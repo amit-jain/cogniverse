@@ -396,8 +396,10 @@ so it funnels through ``SchemaRegistry.deploy_schema`` and the
 document types from the live cluster and refuses to silently drop
 peer-tenant schemas). The in-cluster init job at
 ``charts/cogniverse/templates/init-jobs.yaml`` wires this up as a
-post-install step that deploys ``.Values.config.defaultProfiles.video``
-(none when it is empty) for each ``.Values.config.tenants`` entry:
+post-install step that registers each ``.Values.config.tenants`` entry
+(``POST /admin/tenants``; a 409 for an already registered tenant proceeds)
+and deploys ``.Values.config.defaultProfiles.video`` (none when it is empty)
+for it:
 
 ```bash
 RUNTIME_URL="http://$HOST:$PORT"

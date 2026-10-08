@@ -350,8 +350,8 @@ config:
       name: "Default Tenant"
 
 initJobs:
-  # Post-install hook: deploys config.defaultProfiles.video's schema for each
-  # config.tenants entry once the runtime is healthy.
+  # Post-install hook: registers each config.tenants entry and deploys
+  # config.defaultProfiles.video's schema for it once the runtime is healthy.
   schemaDeployment:
     enabled: true
   modelPulling:

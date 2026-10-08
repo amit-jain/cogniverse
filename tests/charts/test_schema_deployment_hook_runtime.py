@@ -1,9 +1,9 @@
 """The rendered schema-deployment hook against the runtime's admin router.
 
-The hook deploys ``config.defaultProfiles.video`` for each ``config.tenants``
-entry. The runtime here reads the chart's own rendered config.json and a real
-Vespa, so the request the hook makes is answered by the code a helm upgrade
-reaches.
+The hook registers each ``config.tenants`` entry and deploys
+``config.defaultProfiles.video`` for it. The runtime here reads the chart's own
+rendered config.json and a real Vespa, so the requests the hook makes are
+answered by the code a helm upgrade reaches.
 """
 
 from __future__ import annotations
@@ -76,8 +76,9 @@ def _rendered_config(docs: list[dict]) -> dict:
 
 @pytest.fixture
 def runtime_admin(shared_vespa, tmp_path, monkeypatch):
-    """The admin router on a live server, reading the rendered config.json
-    and the shipped schemas, with its config store and schemas on Vespa."""
+    """The admin and tenant-management routers on a live server, reading the
+    rendered config.json and the shipped schemas, with its config store,
+    tenant records and schemas on Vespa."""
     import cogniverse_vespa.backend  # noqa: F401  (registers the backend)
     from cogniverse_core.registries import schema_registry as schema_registry_module
     from cogniverse_core.registries.backend_registry import BackendRegistry
@@ -85,6 +86,7 @@ def runtime_admin(shared_vespa, tmp_path, monkeypatch):
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_runtime.admin import tenant_manager
     from cogniverse_runtime.routers import admin
     from cogniverse_vespa.config.config_store import VespaConfigStore
 
@@ -111,7 +113,14 @@ def runtime_admin(shared_vespa, tmp_path, monkeypatch):
     schema_loader = FilesystemSchemaLoader(REPO_ROOT / "configs" / "schemas")
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
+    previous_tenant_seams = (
+        tenant_manager._config_manager,
+        tenant_manager._schema_loader,
+    )
+    tenant_manager.set_config_manager(config_manager)
+    tenant_manager.set_schema_loader(schema_loader)
     created: list[str] = []
+    registered: list[str] = []
 
     app = FastAPI()
 
@@ -120,6 +129,7 @@ def runtime_admin(shared_vespa, tmp_path, monkeypatch):
         return {"status": "healthy"}
 
     app.include_router(admin.router, prefix="/admin")
+    app.include_router(tenant_manager.router, prefix="/admin")
 
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -134,11 +144,30 @@ def runtime_admin(shared_vespa, tmp_path, monkeypatch):
         assert time.monotonic() < deadline, "admin router did not start"
         time.sleep(0.05)
     try:
-        yield f"http://127.0.0.1:{server_port}", docs, shared_vespa, created
+        yield (
+            f"http://127.0.0.1:{server_port}",
+            docs,
+            shared_vespa,
+            created,
+            registered,
+        )
     finally:
         server.should_exit = True
         thread.join(timeout=30)
         try:
+            # A tenant this test registered is removed as the create's own
+            # rollback removes one: its schemas, then its records.
+            for tenant_id in registered:
+                backend = tenant_manager.get_backend()
+                backend.schema_manager.delete_tenant_schemas(tenant_id)
+                org_id = tenant_id.split(":", 1)[0]
+                for schema, doc_id in (
+                    ("tenant_metadata", tenant_id),
+                    ("organization_metadata", org_id),
+                ):
+                    assert backend.delete_metadata_document(
+                        schema=schema, doc_id=doc_id
+                    ), (schema, doc_id)
             for schema in created:
                 backend = BackendRegistry.get_instance().get_ingestion_backend(
                     "vespa",
@@ -151,13 +180,15 @@ def runtime_admin(shared_vespa, tmp_path, monkeypatch):
                 ]
         finally:
             admin.reset_dependencies()
+            tenant_manager.set_config_manager(previous_tenant_seams[0])
+            tenant_manager.set_schema_loader(previous_tenant_seams[1])
             reset_registries()
 
 
-def test_the_rendered_hook_deploys_the_selected_profile_for_every_listed_tenant(
+def test_the_rendered_hook_registers_and_deploys_every_listed_tenant(
     runtime_admin,
 ):
-    url, docs, vespa, created = runtime_admin
+    url, docs, vespa, created, registered = runtime_admin
     config = _rendered_config(docs)
     profile = config["backend"]["default_profiles"]["video"]["profile"]
     schema = config["backend"]["profiles"][profile]["schema_name"]
@@ -173,6 +204,13 @@ def test_the_rendered_hook_deploys_the_selected_profile_for_every_listed_tenant(
         r'/admin/profiles/([^/"]+)/deploy" \\\n.*\n\s*-d \'\{"tenant_id": "([^"]+)"',
         script,
     ) == [(profile, "default")]
+    assert re.findall(
+        r'/admin/tenants" \\\n.*\n\s*-d \'\{"tenant_id": "([^"]+)"', script
+    ) == ["default"]
+    with httpx.Client(base_url=url, timeout=30) as client:
+        assert client.get("/admin/tenants/default:default").status_code == 404, (
+            "default:default is registered before the hook ran"
+        )
     assert script.count(_RUNTIME_URL_LINE) == 1, script
 
     env = {
@@ -189,7 +227,31 @@ def test_the_rendered_hook_deploys_the_selected_profile_for_every_listed_tenant(
         check=False,
     )
 
+    (create_status,) = re.findall(
+        r"^  Response \((\d+)\): ", result.stdout, re.MULTILINE
+    )
+    if create_status == "200":
+        registered.append("default:default")
     assert result.returncode == 0, result.stdout + result.stderr
+    assert create_status == "200", result.stdout
+    assert "  Registered tenant default" in result.stdout.splitlines()
+    tenant = httpx.get(f"{url}/admin/tenants/default:default", timeout=30)
+    assert tenant.status_code == 200, tenant.text
+    record = tenant.json()
+    record.pop("created_at")
+    assert record == {
+        "tenant_full_id": "default:default",
+        "org_id": "default",
+        "tenant_name": "default",
+        "created_by": "helm:cogniverse",
+        "status": "active",
+        "schemas_deployed": [
+            "video_colpali_smol500_mv_frame",
+            "agent_memories",
+            "provenance",
+        ],
+        "config": {},
+    }
     (response,) = re.findall(r"^  Response: (.*)$", result.stdout, re.MULTILINE)
     body = json.loads(response)
     body.pop("deployed_at")

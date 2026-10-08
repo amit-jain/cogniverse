@@ -237,13 +237,16 @@ sequenceDiagram
     API-->>Admin: {"tenant_full_id": "acme:production", "schemas_deployed": [...]}
 ```
 
-**Deployment path: Helm init job (profile schemas only)**
+**Deployment path: Helm init job (chart tenants and their profile schemas)**
 
 The Helm init job at ``charts/cogniverse/templates/init-jobs.yaml`` (`schema-deployment`
-Job) deploys `config.defaultProfiles.video` (none when it is empty) for each
-`config.tenants` entry and calls only `POST /admin/profiles/{profile}/deploy` — it does **not** call `POST /admin/tenants`,
-so it never creates a `tenant_metadata` record; it just ensures each tenant's
-data (video/etc.) schema exists. Global metadata schemas (`organization_metadata`,
+Job) registers each `config.tenants` entry with `POST /admin/tenants`
+(`created_by: "helm:cogniverse"`), which writes its `tenant_metadata` record and
+deploys its base schemas as above; a 409 (already registered) proceeds and any
+other status fails the Job attempt. It then deploys `config.defaultProfiles.video`
+(none when it is empty) for the tenant with `POST /admin/profiles/{profile}/deploy`,
+which answers `already_deployed` when the profile's schema is one of the base
+schemas. Global metadata schemas (`organization_metadata`,
 `tenant_metadata`, `config_metadata`, `adapter_registry`) are deployed by the
 runtime itself at startup — unconditionally, on every run, via `main.py` →
 `system_backend.schema_manager.upload_metadata_schemas()` — not by this job and
@@ -252,8 +255,9 @@ earlier fresh-install bootstrap deploys the same schemas first through a
 registry-less schema manager with schema removal disabled; it proceeds only
 when the config server (`_application_exists`) reports NO application package
 yet, and raises instead of touching a populated cluster whose read merely
-failed. `agent_memories_<tenant>` is **not** deployed by either path —
-`Mem0MemoryManager` deploys it lazily on first use for that tenant.
+failed. `agent_memories_<tenant>` and `provenance_<tenant>` come with the tenant
+create; `Mem0MemoryManager` also deploys `agent_memories_<tenant>` on first use
+when it is missing.
 
 ```mermaid
 sequenceDiagram
@@ -265,6 +269,8 @@ sequenceDiagram
     Note over Runtime: At runtime startup (once, not per-tenant):<br/>upload_metadata_schemas() → organization_metadata, tenant_metadata,<br/>config_metadata, adapter_registry
 
     loop For each tenant in config.tenants
+        InitJob->>Runtime: POST /admin/tenants {"tenant_id": tenant.id, "created_by": "helm:cogniverse"}
+        Runtime-->>InitJob: 200 (created, base schemas deployed) or 409 (already registered)
         opt config.defaultProfiles.video is set
             InitJob->>Runtime: POST /admin/profiles/{profile}/deploy {"tenant_id": tenant.id, "force": false}
             Runtime->>Registry: deploy_schema(tenant_id, base_schema_name=profile, force)
