@@ -39,7 +39,6 @@ from cogniverse_foundation.config.manager import (
     BackendProfileExistsError,
     BackendProfileNotFoundError,
     ConfigManager,
-    forget_held_backend_configs,
 )
 from cogniverse_foundation.config.unified_config import (
     BackendConfig,
@@ -264,8 +263,8 @@ async def create_profile(
             outlasted every compare-and-set attempt
         HTTPException 500: Creation failed; a requested schema deploy that
             fails answers 201 with schema_deploy_error
-        HTTPException 503: The profile is stored, but a runtime worker did
-            not confirm dropping the profiles it held
+        HTTPException 503: The profile is stored, but a runtime or
+            ingestion worker did not confirm dropping the profiles it held
     """
     _require_profile_change_channel()
     try:
@@ -646,8 +645,8 @@ async def update_profile(
         HTTPException 409: Concurrent writes to the tenant's backend config
             outlasted every compare-and-set attempt
         HTTPException 500: Update operation failed
-        HTTPException 503: The update is stored, but a runtime worker did not
-            confirm dropping the profiles it held
+        HTTPException 503: The update is stored, but a runtime or ingestion
+            worker did not confirm dropping the profiles it held
     """
     _require_profile_change_channel()
 
@@ -765,8 +764,8 @@ async def delete_profile(
             concurrent writes to the tenant's backend config outlasted every
             compare-and-set attempt
         HTTPException 500: Deletion failed
-        HTTPException 503: The profile is deleted, but a runtime worker did
-            not confirm dropping the profiles it held
+        HTTPException 503: The profile is deleted, but a runtime or
+            ingestion worker did not confirm dropping the profiles it held
     """
     _require_profile_change_channel()
 
@@ -857,37 +856,37 @@ async def delete_profile(
 # How long a profile write waits for every worker to drop the profiles it held.
 PROFILE_CHANGE_ACK_TIMEOUT_S = 15.0
 
+# Delivers profile changes to every runtime and ingestion worker; wired at
+# startup.
+_config_events = None
 
-def release_backend_profiles(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop the backend config this process holds for the tenant.
 
-    The ``backend_profiles_changed`` cluster-event handler, run on every
-    worker: its next read of the tenant's profiles comes from the store.
-    """
-    tenant_id = canonical_tenant_id(payload["tenant_id"])
-    return {
-        "tenant_id": tenant_id,
-        "config_managers": forget_held_backend_configs(tenant_id),
-    }
+def set_config_events(config_events) -> None:
+    """Wire the channel profile changes reach every worker process through."""
+    global _config_events
+    _config_events = config_events
 
 
 def _require_profile_change_channel() -> None:
     """A profile write refuses before storing anything when no channel can
     carry the change to the other workers."""
-    if _cluster_events is None:
-        raise RuntimeError("Profile writes need the cluster events channel wired")
+    if _config_events is None:
+        raise RuntimeError("Profile writes need the config events channel wired")
 
 
 async def _publish_profile_change(
     tenant_id: str, profile_name: str, change: str
 ) -> None:
-    """Have every runtime worker process drop the tenant's held profiles,
-    so its next request on any of them reads the change."""
-    from cogniverse_runtime.cluster_events import ClusterEventError
+    """Have every runtime and ingestion worker drop the tenant's held
+    profiles, so its next request or ingest on any of them reads the change."""
+    from cogniverse_runtime.cluster_events import (
+        BACKEND_PROFILES_CHANGED,
+        ClusterEventError,
+    )
 
     try:
-        await _cluster_events.publish(
-            "backend_profiles_changed",
+        await _config_events.publish(
+            BACKEND_PROFILES_CHANGED,
             {"tenant_id": canonical_tenant_id(tenant_id)},
             timeout_s=PROFILE_CHANGE_ACK_TIMEOUT_S,
         )
@@ -896,8 +895,8 @@ async def _publish_profile_change(
             503,
             "profile_change_not_propagated",
             f"Profile '{profile_name}' is {change} for tenant '{tenant_id}', but "
-            "not every runtime worker dropped the profiles it held; those "
-            "workers read the change within a minute.",
+            "not every runtime or ingestion worker dropped the profiles it "
+            "held; those workers read the change within a minute.",
             exc,
             profile_name=profile_name,
             tenant_id=tenant_id,
@@ -1539,8 +1538,7 @@ async def admin_drop_session(tenant_id: str, session_id: str):
     }
 
 
-# Delivers a session close or a profile change to every runtime worker
-# process; wired at startup.
+# Delivers a session close to every runtime worker process; wired at startup.
 _cluster_events = None
 
 # How long a session close waits for every worker to sweep its warm tenants.
@@ -1548,8 +1546,7 @@ SESSION_CLOSE_ACK_TIMEOUT_S = 60.0
 
 
 def set_cluster_events(cluster_events) -> None:
-    """Wire the channel session closes and profile changes reach every worker
-    process through."""
+    """Wire the channel session closes reach every worker process through."""
     global _cluster_events
     _cluster_events = cluster_events
 

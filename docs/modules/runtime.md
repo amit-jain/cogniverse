@@ -1265,10 +1265,11 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 **DELETE /admin/profiles/{profile_name}** - Delete profile
 
 A profile create, update or delete publishes a `backend_profiles_changed`
-cluster event once the store holds it and answers only when every worker
-process and replica has dropped the backend config it held for the tenant
-(`release_backend_profiles`), so the tenant's next search, grounding or
-profile selection on any of them reads the change. A worker that does not
+event on the config events channel once the store holds it and answers only
+when every runtime worker process, every replica and every ingestion worker
+has dropped the backend config it held for the tenant
+(`release_backend_profiles`), so the tenant's next search, grounding,
+profile selection or ingest on any of them reads the change. A worker that does not
 confirm within `PROFILE_CHANGE_ACK_TIMEOUT_S` (15 s), or a Redis that cannot
 carry the event, answers 503 `profile_change_not_propagated`: the write is
 stored, and those workers read it within the config manager's staleness bound
@@ -1320,7 +1321,7 @@ with no channel wired refuses before storing anything.
 
 **Cluster events** (`libs/runtime/cogniverse_runtime/cluster_events.py`)
 
-Admin events every worker process and replica acts on. Each worker's lifespan subscribes a `ClusterEvents` to the Redis channel `cogniverse:runtime:events` with handlers by event kind (`tenant_deleted`, `tenant_tier_set`, `backend_profiles_changed`, `session_closed`), and a second one to `CONFIG_EVENT_CHANNEL` (`cogniverse:config:events`) handling `configs_changed`, which every ingestion worker subscribes to as well. `publish(kind, payload, timeout_s=...)` publishes the event; every subscribed worker runs its handler on a thread and pushes an acknowledgement onto the event's reply list, and the publisher returns each worker's result only once every receiver acknowledged success. Redis unreachable, no subscribed worker, a handler that raised and a worker that did not answer within the timeout raise `ClusterEventUnavailable` or `ClusterEventIncomplete` (both `ClusterEventError`), naming what is missing. A worker whose subscription is down when an event is published is not one of its receivers; it logs the loss and resubscribes with backoff.
+Admin events every worker process and replica acts on. Each worker's lifespan subscribes a `ClusterEvents` to the Redis channel `cogniverse:runtime:events` with handlers by event kind (`tenant_deleted`, `tenant_tier_set`, `session_closed`), and a second one to `CONFIG_EVENT_CHANNEL` (`cogniverse:config:events`) with `CONFIG_EVENT_HANDLERS` (`configs_changed` → `release_held_configs`, `backend_profiles_changed` → `release_backend_profiles`), which every ingestion worker subscribes to as well. `publish(kind, payload, timeout_s=...)` publishes the event; every subscribed worker runs its handler on a thread and pushes an acknowledgement onto the event's reply list, and the publisher returns each worker's result only once every receiver acknowledged success. Redis unreachable, no subscribed worker, a handler that raised and a worker that did not answer within the timeout raise `ClusterEventUnavailable` or `ClusterEventIncomplete` (both `ClusterEventError`), naming what is missing. A worker whose subscription is down when an event is published is not one of its receivers; it logs the loss and resubscribes with backoff.
 
 **Tenant lifecycle** (`libs/runtime/cogniverse_runtime/admin/tenant_manager.py`)
 

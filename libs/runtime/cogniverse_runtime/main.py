@@ -1845,9 +1845,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("SIGUSR1 hot-reload not available in this loop: %s", exc)
         app.state.sigusr1_registered = False
 
-    # Tenant deletes, tier sets, profile changes and session closes reach every
-    # worker process and replica through Redis, and each waits for every worker
-    # to act on it.
+    # Tenant deletes, tier sets and session closes reach every worker process
+    # and replica through Redis, and each waits for every worker to act on it.
     from cogniverse_runtime.cluster_events import ClusterEvents
 
     cluster_events = ClusterEvents(
@@ -1856,7 +1855,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         {
             "tenant_deleted": tenant_manager.release_deleted_tenant,
             "tenant_tier_set": tenant_manager.release_tenant_tier,
-            "backend_profiles_changed": admin.release_backend_profiles,
             "session_closed": admin.sweep_closed_session,
         },
     )
@@ -1866,22 +1864,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     admin.set_cluster_events(cluster_events)
     app.state.cluster_events = cluster_events
     logger.info("Cluster events subscribed as %s", replica_id)
-    # Config saves, restores and imports reach every runtime worker and every
-    # ingestion worker on the config events channel.
+    # Config saves, restores and imports, and profile creates, updates and
+    # deletes, reach every runtime worker and every ingestion worker on the
+    # config events channel.
     from cogniverse_runtime.cluster_events import (
         CONFIG_EVENT_CHANNEL,
-        CONFIGS_CHANGED,
-        release_held_configs,
+        CONFIG_EVENT_HANDLERS,
     )
 
     config_events = ClusterEvents(
         redis_url,
         replica_id,
-        {CONFIGS_CHANGED: release_held_configs},
+        CONFIG_EVENT_HANDLERS,
         channel=CONFIG_EVENT_CHANNEL,
     )
     await config_events.start()
     config_entries.set_config_events(config_events)
+    admin.set_config_events(config_events)
     logger.info("Config events subscribed as %s", replica_id)
     a2a_protocol = await _build_shared_a2a_protocol(
         agent_registry=agent_registry,
@@ -1942,6 +1941,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     admin.set_cluster_events(None)
     await cluster_events.close()
     config_entries.set_config_events(None)
+    admin.set_config_events(None)
     await config_events.close()
     agents.set_conversation_ledger(None)
     openai_compat.set_continuation_store(None)

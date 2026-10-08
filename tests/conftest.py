@@ -1066,26 +1066,24 @@ class ClusterEventsOnOwnLoop:
 
 @pytest.fixture(scope="module")
 def profile_change_events(request):
-    """Wire the admin routes' cluster-events channel, as the runtime's
+    """Wire the admin routes' config events channel, as the runtime's
     lifespan does, with this process as its one worker: a profile write
     publishes ``backend_profiles_changed`` and this process drops the
     tenant's held profiles before the write answers. Module-scoped, so a
     module's own setup can write profiles through the routes."""
+    from cogniverse_runtime.cluster_events import CONFIG_EVENT_HANDLERS
     from cogniverse_runtime.routers import admin
 
     redis_url = os.environ.get("COGNIVERSE_TEST_REDIS_URL") or request.getfixturevalue(
         "workflow_state_redis_url"
     )
-    channel = ClusterEventsOnOwnLoop(
-        redis_url,
-        {"backend_profiles_changed": admin.release_backend_profiles},
-    )
-    previous = admin._cluster_events
-    admin.set_cluster_events(channel)
+    channel = ClusterEventsOnOwnLoop(redis_url, CONFIG_EVENT_HANDLERS)
+    previous = admin._config_events
+    admin.set_config_events(channel)
     try:
         yield channel
     finally:
-        admin.set_cluster_events(previous)
+        admin.set_config_events(previous)
         channel.close()
 
 

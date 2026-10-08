@@ -239,7 +239,7 @@ class _Env:
 
 
 @pytest.fixture
-def env(monkeypatch, in_process_cluster_events):
+def env(monkeypatch, in_process_config_events):
     cm = _StubConfigManager()
     backend = _FakeBackend()
     registry = _FakeRegistry(backend)
@@ -263,7 +263,7 @@ def env(monkeypatch, in_process_cluster_events):
         backend=backend,
         registry=registry,
         validator=validator,
-        events=in_process_cluster_events,
+        events=in_process_config_events,
     )
 
 

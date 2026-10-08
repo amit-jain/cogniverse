@@ -9,11 +9,18 @@ wired with real dependencies including real ColPali query encoder.
 import dataclasses
 import json
 import logging
+import os
+import signal
+import subprocess
+import sys
+import time
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
 import dspy
 import pytest
+import redis
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.testclient import TestClient as StarletteTestClient
@@ -34,6 +41,7 @@ from cogniverse_foundation.config.unified_config import (
 )
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.cluster_events import CONFIG_EVENT_CHANNEL
 from cogniverse_runtime.routers import health, search
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
@@ -813,3 +821,57 @@ def owned_redis():
     finally:
         subprocess.run(["docker", "unpause", name], capture_output=True, timeout=30)
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+
+
+def config_event_subscribers(redis_url: str) -> int:
+    client = redis.Redis.from_url(redis_url)
+    try:
+        return dict(client.pubsub_numsub(CONFIG_EVENT_CHANNEL))[
+            CONFIG_EVENT_CHANNEL.encode()
+        ]
+    finally:
+        client.close()
+
+
+@pytest.fixture
+def ingestion_worker(own_redis, vespa_instance, tmp_path):
+    """The ingestion worker process, as its pod runs it, subscribed to the
+    config events channel of a Redis this test alone uses."""
+    redis_url, _pause, _resume = own_redis
+    consumer_id = f"config-events-{uuid.uuid4().hex[:6]}"
+    log = tmp_path / "ingestion_worker.log"
+    env = dict(
+        os.environ,
+        REDIS_URL=redis_url,
+        BACKEND_URL="http://localhost",
+        BACKEND_PORT=str(vespa_instance["http_port"]),
+        INGEST_CONSUMER_ID=consumer_id,
+        INGEST_REAPER_ENABLED="false",
+        INGEST_CLAIM_BLOCK_MS="200",
+        LOG_LEVEL="INFO",
+        PYTHONUNBUFFERED="1",
+    )
+    with log.open("w") as output:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "cogniverse_runtime.ingestion_worker.worker"],
+            env=env,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
+    try:
+        deadline = time.monotonic() + 180
+        while config_event_subscribers(redis_url) != 1:
+            if process.poll() is not None or time.monotonic() > deadline:
+                raise AssertionError(
+                    f"ingestion worker did not subscribe:\n{log.read_text()}"
+                )
+            time.sleep(0.5)
+        yield redis_url, process, consumer_id
+    finally:
+        os.kill(process.pid, signal.SIGCONT)
+        process.terminate()
+        try:
+            process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()

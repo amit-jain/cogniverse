@@ -47,11 +47,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.admin import tenant_manager as tm
 from cogniverse_runtime.admin.models import Tenant
 from cogniverse_runtime.atlas_projection import ProjectionCache, set_projection_cache
-from cogniverse_runtime.cluster_events import (
-    CONFIGS_CHANGED,
-    ClusterEvents,
-    release_held_configs,
-)
+from cogniverse_runtime.cluster_events import CONFIG_EVENT_HANDLERS, ClusterEvents
 from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_runtime.ingestion_worker import status_api
 from cogniverse_runtime.ingestion_worker import worker as ingest_worker
@@ -112,7 +108,6 @@ def serve_ops_runtime(
             {
                 "tenant_deleted": tm.release_deleted_tenant,
                 "tenant_tier_set": tm.release_tenant_tier,
-                "backend_profiles_changed": admin.release_backend_profiles,
                 "session_closed": admin.sweep_closed_session,
             },
             channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
@@ -121,11 +116,12 @@ def serve_ops_runtime(
         config_events = ClusterEvents(
             redis_url,
             f"web-ops-test-{uuid.uuid4().hex[:8]}",
-            {CONFIGS_CHANGED: release_held_configs},
+            CONFIG_EVENT_HANDLERS,
             channel=f"cogniverse:test-config-events:{uuid.uuid4().hex[:8]}",
         )
         await config_events.start()
         config_entries.set_config_events(config_events)
+        admin.set_config_events(config_events)
         shared_state = await connect_shared_state_redis(redis_url)
         set_projection_cache(ProjectionCache(shared_state))
         task_events = TaskEventStore(shared_state)
@@ -169,6 +165,7 @@ def serve_ops_runtime(
             tm.set_cluster_events(None)
             tm.set_task_event_store(None)
             admin.set_cluster_events(None)
+            admin.set_config_events(None)
             agents.set_task_event_store(None)
             events_router.set_task_event_store(None)
             ingestion.set_task_event_store(None)

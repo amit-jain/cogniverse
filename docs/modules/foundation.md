@@ -396,8 +396,8 @@ one is `expected_version` (0: none) and returns None when another write landed
 first; `forget_held_configs(tenant_id)` drops what the manager holds for a
 tenant (the system config for `_system`). The module function
 `forget_held_backend_configs(tenant_id)` drops the tenant's backend config
-from every ConfigManager in the process; the runtime runs it on every worker
-when a profile is written. `forget_held_tenant_configs(tenant_id)` drops
+from every ConfigManager in the process; the runtime runs it on every runtime
+and ingestion worker when a profile is written. `forget_held_tenant_configs(tenant_id)` drops
 everything every ConfigManager in the process holds for a tenant (the system
 config for `_system`); the runtime runs it on every runtime and ingestion
 worker when a config is saved, restored or imported. `SystemConfig.to_dict()` shows

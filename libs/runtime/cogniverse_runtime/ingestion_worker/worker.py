@@ -42,9 +42,8 @@ from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.schema_deploy_lease import LeaseWaitTimeout
 from cogniverse_runtime.cluster_events import (
     CONFIG_EVENT_CHANNEL,
-    CONFIGS_CHANGED,
+    CONFIG_EVENT_HANDLERS,
     ClusterEvents,
-    release_held_configs,
 )
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.ingestion_worker import idempotency, queue
@@ -1107,6 +1106,18 @@ async def _claim_loop(
                 await asyncio.sleep(2.0)
 
 
+def config_event_subscriber(redis_url: str, consumer_id: str) -> ClusterEvents:
+    """This worker process's subscription to the config events channel: a
+    config or backend profile written through the runtime is dropped from
+    what the process holds before the write answers."""
+    return ClusterEvents(
+        redis_url,
+        f"ingestion:{consumer_id}:{os.getpid()}:{uuid.uuid4().hex[:8]}",
+        CONFIG_EVENT_HANDLERS,
+        channel=CONFIG_EVENT_CHANNEL,
+    )
+
+
 async def run(
     stop: Optional[asyncio.Event] = None,
     processor=None,
@@ -1151,14 +1162,7 @@ async def run(
         )
         return
 
-    # A config saved, restored or imported through the runtime is dropped
-    # from what this worker holds before the write answers.
-    config_events = ClusterEvents(
-        config.redis_url,
-        f"ingestion:{config.consumer_id}:{os.getpid()}:{uuid.uuid4().hex[:8]}",
-        {CONFIGS_CHANGED: release_held_configs},
-        channel=CONFIG_EVENT_CHANNEL,
-    )
+    config_events = config_event_subscriber(config.redis_url, config.consumer_id)
     await config_events.start()
     try:
         redis = await get_redis(config.redis_url)

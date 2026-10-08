@@ -20,12 +20,10 @@ import signal
 import subprocess
 import sys
 import threading
-import time
 import uuid
 
 import httpx
 import pytest
-import redis
 from fastapi import FastAPI
 
 from cogniverse_foundation.config.manager import ConfigManager
@@ -405,60 +403,6 @@ class TestConfigWriteFaultContract:
             "Config writes need the config events channel wired"
         )
         assert _stored_version(config_manager, tenant_id) == 0
-
-
-def _subscribers(redis_url: str) -> int:
-    client = redis.Redis.from_url(redis_url)
-    try:
-        return dict(client.pubsub_numsub(CONFIG_EVENT_CHANNEL))[
-            CONFIG_EVENT_CHANNEL.encode()
-        ]
-    finally:
-        client.close()
-
-
-@pytest.fixture
-def ingestion_worker(own_redis, vespa_instance, tmp_path):
-    """The ingestion worker process, as its pod runs it, subscribed to the
-    config events channel of a Redis this test alone uses."""
-    redis_url, _pause, _resume = own_redis
-    consumer_id = f"config-events-{uuid.uuid4().hex[:6]}"
-    log = tmp_path / "ingestion_worker.log"
-    env = dict(
-        os.environ,
-        REDIS_URL=redis_url,
-        BACKEND_URL="http://localhost",
-        BACKEND_PORT=str(vespa_instance["http_port"]),
-        INGEST_CONSUMER_ID=consumer_id,
-        INGEST_REAPER_ENABLED="false",
-        INGEST_CLAIM_BLOCK_MS="200",
-        LOG_LEVEL="INFO",
-        PYTHONUNBUFFERED="1",
-    )
-    with log.open("w") as output:
-        process = subprocess.Popen(
-            [sys.executable, "-m", "cogniverse_runtime.ingestion_worker.worker"],
-            env=env,
-            stdout=output,
-            stderr=subprocess.STDOUT,
-        )
-    try:
-        deadline = time.monotonic() + 180
-        while _subscribers(redis_url) != 1:
-            if process.poll() is not None or time.monotonic() > deadline:
-                raise AssertionError(
-                    f"ingestion worker did not subscribe:\n{log.read_text()}"
-                )
-            time.sleep(0.5)
-        yield redis_url, process, consumer_id
-    finally:
-        os.kill(process.pid, signal.SIGCONT)
-        process.terminate()
-        try:
-            process.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
 
 
 @pytest.mark.asyncio

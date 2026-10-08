@@ -19,8 +19,10 @@ from redis.asyncio import Redis
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_runtime.cluster_events import (
+    BACKEND_PROFILES_CHANGED,
     CONFIG_EVENT_CHANNEL,
     CONFIGS_CHANGED,
+    release_backend_profiles,
     release_held_configs,
 )
 from cogniverse_runtime.ingestion_worker.worker import _worker_dspy_lm
@@ -339,7 +341,10 @@ class TestRunEntrypointWiring:
         assert recorded["closed"] == 1
         assert recorded["config_events"] == (
             "redis://testhost:6379/3",
-            {CONFIGS_CHANGED: release_held_configs},
+            {
+                CONFIGS_CHANGED: release_held_configs,
+                BACKEND_PROFILES_CHANGED: release_backend_profiles,
+            },
             CONFIG_EVENT_CHANNEL,
         )
         assert (
