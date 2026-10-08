@@ -84,6 +84,7 @@ from cogniverse_runtime.routers import (
     ingestion,
     knowledge,
     openai_compat,
+    optimization_framework,
     orchestration_annotations,
     routing_decisions,
     search,
@@ -2047,6 +2048,11 @@ app.include_router(
 )
 app.include_router(
     embedding_atlas.router, prefix="/admin/tenant", tags=["embedding-atlas"]
+)
+app.include_router(
+    optimization_framework.router,
+    prefix="/admin/tenant",
+    tags=["optimization-framework"],
 )
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])
