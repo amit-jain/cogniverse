@@ -52,7 +52,7 @@ def _dead_backend_manager() -> TelemetryManager:
 class _HangingManager:
     """span() enqueue blocks forever — a synchronous emitter would hang here."""
 
-    def span(self, name: str, tenant_id: str):
+    def span(self, name: str, tenant_id: str, start_time: int | None = None):
         raise AssertionError(
             "request path entered span() synchronously; emit must enqueue, "
             "never block the request on the telemetry backend"
@@ -94,6 +94,7 @@ async def _emit_all(manager) -> None:
         generation_type="raw_results",
         routed_to="search_agent",
         confidence=0.9,
+        started_ns=time.time_ns(),
     )
 
     ee = object.__new__(EntityExtractionAgent)

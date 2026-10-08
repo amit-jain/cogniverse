@@ -10,10 +10,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Literal, Optional
 
+import httpx
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from cogniverse_agents.routing.annotation_agent import AnnotationAgent
 from cogniverse_agents.routing.annotation_storage import (
     AnnotationStorage,
     LLMAnnotationNotFoundError,
@@ -68,6 +70,9 @@ class AgentRouting(BaseModel):
     success_rate: float
     mean_confidence: float
     mean_latency_ms: float
+    precision: float
+    recall: float
+    f1: float
 
 
 class RoutingLatency(BaseModel):
@@ -77,6 +82,7 @@ class RoutingLatency(BaseModel):
 
 
 class RoutingDecisions(BaseModel):
+    project: str
     total: int
     successes: int
     failures: int
@@ -100,6 +106,81 @@ class LabelRequest(DecisionRef):
     label: ReviewLabel
     reasoning: str = ""
     suggested_agent: Optional[str] = None
+
+
+class AnnotationCandidate(BaseModel):
+    span_id: str
+    start_time: str
+    query: str
+    chosen_agent: str
+    confidence: float
+    outcome: str
+    priority: Literal["high", "medium", "low"]
+    reason: str
+
+
+class AnnotationCandidates(BaseModel):
+    candidates: List[AnnotationCandidate]
+
+
+class LabelStatistics(BaseModel):
+    total: int
+    human_reviewed: int
+    pending_review: int
+    by_label: Dict[str, int]
+
+
+# Failures that describe the moment rather than the configuration: the same
+# read can succeed once the telemetry store answers again. OSError covers
+# timeouts and refused or reset connections.
+_TRANSIENT_FAILURES = (OSError, httpx.TransportError)
+_TRANSIENT_STATUSES = {502, 503, 504}
+# Bounds the cause walk; chains are short and may be cyclic.
+_MAX_CAUSE_DEPTH = 10
+
+
+def _transient_cause(exc: BaseException) -> Optional[BaseException]:
+    """The first exception in ``exc``'s cause chain that a retry can clear:
+    a timeout, a connection or transport failure, or an HTTP answer of 502,
+    503 or 504."""
+    cursor: Optional[BaseException] = exc
+    for _ in range(_MAX_CAUSE_DEPTH):
+        if cursor is None:
+            return None
+        if isinstance(cursor, _TRANSIENT_FAILURES) or (
+            isinstance(cursor, httpx.HTTPStatusError)
+            and cursor.response.status_code in _TRANSIENT_STATUSES
+        ):
+            return cursor
+        cursor = cursor.__cause__
+    return None
+
+
+def _telemetry_unavailable(exc: Exception, tenant_id: str, what: str) -> HTTPException:
+    """502 for a telemetry read that failed, saying whether the store did
+    not answer (a retry may succeed) or refused the query (its configuration
+    needs checking)."""
+    transient = _transient_cause(exc)
+    if transient is not None:
+        message = (
+            f"Could not read {what} of tenant {tenant_id}: the telemetry store "
+            f"did not answer ({type(transient).__name__}). It may be starting "
+            "rather than misconfigured; refresh to try again."
+        )
+    else:
+        message = (
+            f"Could not read {what} of tenant {tenant_id}: the telemetry store "
+            f"refused the query ({type(exc).__name__}). Check the telemetry "
+            "configuration of this tenant."
+        )
+    return failure_response(
+        502,
+        "telemetry_unavailable",
+        message,
+        exc,
+        tenant_id=tenant_id,
+        transient=transient is not None,
+    )
 
 
 def _value(value):
@@ -174,14 +255,78 @@ async def list_routing_decisions(
         )
         labels = await _labels(storage, spans)
     except Exception as exc:
-        raise failure_response(
-            502,
-            "telemetry_unavailable",
-            f"Could not read the routing decisions of tenant {tenant_id}.",
-            exc,
+        raise _telemetry_unavailable(exc, tenant_id, "the routing decisions") from exc
+    return RoutingDecisions(project=storage.project_name, **_decisions(spans, labels))
+
+
+def _utc_iso(timestamp) -> str:
+    stamp = pd.Timestamp(timestamp)
+    stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp
+    return stamp.tz_convert("UTC").isoformat()
+
+
+@router.get(
+    "/{tenant_id}/routing-decisions/annotation-candidates",
+    response_model=AnnotationCandidates,
+)
+async def find_annotation_candidates(
+    tenant_id: str,
+    lookback_hours: int = Query(24, ge=1, le=24 * 30),
+    confidence_threshold: float = Query(0.6, ge=0.0, le=1.0),
+    max_annotations: int = Query(20, ge=1, le=100),
+):
+    """The tenant's routing decisions of the last ``lookback_hours`` that need
+    a reviewer: failures, low-confidence, ambiguous and near-boundary ones as
+    ``AnnotationAgent`` finds them with ``confidence_threshold``, highest
+    priority first, at most ``max_annotations``."""
+    tenant_id = canonical_tenant_id(tenant_id)
+    try:
+        agent = AnnotationAgent(
             tenant_id=tenant_id,
+            confidence_threshold=confidence_threshold,
+            max_annotations_per_run=max_annotations,
+        )
+        requests = await agent.identify_spans_needing_annotation(
+            lookback_hours=lookback_hours
+        )
+    except Exception as exc:
+        raise _telemetry_unavailable(
+            exc, tenant_id, "the routing decisions needing annotation"
         ) from exc
-    return RoutingDecisions(**_decisions(spans, labels))
+    return AnnotationCandidates(
+        candidates=[
+            AnnotationCandidate(
+                span_id=request.span_id,
+                start_time=_utc_iso(request.timestamp),
+                query=request.query,
+                chosen_agent=request.chosen_agent,
+                confidence=request.routing_confidence,
+                outcome=request.outcome.value,
+                priority=request.priority.value,
+                reason=request.reason,
+            )
+            for request in requests
+        ]
+    )
+
+
+@router.get(
+    "/{tenant_id}/routing-decisions/label-statistics",
+    response_model=LabelStatistics,
+)
+async def label_statistics(tenant_id: str):
+    """How many routing decisions of the last 30 days carry a stored label,
+    how many of those a reviewer has reviewed and how many still await
+    review, and the count of each label."""
+    tenant_id = canonical_tenant_id(tenant_id)
+    storage = AnnotationStorage(tenant_id=tenant_id)
+    try:
+        statistics = await storage.get_annotation_statistics()
+    except Exception as exc:
+        raise _telemetry_unavailable(
+            exc, tenant_id, "the stored routing labels"
+        ) from exc
+    return LabelStatistics(**statistics)
 
 
 async def _read_decision(
@@ -205,12 +350,8 @@ async def _read_decision(
             spans = spans[spans["context.span_id"] == span_id]
         labels = await _labels(storage, spans)
     except Exception as exc:
-        raise failure_response(
-            502,
-            "telemetry_unavailable",
-            f"Could not read routing decision {span_id} of tenant {tenant_id}.",
-            exc,
-            tenant_id=tenant_id,
+        raise _telemetry_unavailable(
+            exc, tenant_id, f"routing decision {span_id}"
         ) from exc
     decisions = _decisions(spans, labels)["decisions"]
     if not decisions:

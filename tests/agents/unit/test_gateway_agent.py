@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -624,32 +625,45 @@ class TestTelemetrySpan:
         """telemetry_manager set -> gateway AND routing spans emitted."""
         import json
 
-        mock_gliner_model.predict_entities.return_value = [
-            {"text": "video", "label": "video_content", "score": 0.92},
-        ]
+        classified_at = []
+
+        def predict_entities(*args, **kwargs):
+            classified_at.append(time.time_ns())
+            return [{"text": "video", "label": "video_content", "score": 0.92}]
+
+        mock_gliner_model.predict_entities.side_effect = predict_entities
         telemetry = RecordingTelemetryManager()
         gateway_agent.telemetry_manager = telemetry
 
+        before = time.time_ns()
         await gateway_agent._process_impl(
             GatewayInput(query="cooking videos", tenant_id="acme")
         )
 
         # Gateway emits two spans, in this order: the training-data gateway
         # span, then the routing span downstream evaluators/annotation read.
-        # require_tenant_id canonicalizes "acme" → "acme:acme".
-        assert len(telemetry.calls) == 2
+        # Both start when the decision began, before classification, so
+        # their duration is the decision's. require_tenant_id canonicalizes
+        # "acme" → "acme:acme".
+        started = telemetry.calls[0].get("start_time")
         assert [c["name"] for c in telemetry.calls] == [
             "cogniverse.gateway",
             "cogniverse.routing",
         ]
-        assert telemetry.calls[0] == {
-            "name": "cogniverse.gateway",
-            "tenant_id": "acme:acme",
-        }
-        assert telemetry.calls[1] == {
-            "name": "cogniverse.routing",
-            "tenant_id": "acme:acme",
-        }
+        assert telemetry.calls == [
+            {
+                "name": "cogniverse.gateway",
+                "tenant_id": "acme:acme",
+                "start_time": started,
+            },
+            {
+                "name": "cogniverse.routing",
+                "tenant_id": "acme:acme",
+                "start_time": started,
+            },
+        ]
+        assert len(classified_at) == 1
+        assert before <= started <= classified_at[0]
         recorded = _span_attributes(telemetry, "cogniverse.gateway")
         assert recorded["operation"] == "gateway"
         assert recorded["input.value"] == "cooking videos"
@@ -678,6 +692,7 @@ class TestTelemetrySpan:
         assert telemetry.calls[1] == {
             "name": "cogniverse.routing",
             "tenant_id": "acme:acme",
+            "start_time": telemetry.calls[0]["start_time"],
         }
         recorded = _span_attributes(telemetry, "cogniverse.routing")
         assert recorded["operation"] == "routing"
@@ -704,6 +719,7 @@ class TestTelemetrySpan:
                     generation_type="raw_results",
                     routed_to="search_agent",
                     confidence=0.91,
+                    started_ns=1_000_000_000,
                 )
             )
         assert _messages(caplog, "cogniverse_agents.gateway_agent") == [
@@ -728,10 +744,17 @@ class TestTelemetrySpan:
                     generation_type="raw_results",
                     routed_to="search_agent",
                     confidence=0.91,
+                    started_ns=1_000_000_000,
                 )
             )
 
-        assert telemetry.calls == [{"name": "cogniverse.gateway", "tenant_id": "acme"}]
+        assert telemetry.calls == [
+            {
+                "name": "cogniverse.gateway",
+                "tenant_id": "acme",
+                "start_time": 1_000_000_000,
+            }
+        ]
         assert _messages(caplog, "cogniverse_agents.gateway_agent") == [
             "Failed to emit gateway telemetry: tenant=acme error=telemetry boom"
         ]

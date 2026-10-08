@@ -56,6 +56,7 @@ def _emit(manager, tenants, monkeypatch, *, concurrent=False):
             routed_to="search_agent",
             confidence=0.9,
             reasoning="video requested",
+            started_ns=time.time_ns(),
             thresholds=_RoutingThresholds(0.4, 0.5),
         )
         asyncio.run(

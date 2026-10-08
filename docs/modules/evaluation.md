@@ -1865,9 +1865,15 @@ monitor = QualityMonitor(
 that succeeded, `None` without decisions); `confidence_calibration` (the Pearson correlation
 of confidence with success, `None` when either side is constant or there are fewer than two
 decisions); `latency_ms` (`mean`, `p50`, `p95`); and `per_agent` (`agent`, `decisions`,
-`successes`, `failures`, `ambiguous`, `success_rate`, `mean_confidence`, `mean_latency_ms`;
-most decisions first, then by agent). `GET /admin/tenant/{tenant_id}/routing-decisions`
-serves it.
+`successes`, `failures`, `ambiguous`, `success_rate`, `mean_confidence`, `mean_latency_ms`,
+`precision`, `recall`, `f1`; most decisions first, then by agent). `GET
+/admin/tenant/{tenant_id}/routing-decisions` serves it.
+
+`per_agent_precision_recall_f1(decisions)` scores `(chosen_agent, succeeded)` pairs per
+agent: a success is a true positive and any other decision a false positive. With no
+ground truth for where a decision should have gone there are no false negatives, so
+recall is 1.0 for an agent with a success and 0.0 otherwise. `RoutingEvaluator.calculate_metrics`
+uses the same scores.
 
 ### Scoring recorded searches
 

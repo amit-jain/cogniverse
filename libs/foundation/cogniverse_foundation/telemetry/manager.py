@@ -279,6 +279,7 @@ class TelemetryManager:
         attributes: Optional[Dict[str, Any]] = None,
         component: str = "agents",
         require_export: bool = False,
+        start_time: Optional[int] = None,
     ):
         """
         Context manager for creating tenant-specific spans.
@@ -303,6 +304,9 @@ class TelemetryManager:
             require_export: Export synchronously and raise when the configured
                 telemetry backend does not accept the span. Use this only for
                 records that the caller cannot safely lose.
+            start_time: When the recorded work began, in nanoseconds since the
+                epoch (``time.time_ns()``); the span starts then and ends when
+                the context exits. ``None`` starts it on entry.
 
         Usage:
             # User operation (search, routing, etc.) - unified tenant project.
@@ -360,14 +364,16 @@ class TelemetryManager:
                     )
                     if tracer is not None:
                         span = span_scope.enter_context(
-                            tracer.start_as_current_span(name)
+                            tracer.start_as_current_span(name, start_time=start_time)
                         )
                 else:
                     with self._lock:
                         tracer = self._get_tracer_for_project(tenant_id, project_name)
                         if tracer is not None:
                             span = span_scope.enter_context(
-                                tracer.start_as_current_span(name)
+                                tracer.start_as_current_span(
+                                    name, start_time=start_time
+                                )
                             )
 
                 if tracer is None:
