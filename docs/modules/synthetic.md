@@ -178,6 +178,8 @@ holds the four deliberate categories; `ContentRejection` refuses
 trace of the sampled backend rows. Each trace item carries `profile_name`,
 `schema_name`, `source_id`, `segment_id`, and `description`, so callers can
 recompute the same saliency pass against the exact text the generator used.
+`metadata.generation_time_ms` is the wall time of the whole `generate()` call in
+milliseconds.
 
 Direct construction of routing, profile-selection, and query-enhancement
 generators exposes a positive, finite `production_label_timeout_seconds`

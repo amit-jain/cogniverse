@@ -10,6 +10,7 @@ import asyncio
 import logging
 import math
 import threading
+from time import perf_counter
 from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -315,6 +316,7 @@ class SyntheticDataService:
         Raises:
             ValueError: If optimizer is unknown or configuration is invalid
         """
+        started = perf_counter()
         if not validate_optimizer_exists(request.optimizer):
             available = ", ".join(OPTIMIZER_REGISTRY.keys())
             raise ValueError(
@@ -386,6 +388,7 @@ class SyntheticDataService:
                 "target_count": request.count,
                 "vespa_sample_size": request.vespa_sample_size,
                 "generation": generation_tracker.to_metadata(),
+                "generation_time_ms": round((perf_counter() - started) * 1000, 1),
             },
         )
 

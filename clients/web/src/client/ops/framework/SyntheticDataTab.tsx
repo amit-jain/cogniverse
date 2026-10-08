@@ -229,8 +229,13 @@ function RunResults({ tenant, name }: { tenant: string; name: string }) {
         results.data.outcomes.map((outcome) => (
           <Outcome key={outcome.optimizer} tenant={tenant} outcome={outcome} />
         ))}
-      {results.data?.settled && results.data.outcomes.length === 0 && (
-        <p className="muted">The run ended {results.data.phase} without generating for any optimizer.</p>
+      {results.data?.settled && results.data.error && <Alert>The run failed: {results.data.error}</Alert>}
+      {results.data?.settled && results.data.outcomes.length === 0 && !results.data.error && (
+        <p className="muted">
+          {results.data.phase === 'Cancelled'
+            ? 'The run was cancelled before it reported an outcome.'
+            : `The run ended ${results.data.phase} without generating for any optimizer.`}
+        </p>
       )}
     </Panel>
   );

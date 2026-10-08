@@ -4,8 +4,8 @@ Its routes run on a real uvicorn socket over real Phoenix (read through a
 fault proxy), the production approval store on Phoenix and Redis, and a real
 Argo API server. No workflow controller runs there: a synthetic run's pod is
 played by the optimization CLI's own submit step against the real approval
-store, and its printed outcome is recorded on the Workflow the way Argo
-records a pod's stdout.
+store, and the Workflow's status is the one Argo's controller recorded for a
+real run of the chart's template, carrying that outcome.
 """
 
 from __future__ import annotations
@@ -34,7 +34,11 @@ from cogniverse_sdk.document import source_title_key
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 from cogniverse_synthetic.schemas import SAMPLING_STRATEGIES, SyntheticDataResponse
 from tests.utils.approval_review import review_config_manager, run_in_own_loop
-from tests.utils.argo_api import argo_api_server, set_workflow_status
+from tests.utils.argo_api import (
+    argo_api_server,
+    recorded_optimizer_run,
+    set_workflow_status,
+)
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.k8s_api_server import _kubectl
 from tests.utils.telemetry_metric_spans import (
@@ -186,28 +190,11 @@ def _parameters(argo, name: str) -> dict:
     }
 
 
-def _finish(argo, name: str, printed: dict) -> None:
-    """Record ``name`` as Argo does once its optimizer pod printed
-    ``printed`` and exited."""
+def _finish(argo, name: str, outcome: dict | None, case: str = "succeeded") -> None:
+    """Record ``name`` as Argo's controller recorded a run of ``case`` whose
+    optimizer pod wrote ``outcome``."""
     set_workflow_status(
-        argo["kubeconfig"],
-        name,
-        {
-            "phase": "Succeeded",
-            "startedAt": "2026-10-08T09:00:00Z",
-            "finishedAt": "2026-10-08T09:04:00Z",
-            "nodes": {
-                name: {
-                    "id": name,
-                    "name": name,
-                    "displayName": name,
-                    "type": "Pod",
-                    "templateName": "run-optimizer",
-                    "phase": "Succeeded",
-                    "outputs": {"result": json.dumps(printed), "exitCode": "0"},
-                }
-            },
-        },
+        argo["kubeconfig"], name, recorded_optimizer_run(case, name, outcome)
     )
 
 
@@ -378,6 +365,19 @@ def _pod_outcome(review_config, telemetry, tenant, human_review):
     return {"status": "success", "results": {"query_enhancement": outcome}}
 
 
+def _submit_synthetic(client, tenant: str) -> str:
+    response = client.post(
+        f"/admin/tenant/{tenant}/optimize",
+        json={
+            "mode": "synthetic",
+            "optimizers": ["query_enhancement"],
+            "options": {"count": 2},
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["workflow_name"]
+
+
 class TestSyntheticRun:
     def test_an_operator_generates_follows_and_exports_a_synthetic_run(
         self, page, web_url, argo, review_config, telemetry
@@ -531,7 +531,7 @@ class TestSyntheticRun:
             "error": "GLiNER inference endpoint is required for synthetic routing",
         }
         printed["status"] = "failed"
-        _finish(argo, name, printed)
+        _finish(argo, name, printed, "mixed")
         results = page.get_by_role("region", name=f"Results of {name}")
         approved = results.get_by_role("region", name="Outcome for query_enhancement")
         expect(approved.get_by_role("status").first).to_have_text(
@@ -545,6 +545,58 @@ class TestSyntheticRun:
         expect(failed.get_by_role("alert")).to_have_text(
             "Generation for routing failed: GLiNER inference endpoint is required for synthetic routing"
         )
+
+    def test_a_failed_a_killed_and_a_cancelled_run_each_say_what_happened(
+        self, page, web_url, runtime_url, argo
+    ):
+        tenant = _tenant("websynthend")
+        with httpx.Client(base_url=runtime_url, timeout=120) as client:
+            raised, killed, cancelled = (
+                _submit_synthetic(client, tenant) for _ in range(3)
+            )
+            stopped = client.post(
+                f"/admin/tenant/{tenant}/optimize/runs/{cancelled}/cancel"
+            )
+            assert stopped.status_code == 200, stopped.text
+        _finish(argo, raised, None, "raised")
+        _finish(argo, killed, None, "killed")
+        _finish(argo, cancelled, None, "cancelled_pending")
+
+        _open(page, web_url, tenant, "Synthetic data")
+        runs = page.get_by_role("region", name="Synthetic runs")
+        chooser = runs.get_by_label("Synthetic run")
+        expect(chooser.locator("option")).to_have_count(4)
+        # The runs list orders them; here each carries its phase.
+        assert sorted(chooser.locator("option").all_inner_texts()) == sorted(
+            [
+                "Choose a run",
+                f"{raised} (Failed)",
+                f"{killed} (Failed)",
+                f"{cancelled} (Cancelled)",
+            ]
+        )
+
+        chooser.select_option(raised)
+        results = page.get_by_role("region", name=f"Results of {raised}")
+        expect(results.get_by_role("alert")).to_have_text(
+            "The run failed: ValueError: synthetic optimizer types have no "
+            "approved training-data consumer: ['bogus']"
+        )
+        expect(results.locator("section")).to_have_count(0)
+
+        chooser.select_option(killed)
+        results = page.get_by_role("region", name=f"Results of {killed}")
+        expect(results.get_by_role("alert")).to_have_text(
+            f"The run's results are unavailable: Run {killed} ended Failed without "
+            "reporting its outcome: Error (exit code 137)."
+        )
+
+        chooser.select_option(cancelled)
+        results = page.get_by_role("region", name=f"Results of {cancelled}")
+        expect(results.locator("p.muted")).to_have_text(
+            "The run was cancelled before it reported an outcome."
+        )
+        expect(results.get_by_role("alert")).to_have_count(0)
 
 
 class TestModuleOptimization:
@@ -786,16 +838,153 @@ class TestSyntheticResultsRoute:
     """The synthetic results route on the same runtime, without a browser."""
 
     def _submit(self, client, tenant):
-        response = client.post(
-            f"/admin/tenant/{tenant}/optimize",
-            json={
-                "mode": "synthetic",
-                "optimizers": ["query_enhancement"],
-                "options": {"count": 2},
-            },
+        return _submit_synthetic(client, tenant)
+
+    def test_every_way_a_run_ends_reads_as_argo_recorded_it(self, runtime_url, argo):
+        tenant = _tenant("synthends")
+        with httpx.Client(base_url=runtime_url, timeout=120) as client:
+            names = {
+                case: self._submit(client, tenant)
+                for case in (
+                    "mixed",
+                    "raised",
+                    "killed",
+                    "cancelled_running",
+                    "cancelled_pending",
+                    "garbled",
+                )
+            }
+            for case in ("cancelled_running", "cancelled_pending"):
+                stopped = client.post(
+                    f"/admin/tenant/{tenant}/optimize/runs/{names[case]}/cancel"
+                )
+                assert stopped.status_code == 200, stopped.text
+            _finish(
+                argo,
+                names["mixed"],
+                {
+                    "status": "failed",
+                    "results": {
+                        "query_enhancement": {
+                            "status": "no_data",
+                            "examples_generated": 0,
+                            "schema_name": "QueryEnhancementExampleSchema",
+                            "selected_profiles": ["document_text_semantic"],
+                            "profile_selection_reasoning": "Text covers it",
+                            "generation_time_ms": 812.4,
+                        },
+                        "routing": {
+                            "status": "failed",
+                            "error": "SyntheticDataService generated 0 examples "
+                            "but request count is 2",
+                        },
+                    },
+                },
+                "mixed",
+            )
+            for case in ("raised", "killed", "cancelled_running", "cancelled_pending"):
+                _finish(argo, names[case], None, case)
+            garbled = recorded_optimizer_run("succeeded", names["garbled"])
+            [node] = garbled["nodes"].values()
+            node["outputs"]["parameters"][0]["value"] = "Segmentation fault"
+            set_workflow_status(argo["kubeconfig"], names["garbled"], garbled)
+            read = {
+                case: client.get(
+                    f"/admin/tenant/{tenant}/optimize/runs/{name}/synthetic"
+                )
+                for case, name in names.items()
+            }
+
+        def body(case, **fields):
+            return {
+                "workflow_name": names[case],
+                "settled": True,
+                "status": None,
+                "error": None,
+                "parameters": {
+                    "optimizers": ["query_enhancement"],
+                    "count": 2,
+                    "vespa_sample_size": 200,
+                    "strategy": None,
+                    "max_profiles": 3,
+                    "human_review": True,
+                },
+                "outcomes": [],
+                **fields,
+            }
+
+        empty = {
+            "batch_id": None,
+            "auto_approved": 0,
+            "pending_review": 0,
+            "avg_confidence": None,
+            "items": [],
+        }
+        garbled = read.pop("garbled")
+        assert (garbled.status_code, garbled.json()["detail"]["error"]) == (
+            502,
+            "synthetic_result_unreadable",
         )
-        assert response.status_code == 200, response.text
-        return response.json()["workflow_name"]
+        assert {case: (r.status_code, r.json()) for case, r in read.items()} == {
+            "mixed": (
+                200,
+                body(
+                    "mixed",
+                    phase="Failed",
+                    status="failed",
+                    outcomes=[
+                        {
+                            **empty,
+                            "optimizer": "query_enhancement",
+                            "status": "no_data",
+                            "error": None,
+                            "schema_name": "QueryEnhancementExampleSchema",
+                            "selected_profiles": ["document_text_semantic"],
+                            "profile_selection_reasoning": "Text covers it",
+                            "generation_time_ms": 812.4,
+                            "examples_generated": 0,
+                        },
+                        {
+                            **empty,
+                            "optimizer": "routing",
+                            "status": "failed",
+                            "error": "SyntheticDataService generated 0 examples "
+                            "but request count is 2",
+                            "schema_name": None,
+                            "selected_profiles": [],
+                            "profile_selection_reasoning": None,
+                            "generation_time_ms": None,
+                            "examples_generated": 0,
+                        },
+                    ],
+                ),
+            ),
+            "raised": (
+                200,
+                body(
+                    "raised",
+                    phase="Failed",
+                    status="failed",
+                    error="ValueError: synthetic optimizer types have no approved "
+                    "training-data consumer: ['bogus']",
+                ),
+            ),
+            "killed": (
+                502,
+                {
+                    "detail": f"Run {names['killed']} ended Failed without "
+                    "reporting its outcome: Error (exit code 137)."
+                },
+            ),
+            "cancelled_running": (
+                200,
+                body("cancelled_running", phase="Cancelled"),
+            ),
+            "cancelled_pending": (
+                200,
+                body("cancelled_pending", phase="Cancelled"),
+            ),
+        }
 
     def test_runs_read_at_once_each_answer_their_own_batch(
         self, runtime_url, argo, review_config, telemetry

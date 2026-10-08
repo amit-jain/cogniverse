@@ -1518,8 +1518,13 @@ class TestServiceWithBackendConfig:
 
     @pytest.mark.asyncio
     async def test_workflow_generation_skips_ungroundable_profiles_and_uses_groundable_content(
-        self,
+        self, monkeypatch
     ):
+        # generate() reads the clock once when it starts and once when done.
+        clock = iter([100.0, 101.2345])
+        monkeypatch.setattr(
+            "cogniverse_synthetic.service.perf_counter", lambda: next(clock)
+        )
         backend = _GroundabilityBackend()
         profiles = {
             name: _shipped_backend_profile(name)
@@ -1581,6 +1586,7 @@ class TestServiceWithBackendConfig:
                 "dropped_count": 0,
                 "dropped_examples": [],
             },
+            "generation_time_ms": 1234.5,
         }
         assert [example["query"] for example in response.data] == [
             "find Curie lecture explores radium and Marie"

@@ -1,0 +1,518 @@
+{
+ "cancelled_pending": {
+  "name": "manual-optimize-synthetic-probepending",
+  "spec": {
+   "shutdown": "Terminate"
+  },
+  "status": {
+   "artifactGCStatus": {
+    "notSpecified": true
+   },
+   "artifactRepositoryRef": {
+    "artifactRepository": {},
+    "default": true
+   },
+   "conditions": [
+    {
+     "status": "True",
+     "type": "Completed"
+    },
+    {
+     "status": "False",
+     "type": "PodRunning"
+    }
+   ],
+   "finishedAt": "2026-10-08T20:26:09Z",
+   "nodes": {
+    "manual-optimize-synthetic-probepending": {
+     "displayName": "manual-optimize-synthetic-probepending",
+     "finishedAt": "2026-10-08T20:26:09Z",
+     "id": "manual-optimize-synthetic-probepending",
+     "inputs": {
+      "parameters": [
+       {
+        "name": "mode",
+        "value": "sleep"
+       },
+       {
+        "name": "tenant-id",
+        "value": "probe6"
+       },
+       {
+        "name": "lookback-hours",
+        "value": "48"
+       },
+       {
+        "name": "agents",
+        "value": "query_enhancement"
+       },
+       {
+        "name": "trigger-dataset",
+        "value": ""
+       },
+       {
+        "name": "options",
+        "value": "{\"count\":2}"
+       }
+      ]
+     },
+     "message": "workflow shutdown with strategy: Terminate",
+     "name": "manual-optimize-synthetic-probepending",
+     "phase": "Skipped",
+     "progress": "1/1",
+     "startedAt": "2026-10-08T20:26:09Z",
+     "templateName": "run-optimizer",
+     "templateScope": "local/",
+     "type": "Pod"
+    }
+   },
+   "phase": "Succeeded",
+   "progress": "1/1",
+   "startedAt": "2026-10-08T20:26:09Z"
+  }
+ },
+ "cancelled_running": {
+  "name": "manual-optimize-synthetic-proberunning",
+  "spec": {
+   "shutdown": "Terminate"
+  },
+  "status": {
+   "artifactGCStatus": {
+    "notSpecified": true
+   },
+   "artifactRepositoryRef": {
+    "artifactRepository": {},
+    "default": true
+   },
+   "conditions": [
+    {
+     "status": "False",
+     "type": "PodRunning"
+    },
+    {
+     "status": "True",
+     "type": "Completed"
+    }
+   ],
+   "finishedAt": "2026-10-08T20:26:09Z",
+   "message": "Stopped with strategy 'Terminate'",
+   "nodes": {
+    "manual-optimize-synthetic-proberunning": {
+     "displayName": "manual-optimize-synthetic-proberunning",
+     "finishedAt": "2026-10-08T20:26:09Z",
+     "hostNodeName": "k3d-cv-optruns-argo-server-0",
+     "id": "manual-optimize-synthetic-proberunning",
+     "inputs": {
+      "parameters": [
+       {
+        "name": "mode",
+        "value": "sleep"
+       },
+       {
+        "name": "tenant-id",
+        "value": "probe5"
+       },
+       {
+        "name": "lookback-hours",
+        "value": "48"
+       },
+       {
+        "name": "agents",
+        "value": "query_enhancement"
+       },
+       {
+        "name": "trigger-dataset",
+        "value": ""
+       },
+       {
+        "name": "options",
+        "value": "{\"count\":2}"
+       }
+      ]
+     },
+     "message": "workflow shutdown with strategy:  Terminate",
+     "name": "manual-optimize-synthetic-proberunning",
+     "phase": "Failed",
+     "progress": "0/1",
+     "startedAt": "2026-10-08T20:25:15Z",
+     "templateName": "run-optimizer",
+     "templateScope": "local/",
+     "type": "Pod"
+    }
+   },
+   "phase": "Failed",
+   "progress": "0/1",
+   "startedAt": "2026-10-08T20:25:15Z"
+  }
+ },
+ "killed": {
+  "name": "manual-optimize-synthetic-probenofile",
+  "spec": {},
+  "status": {
+   "artifactGCStatus": {
+    "notSpecified": true
+   },
+   "artifactRepositoryRef": {
+    "artifactRepository": {},
+    "default": true
+   },
+   "conditions": [
+    {
+     "status": "False",
+     "type": "PodRunning"
+    },
+    {
+     "status": "True",
+     "type": "Completed"
+    }
+   ],
+   "finishedAt": "2026-10-08T20:25:50Z",
+   "message": "Error (exit code 137)",
+   "nodes": {
+    "manual-optimize-synthetic-probenofile": {
+     "displayName": "manual-optimize-synthetic-probenofile",
+     "finishedAt": "2026-10-08T20:25:42Z",
+     "hostNodeName": "k3d-cv-optruns-argo-server-0",
+     "id": "manual-optimize-synthetic-probenofile",
+     "inputs": {
+      "parameters": [
+       {
+        "name": "mode",
+        "value": "nofile"
+       },
+       {
+        "name": "tenant-id",
+        "value": "probe4"
+       },
+       {
+        "name": "lookback-hours",
+        "value": "48"
+       },
+       {
+        "name": "agents",
+        "value": "query_enhancement"
+       },
+       {
+        "name": "trigger-dataset",
+        "value": ""
+       },
+       {
+        "name": "options",
+        "value": "{\"count\":2}"
+       }
+      ]
+     },
+     "message": "Error (exit code 137)",
+     "name": "manual-optimize-synthetic-probenofile",
+     "outputs": {
+      "exitCode": "137",
+      "parameters": [
+       {
+        "name": "outcome",
+        "value": "",
+        "valueFrom": {
+         "default": "",
+         "path": "/tmp/outcome.json"
+        }
+       }
+      ]
+     },
+     "phase": "Failed",
+     "progress": "0/1",
+     "resourcesDuration": {
+      "cpu": 12,
+      "memory": 12
+     },
+     "startedAt": "2026-10-08T20:25:15Z",
+     "templateName": "run-optimizer",
+     "templateScope": "local/",
+     "type": "Pod"
+    }
+   },
+   "phase": "Failed",
+   "progress": "0/1",
+   "resourcesDuration": {
+    "cpu": 12,
+    "memory": 12
+   },
+   "startedAt": "2026-10-08T20:25:15Z"
+  }
+ },
+ "mixed": {
+  "name": "manual-optimize-synthetic-probemixed",
+  "spec": {},
+  "status": {
+   "artifactGCStatus": {
+    "notSpecified": true
+   },
+   "artifactRepositoryRef": {
+    "artifactRepository": {},
+    "default": true
+   },
+   "conditions": [
+    {
+     "status": "False",
+     "type": "PodRunning"
+    },
+    {
+     "status": "True",
+     "type": "Completed"
+    }
+   ],
+   "finishedAt": "2026-10-08T20:25:50Z",
+   "message": "Error (exit code 1)",
+   "nodes": {
+    "manual-optimize-synthetic-probemixed": {
+     "displayName": "manual-optimize-synthetic-probemixed",
+     "finishedAt": "2026-10-08T20:25:42Z",
+     "hostNodeName": "k3d-cv-optruns-argo-server-0",
+     "id": "manual-optimize-synthetic-probemixed",
+     "inputs": {
+      "parameters": [
+       {
+        "name": "mode",
+        "value": "mixed"
+       },
+       {
+        "name": "tenant-id",
+        "value": "probe2"
+       },
+       {
+        "name": "lookback-hours",
+        "value": "48"
+       },
+       {
+        "name": "agents",
+        "value": "query_enhancement"
+       },
+       {
+        "name": "trigger-dataset",
+        "value": ""
+       },
+       {
+        "name": "options",
+        "value": "{\"count\":2}"
+       }
+      ]
+     },
+     "message": "Error (exit code 1)",
+     "name": "manual-optimize-synthetic-probemixed",
+     "outputs": {
+      "exitCode": "1",
+      "parameters": [
+       {
+        "name": "outcome",
+        "value": "{\n  \"status\": \"success\",\n  \"results\": {\n    \"query_enhancement\": {\n      \"status\": \"success\",\n      \"batch_id\": \"synthetic_query_enhancement_probe\",\n      \"examples_generated\": 2,\n      \"auto_approved\": 0,\n      \"pending_review\": 2,\n      \"avg_confidence\": 0.0,\n      \"generation_time_ms\": 1250.5\n    },\n    \"routing\": {\n      \"status\": \"failed\",\n      \"error\": \"SyntheticDataService generated 0 examples but request count is 2\"\n    }\n  }\n}",
+        "valueFrom": {
+         "default": "",
+         "path": "/tmp/outcome.json"
+        }
+       }
+      ]
+     },
+     "phase": "Failed",
+     "progress": "0/1",
+     "resourcesDuration": {
+      "cpu": 12,
+      "memory": 12
+     },
+     "startedAt": "2026-10-08T20:25:15Z",
+     "templateName": "run-optimizer",
+     "templateScope": "local/",
+     "type": "Pod"
+    }
+   },
+   "phase": "Failed",
+   "progress": "0/1",
+   "resourcesDuration": {
+    "cpu": 12,
+    "memory": 12
+   },
+   "startedAt": "2026-10-08T20:25:15Z"
+  }
+ },
+ "raised": {
+  "name": "manual-optimize-synthetic-proberaised",
+  "spec": {},
+  "status": {
+   "artifactGCStatus": {
+    "notSpecified": true
+   },
+   "artifactRepositoryRef": {
+    "artifactRepository": {},
+    "default": true
+   },
+   "conditions": [
+    {
+     "status": "False",
+     "type": "PodRunning"
+    },
+    {
+     "status": "True",
+     "type": "Completed"
+    }
+   ],
+   "finishedAt": "2026-10-08T20:25:50Z",
+   "message": "Error (exit code 1)",
+   "nodes": {
+    "manual-optimize-synthetic-proberaised": {
+     "displayName": "manual-optimize-synthetic-proberaised",
+     "finishedAt": "2026-10-08T20:25:42Z",
+     "hostNodeName": "k3d-cv-optruns-argo-server-0",
+     "id": "manual-optimize-synthetic-proberaised",
+     "inputs": {
+      "parameters": [
+       {
+        "name": "mode",
+        "value": "raised"
+       },
+       {
+        "name": "tenant-id",
+        "value": "probe3"
+       },
+       {
+        "name": "lookback-hours",
+        "value": "48"
+       },
+       {
+        "name": "agents",
+        "value": "query_enhancement"
+       },
+       {
+        "name": "trigger-dataset",
+        "value": ""
+       },
+       {
+        "name": "options",
+        "value": "{\"count\":2}"
+       }
+      ]
+     },
+     "message": "Error (exit code 1)",
+     "name": "manual-optimize-synthetic-proberaised",
+     "outputs": {
+      "exitCode": "1",
+      "parameters": [
+       {
+        "name": "outcome",
+        "value": "{\n  \"status\": \"failed\",\n  \"error\": \"ValueError: synthetic optimizer types have no approved training-data consumer: ['bogus']\"\n}",
+        "valueFrom": {
+         "default": "",
+         "path": "/tmp/outcome.json"
+        }
+       }
+      ]
+     },
+     "phase": "Failed",
+     "progress": "0/1",
+     "resourcesDuration": {
+      "cpu": 13,
+      "memory": 13
+     },
+     "startedAt": "2026-10-08T20:25:15Z",
+     "templateName": "run-optimizer",
+     "templateScope": "local/",
+     "type": "Pod"
+    }
+   },
+   "phase": "Failed",
+   "progress": "0/1",
+   "resourcesDuration": {
+    "cpu": 13,
+    "memory": 13
+   },
+   "startedAt": "2026-10-08T20:25:15Z"
+  }
+ },
+ "succeeded": {
+  "name": "manual-optimize-synthetic-probeok",
+  "spec": {},
+  "status": {
+   "artifactGCStatus": {
+    "notSpecified": true
+   },
+   "artifactRepositoryRef": {
+    "artifactRepository": {},
+    "default": true
+   },
+   "conditions": [
+    {
+     "status": "False",
+     "type": "PodRunning"
+    },
+    {
+     "status": "True",
+     "type": "Completed"
+    }
+   ],
+   "finishedAt": "2026-10-08T20:25:50Z",
+   "nodes": {
+    "manual-optimize-synthetic-probeok": {
+     "displayName": "manual-optimize-synthetic-probeok",
+     "finishedAt": "2026-10-08T20:25:42Z",
+     "hostNodeName": "k3d-cv-optruns-argo-server-0",
+     "id": "manual-optimize-synthetic-probeok",
+     "inputs": {
+      "parameters": [
+       {
+        "name": "mode",
+        "value": "ok"
+       },
+       {
+        "name": "tenant-id",
+        "value": "probe1"
+       },
+       {
+        "name": "lookback-hours",
+        "value": "48"
+       },
+       {
+        "name": "agents",
+        "value": "query_enhancement"
+       },
+       {
+        "name": "trigger-dataset",
+        "value": ""
+       },
+       {
+        "name": "options",
+        "value": "{\"count\":2}"
+       }
+      ]
+     },
+     "name": "manual-optimize-synthetic-probeok",
+     "outputs": {
+      "exitCode": "0",
+      "parameters": [
+       {
+        "name": "outcome",
+        "value": "{\n  \"status\": \"success\",\n  \"results\": {\n    \"query_enhancement\": {\n      \"status\": \"success\",\n      \"batch_id\": \"synthetic_query_enhancement_probe\",\n      \"examples_generated\": 2,\n      \"auto_approved\": 0,\n      \"pending_review\": 2,\n      \"avg_confidence\": 0.0,\n      \"generation_time_ms\": 1250.5\n    }\n  }\n}",
+        "valueFrom": {
+         "default": "",
+         "path": "/tmp/outcome.json"
+        }
+       }
+      ]
+     },
+     "phase": "Succeeded",
+     "progress": "1/1",
+     "resourcesDuration": {
+      "cpu": 12,
+      "memory": 12
+     },
+     "startedAt": "2026-10-08T20:25:15Z",
+     "templateName": "run-optimizer",
+     "templateScope": "local/",
+     "type": "Pod"
+    }
+   },
+   "phase": "Succeeded",
+   "progress": "1/1",
+   "resourcesDuration": {
+    "cpu": 12,
+    "memory": 12
+   },
+   "startedAt": "2026-10-08T20:25:15Z"
+  }
+ }
+}

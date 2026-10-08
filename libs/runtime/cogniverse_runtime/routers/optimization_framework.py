@@ -571,13 +571,14 @@ class SyntheticRunResults(BaseModel):
     phase: Optional[str]
     settled: bool
     status: Optional[str]
+    # Why the run failed before generating for any optimizer.
+    error: Optional[str] = None
     parameters: Dict[str, Any]
     outcomes: List[OptimizerOutcome]
 
 
-def _run_optimizer_result(data: Dict[str, Any]) -> Optional[str]:
-    """The stdout Argo captured from the run's optimizer pod, or ``None``
-    while it has none."""
+def _run_optimizer_node(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The run's single optimizer pod node, or ``None`` before Argo made it."""
     nodes = [
         node
         for node in ((data.get("status") or {}).get("nodes") or {}).values()
@@ -585,9 +586,16 @@ def _run_optimizer_result(data: Dict[str, Any]) -> Optional[str]:
         and node.get("type") == "Pod"
         and node.get("templateName") == "run-optimizer"
     ]
-    if len(nodes) != 1:
-        return None
-    return (nodes[0].get("outputs") or {}).get("result")
+    return nodes[0] if len(nodes) == 1 else None
+
+
+def _run_outcome(node: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The outcome document the optimizer pod wrote, which Argo keeps as the
+    node's ``outcome`` output parameter; ``None`` when it wrote none."""
+    for parameter in ((node or {}).get("outputs") or {}).get("parameters") or []:
+        if isinstance(parameter, dict) and parameter.get("name") == "outcome":
+            return parameter.get("value") or None
+    return None
 
 
 def _generated_item(item: ReviewItem) -> GeneratedItem:
@@ -656,7 +664,9 @@ async def synthetic_run_results(tenant_id: str, workflow_name: str):
     profiles it sampled and why, and the examples with their review state.
 
     Until the run settles there is nothing to read; a settled run's outcome
-    is the document its optimizer pod printed.
+    is the document its optimizer pod wrote, per optimizer whether it
+    succeeded or why it failed. A run cancelled before it wrote one has no
+    outcomes.
     """
     data = await tenant_router._argo_get_workflow_data(workflow_name, tenant_id)
     labels = (data.get("metadata") or {}).get("labels") or {}
@@ -666,7 +676,7 @@ async def synthetic_run_results(tenant_id: str, workflow_name: str):
             detail=f"Run {workflow_name} is not a synthetic run.",
         )
     tenant_id = canonical_tenant_id(tenant_id)
-    phase = (data.get("status") or {}).get("phase")
+    phase = tenant_router._run_phase(data)
     try:
         options = json.loads(tenant_router._workflow_parameter(data, "options") or "{}")
     except ValueError as exc:
@@ -687,7 +697,9 @@ async def synthetic_run_results(tenant_id: str, workflow_name: str):
         ],
         **options,
     }
-    settled = phase in tenant_router._FINISHED_WORKFLOW_PHASES
+    settled = (data.get("status") or {}).get(
+        "phase"
+    ) in tenant_router._FINISHED_WORKFLOW_PHASES
     if not settled:
         return SyntheticRunResults(
             workflow_name=workflow_name,
@@ -697,23 +709,39 @@ async def synthetic_run_results(tenant_id: str, workflow_name: str):
             parameters=parameters,
             outcomes=[],
         )
-    printed = _run_optimizer_result(data)
-    if printed is None:
+    node = _run_optimizer_node(data)
+    written = _run_outcome(node)
+    if written is None:
+        if phase == tenant_router.CANCELLED_PHASE:
+            return SyntheticRunResults(
+                workflow_name=workflow_name,
+                phase=phase,
+                settled=True,
+                status=None,
+                parameters=parameters,
+                outcomes=[],
+            )
+        reason = (node or {}).get("message") or (data.get("status") or {}).get(
+            "message"
+        )
         raise HTTPException(
             status_code=502,
             detail=(
-                f"Run {workflow_name} ended {phase} without printing its "
-                "outcome; its pod log says why."
+                f"Run {workflow_name} ended {phase} without reporting its "
+                "outcome" + (f": {reason}." if reason else ".")
             ),
         )
     try:
-        document = json.loads(printed)
-        results: Dict[str, Dict[str, Any]] = document["results"]
-    except (ValueError, KeyError, TypeError) as exc:
+        document = json.loads(written)
+        results: Dict[str, Dict[str, Any]] = document.get("results") or {}
+        error = document.get("error")
+        if not isinstance(results, dict) or not (results or error):
+            raise ValueError("neither per-optimizer results nor an error")
+    except (ValueError, AttributeError) as exc:
         raise failure_response(
             502,
             "synthetic_result_unreadable",
-            f"Run {workflow_name} printed an outcome that is not a synthetic "
+            f"Run {workflow_name} reported an outcome that is not a synthetic "
             "run result.",
             exc,
             workflow=workflow_name,
@@ -744,6 +772,7 @@ async def synthetic_run_results(tenant_id: str, workflow_name: str):
         phase=phase,
         settled=True,
         status=document.get("status"),
+        error=error,
         parameters=parameters,
         outcomes=outcomes,
     )

@@ -274,10 +274,14 @@ curl -X POST http://localhost:8000/admin/tenant/acme_corp/optimize \
 
 ### Check Results
 
-The `run-optimizer` template declares no Argo output parameters — results live in the pod's stdout (each `optimization_cli` mode logs a JSON result dict) and in whatever `ArtifactManager` persisted for the tenant.
+The `run-optimizer` template runs the CLI with `--outcome-file /tmp/outcome.json` and declares that file as its `outcome` output parameter (empty when the run wrote none): the JSON result dict every `optimization_cli` mode prints, or `{"status": "failed", "error": "<type>: <message>"}` for a run that raised. Argo keeps it on the node after the pod and its log are gone, failed runs included; the runtime reads a synthetic run's results from it. Anything else the run produced lives in whatever `ArtifactManager` persisted for the tenant.
 
 ```bash
-# Read the run's log output (JSON result dict from optimization_cli)
+# Read the run's outcome document
+argo get <workflow-name> -n cogniverse -o json \
+  | jq -r '.status.nodes[] | select(.templateName == "run-optimizer") | .outputs.parameters[] | select(.name == "outcome") | .value'
+
+# Read the run's log output while the pod exists
 argo logs <workflow-name> -n cogniverse
 
 # Confirm the run succeeded

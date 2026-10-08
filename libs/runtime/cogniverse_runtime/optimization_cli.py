@@ -261,6 +261,32 @@ def _redirect_stdout_to_stderr():
             os.close(saved_stdout_fd)
 
 
+def _write_outcome(path: Optional[str], document: str) -> None:
+    """Write the run's outcome document where the workflow step collects it
+    as an output parameter; no-op when the run names no outcome file."""
+    if not path:
+        return
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(document)
+
+
+@contextlib.contextmanager
+def _outcome_on_failure(path: Optional[str]):
+    """Record a run that raises as a failed outcome naming the exception, so
+    the run's reader sees why it failed after its pod log is gone."""
+    try:
+        yield
+    except Exception as exc:
+        _write_outcome(
+            path,
+            json.dumps(
+                {"status": "failed", "error": f"{type(exc).__name__}: {exc}"},
+                indent=2,
+            ),
+        )
+        raise
+
+
 class _TriggeredOptCheckpointer:
     """Per-agent checkpoint + resume for ``run_triggered_optimization``.
 
@@ -6812,6 +6838,13 @@ def build_parser() -> argparse.ArgumentParser:
             "as JSON (cogniverse_runtime.optimization_options)"
         ),
     )
+    parser.add_argument(
+        "--outcome-file",
+        help=(
+            "Also write the final JSON document here, or a failed document "
+            "naming the exception when the run raises"
+        ),
+    )
     parser.add_argument("--log-retention-days", type=int)
     parser.add_argument("--memory-retention-days", type=int)
     # rollback mode args. Operators run e.g.
@@ -6959,7 +6992,11 @@ def _run_failed(result: Any) -> bool:
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    with _outcome_on_failure(args.outcome_file):
+        _run_mode(parser, args)
 
+
+def _run_mode(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -7235,7 +7272,9 @@ def main():
         print(presence)
         sys.exit(0)
 
-    print(json.dumps(result, indent=2, default=str))
+    document = json.dumps(result, indent=2, default=str)
+    _write_outcome(args.outcome_file, document)
+    print(document)
     sys.exit(1 if _run_failed(result) else 0)
 
 

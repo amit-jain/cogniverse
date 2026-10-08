@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert, messageOf, Panel, useAction, useLoad } from './common';
+import { SETTLED } from './framework/api';
 import { errorMessage, runtimeJson, seg } from './http';
 import {
   checkTrainingFile,
@@ -37,8 +38,6 @@ interface RunStatus {
   blocked_reason: string | null;
 }
 
-/** Phases after which Argo changes nothing about a run. */
-const SETTLED = new Set(['Succeeded', 'Failed', 'Error']);
 const POLL_MS = 5000;
 
 /** An Argo RFC-3339 UTC time as ``YYYY-MM-DD HH:MM UTC``. */
