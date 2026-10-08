@@ -3,6 +3,9 @@
 **Package:** `cogniverse_dashboard`
 **Location:** `libs/dashboard/cogniverse_dashboard/`
 
+> The Cogniverse UI is the [web client](web-client.md). The Helm chart deploys
+> the Streamlit dashboard only when `dashboard.enabled: true` (default `false`).
+
 ---
 
 ## Table of Contents
@@ -834,8 +837,12 @@ wires `livenessProbe`/`readinessProbe` to `/_stcore/health` on port `8501`.
 injected by the chart's shared backend-connection block alongside the other
 workload deployments (ingestor, runtime, optimization workflows):
 
+The chart renders the dashboard only when `dashboard.enabled` is `true`
+(default `false`):
+
 ```bash
 helm upgrade --install cogniverse ./charts/cogniverse \
+  --set dashboard.enabled=true \
   --set dashboard.backend=cpu \
   --set dashboard.imagesByBackend.cpu.tag=0.1.0-dev
 ```
@@ -845,8 +852,7 @@ helm upgrade --install cogniverse ./charts/cogniverse \
 ## Testing
 
 Dashboard unit tests live in `tests/dashboard/unit/` (one file per tab plus
-smoke and search-summary tests); a full sidebar-to-tab flow is covered by
-`tests/e2e/test_dashboard_e2e.py`, and RLM A/B tile wiring has an integration
+smoke and search-summary tests), and RLM A/B tile wiring has an integration
 test at `tests/runtime/integration/test_rlm_ab_compare_dashboard_tile.py`.
 
 ```bash
@@ -855,9 +861,6 @@ uv run pytest tests/dashboard/unit/ -v
 
 # Run backend-profile form tests
 uv run pytest tests/dashboard/unit/test_backend_profile_forms.py -v
-
-# Run the dashboard end-to-end test
-uv run pytest tests/e2e/test_dashboard_e2e.py -v
 
 # Test with coverage
 uv run pytest tests/dashboard/unit/ --cov=cogniverse_dashboard --cov-report=html

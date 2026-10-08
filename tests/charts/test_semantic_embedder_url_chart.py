@@ -58,6 +58,9 @@ def _render(*set_args: str) -> list:
         "runtime.qualityMonitor.tenantId=test-tenant",
         "--set",
         "hostStorage.backup.enabled=true",
+        # Disabled by default; enabled so its container stays checked.
+        "--set",
+        "dashboard.enabled=true",
     ]
     for value in set_args:
         args += ["--set", value]

@@ -103,7 +103,10 @@ def test_the_dashboard_image_sets_the_bundled_cost_map():
 @pytest.mark.parametrize("backend", ["cpu", "cuda", "rocm"])
 def test_every_cogniverse_workload_runs_an_image_that_sets_it(backend):
     containers = _rendered_cogniverse_containers(
-        f"runtime.backend={backend}", f"dashboard.backend={backend}"
+        f"runtime.backend={backend}",
+        f"dashboard.backend={backend}",
+        # Disabled by default; enabled here so its image stays covered.
+        "dashboard.enabled=true",
     )
     owners = {owner for owner, _ in containers}
 

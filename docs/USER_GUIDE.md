@@ -114,10 +114,10 @@ JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
 
 ### Next Steps
 
-- **View Results**: Open Phoenix dashboard at http://localhost:28501
+- **View Results**: Open the web client at http://localhost:28400 and the Phoenix UI at http://localhost:26006
 - **Try API**: Use the REST API at http://localhost:28000/docs
 - **Configure**: Customize profiles in `configs/config.json`
-- **Web UI**: Chat with any registered agent in the browser — see the [web client](../clients/web/README.md)
+- **Web UI**: Chat with any registered agent and manage the stack in the browser — see the [web client](modules/web-client.md)
 - **Coding Agent**: Run `cogniverse code` to start an interactive coding REPL with streaming — see [Coding Agent CLI](user/coding-agent-cli.md)
 - **Knowledge Graph**: Run `cogniverse index ./path --type code` to build a searchable knowledge graph — see [Knowledge Graph](user/knowledge-graph.md)
 - **Learn More**: Continue reading this guide
@@ -128,12 +128,12 @@ The `cogniverse` CLI manages the full stack:
 
 | Command | Purpose |
 |---------|---------|
-| `cogniverse up` | Deploy all services (Vespa, Phoenix, LLM, Runtime, Dashboard) via k3d |
+| `cogniverse up` | Deploy all services (Vespa, Phoenix, LLM, Runtime, Web client) via k3d |
 | `cogniverse up --messaging` | Deploy with Telegram gateway enabled |
 | `cogniverse down` | Stop all services |
 | `cogniverse down --keep-data` | Stop services but preserve volumes |
 | `cogniverse status` | Show health of all services |
-| `cogniverse logs <service>` | View logs (`runtime`, `dashboard`, `vespa`, `phoenix`, `llm`, `argo`) |
+| `cogniverse logs <service>` | View logs (`runtime`, `web`, `dashboard`, `vespa`, `phoenix`, `llm`, `argo`) |
 | `cogniverse logs <service> --follow` | Stream logs in real-time |
 | `cogniverse code` | Interactive coding agent REPL |
 | `cogniverse index <path> --type code` | Build a knowledge graph from code |
@@ -357,19 +357,20 @@ user_memories = memory.search_memory(
 Track everything with Phoenix:
 
 ```bash
-# Launch Phoenix dashboard
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
+# Phoenix UI: traces, spans and experiments
+open http://localhost:26006
 
-# Open http://localhost:8501
+# Web client: analytics, evaluation and memory views over the same telemetry
+open http://localhost:28400
 ```
 
-**Dashboard Features:**
+**Web client views over telemetry:**
 
-- **Traces**: Request flow visualization with span details
-- **Experiments**: Compare A/B test results
-- **Metrics**: Query latency, hit rates, routing accuracy
-- **Memory**: View stored user context and preferences
-- **Embeddings**: UMAP visualization of video embeddings
+- **Analytics**: Traces with latency over time, histograms, outliers and root causes
+- **Evaluation**: Golden-set search quality per profile and strategy
+- **Routing evaluation**: Routing decisions, accuracy and confidence calibration
+- **Memory**: View, search, add and delete stored memories
+- **Embedding atlas**: Documents placed by their embeddings
 
 ---
 
@@ -1507,7 +1508,8 @@ tail -f outputs/logs/*.log
 
 - **Documentation**: [Home](index.md)
 - **GitHub Issues**: [Report bugs](https://github.com/org/cogniverse/issues)
-- **Phoenix Dashboard**: http://localhost:28501 for system metrics
+- **Web Client**: http://localhost:28400
+- **Phoenix UI**: http://localhost:26006 for traces and experiments
 - **API Docs**: http://localhost:28000/docs for interactive API documentation
 
 ---

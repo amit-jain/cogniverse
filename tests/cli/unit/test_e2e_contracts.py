@@ -761,11 +761,11 @@ def test_run_e2e_batched_script_covers_every_e2e_test_file():
     filesystem_files = {f"tests/e2e/{path.name}" for path in e2e_dir.glob("test_*.py")}
 
     assert exclusion_files == {
-        "tests/e2e/test_dashboard_e2e.py",
+        "tests/e2e/test_web_client_e2e.py",
         "tests/e2e/test_modal_inference_e2e.py",
         "tests/e2e/test_cronworkflow_execution_heavy_e2e.py",
     }, sorted(exclusion_files)
-    assert exclusion_reasons["tests/e2e/test_dashboard_e2e.py"] == (
+    assert exclusion_reasons["tests/e2e/test_web_client_e2e.py"] == (
         "browser lane via pytest.mark.browser"
     )
     assert exclusion_reasons["tests/e2e/test_modal_inference_e2e.py"] == (

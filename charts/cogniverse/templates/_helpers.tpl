@@ -746,3 +746,11 @@ more requests than CPUs only queue against their own timeouts.
 {{- max 1 (atoi $cpu) -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+The Secret holding the harness key the web server sends the runtime: the
+operator's web.existingSecret, or the one the chart renders from web.harnessKey.
+*/}}
+{{- define "cogniverse.webSecretName" -}}
+{{- .Values.web.existingSecret | default (printf "%s-web" (include "cogniverse.fullname" .)) -}}
+{{- end -}}

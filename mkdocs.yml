@@ -219,6 +219,7 @@ nav:
     - Synthetic: modules/synthetic.md
     - Finetuning: modules/finetuning.md
     - Runtime: modules/runtime.md
+    - Web Client: modules/web-client.md
     - Dashboard: modules/dashboard.md
     - Common: modules/common.md
     - Utils: modules/utils.md

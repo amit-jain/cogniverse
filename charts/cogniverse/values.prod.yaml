@@ -40,8 +40,8 @@ ingress:
           port: 8000
         - path: /
           pathType: Prefix
-          service: dashboard
-          port: 8501
+          service: web
+          port: 4000
   tls:
     - secretName: cogniverse-tls
       hosts:
@@ -52,6 +52,9 @@ ingress:
 # secure per-environment value (e.g. via --set or a sealed secret).
 minio:
   rootPassword: ""
+
+web:
+  harnessKey: ""
 
 openshell:
   server:

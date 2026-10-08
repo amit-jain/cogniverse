@@ -409,7 +409,8 @@ flowchart TB
 |---------|------|---------|
 | **Vespa HTTP** | 8080 | Document feed & search |
 | **Vespa Config** | 19071 | Schema deployment |
-| **Phoenix Web** | 6006 | Dashboard & experiments |
+| **Phoenix Web** | 6006 | Traces & experiments |
+| **Web client** | 4000 (k3d NodePort 28400) | The Cogniverse UI ([Web Client](../modules/web-client.md)) |
 | **Phoenix Collector** | 4317 | OTLP span collection (gRPC) |
 | **Ollama** | 11434 | LLM inference API |
 | **vLLM ASR (Whisper)** | 29005† | OpenAI-compat ASR (`/v1/audio/transcriptions`, `/health`) |

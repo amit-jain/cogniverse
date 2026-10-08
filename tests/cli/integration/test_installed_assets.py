@@ -54,6 +54,7 @@ _PROD_RENDER_VALUES = (
     *_RENDER_VALUES,
     "minio.rootPassword=test-minio",
     "openshell.server.sshHandshakeSecret=test-handshake",
+    "web.harnessKey=test-web-key",
     "phoenix.postgres.auth.password=test-postgres",
     "redis.auth.password=test-redis",
 )

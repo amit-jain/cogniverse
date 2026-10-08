@@ -470,8 +470,8 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --backend vespa \
   --tenant-id acme_corp
 
-# Run dashboard
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
+# Open the web client (deployed by `cogniverse up`)
+open http://localhost:28400
 
 # Run experiments
 uv run python scripts/run_experiments_with_visualization.py \

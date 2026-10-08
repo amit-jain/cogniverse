@@ -1826,17 +1826,13 @@ def search_videos_with_telemetry(tenant_id: str, query: str):
 
 ---
 
-### Example 4: Per-Modality Observability via Dashboard
+### Example 4: Per-Modality Observability in the Web Client
 
-Per-modality runtime metrics (P50/P95/P99 latency, success rate, request count) are available in the **Profile Routing Metrics** tab of the Cogniverse dashboard (`libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`).
+Per-modality runtime metrics (P50/P95/P99 latency, success rate, request count) are available in the web client's **Profile metrics** view (`GET /admin/tenant/{tenant}/telemetry/profile-selection`).
 
-The tab queries `cogniverse.profile_selection` spans from Phoenix for the selected tenant and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. No additional code is needed in the application — drive traffic through the routing agent and the dashboard reflects real-time modality breakdown.
+The runtime queries `cogniverse.profile_selection` spans from Phoenix for the selected tenant and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. No additional code is needed in the application — drive traffic through the routing agent and the view reflects real-time modality breakdown.
 
-To view:
-```bash
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
-```
-Then select a tenant in the sidebar and open the "Profile Routing Metrics" tab.
+To view, open the web client (http://localhost:28400 under `cogniverse up`), choose **Profile metrics** under Operations, and pick the tenant and window.
 
 ---
 

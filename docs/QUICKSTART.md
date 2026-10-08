@@ -32,7 +32,7 @@ export UV_NO_SYNC=1
 ## 2. Start Services
 
 ```bash
-# Deploy the full stack (Vespa, Phoenix, LLM, Runtime, Dashboard) via k3d.
+# Deploy the full stack (Vespa, Phoenix, LLM, Runtime, Web client) via k3d.
 # By default the LLM is vLLM gemma-4-e4b-it on ROCm hosts, Ollama gemma3:4b on
 # CPU and CUDA hosts.
 cogniverse up
@@ -177,21 +177,16 @@ curl http://localhost:8000/health
 
 ---
 
-## 7. View in Dashboard
+## 7. Open the Web Client
 
-`cogniverse up` (step 2) also deployed the Streamlit dashboard — it's
-reachable on the host at NodePort 28501.
-
-```bash
-open http://localhost:28501
-```
-
-For local development without k3d, run the dashboard directly instead:
+`cogniverse up` (step 2) also deployed the web client. It is reachable on the
+host at NodePort 28400.
 
 ```bash
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
-open http://localhost:8501
+open http://localhost:28400
 ```
+
+To run it locally without k3d, see [Web Client](modules/web-client.md#local-development).
 
 ---
 
@@ -306,7 +301,9 @@ cogniverse/
 │   ├── runtime/             # FastAPI server + quality monitor CLI
 │   ├── messaging/           # Telegram messaging gateway
 │   ├── cli/                 # cogniverse CLI (deploy, manage)
-│   └── dashboard/           # Streamlit UI
+│   └── dashboard/           # Streamlit UI (disabled by default)
+├── clients/
+│   └── web/                 # Web client (the Cogniverse UI)
 ├── configs/                 # Configuration files
 │   ├── config.json          # Main config
 │   └── schemas/             # Schema definitions

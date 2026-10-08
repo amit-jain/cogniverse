@@ -449,6 +449,16 @@ spec:
         {{- end }}
         - name: COGNIVERSE_ROOT_PATH
           value: {{ include "cogniverse.apiPrefix" . | quote }}
+        {{- if .Values.web.enabled }}
+        {{- if hasKey .Values.runtime.env "COGNIVERSE_HARNESS_API_KEY" }}
+        {{- fail "COGNIVERSE_HARNESS_API_KEY is the web client's harness key; set web.harnessKey or web.existingSecret instead" }}
+        {{- end }}
+        - name: COGNIVERSE_HARNESS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cogniverse.webSecretName" . }}
+              key: harness-api-key
+        {{- end }}
         {{- range $key, $value := .Values.runtime.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}

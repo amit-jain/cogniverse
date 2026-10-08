@@ -24,6 +24,10 @@ on:
       - 'libs/runtime/cogniverse_runtime/routers/admin.py'
       - 'libs/runtime/Dockerfile'
       - 'libs/dashboard/Dockerfile'
+      # test_ingress_runtime.py builds and runs the web client image.
+      - 'clients/web/**'
+      - 'tests/utils/web_image.py'
+      - 'libs/cli/cogniverse_cli/images.py'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
   pull_request:
@@ -50,6 +54,10 @@ on:
       - 'libs/runtime/cogniverse_runtime/routers/admin.py'
       - 'libs/runtime/Dockerfile'
       - 'libs/dashboard/Dockerfile'
+      # test_ingress_runtime.py builds and runs the web client image.
+      - 'clients/web/**'
+      - 'tests/utils/web_image.py'
+      - 'libs/cli/cogniverse_cli/images.py'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
 

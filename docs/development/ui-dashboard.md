@@ -3,6 +3,10 @@
 **Module Path:** `libs/dashboard/cogniverse_dashboard/tabs/`
 **SDK Packages:** Uses dashboard (application layer) + agents, telemetry-phoenix (implementation layer) + core, evaluation (core layer) + foundation (foundation layer)
 
+> The Cogniverse UI is the [web client](../modules/web-client.md). The Helm
+> chart deploys this Streamlit dashboard only when `dashboard.enabled: true`
+> (default `false`).
+
 ---
 
 ## Table of Contents

@@ -1,7 +1,7 @@
 """Shared fixtures and helpers for E2E tests.
 
 Provides stack checks, artifact generation, and Streamlit interaction helpers
-for both API (httpx) and dashboard (Playwright) E2E tests.
+for both API (httpx) and web client (Playwright) E2E tests.
 
 Test artifact paths (real data used for ingestion tests):
 - Video: tests/system/resources/videos/v_-D1gdv_gQyw.mp4
@@ -81,7 +81,6 @@ from tests.e2e.sample_corpus import (
     _video_duration_seconds,
     profile_selection_corpus_videos,
 )
-from tests.e2e.tab_selection import tab_candidates_in_scope
 from tests.utils.profile_payload import profile_create_payload
 
 # Deployment-lifecycle tests bring up their own port-forward-based cluster
@@ -288,7 +287,7 @@ def pytest_collection_modifyitems(config, items):
     items.sort(key=_priority)
 
 
-DASHBOARD = "http://localhost:33501"  # dashboard.service.nodePort
+WEB = "http://localhost:33400"  # web.service.nodePort
 PHOENIX_URL = "http://localhost:33006"  # phoenix.service.nodePort
 
 
@@ -309,11 +308,17 @@ SAMPLE_VIDEO_CONTENT_ID = (
 E2E_ARTIFACT_DIR = Path(tempfile.gettempdir()) / "cogniverse_e2e_artifacts"
 
 
-def dashboard_available() -> bool:
+def web_available() -> bool:
+    """The web client's server answers its health route with its own document."""
     try:
-        r = httpx.get(DASHBOARD, timeout=5.0)
-        return r.status_code == 200
-    except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError):
+        r = httpx.get(f"{WEB}/healthz", timeout=5.0)
+        return r.status_code == 200 and r.json() == {"status": "ok"}
+    except (
+        httpx.ConnectError,
+        httpx.ReadTimeout,
+        httpx.RemoteProtocolError,
+        ValueError,
+    ):
         return False
 
 
@@ -331,7 +336,7 @@ def _ensure_stack_running() -> bool:
     import time as _t
 
     for attempt in range(5):
-        if runtime_available() and dashboard_available():
+        if runtime_available() and web_available():
             return True
         if attempt < 4:
             _t.sleep(3.0)
@@ -2284,462 +2289,6 @@ def browser_type_launch_args():
 @pytest.fixture(scope="session")
 def browser_context_args():
     return {"viewport": {"width": 1920, "height": 1080}}
-
-
-def wait_for_script_idle(page, timeout_ms: int = 480_000, settle_ms: int = 1_500):
-    """Block until no Streamlit script run is in flight.
-
-    Streamlit streams a run's output over the websocket, so
-    ``wait_for_load_state("networkidle")`` reports idle while the run is still
-    executing and the later tabs have not been written yet. The status widget
-    is present for exactly the duration of a run, and absent both before and
-    after one, so completion is a continuous absence of ``settle_ms`` rather
-    than a bare ``state="detached"`` wait.
-    """
-    deadline = _time.monotonic() + timeout_ms / 1000
-    idle_since = None
-    while _time.monotonic() < deadline:
-        if page.locator('[data-testid="stStatusWidget"]').count():
-            idle_since = None
-        elif idle_since is None:
-            idle_since = _time.monotonic()
-        elif _time.monotonic() - idle_since >= settle_ms / 1000:
-            return
-        page.wait_for_timeout(250)
-    raise TimeoutError(
-        f"Streamlit was still running a script after {timeout_ms / 1000:g}s. "
-        "The run never completed, so any widget assertion here would be "
-        "reading a partially rendered page."
-    )
-
-
-def wait_for_streamlit(page, timeout: int = 30_000):
-    """Wait for the Streamlit app to finish rendering."""
-    page.wait_for_selector('[data-testid="stAppViewContainer"]', timeout=timeout)
-    wait_for_script_idle(page)
-
-
-def _strip_emoji(text: str) -> str:
-    """Strip leading emoji + whitespace from tab text for clean comparison."""
-    import re
-
-    return re.sub(
-        r"^[\U0001f300-\U0001faff\u2600-\u27bf\ufe0f\u200d]+\s*", "", text
-    ).strip()
-
-
-def _activate_tab(page, tab, settle_ms: int) -> bool:
-    """Click a tab and confirm it became the selected one.
-
-    A click that lands while Streamlit is mid-rerun is swallowed. Returning
-    anyway leaves the previous tab open, and every later locator then reads a
-    panel the test never asked for, which surfaces as a missing widget rather
-    than as a missed click.
-
-    Visibility is read here rather than taken from the caller's snapshot.
-    Trying one candidate re-renders the strip, so a tab recorded as visible
-    when the candidates were collected can be hidden by the time it is
-    reached; an unforced click then raises instead of yielding the next
-    candidate.
-    """
-    from playwright.sync_api import Error as PlaywrightError
-
-    try:
-        visible = tab.is_visible()
-        if visible:
-            tab.scroll_into_view_if_needed()
-            page.wait_for_timeout(500)
-        tab.click(force=not visible)
-        page.wait_for_timeout(1_000)
-
-        if tab.get_attribute("aria-selected") != "true":
-            tab.dispatch_event("click")
-            page.wait_for_timeout(1_000)
-            if tab.get_attribute("aria-selected") != "true":
-                return False
-    except PlaywrightError:
-        return False
-
-    page.wait_for_timeout(settle_ms)
-    # Selecting a tab reruns the script; wait for that run rather than for
-    # networkidle, which the websocket satisfies while the panel is still
-    # being written.
-    wait_for_script_idle(page)
-    return True
-
-
-def _click_tab_by_label(
-    page, label: str, scope: str, retries: int = 6, settle_ms: int = 3_000
-):
-    """Click a Streamlit tab by matching its visible text (ignoring emojis).
-
-    ``scope`` is ``"top"`` or ``"sub"`` and is what disambiguates a label that
-    names two tabs: the dashboard nests a "Synthetic Data" sub-tab inside a
-    "Synthetic Data & Optimization" parent, so a page-wide search finds an
-    exact match on the sub-tab and only a substring match on the parent. A
-    caller asking for the parent is then sent into a panel that is not open,
-    and every click is swallowed.
-
-    Within a scope, exact matches come before substring ones and visible tabs
-    before hidden ones.
-    """
-    # The tab strip renders only after the tenant gate resolves, which calls
-    # the runtime. While the cluster is warming that call is slow, so the strip
-    # can be empty for far longer than the retry loop below allows. Wait for it
-    # to exist before searching it; a genuine absence still falls through to the
-    # loop and is reported by the empty-strip branch at the end.
-    #
-    # Wait for the tab the caller actually asked for, in the containment the
-    # scope selects. Waiting on any tab is satisfied immediately by the top
-    # strip; waiting on any nested tab is satisfied by whichever panel's sub
-    # strip is already open, which is generally not the one being opened here.
-    # Either way the loop then searches a strip the target is absent from and
-    # spends every attempt on an empty candidate list. `has-text` matches a
-    # case-insensitive substring, the same way the scoping below does.
-    escaped = label.replace('"', '\\"')
-    strip_selector = (
-        f'[role="tabpanel"] button[role="tab"]:has-text("{escaped}")'
-        if scope == "sub"
-        else f'button[role="tab"]:has-text("{escaped}")'
-    )
-    # Let the in-flight run finish before reading the strip. Otherwise the
-    # search runs against however much of the script has been written so far,
-    # and a tab that has merely not been rendered yet is indistinguishable
-    # from one that is absent.
-    wait_for_script_idle(page)
-    try:
-        page.locator(strip_selector).first.wait_for(state="attached", timeout=60_000)
-    except Exception:
-        pass
-
-    for attempt in range(retries):
-        tabs = page.locator('button[role="tab"]')
-
-        # Collect label / visibility / containment for every tab in one round
-        # trip. ``closest('[role="tabpanel"]')`` is the containment fact: a tab
-        # rendered inside another tab's panel is a sub-tab. Read from ARIA
-        # rather than a Streamlit-version-specific attribute.
-        raw_info = page.eval_on_selector_all(
-            'button[role="tab"]',
-            """els => els.map(el => ({
-                text: el.textContent || "",
-                visible: !!(el.offsetParent || el.getClientRects().length),
-                nested: !!el.closest('[role="tabpanel"]'),
-            }))""",
-        )
-        scoped = [
-            (entry["text"], entry["visible"], entry["nested"]) for entry in raw_info
-        ]
-
-        for idx in tab_candidates_in_scope(scoped, label, scope):
-            if _activate_tab(page, tabs.nth(idx), settle_ms):
-                return
-
-        if attempt < retries - 1:
-            page.wait_for_timeout(3_000)
-    tab_texts = [tabs.nth(i).text_content() or "" for i in range(tabs.count())]
-    if not tab_texts:
-        raise ValueError(
-            f"No tabs rendered at all, so tab '{label}' could not be found. "
-            "The dashboard renders its tab strip only once the tenant gate "
-            "is satisfied, which calls the runtime; an empty strip means that "
-            "gate never completed, not that the tab is missing."
-        )
-    in_scope = [text for text, _visible, nested in scoped if nested is (scope == "sub")]
-    raise ValueError(
-        f"Tab '{label}' was never activated in the '{scope}' strip after "
-        f"{retries} attempts. A tab that is present but never reports "
-        "aria-selected has had every click swallowed by an in-flight rerun; a "
-        "tab absent from this strip is in the other one. "
-        f"Tabs in the '{scope}' strip: {in_scope}. All tabs: {tab_texts}"
-    )
-
-
-def _wait_for_visible_panel(page, timeout: int = 60_000):
-    """Wait for the clicked tab's panel to become visible.
-
-    Streamlit renders a tab body lazily after the click. The dashboard holds 49
-    panels and the one under test can be well down the DOM, so under load the
-    panel can lag the click by longer than a caller's own timeout. Settle here,
-    once, rather than in every caller.
-    """
-    try:
-        page.locator('[role="tabpanel"]:visible').first.wait_for(
-            state="visible", timeout=timeout
-        )
-    except Exception:
-        # A tab that renders no panel is the caller's assertion to make.
-        pass
-
-
-def click_top_tab(page, label: str):
-    """Click a top-level Streamlit tab."""
-    start = _time.monotonic()
-    _click_tab_by_label(page, label, scope="top")
-    _wait_for_visible_panel(page)
-    elapsed = (_time.monotonic() - start) * 1000
-    if _report_collector:
-        _report_collector.record_browser_op("click_top_tab", label, elapsed_ms=elapsed)
-
-
-def click_sub_tab(page, label: str):
-    """Click a sub-level Streamlit tab.
-
-    Uses a longer settle time than top-level tabs because sub-tabs
-    often trigger heavy Streamlit reruns (API calls, data loading).
-    """
-    start = _time.monotonic()
-    _click_tab_by_label(page, label, scope="sub", settle_ms=4_000)
-    _wait_for_visible_panel(page)
-    elapsed = (_time.monotonic() - start) * 1000
-    if _report_collector:
-        _report_collector.record_browser_op("click_sub_tab", label, elapsed_ms=elapsed)
-
-
-def fill_input(locator, value: str):
-    """Fill a Streamlit input, handling both visible and hidden elements.
-
-    Uses keyboard approach (click + type) for visible elements to ensure
-    Streamlit picks up the value. Falls back to JS for hidden elements.
-    """
-    start = _time.monotonic()
-    if locator.is_visible():
-        locator.click(click_count=3)
-        locator.press("Delete")
-        locator.type(value, delay=5)
-        locator.press("Enter")
-    else:
-        locator.evaluate(
-            """(el, value) => {
-                el.focus();
-                const nativeSetter = Object.getOwnPropertyDescriptor(
-                    window.HTMLInputElement.prototype, 'value'
-                ).set;
-                nativeSetter.call(el, value);
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                el.blur();
-            }""",
-            value,
-        )
-        # Streamlit text_input requires Enter to commit the value
-        locator.press("Enter")
-    elapsed = (_time.monotonic() - start) * 1000
-    if _report_collector:
-        _report_collector.record_browser_op("fill_input", "text_input", value, elapsed)
-
-
-def fill_textarea(locator, value: str):
-    """Fill a Streamlit textarea, handling both visible and hidden elements.
-
-    Uses keyboard approach for visible elements. Streamlit textareas
-    commit their value on Ctrl+Enter (Enter just adds a newline).
-    Falls back to JS for hidden elements.
-    """
-    start = _time.monotonic()
-    if locator.is_visible():
-        locator.click(click_count=3)
-        locator.press("Delete")
-        locator.type(value, delay=5)
-        locator.press("Control+Enter")
-    else:
-        locator.evaluate(
-            """(el, value) => {
-                el.focus();
-                const nativeSetter = Object.getOwnPropertyDescriptor(
-                    window.HTMLTextAreaElement.prototype, 'value'
-                ).set;
-                nativeSetter.call(el, value);
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                el.blur();
-            }""",
-            value,
-        )
-    elapsed = (_time.monotonic() - start) * 1000
-    if _report_collector:
-        _report_collector.record_browser_op("fill_textarea", "textarea", value, elapsed)
-
-
-def active_tab_panel(page, timeout: int = 60_000):
-    """The visible top-level tab panel.
-
-    Streamlit renders every tab body into the DOM, so a page-wide locator
-    also matches widgets belonging to tabs that are not open: at the time of
-    writing the Configuration tab alone contributes 14 selectboxes and 16 text
-    inputs. Scope widget assertions to this panel so a test can only observe
-    the tab it opened. Nested panels are children of their parent, so the
-    first visible one in DOM order is the top-level panel.
-    """
-    panel = page.locator('[role="tabpanel"]:visible').first
-    try:
-        panel.wait_for(state="visible", timeout=timeout)
-    except Exception as exc:
-        # No panel at all is almost never a tab problem: the dashboard
-        # st.stop()s before rendering any tab when the tenant gate is not
-        # satisfied, so report what the page actually shows rather than a bare
-        # selector timeout.
-        body = ""
-        try:
-            body = (page.inner_text("body") or "").strip()
-        except Exception:
-            pass
-        raise AssertionError(
-            "No tab panel became visible. The dashboard renders its tabs only "
-            "after the tenant gate passes, so an empty page means that gate "
-            f"stopped the script rather than that a tab is missing. Page text: "
-            f"{body[:600]!r}"
-        ) from exc
-    # The element turns visible before Streamlit streams its children in, so a
-    # query issued right after networkidle can read an empty panel. Settle on
-    # the panel carrying content rather than merely existing.
-    deadline = _time.monotonic() + timeout / 1000.0
-    while _time.monotonic() < deadline:
-        if (panel.inner_text() or "").strip():
-            break
-        page.wait_for_timeout(250)
-    return panel
-
-
-def active_sub_tab_panel(page, timeout: int = 60_000):
-    """The visible sub-tab panel inside the open top-level tab.
-
-    ``active_tab_panel`` narrows to the open top-level tab, which is not
-    enough for an assertion about a sub-tab: Streamlit renders every sub-tab
-    body into that panel too, and a CSS locator matches a subtree whether or
-    not it is displayed. Counting metrics in the Optimization tab's Overview
-    sub-tab found seven -- its own four plus three belonging to sub-tabs the
-    test never opened.
-
-    Narrowing by CONTAINMENT rather than by ``:visible``. The two are not
-    interchangeable: Streamlit collapses expanders by default, so their
-    contents are in the open panel and undisplayed, and a visibility filter
-    drops the very widgets a test means to count.
-    """
-    panel = (
-        active_tab_panel(page, timeout=timeout)
-        .locator('[role="tabpanel"]:visible')
-        .first
-    )
-    panel.wait_for(state="visible", timeout=timeout)
-    deadline = _time.monotonic() + timeout / 1000.0
-    while _time.monotonic() < deadline:
-        if (panel.inner_text() or "").strip():
-            break
-        page.wait_for_timeout(250)
-    return panel
-
-
-def panel_widget(page, testid: str, label: str, timeout: int = 20_000):
-    """Locator for the Streamlit widget of ``testid`` labelled ``label``,
-    scoped to the visible tab panel.
-
-    A bare ``[data-testid="stSelectbox"]`` matches every selectbox the app
-    renders, so asserting it is non-empty proves nothing about the tab under
-    test. Naming the widget makes the assertion able to fail.
-    """
-    located = (
-        active_tab_panel(page, timeout=timeout)
-        .locator(f'[data-testid="{testid}"]')
-        .filter(has_text=label)
-    )
-    # Wait for the widget itself: a panel can carry content while this
-    # particular widget is still streaming. A genuine absence is the caller's
-    # assertion to report, so a timeout here is not an error.
-    try:
-        located.first.wait_for(state="attached", timeout=timeout)
-    except Exception:
-        pass
-    return located
-
-
-def click_button(page, text: str):
-    """Click a Streamlit button by text, excluding tab buttons.
-
-    Uses JS click to bypass visibility checks. Excludes buttons with
-    role="tab" to avoid accidentally clicking tabs instead of form buttons.
-
-    Prefers a VISIBLE match. Streamlit renders every tab body, not just the
-    selected one, and ``has-text`` is a case-insensitive substring, so a
-    label routinely matches buttons in other panels: "Load" matches six
-    buttons, of which the first is a hidden "Upload". Combined with the JS
-    click, ``.first`` silently actuated the wrong widget and the calling
-    test saw nothing happen.
-    """
-    start = _time.monotonic()
-    btn = page.locator(f'button:not([role="tab"]):has-text("{text}")')
-    visible = page.locator(f'button:not([role="tab"]):has-text("{text}"):visible')
-    target = visible.first if visible.count() > 0 else btn.first
-    if btn.count() > 0:
-        target.evaluate("el => el.click()")
-        page.wait_for_timeout(2_000)
-        page.wait_for_load_state("networkidle")
-        elapsed = (_time.monotonic() - start) * 1000
-        if _report_collector:
-            _report_collector.record_browser_op(
-                "click_button", text, elapsed_ms=elapsed
-            )
-        return True
-    elapsed = (_time.monotonic() - start) * 1000
-    if _report_collector:
-        _report_collector.record_browser_op(
-            "click_button (not found)", text, elapsed_ms=elapsed
-        )
-    return False
-
-
-def expand_sidebar(page):
-    """Expand the sidebar if it's collapsed (common in headless mode)."""
-    # Streamlit collapses sidebar in narrow viewports / headless
-    collapse_btn = page.locator(
-        '[data-testid="stSidebarCollapsedControl"], '
-        'button[aria-label="Open sidebar"], '
-        '[data-testid="collapsedControl"]'
-    )
-    if collapse_btn.count() > 0 and collapse_btn.first.is_visible():
-        collapse_btn.first.click()
-        page.wait_for_timeout(1_000)
-
-
-def set_tenant(page, tenant_id: str, retries: int = 3):
-    """Set the active tenant in the sidebar with retry.
-
-    Targets the 'Active Tenant' input specifically (not 'Tenant ID').
-    Retries if the value doesn't stick (Streamlit session state timing).
-    """
-    start = _time.monotonic()
-    expand_sidebar(page)
-
-    sidebar = page.locator('[data-testid="stSidebar"]')
-    tenant_input = sidebar.locator('input[aria-label="Active Tenant"]')
-
-    for attempt in range(retries):
-        tenant_input.click(click_count=3, force=True)
-        page.keyboard.press("Delete")
-        tenant_input.type(tenant_id, delay=30)
-        tenant_input.press("Enter")
-        page.wait_for_timeout(4_000)
-        # Setting the tenant reruns the whole script, which is the expensive
-        # one: every tab body re-executes. Wait for that run to finish.
-        wait_for_script_idle(page)
-
-        # Verify tenant was committed to Streamlit session state
-        # by checking for the confirmation alert
-        tenant_alert = page.locator(
-            '[data-testid="stAlert"]:has-text("Current tenant")'
-        )
-        if tenant_alert.count() > 0:
-            elapsed = (_time.monotonic() - start) * 1000
-            if _report_collector:
-                _report_collector.record_browser_op(
-                    "set_tenant", "sidebar", tenant_id, elapsed
-                )
-            return
-    raise RuntimeError(
-        f"set_tenant failed: tenant '{tenant_id}' was not committed to "
-        f"Streamlit session state after {retries} attempts. "
-        "Expected 'Current tenant' confirmation alert to appear."
-    )
 
 
 _TRACKED_E2E_VIDEO = (

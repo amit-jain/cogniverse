@@ -48,7 +48,7 @@ A2A card, not a way to launch them as their own server.
 
 ```mermaid
 flowchart TB
-    Client["<span style='color:#000'>Client / Dashboard</span>"]
+    Client["<span style='color:#000'>Client / Web client</span>"]
 
     Client --> Runtime["<span style='color:#000'>Runtime<br/>Port 8000<br/>REST + A2A JSON-RPC</span>"]
 
@@ -306,7 +306,7 @@ warn-and-skip when the local value is absent); Argo controller install;
 sandbox wiring; `helm install/upgrade` of release `cogniverse` into
 namespace `cogniverse`; workflow-template deploy; `kubectl wait` for pod
 readiness (300s); port-forwards and HTTP health checks (Vespa `:19071`,
-Runtime `:28000`, Dashboard `:28501`, Phoenix `:26006`, LLM `:11434`, Argo
+Runtime `:28000`, Web client `:28400`, Phoenix `:26006`, LLM `:11434`, Argo
 `:2746`).
 
 Re-sync cluster Secrets later with `cogniverse secrets sync`

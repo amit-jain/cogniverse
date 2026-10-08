@@ -250,6 +250,14 @@ semanticRouter:
       type: NodePort
       nodePort: 28081
 
+web:
+  image:
+    repository: cogniverse/web
+    tag: "0.1.0-dev"
+    pullPolicy: Never
+  service:
+    type: NodePort
+
 dashboard:
   replicaCount: 1
   backend: cpu
@@ -330,8 +338,8 @@ ingress:
           port: 8000
         - path: /
           pathType: Prefix
-          service: dashboard
-          port: 8501
+          service: web
+          port: 4000
   tls: []
 
 config:

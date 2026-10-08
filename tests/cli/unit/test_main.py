@@ -163,7 +163,7 @@ class TestCli:
         runner = CliRunner()
         result = runner.invoke(cli, ["logs", "--help"])
         assert result.exit_code == 0
-        for svc in ("runtime", "dashboard", "vespa", "phoenix", "llm", "argo"):
+        for svc in ("runtime", "web", "dashboard", "vespa", "phoenix", "llm", "argo"):
             assert svc in result.output
 
 
@@ -941,6 +941,20 @@ class TestLogsCommand:
         assert "-f" not in cmd
 
     @patch("cogniverse_cli.main.subprocess.run")
+    def test_logs_web(self, mock_run: MagicMock) -> None:
+        """Logs for the web client read its deployment in the release namespace."""
+        mock_run.return_value.returncode = 0
+        result = CliRunner().invoke(cli, ["logs", "web"])
+        assert result.exit_code == 0
+        assert mock_run.call_args[0][0] == [
+            "kubectl",
+            "logs",
+            "deployment/cogniverse-web",
+            "-n",
+            "cogniverse",
+        ]
+
+    @patch("cogniverse_cli.main.subprocess.run")
     def test_logs_vespa_follow(self, mock_run: MagicMock) -> None:
         """Logs for vespa with -f uses statefulset and follow flag."""
         mock_run.return_value.returncode = 0
@@ -1003,8 +1017,29 @@ class TestServiceConstants:
         """Every valid logs service has a kubectl resource mapping."""
         from cogniverse_cli.main import _SERVICE_KUBECTL_RESOURCE
 
-        expected_services = {"runtime", "dashboard", "vespa", "phoenix", "llm", "argo"}
+        expected_services = {
+            "runtime",
+            "web",
+            "dashboard",
+            "vespa",
+            "phoenix",
+            "llm",
+            "argo",
+        }
         assert set(_SERVICE_KUBECTL_RESOURCE.keys()) == expected_services
+
+    def test_the_web_client_is_the_ui_status_and_up_verify(self) -> None:
+        """The web client's NodePort and health route are what ``status``
+        shows and ``up`` waits for; the disabled-by-default dashboard is not."""
+        assert SERVICE_HEALTH_URLS == {
+            "Vespa": "http://localhost:19071/state/v1/health",
+            "Runtime": "http://localhost:28000/health",
+            "Web": "http://localhost:28400/healthz",
+            "Phoenix": "http://localhost:26006/health",
+            "LLM": "http://localhost:11434/api/tags",
+            "Argo": "https://localhost:2746/api/v1/info",
+        }
+        assert SERVICE_ENDPOINTS["Web"] == "http://localhost:28400"
 
 
 class TestStopStartCommands:

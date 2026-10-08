@@ -313,6 +313,6 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -v -k "search" --d
 
 ### Continuous Performance Monitoring
 ```bash
-# Real-time dashboard (available)
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
+# Web client Analytics and Profile metrics views (k3d: cogniverse up)
+open http://localhost:28400
 ```

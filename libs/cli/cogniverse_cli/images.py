@@ -33,6 +33,9 @@ DASHBOARD_REPOS_BY_BACKEND = {
     "cuda": "cogniverse/dashboard-cuda",
     "rocm": "cogniverse/dashboard-rocm",
 }
+# The web client: a Node server and the built browser client, one image for
+# every backend.
+WEB_REPO = "cogniverse/web"
 # GLiNER sidecar — backend-agnostic CPU-only NER server. Its
 # chart image uses pullPolicy: Never, so k3d must have it built+imported or
 # the pod ErrImageNeverPulls on a fresh deploy. One image, all backends.
@@ -99,6 +102,7 @@ _APP_WORKSPACE_INPUTS = (
 IMAGE_DOCKERFILES = {
     "runtime": "libs/runtime/Dockerfile",
     "dashboard": "libs/dashboard/Dockerfile",
+    "web": "clients/web/Dockerfile",
     "pylate": "deploy/pylate/Dockerfile",
     "gliner": "deploy/gliner/Dockerfile",
     "clap_embed": "deploy/clap_embed/Dockerfile",
@@ -107,8 +111,14 @@ IMAGE_DOCKERFILES = {
     "vllm_audio": "deploy/vllm_audio/Dockerfile",
 }
 
+# Build context of each image that does not build from the repository root.
+# Its own .dockerignore, at the context root, decides what the build reads.
+IMAGE_BUILD_CONTEXTS = {
+    "web": "clients/web",
+}
+
 # Host-side inputs read by each Docker build. Every set includes the Dockerfile
-# and the root ignore rules in addition to all local COPY/ADD sources.
+# and its context's ignore rules in addition to all local COPY/ADD sources.
 IMAGE_INPUT_PATHS = {
     "runtime": (
         IMAGE_DOCKERFILES["runtime"],
@@ -127,6 +137,10 @@ IMAGE_INPUT_PATHS = {
         "configs/config.json",
         "scripts",
         ".dockerignore",
+    ),
+    "web": (
+        IMAGE_DOCKERFILES["web"],
+        "clients/web",
     ),
     "pylate": (
         IMAGE_DOCKERFILES["pylate"],
@@ -166,6 +180,17 @@ IMAGE_INPUT_PATHS = {
 DEPLOY_INPUT_PATHS = tuple(
     dict.fromkeys(path for paths in IMAGE_INPUT_PATHS.values() for path in paths)
 )
+
+
+def image_build_context(image: str) -> str:
+    """The Docker build context of ``image``, relative to the repository root."""
+    return IMAGE_BUILD_CONTEXTS.get(image, ".")
+
+
+def image_dockerignore(image: str) -> str:
+    """The ignore file Docker applies to ``image``'s build context."""
+    context = image_build_context(image)
+    return ".dockerignore" if context == "." else f"{context}/.dockerignore"
 
 
 def detect_torch_backend() -> str:
@@ -260,10 +285,13 @@ def _latest_deploy_input_commit(project_root: Path, image: str) -> str:
         text=True,
         check=True,
     )
+    ignore_file = image_dockerignore(image)
     dockerignore = GitIgnoreSpec.from_lines(
-        (project_root / ".dockerignore").read_text().splitlines()
+        (project_root / ignore_file).read_text().splitlines()
     )
-    always_included = {IMAGE_DOCKERFILES[image], ".dockerignore"}
+    always_included = {IMAGE_DOCKERFILES[image], ignore_file}
+    context = image_build_context(image)
+    context_prefix = "" if context == "." else f"{context}/"
     commit = ""
     for line in result.stdout.split("\n"):
         if line.startswith("\x1e"):
@@ -271,7 +299,10 @@ def _latest_deploy_input_commit(project_root: Path, image: str) -> str:
         elif (
             line
             and commit
-            and (line in always_included or not dockerignore.match_file(line))
+            and (
+                line in always_included
+                or not dockerignore.match_file(line.removeprefix(context_prefix))
+            )
         ):
             return commit
     raise RuntimeError(f"No committed inputs found for image family {image!r}")
@@ -351,9 +382,9 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return base
 
 
-def _merged_inference(project_root: Path, values_files: list[Path] | None) -> dict:
-    """``inference`` block after merging the chart defaults with the deploy
-    overlays helm will apply, in the order helm applies them."""
+def _merged_values(project_root: Path, values_files: list[Path] | None) -> dict:
+    """Chart values after merging the chart defaults with the deploy overlays
+    helm will apply, in the order helm applies them."""
     merged: dict = (
         yaml.safe_load(
             (project_root / "charts" / "cogniverse" / "values.yaml").read_text()
@@ -363,7 +394,40 @@ def _merged_inference(project_root: Path, values_files: list[Path] | None) -> di
     for values_file in values_files or []:
         overlay = yaml.safe_load(Path(values_file).read_text()) or {}
         _deep_merge(merged, overlay)
-    return merged.get("inference") or {}
+    return merged
+
+
+def _merged_inference(project_root: Path, values_files: list[Path] | None) -> dict:
+    """``inference`` block of the merged deploy values."""
+    return _merged_values(project_root, values_files).get("inference") or {}
+
+
+def _component_enabled(values: dict, component: str) -> bool:
+    block = values.get(component)
+    return isinstance(block, dict) and block.get("enabled") is True
+
+
+def _app_image_tags(
+    project_root: Path,
+    torch_backend: str,
+    values_files: list[Path] | None,
+    versions: dict[str, str],
+) -> dict[str, str]:
+    """The runtime image and each enabled UI image (web, dashboard), keyed by
+    image family, mapped to the tag the deploy renders."""
+    values = _merged_values(project_root, values_files)
+    tags = {
+        "runtime": _dev_tag(
+            RUNTIME_REPOS_BY_BACKEND[torch_backend], versions["runtime"]
+        )
+    }
+    if _component_enabled(values, "web"):
+        tags["web"] = _dev_tag(WEB_REPO, versions["web"])
+    if _component_enabled(values, "dashboard"):
+        tags["dashboard"] = _dev_tag(
+            DASHBOARD_REPOS_BY_BACKEND[torch_backend], versions["dashboard"]
+        )
+    return tags
 
 
 def enabled_sidecars(project_root: Path, values_files: list[Path] | None) -> list[str]:
@@ -484,31 +548,24 @@ def _resolved_builds(
             "Add a LOCAL_IMAGE_BUILDS entry (repository, dockerfile, context)."
         )
 
-    runtime_args = [
-        "--build-arg",
-        f"TORCH_BACKEND={torch_backend}",
-        "--build-arg",
-        f"SETUPTOOLS_SCM_PRETEND_VERSION={versions['runtime']}",
-    ]
-    dashboard_args = [
-        "--build-arg",
-        f"TORCH_BACKEND={torch_backend}",
-        "--build-arg",
-        f"SETUPTOOLS_SCM_PRETEND_VERSION={versions['dashboard']}",
-    ]
-    builds = [
-        (
-            _dev_tag(RUNTIME_REPOS_BY_BACKEND[torch_backend], versions["runtime"]),
-            IMAGE_DOCKERFILES["runtime"],
-            ".",
-            runtime_args,
-        ),
-        (
-            _dev_tag(DASHBOARD_REPOS_BY_BACKEND[torch_backend], versions["dashboard"]),
-            IMAGE_DOCKERFILES["dashboard"],
-            ".",
-            dashboard_args,
-        ),
+    builds = []
+    for image, tag in _app_image_tags(
+        project_root, torch_backend, values_files, versions
+    ).items():
+        build_args = (
+            []
+            if image == "web"
+            else [
+                "--build-arg",
+                f"TORCH_BACKEND={torch_backend}",
+                "--build-arg",
+                f"SETUPTOOLS_SCM_PRETEND_VERSION={versions[image]}",
+            ]
+        )
+        builds.append(
+            (tag, IMAGE_DOCKERFILES[image], image_build_context(image), build_args)
+        )
+    builds += [
         (
             _dev_tag(LOCAL_IMAGE_BUILDS["gliner"][0], versions["gliner"]),
             LOCAL_IMAGE_BUILDS["gliner"][1],
@@ -619,7 +676,13 @@ def verify_local_images_cover_deploy(
     resolved = _resolved_versions(project_root, versions)
     backend = torch_backend or detect_torch_backend()
     have = set(built_tags)
-    missing: dict[str, str] = {}
+    missing: dict[str, str] = {
+        image: tag
+        for image, tag in _app_image_tags(
+            project_root, backend, values_files, resolved
+        ).items()
+        if tag not in have
+    }
     device_services = device_image_services(project_root, values_files)
     for svc, repo in first_party_services(project_root, values_files).items():
         if svc in device_services:
@@ -659,8 +722,10 @@ def build_images(
     family's version (tests, no git checkout). The return value is the complete
     required tag set, including reused images.
 
-    Builds the runtime + dashboard variants matching ``torch_backend``
-    (auto-detected when None) plus the backend-agnostic GLiNER sidecar. Each
+    Builds the runtime variant matching ``torch_backend`` (auto-detected when
+    None), the web client and the dashboard variant when their ``enabled``
+    resolves true across ``values_files``, plus the backend-agnostic GLiNER
+    sidecar. Each
     optional embedder sidecar in ``SIDECAR_BUILDS`` is built only when its
     ``inference.<svc>.enabled`` resolves true across ``values_files``, so
     passing the overlays helm receives is what brings an enabled sidecar into
@@ -723,11 +788,17 @@ def dev_image_set_values(
     """
     backend = torch_backend or detect_torch_backend()
     resolved = _resolved_versions(project_root, versions)
+    app_images = _app_image_tags(project_root, backend, values_files, resolved)
     overrides = {
         f"runtime.imagesByBackend.{backend}.tag": _docker_tag(resolved["runtime"]),
-        f"dashboard.imagesByBackend.{backend}.tag": _docker_tag(resolved["dashboard"]),
-        "inference.gliner.image.tag": _docker_tag(resolved["gliner"]),
     }
+    if "web" in app_images:
+        overrides["web.image.tag"] = _docker_tag(resolved["web"])
+    if "dashboard" in app_images:
+        overrides[f"dashboard.imagesByBackend.{backend}.tag"] = _docker_tag(
+            resolved["dashboard"]
+        )
+    overrides["inference.gliner.image.tag"] = _docker_tag(resolved["gliner"])
     for svc in enabled_sidecars(project_root, values_files):
         _, dockerfile, _ = LOCAL_IMAGE_BUILDS[svc]
         image = _image_family_for_dockerfile(dockerfile)
