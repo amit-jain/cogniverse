@@ -44,7 +44,12 @@ from cogniverse_runtime.shared_state import connect_shared_state_redis
 from cogniverse_runtime.task_events import TaskEventStore
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.memory_store import InMemoryConfigStore
-from tests.utils.web_client import recording_telemetry_sink, serve_app, serve_web
+from tests.utils.web_client import (
+    browse_as,
+    recording_telemetry_sink,
+    serve_app,
+    serve_web,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
@@ -217,12 +222,35 @@ def web_url(built_client, runtime, tenants):
         assert received == []
 
 
+# A hostname that is not localhost, as the cluster ingress serves the client
+# over plain http: the page is not a secure context there.
+INGRESS_HOST = "cogniverse.test"
+THREAD = re.compile(
+    rf"#/agents/{AGENT}/[0-9a-f]{{8}}-[0-9a-f]{{4}}-4[0-9a-f]{{3}}-[89ab][0-9a-f]{{3}}-[0-9a-f]{{12}}$"
+)
+
+
 @pytest.fixture(scope="module")
-def browser():
+def playwright_driver():
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
-        yield browser
-        browser.close()
+        yield playwright
+
+
+@pytest.fixture(scope="module")
+def browser(playwright_driver):
+    browser = playwright_driver.chromium.launch()
+    yield browser
+    browser.close()
+
+
+@pytest.fixture(scope="module")
+def ingress_browser(playwright_driver):
+    """Chromium resolving ``INGRESS_HOST`` to this host."""
+    browser = playwright_driver.chromium.launch(
+        args=[f"--host-resolver-rules=MAP {INGRESS_HOST} 127.0.0.1"]
+    )
+    yield browser
+    browser.close()
 
 
 @pytest.fixture()
@@ -245,6 +273,13 @@ def _current(page: Page):
 
 def _assistant_messages(page: Page):
     return page.get_by_test_id("copilot-assistant-message")
+
+
+def _page_errors(page: Page) -> list:
+    """Every error the page throws and does not catch from now on."""
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    return errors
 
 
 def _send(page: Page, text: str) -> None:
@@ -432,3 +467,56 @@ class TestAgents:
                 for key in runtime.keys.list(tenant)["keys"]
                 if name.match(key["name"]) and not key["revoked"]
             ] == [tenant]
+
+
+class TestIngress:
+    """The client served over plain http on a hostname other than localhost,
+    as the cluster ingress serves it: not a secure context."""
+
+    def test_choosing_a_tenant_opens_the_agent_and_a_run_answers(
+        self, ingress_browser, web_url, tenants
+    ):
+        alpha, _ = tenants
+        context = ingress_browser.new_context()
+        page = context.new_page()
+        errors = _page_errors(page)
+        try:
+            page.goto(f"{web_url.replace('127.0.0.1', INGRESS_HOST)}/")
+            assert page.evaluate(
+                "[window.isSecureContext, typeof crypto.randomUUID]"
+            ) == [False, "undefined"]
+            _use_tenant(page, alpha)
+            expect(_current(page)).to_have_text(f"Current tenant: {alpha}")
+            expect(page.get_by_placeholder("Ask Shell…")).to_be_visible()
+            expect(page).to_have_url(THREAD)
+            _barrier.update(expected=1, entered=0)
+            _send(page, "over the ingress")
+            expect(_assistant_messages(page)).to_have_text(
+                [f"[{alpha}] over the ingress"], timeout=60_000
+            )
+            first = page.url
+            page.get_by_role("button", name="New conversation").click()
+            expect(page).not_to_have_url(first)
+            expect(page).to_have_url(THREAD)
+            expect(page.get_by_label("Conversation")).to_have_text(
+                f"{alpha} · 0 messages"
+            )
+        finally:
+            context.close()
+        assert errors == []
+
+    def test_an_agent_address_without_a_thread_opens_a_new_one(
+        self, ingress_browser, web_url, tenants
+    ):
+        alpha, _ = tenants
+        context = ingress_browser.new_context()
+        browse_as(context, alpha)
+        page = context.new_page()
+        errors = _page_errors(page)
+        try:
+            page.goto(f"{web_url.replace('127.0.0.1', INGRESS_HOST)}/#/agents/{AGENT}")
+            expect(page.get_by_placeholder("Ask Shell…")).to_be_visible()
+            expect(page).to_have_url(THREAD)
+        finally:
+            context.close()
+        assert errors == []

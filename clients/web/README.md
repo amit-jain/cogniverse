@@ -140,7 +140,8 @@ answer) is cut.
 the built client served by the Node server on port 4000, with `/healthz` for
 probes. The Helm chart deploys it as the `web` component behind the ingress's
 `/` path; `cogniverse up` builds and imports it and serves it at
-http://localhost:28400. Chart values and deployment are in
+http://localhost:28400. The client needs no secure context, so it also works
+over plain http on another hostname. Chart values and deployment are in
 [docs/modules/web-client.md](../../docs/modules/web-client.md).
 
 ## Tests

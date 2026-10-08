@@ -2,6 +2,7 @@ import { CopilotKitProvider } from '@copilotkit/react-core/v2';
 import { useEffect, useMemo, useState } from 'react';
 import { AgentWorkspace } from './AgentWorkspace';
 import { fetchAgents } from './api';
+import { newId } from './ids';
 import { noticeRenderer } from './Notice';
 import { OPS_VIEWS } from './ops/views';
 import { parseRoute, routeHash } from './route';
@@ -107,7 +108,7 @@ export function App() {
       (routed && (owner === undefined || owner === tenant) ? routed : undefined) ??
       threads.get(`${tenant}/${agentName}`) ??
       rememberedThread(tenant, agentName) ??
-      crypto.randomUUID();
+      newId();
     threads.set(`${tenant}/${agentName}`, threadId);
     threadTenants.set(threadId, tenant);
   }
@@ -170,7 +171,7 @@ export function App() {
             saveSettings(next);
           }}
           onNewThread={() => {
-            window.location.hash = routeHash({ kind: 'agent', name: agentName, thread: crypto.randomUUID() });
+            window.location.hash = routeHash({ kind: 'agent', name: agentName, thread: newId() });
           }}
         />
       </>
