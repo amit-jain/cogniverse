@@ -41,6 +41,12 @@ export function splitList(text: string): string[] {
     .filter(Boolean);
 }
 
+/** The loaded workflows with each review this page saved in place of the
+ * loaded one, which the telemetry backend may not serve yet. */
+export function withSavedReviews<T extends { span_id: string }>(loaded: T[], saved: Record<string, T>): T[] {
+  return loaded.map((workflow) => saved[workflow.span_id] ?? workflow);
+}
+
 function workflowsPath(tenant: string): string {
   return `/admin/tenant/${seg(tenant)}/orchestration-workflows`;
 }
@@ -50,7 +56,7 @@ export function WorkflowReviewsView() {
   const [lookback, setLookback] = useState(24);
   const [reviewer, setReviewer] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
-  const [version, setVersion] = useState(0);
+  const [saved, setSaved] = useState<Record<string, Workflow>>({});
   const [notice, setNotice] = useState('');
   return (
     <div className="ops-view">
@@ -59,24 +65,26 @@ export function WorkflowReviewsView() {
         onChoose={(chosen) => {
           setTenant(chosen);
           setSelected(null);
+          setSaved({});
           setNotice('');
         }}
       />
       {notice && <Alert tone="ok">{notice}</Alert>}
       {tenant && (
         <Workflows
-          key={`${tenant}-${lookback}-${version}`}
+          key={`${tenant}-${lookback}`}
           tenant={tenant}
+          saved={saved}
           lookback={lookback}
           onLookback={setLookback}
           reviewer={reviewer}
           onReviewer={setReviewer}
           selected={selected}
           onSelect={setSelected}
-          onReviewed={(message) => {
-            setNotice(message);
+          onReviewed={(reviewed) => {
+            setNotice(`Saved the review of ${reviewed.workflow_id}: ${reviewed.review?.label}.`);
+            setSaved((previous) => ({ ...previous, [reviewed.span_id]: reviewed }));
             setSelected(null);
-            setVersion((n) => n + 1);
           }}
         />
       )}
@@ -86,6 +94,7 @@ export function WorkflowReviewsView() {
 
 function Workflows({
   tenant,
+  saved,
   lookback,
   onLookback,
   reviewer,
@@ -95,13 +104,14 @@ function Workflows({
   onReviewed,
 }: {
   tenant: string;
+  saved: Record<string, Workflow>;
   lookback: number;
   onLookback: (hours: number) => void;
   reviewer: string;
   onReviewer: (reviewer: string) => void;
   selected: string | null;
   onSelect: (spanId: string) => void;
-  onReviewed: (notice: string) => void;
+  onReviewed: (reviewed: Workflow) => void;
 }) {
   const workflows = useLoad(
     (signal) =>
@@ -110,7 +120,8 @@ function Workflows({
       }).then((body) => body.workflows),
     [tenant, lookback],
   );
-  const chosen = workflows.data?.find((workflow) => workflow.span_id === selected);
+  const shown = workflows.data && withSavedReviews(workflows.data, saved);
+  const chosen = shown?.find((workflow) => workflow.span_id === selected);
   return (
     <>
       <Panel title={`Workflows of ${tenant}`} actions={<button onClick={workflows.reload}>Refresh</button>}>
@@ -122,10 +133,10 @@ function Workflows({
           </label>
         </div>
         {workflows.error && <Alert>{workflows.error}</Alert>}
-        {workflows.data && workflows.data.length === 0 && (
+        {shown && shown.length === 0 && (
           <p className="muted">No orchestration workflows in this window.</p>
         )}
-        {workflows.data && workflows.data.length > 0 && (
+        {shown && shown.length > 0 && (
           <table aria-label="Workflows">
             <thead>
               <tr>
@@ -140,7 +151,7 @@ function Workflows({
               </tr>
             </thead>
             <tbody>
-              {workflows.data.map((workflow) => (
+              {shown.map((workflow) => (
                 <tr key={workflow.span_id} className={workflow.span_id === selected ? 'selected' : undefined}>
                   <td>{new Date(workflow.start_time).toLocaleString()}</td>
                   <td>{workflow.query}</td>
@@ -178,7 +189,7 @@ function ReviewForm({
   tenant: string;
   workflow: Workflow;
   reviewer: string;
-  onReviewed: (notice: string) => void;
+  onReviewed: (reviewed: Workflow) => void;
 }) {
   const [label, setLabel] = useState('');
   const [score, setScore] = useState('');
@@ -241,7 +252,7 @@ function ReviewForm({
               `${workflowsPath(tenant)}/${seg(workflow.span_id)}/annotation`,
               { method: 'POST', body },
             );
-            onReviewed(`Saved the review of ${reviewed.workflow_id}: ${reviewed.review?.label}.`);
+            onReviewed(reviewed);
           });
         }}
       >

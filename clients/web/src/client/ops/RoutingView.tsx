@@ -111,6 +111,8 @@ function Routing({
             <dd>{optional(data.accuracy, percent)}</dd>
             <dt>Confidence calibration</dt>
             <dd>{optional(data.confidence_calibration, (value) => value.toFixed(2))}</dd>
+            <dt>Latency mean</dt>
+            <dd>{optional(data.latency_ms.mean, ms)}</dd>
             <dt>Latency p50</dt>
             <dd>{optional(data.latency_ms.p50, ms)}</dd>
             <dt>Latency p95</dt>

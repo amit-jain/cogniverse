@@ -57,7 +57,8 @@ def ingest_redis_url(workflow_state_redis_url):
 
 async def _pipeline(job, *, endpoint: str) -> dict:
     """Localise the upload and return a pipeline envelope: one keyframe and
-    one fed document per line; an empty file fails as the pipeline fails."""
+    one fed document per line, none fed when the first line is ``unfed``; an
+    empty file fails as the pipeline fails."""
     locator = MediaLocator(
         tenant_id=job.tenant_id,
         config=_media_config_from_defaults({"minio_endpoint": endpoint}),
@@ -77,7 +78,7 @@ async def _pipeline(job, *, endpoint: str) -> dict:
         "video_id": Path(name).stem,
         "results": {
             "keyframes": [{"frame": index} for index in range(len(lines))],
-            "embeddings": {"documents_fed": len(lines)},
+            "embeddings": {"documents_fed": 0 if lines[0] == "unfed" else len(lines)},
         },
     }
 
@@ -347,6 +348,65 @@ class TestIngestion:
             page.get_by_role("region", name="Ingests").get_by_role("table")
         ).to_have_count(0)
         assert _stored_keys(minio, tenant) == stored_before
+
+    def test_a_completion_that_fed_nothing_reads_as_a_failure(
+        self, page, web_url, runtime_url, tenant, tmp_path
+    ):
+        clip = tmp_path / f"unfed-{uuid.uuid4().hex[:6]}.txt"
+        clip.write_text("unfed\nframe two\n")
+        _ingestion_view(page, web_url, tenant)
+        _upload(page, clip)
+        ingest_id = _ingest_id_from_notice(page, clip.name)
+        row = _row(page, ingest_id)
+        expect(row.get_by_role("cell").nth(3)).to_have_text("complete")
+        status = _status(runtime_url, ingest_id)
+        video_id = Path(status["history"][0]["source_url"]).stem
+        assert status["latest"]["result"]["documents_fed"] == 0
+        expect(row.get_by_role("cell").nth(4).get_by_role("alert")).to_have_text(
+            f"{video_id}: completed without feeding any documents."
+        )
+
+    def test_a_cancelled_ingest_shows_its_reason_and_stops_being_followed(
+        self, page, web_url, runtime_url, tenant, tmp_path
+    ):
+        _release.clear()
+        held = tmp_path / f"held-{uuid.uuid4().hex[:6]}.txt"
+        held.write_text("hold\n")
+        queued = tmp_path / f"queued-{uuid.uuid4().hex[:6]}.txt"
+        queued.write_text("frame\n")
+        event_reads = []
+        page.on(
+            "request",
+            lambda request: (
+                event_reads.append(request.url) if "/events" in request.url else None
+            ),
+        )
+        _ingestion_view(page, web_url, tenant)
+        _upload(page, held)
+        held_id = _ingest_id_from_notice(page, held.name)
+        expect(_row(page, held_id).get_by_role("cell").nth(3)).to_have_text("running")
+        _upload(page, queued)
+        queued_id = _ingest_id_from_notice(page, queued.name)
+        row = _row(page, queued_id)
+        expect(row.get_by_role("cell").nth(3)).to_have_text("queued")
+
+        cancelled = httpx.post(
+            f"{runtime_url}/events/ingestion/{queued_id}/cancel",
+            json={"reason": "operator stopped it"},
+        )
+        assert cancelled.status_code == 200, cancelled.text
+        _release.set()
+
+        expect(row.get_by_role("cell").nth(3)).to_have_text("cancelled")
+        expect(row.get_by_role("cell").nth(4).get_by_role("alert")).to_have_text(
+            "Cancelled: operator stopped it"
+        )
+        assert _status(runtime_url, queued_id)["latest"]["state"] == "cancelled"
+        # The stream ended on the terminal event and is not opened again.
+        page.wait_for_timeout(3000)
+        assert [url for url in event_reads if f"/{queued_id}/events" in url] == [
+            f"{web_url}/api/runtime/ingestion/{queued_id}/events"
+        ]
 
 
 class TestConcurrency:

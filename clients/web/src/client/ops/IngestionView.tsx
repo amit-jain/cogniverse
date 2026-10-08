@@ -10,6 +10,7 @@ interface IngestEvent {
   profile?: string;
   error?: string;
   error_type?: string;
+  reason?: string;
   cleanup_error?: string;
   result?: {
     video_id?: string;
@@ -30,10 +31,12 @@ interface Upload {
 interface Followed {
   ingestId: string;
   filename?: string;
+  /** The upload matched bytes an earlier ingest already took. */
+  existing?: boolean;
 }
 
 /** The states after which the runtime closes an ingest's event stream. */
-const TERMINAL = new Set(['complete', 'failed']);
+export const TERMINAL = new Set(['complete', 'failed', 'cancelled']);
 
 /** One ingest's events, replayed from its start and then followed live
  * until a terminal state; a stream the runtime closes while idle resumes
@@ -79,18 +82,41 @@ function useIngestEvents(ingestId: string): { events: IngestEvent[]; error: stri
   return { events, error };
 }
 
-function outcome(event: IngestEvent | undefined): string {
-  if (!event) return '';
+/** What an ingest's latest event says, and whether it ended without the
+ * content being ingested: failed, cancelled, or complete without feeding a
+ * document. ``existing`` is a re-upload of bytes already ingested, whose
+ * completion may no longer carry its counts. */
+export function ingestOutcome(event: IngestEvent | undefined, existing: boolean): { text: string; failed: boolean } {
+  if (!event) return { text: '', failed: false };
   let text = '';
-  if (event.state === 'complete' && event.result) {
-    const r = event.result;
-    text = `${r.video_id ? `${r.video_id}: ` : ''}${r.chunks ?? 0} chunks, ${r.documents_fed ?? 0} documents fed.`;
-    if (r.graph_nodes !== undefined)
-      text += ` Graph: ${r.graph_nodes} nodes, ${r.graph_edges ?? 0} edges.`;
-  } else if (event.state === 'failed') text = `${event.error_type}: ${event.error}`;
-  else if (event.state === 'retrying') text = `Retrying after ${event.error_type}: ${event.error}`;
+  let failed = false;
+  if (event.state === 'complete') {
+    const r = event.result ?? {};
+    const video = r.video_id ? `${r.video_id}: ` : '';
+    const fed = r.documents_fed as unknown;
+    if (fed === undefined && existing) text = `${video}already ingested; nothing was fed again.`;
+    else if (fed === undefined) {
+      text = `${video}completed without reporting the documents it fed.`;
+      failed = true;
+    } else if (typeof fed !== 'number' || !Number.isInteger(fed)) {
+      text = `${video}completed with an invalid documents_fed (${JSON.stringify(fed)}).`;
+      failed = true;
+    } else if (fed <= 0) {
+      text = `${video}completed without feeding any documents.`;
+      failed = true;
+    } else {
+      text = `${video}${r.chunks ?? 0} chunks, ${fed} documents fed.`;
+      if (r.graph_nodes !== undefined) text += ` Graph: ${r.graph_nodes} nodes, ${r.graph_edges ?? 0} edges.`;
+    }
+  } else if (event.state === 'failed') {
+    text = `${event.error_type}: ${event.error}`;
+    failed = true;
+  } else if (event.state === 'cancelled') {
+    text = `Cancelled: ${event.reason || 'no reason given'}`;
+    failed = true;
+  } else if (event.state === 'retrying') text = `Retrying after ${event.error_type}: ${event.error}`;
   if (event.cleanup_error) text += ` Cleanup failed: ${event.cleanup_error}`;
-  return text;
+  return { text, failed };
 }
 
 function sourceName(sourceUrl?: string): string | undefined {
@@ -101,6 +127,7 @@ function IngestRow({ ingest }: { ingest: Followed }) {
   const { events, error } = useIngestEvents(ingest.ingestId);
   const latest = events[events.length - 1];
   const queued = events.find((event) => event.source_url);
+  const outcome = ingestOutcome(latest, ingest.existing ?? false);
   return (
     <tr>
       <td>{ingest.ingestId}</td>
@@ -108,7 +135,7 @@ function IngestRow({ ingest }: { ingest: Followed }) {
       <td>{queued?.profile ?? '—'}</td>
       <td>{latest?.state ?? (error ? '—' : 'connecting…')}</td>
       <td>
-        {outcome(latest)}
+        {outcome.failed ? <Alert>{outcome.text}</Alert> : outcome.text}
         {error && <Alert>{error}</Alert>}
       </td>
     </tr>
@@ -142,7 +169,7 @@ export function IngestionView() {
                 ? `${upload.filename} matches ingest ${upload.ingest_id} (${upload.state}); following it.`
                 : `Queued ${upload.filename} as ingest ${upload.ingest_id}.`,
             );
-            follow({ ingestId: upload.ingest_id, filename: upload.filename });
+            follow({ ingestId: upload.ingest_id, filename: upload.filename, existing: upload.existing });
           }}
         />
       )}

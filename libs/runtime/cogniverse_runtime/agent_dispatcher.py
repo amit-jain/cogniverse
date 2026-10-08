@@ -246,6 +246,17 @@ async def _end_workflow_quietly(queue: RedisTaskEventQueue, event) -> None:
         )
 
 
+class ConversationMemoryUnavailable(RuntimeError):
+    """No conversation memory is configured for the tenant."""
+
+
+def _still_saving(unsettled: List[int]) -> str:
+    return (
+        f"{len(unsettled)} earlier turn(s) still saving after "
+        f"{CONVERSATION_SAVE_TIMEOUT_S:.0f}s"
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class ConversationHistory:
     """A context's prior turns and the outcome of the read that produced them.
@@ -1983,21 +1994,7 @@ class AgentDispatcher:
         carries under ``conversation``, so a caller can tell a context with no
         prior turns from one whose turns were not read.
         """
-        ledger = self._require_conversation_ledger()
-        unsettled = await ledger.wait_settled(
-            tenant_id,
-            context_id,
-            await ledger.pending(tenant_id, context_id),
-            CONVERSATION_SAVE_TIMEOUT_S,
-        )
-        if unsettled:
-            logger.warning(
-                "Conversation saves for context %s did not settle within "
-                "%.1fs; reading history without %d turn(s)",
-                context_id,
-                CONVERSATION_SAVE_TIMEOUT_S,
-                len(unsettled),
-            )
+        unsettled = await self._wait_for_conversation_saves(tenant_id, context_id)
 
         async def _load() -> List[Dict[str, str]]:
             store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
@@ -2023,12 +2020,89 @@ class AgentDispatcher:
             return ConversationHistory(
                 turns=turns,
                 state=CONVERSATION_HISTORY_INCOMPLETE,
-                reason=(
-                    f"{len(unsettled)} earlier turn(s) still saving after "
-                    f"{CONVERSATION_SAVE_TIMEOUT_S:.0f}s"
-                ),
+                reason=_still_saving(unsettled),
             )
         return ConversationHistory(turns=turns)
+
+    async def _wait_for_conversation_saves(
+        self, tenant_id: str, context_id: str
+    ) -> List[int]:
+        """Wait, within one save budget, for the context's turns still being
+        saved on any process; returns the positions that did not settle."""
+        ledger = self._require_conversation_ledger()
+        unsettled = await ledger.wait_settled(
+            tenant_id,
+            context_id,
+            await ledger.pending(tenant_id, context_id),
+            CONVERSATION_SAVE_TIMEOUT_S,
+        )
+        if unsettled:
+            logger.warning(
+                "Conversation saves for context %s did not settle within "
+                "%.1fs; reading history without %d turn(s)",
+                context_id,
+                CONVERSATION_SAVE_TIMEOUT_S,
+                len(unsettled),
+            )
+        return unsettled
+
+    async def read_conversation(
+        self, tenant_id: str, context_id: str
+    ) -> ConversationHistory:
+        """Every stored turn of a context, oldest first, for display.
+
+        Waits for the context's pending saves as a dispatch does. The state
+        is ``incomplete`` when a save is still pending after the budget or a
+        turn of the context was lost and not recovered.
+
+        Raises:
+            SessionStateUnavailable: the ledger is missing or unreachable.
+            ConversationMemoryUnavailable: no conversation memory is
+                configured for the tenant.
+            Exception: the store read failed or exceeded
+                CONVERSATION_LOAD_TIMEOUT_S, with the failing exception.
+        """
+        unsettled = await self._wait_for_conversation_saves(tenant_id, context_id)
+
+        async def _read() -> List[Dict[str, str]]:
+            store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
+            if store is None:
+                raise ConversationMemoryUnavailable(
+                    f"no conversation memory is configured for tenant {tenant_id}"
+                )
+            return await asyncio.to_thread(store.get_history, context_id, None)
+
+        turns = await asyncio.wait_for(_read(), timeout=CONVERSATION_LOAD_TIMEOUT_S)
+        if unsettled:
+            return ConversationHistory(
+                turns=turns,
+                state=CONVERSATION_HISTORY_INCOMPLETE,
+                reason=_still_saving(unsettled),
+            )
+        lost = await self._require_conversation_ledger().failure(tenant_id, context_id)
+        if lost is not None:
+            return ConversationHistory(
+                turns=turns,
+                state=CONVERSATION_HISTORY_INCOMPLETE,
+                reason=f"a turn was not saved ({lost.error_type})",
+            )
+        return ConversationHistory(turns=turns)
+
+    async def record_conversation_turn(
+        self, tenant_id: str, context_id: str, query: str, result: Dict[str, Any]
+    ) -> "asyncio.Task[None]":
+        """Save one turn its caller ran with its own history.
+
+        The turn takes its position in the context before this returns and is
+        written in the background, exactly as a server-managed turn is; a
+        ``result`` without an answer saves the user turn alone.
+
+        Raises:
+            SessionStateUnavailable: the ledger is missing or unreachable.
+        """
+        return await self._schedule_conversation_save(
+            tenant_id, context_id, query, result
+        )
 
     async def _schedule_conversation_save(
         self, tenant_id: str, context_id: str, query: str, result: Dict[str, Any]

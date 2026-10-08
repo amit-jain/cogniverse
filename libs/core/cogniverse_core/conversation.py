@@ -26,7 +26,7 @@ message rather than prose no agent produced.
 
 import json
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 import requests
@@ -84,12 +84,12 @@ class ConversationStore:
         self._tenant_id = tenant_id
 
     def get_history(
-        self, context_id: str, max_turns: int = MAX_HISTORY_TURNS
+        self, context_id: str, max_turns: Optional[int] = MAX_HISTORY_TURNS
     ) -> List[Dict[str, str]]:
         """Return the most recent renderable turns for ``context_id`` in order.
 
         ``[{"role": "user"|"assistant", "content": ...}]``, oldest first,
-        capped at ``max_turns``. An ``assistant_missing`` marker is not a
+        capped at ``max_turns`` (every turn when it is None). An ``assistant_missing`` marker is not a
         turn an agent may read, so it is left out and the user turn it
         belongs to reads as unanswered.
         """
@@ -98,7 +98,7 @@ class ConversationStore:
             for turn in self._stored_turns(context_id)
             if turn["role"] in RENDERED_TURN_ROLES
         ]
-        return turns[-max_turns:]
+        return turns if max_turns is None else turns[-max_turns:]
 
     def get_missing_assistant_markers(self, context_id: str) -> List[Dict[str, str]]:
         """Return this context's half-turn markers, oldest first."""

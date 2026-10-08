@@ -31,7 +31,7 @@ from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
 from cogniverse_runtime.config_loader import ConfigLoader
 from cogniverse_runtime.routers import ag_ui, openai_compat
-from cogniverse_runtime.session_state import ContinuationStore
+from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [
@@ -311,15 +311,21 @@ def config_manager():
 
 @pytest.fixture(scope="module")
 def dispatcher(config_manager):
-    return AgentDispatcher(
+    dispatcher = AgentDispatcher(
         agent_registry=_registry(config_manager),
         config_manager=config_manager,
         schema_loader=None,
     )
+    # No conversation memory is configured: a run's turn takes its place in
+    # the ledger and is not stored (tests/runtime/integration/
+    # test_ag_ui_threads.py stores and reads them back).
+    dispatcher._conversation_store_factory = lambda tenant_id: None
+    return dispatcher
 
 
 @pytest.fixture()
-def ag_ui_app(dispatcher, continuation_store):
+def ag_ui_app(dispatcher, continuation_store, conversation_ledger):
+    dispatcher.set_conversation_ledger(conversation_ledger)
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
     openai_compat.set_api_keys({KEY_A: TENANT_A, KEY_B: TENANT_B})
     openai_compat.set_key_resolver(None)
@@ -329,6 +335,7 @@ def ag_ui_app(dispatcher, continuation_store):
     app = FastAPI()
     app.include_router(ag_ui.router, prefix="/ag-ui")
     yield app
+    dispatcher.set_conversation_ledger(None)
     openai_compat.set_dispatcher_provider(None)
     openai_compat.set_api_keys({})
     openai_compat.set_continuation_store(None)
@@ -1033,6 +1040,74 @@ class TestRunFailures:
             "tool_agent failed with SessionStateUnavailable. See server logs for "
             "detail."
         )
+
+    async def test_a_dead_conversation_ledger_fails_the_answered_run_after_its_text(
+        self, client, dispatcher, conversation_ledger
+    ):
+        dead = Redis.from_url(
+            f"redis://127.0.0.1:{_free_port()}",
+            socket_connect_timeout=1.0,
+            socket_timeout=1.0,
+        )
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                dead, save_lease_s=5, failure_capacity=10, key_prefix="test:dead"
+            )
+        )
+        try:
+            response = await client.post(
+                "/ag-ui/search_stream_agent",
+                json=_run([_user(QUERY)]),
+                headers=_auth(KEY_A),
+            )
+        finally:
+            dispatcher.set_conversation_ledger(conversation_ledger)
+            await dead.aclose()
+
+        events = _events(response.text)
+        assert _text(events) == f"[{TENANT_A}] {SUMMARY_BODY}"
+        assert _types(events)[-3:] == ["TEXT_MESSAGE_END", "STEP_FINISHED", "RUN_ERROR"]
+        assert events[-1] == {
+            "type": "RUN_ERROR",
+            "message": "The reply was not saved to this conversation "
+            "(SessionStateUnavailable). See server logs for detail.",
+            "code": "conversation_not_saved",
+        }
+
+    async def test_a_failed_run_keeps_its_own_error_when_the_ledger_is_dead(
+        self, client, dispatcher, conversation_ledger
+    ):
+        dead = Redis.from_url(
+            f"redis://127.0.0.1:{_free_port()}",
+            socket_connect_timeout=1.0,
+            socket_timeout=1.0,
+        )
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                dead, save_lease_s=5, failure_capacity=10, key_prefix="test:dead"
+            )
+        )
+        try:
+            response = await client.post(
+                "/ag-ui/failing_stream_agent",
+                json=_run([_user(QUERY)]),
+                headers=_auth(KEY_A),
+            )
+        finally:
+            dispatcher.set_conversation_ledger(conversation_ledger)
+            await dead.aclose()
+
+        events = _events(response.text)
+        assert events[1:] == [
+            {
+                "type": "RUN_ERROR",
+                "message": (
+                    "FailingAgent streaming failed with RuntimeError. See server "
+                    "logs for detail."
+                ),
+                "code": "internal_error",
+            }
+        ]
 
     async def test_an_unwired_dispatcher_is_503(self, client):
         openai_compat.set_dispatcher_provider(None)

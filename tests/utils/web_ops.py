@@ -1,7 +1,7 @@
 """The runtime the web client's operations views talk to, for browser tests.
 
 The tenant admin, tenant self-service, approvals, orchestration annotation,
-profile admin, agents and ingestion routers are mounted at the paths the
+profile admin, agents, events and ingestion routers are mounted at the paths the
 runtime mounts them on, over the caller's real config store and schema loader,
 with a cluster-events channel of their own so tenant deletes and session
 closes reach this worker the way they reach a runtime replica, and a task
@@ -9,10 +9,13 @@ event store on the same Redis that uploads open their tasks in and tenant
 deletes cancel them through.
 The annotation queue is a real Redis queue under ``annotation_queue_prefix``.
 Given an ingest processor, the ingestion worker's claim loop runs on the
-server's loop against ``REDIS_URL``, as a worker pod runs it.
+server's loop against ``REDIS_URL`` with the same task event store, as a
+worker pod runs it, so a cancelled job stops before it starts.
 
 ``serve_token_embedder`` answers the OpenAI ``/v1/embeddings`` contract the
 memory store's DenseOn client speaks, for hosts that cannot fetch DenseOn.
+``memory_on_vespa`` builds a Mem0 manager per tenant on real Vespa behind a
+fault proxy, embedding with it.
 """
 
 from __future__ import annotations
@@ -26,16 +29,20 @@ import threading
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Awaitable, Callable, Iterator, Optional
+from pathlib import Path
+from typing import Awaitable, Callable, Dict, Iterable, Iterator, Optional, Tuple
 
 from fastapi import FastAPI
 
 from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.admin import tenant_manager as tm
 from cogniverse_runtime.cluster_events import ClusterEvents
 from cogniverse_runtime.ingestion_worker import status_api
+from cogniverse_runtime.ingestion_worker import worker as ingest_worker
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
 from cogniverse_runtime.routers import (
@@ -50,8 +57,11 @@ from cogniverse_runtime.routers import (
     telemetry_metrics,
     tenant,
 )
+from cogniverse_runtime.routers import events as events_router
 from cogniverse_runtime.shared_state import connect_shared_state_redis
 from cogniverse_runtime.task_events import TaskEventStore
+from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.vespa_test_helpers import deploy_tenant_schema
 from tests.utils.web_client import serve_app
 
 
@@ -95,6 +105,7 @@ def serve_ops_runtime(
         task_events = TaskEventStore(shared_state)
         task_events.start()
         agents.set_task_event_store(task_events)
+        events_router.set_task_event_store(task_events)
         ingestion.set_task_event_store(task_events)
         tm.set_cluster_events(events)
         tm.set_task_event_store(task_events)
@@ -109,6 +120,7 @@ def serve_ops_runtime(
         stop = asyncio.Event()
         worker = None
         if ingest_processor is not None:
+            ingest_worker._task_events = task_events
             config = WorkerConfig()
             config.claim_block_ms = 200
             worker = asyncio.create_task(
@@ -125,12 +137,14 @@ def serve_ops_runtime(
             stop.set()
             if worker is not None:
                 await asyncio.wait_for(worker, timeout=20)
+                ingest_worker._task_events = None
             await close_redis()
             agents.set_annotation_queue(None)
             tm.set_cluster_events(None)
             tm.set_task_event_store(None)
             admin.set_cluster_events(None)
             agents.set_task_event_store(None)
+            events_router.set_task_event_store(None)
             ingestion.set_task_event_store(None)
             await task_events.close()
             await shared_state.aclose()
@@ -147,6 +161,7 @@ def serve_ops_runtime(
     app.include_router(routing_decisions.router, prefix="/admin/tenant")
     app.include_router(embedding_atlas.router, prefix="/admin/tenant")
     app.include_router(agents.router, prefix="/agents")
+    app.include_router(events_router.router, prefix="/events")
     app.include_router(ingestion.router, prefix="/ingestion")
     app.include_router(status_api.router, prefix="/ingestion")
     app.dependency_overrides[ingestion.get_config_manager_dependency] = lambda: (
@@ -229,3 +244,48 @@ def serve_token_embedder() -> Iterator[str]:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@contextmanager
+def memory_on_vespa(
+    vespa_instance: dict, config_manager, tenants: Iterable[str]
+) -> Iterator[Tuple[Dict[str, Mem0MemoryManager], InterceptFaultProxy]]:
+    """A Mem0 manager per tenant on real Vespa, reached through a fault proxy
+    and embedding with ``serve_token_embedder``; yields the managers by tenant
+    and the proxy."""
+    tenants = list(tenants)
+    affirm_memory_profile(config_manager)
+    with (
+        InterceptFaultProxy(vespa_instance["base_url"]) as proxy,
+        serve_token_embedder() as embedder_url,
+    ):
+        endpoints = dict(vespa_instance, http_port=proxy.port)
+        managers = {}
+        for tenant_id in tenants:
+            Mem0MemoryManager._instances.pop(tenant_id, None)
+            deploy_tenant_schema(
+                endpoints,
+                tenant_id=tenant_id,
+                base_schema_name="agent_memories",
+                config_manager=config_manager,
+            )
+            manager = Mem0MemoryManager(tenant_id)
+            manager.initialize(
+                backend_host="http://127.0.0.1",
+                backend_port=proxy.port,
+                backend_config_port=vespa_instance["config_port"],
+                base_schema_name="agent_memories",
+                llm_model="memory-test-unused",
+                embedding_model="lightonai/DenseOn",
+                llm_base_url="http://127.0.0.1:9",
+                embedder_base_url=embedder_url,
+                auto_create_schema=False,
+                config_manager=config_manager,
+                schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            )
+            managers[tenant_id] = manager
+        try:
+            yield managers, proxy
+        finally:
+            for tenant_id in tenants:
+                Mem0MemoryManager._instances.pop(tenant_id, None)

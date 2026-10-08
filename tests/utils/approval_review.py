@@ -9,6 +9,15 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Coroutine
 
 from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+from cogniverse_agents.optimizer.entity_self_consistency import (
+    AGREEMENT_KEY,
+    ENTITIES_KEY,
+    ENTITY_TEXT_KEY,
+    ENTITY_TYPE_KEY,
+    NEEDS_REVIEW_KEY,
+    SAMPLES_KEY,
+    SELF_CONSISTENCY_METADATA_KEY,
+)
 from cogniverse_core.approval.interfaces import (
     ApprovalBatch,
     ApprovalStatus,
@@ -67,16 +76,40 @@ def review_config_manager(phoenix, redis_url, *, telemetry_url=None) -> ConfigMa
     return manager
 
 
+# The entity self-consistency check's record on the routing item, in the
+# metadata shape the check writes.
+SELF_CONSISTENCY = {
+    SAMPLES_KEY: 5,
+    ENTITIES_KEY: [
+        {
+            ENTITY_TEXT_KEY: "gradient descent",
+            ENTITY_TYPE_KEY: "CONCEPT",
+            AGREEMENT_KEY: 0.6,
+            NEEDS_REVIEW_KEY: True,
+        },
+        {
+            ENTITY_TEXT_KEY: "lecture",
+            ENTITY_TYPE_KEY: "MEDIA",
+            AGREEMENT_KEY: 1.0,
+            NEEDS_REVIEW_KEY: False,
+        },
+    ],
+}
+
+
 def save_review_batch(storage: ApprovalStorageImpl, batch_id: str) -> None:
     """Save a batch with a routing and a workflow item awaiting review and one
-    auto-approved item, ``{batch_id}_routing``, ``_workflow`` and
-    ``_confident``."""
+    auto-approved item, ``{batch_id}_routing`` (with SELF_CONSISTENCY),
+    ``_workflow`` and ``_confident``."""
     tenant_id = storage.tenant_id
     items = [
         ReviewItem(
             item_id=f"{batch_id}_routing",
             data=dict(ROUTING),
-            metadata={"agent_type": "routing"},
+            metadata={
+                "agent_type": "routing",
+                SELF_CONSISTENCY_METADATA_KEY: SELF_CONSISTENCY,
+            },
             confidence=0.4,
             status=ApprovalStatus.PENDING_REVIEW,
         ),

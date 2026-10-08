@@ -33,6 +33,20 @@ export function changedCorrections(template: JsonObject, edited: JsonObject): Js
   return Object.fromEntries(Object.entries(edited).filter(([key, value]) => !sameJson(value, template[key])));
 }
 
+/** One line per mention the self-consistency check sampled, with how often
+ * the samples agreed on it and whether that calls for review. */
+export function selfConsistencyLines(metadata: JsonObject): string[] {
+  const block = metadata.self_consistency as
+    | { samples?: number; entities?: { text: string; type: string; agreement: number; needs_review: boolean }[] }
+    | undefined;
+  if (!block || !Array.isArray(block.entities)) return [];
+  return block.entities.map(
+    (entity) =>
+      `Agreement (${block.samples} samples): ${entity.text} (${entity.type}) ${entity.agreement.toFixed(2)}` +
+      (entity.needs_review ? ' — needs review' : ''),
+  );
+}
+
 function decisionNotice(item: PendingItem, decision: Decision): string {
   if (decision.status === 'approved') return `Approved ${item.item_id} into the training dataset.`;
   if (decision.status === 'regenerated') {
@@ -131,6 +145,7 @@ function ReviewItem({
   const [feedback, setFeedback] = useState('');
   const [corrections, setCorrections] = useState(jsonText(template));
   const action = useAction();
+  const agreement = selfConsistencyLines(item.metadata);
   const decide = (approved: boolean) =>
     action.run(async () => {
       if (!reviewer.trim()) throw new Error('Enter your name as the reviewer first.');
@@ -163,6 +178,18 @@ function ReviewItem({
           <>
             <dt>Reasoning</dt>
             <dd>{item.reasoning}</dd>
+          </>
+        )}
+        {agreement.length > 0 && (
+          <>
+            <dt>Self-consistency</dt>
+            <dd>
+              <ul aria-label="Self-consistency">
+                {agreement.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </dd>
           </>
         )}
         <dt>Example</dt>

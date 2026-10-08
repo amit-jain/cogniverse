@@ -11,22 +11,17 @@ through the page and its outcome read back from the store.
 from __future__ import annotations
 
 import threading
-from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
-from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-from tests.utils.http_fault_proxy import InterceptFaultProxy
-from tests.utils.vespa_test_helpers import deploy_tenant_schema
 from tests.utils.web_client import (
     recording_telemetry_sink,
     serve_web,
 )
 from tests.utils.web_ops import (
+    memory_on_vespa,
     serve_ops_runtime,
-    serve_token_embedder,
     token_embedding,
 )
 
@@ -43,39 +38,8 @@ SYSTEM_NOTE = (
 @pytest.fixture(scope="module")
 def memory_store(vespa_instance, config_manager):
     """A Mem0 manager per tenant on real Vespa, reached through a fault proxy."""
-    affirm_memory_profile(config_manager)
-    with (
-        InterceptFaultProxy(vespa_instance["base_url"]) as proxy,
-        serve_token_embedder() as embedder_url,
-    ):
-        endpoints = dict(vespa_instance, http_port=proxy.port)
-        managers = {}
-        for tenant_id in TENANTS:
-            Mem0MemoryManager._instances.pop(tenant_id, None)
-            deploy_tenant_schema(
-                endpoints,
-                tenant_id=tenant_id,
-                base_schema_name="agent_memories",
-                config_manager=config_manager,
-            )
-            manager = Mem0MemoryManager(tenant_id)
-            manager.initialize(
-                backend_host="http://127.0.0.1",
-                backend_port=proxy.port,
-                backend_config_port=vespa_instance["config_port"],
-                base_schema_name="agent_memories",
-                llm_model="memory-view-test-unused",
-                embedding_model="lightonai/DenseOn",
-                llm_base_url="http://127.0.0.1:9",
-                embedder_base_url=embedder_url,
-                auto_create_schema=False,
-                config_manager=config_manager,
-                schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
-            )
-            managers[tenant_id] = manager
+    with memory_on_vespa(vespa_instance, config_manager, TENANTS) as (managers, proxy):
         yield managers, proxy
-        for tenant_id in TENANTS:
-            Mem0MemoryManager._instances.pop(tenant_id, None)
 
 
 @pytest.fixture()

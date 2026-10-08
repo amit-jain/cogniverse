@@ -8,10 +8,12 @@ import { Hono } from 'hono';
 import type { ServerConfig } from './config.js';
 import { forwardToRuntime } from './proxy.js';
 import { RuntimeUnavailableError, cogniverseAgents, listAgents } from './runtime.js';
+import { CogniverseThreadRunner } from './threads.js';
 
 export function createApp(config: ServerConfig, fetchFn: typeof fetch = fetch) {
   const runtime = new CopilotRuntime({
     agents: async () => cogniverseAgents(config, await listAgents(config, fetchFn)),
+    runner: new CogniverseThreadRunner(config, fetchFn),
   });
   const copilotkit = createCopilotHonoHandler({
     runtime,

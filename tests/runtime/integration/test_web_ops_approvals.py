@@ -20,10 +20,14 @@ import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
 from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+from cogniverse_agents.optimizer.entity_self_consistency import (
+    SELF_CONSISTENCY_METADATA_KEY,
+)
 from cogniverse_core.approval.interfaces import ReviewDecision
 from cogniverse_runtime.routers import approvals
 from tests.utils.approval_review import (
     ROUTING,
+    SELF_CONSISTENCY,
     WORKFLOW,
     approved_rows,
     approved_rows_until,
@@ -193,7 +197,14 @@ class TestApprovalsView:
                 if served[routing]["reasoning"]
                 else {}
             ),
+            "Self-consistency": (
+                "Agreement (5 samples): gradient descent (CONCEPT) 0.60 — needs review\n"
+                "Agreement (5 samples): lecture (MEDIA) 1.00"
+            ),
         }
+        assert served[routing]["metadata"][SELF_CONSISTENCY_METADATA_KEY] == (
+            SELF_CONSISTENCY
+        )
         assert json.loads(facts["Example"]) == ROUTING
         template = served[workflow]["correction_template"]
         assert (

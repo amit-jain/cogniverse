@@ -253,6 +253,8 @@ jobs:
         # The browser suites run in web-ops-integration-tests.
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/runtime/integration/ \
+          --ignore=tests/runtime/integration/test_ag_ui_threads.py \
+          --ignore=tests/runtime/integration/test_web_agent_workspace.py \
           --ignore=tests/runtime/integration/test_web_client_ag_ui.py \
           --ignore=tests/runtime/integration/test_web_ops_annotations.py \
           --ignore=tests/runtime/integration/test_web_ops_approvals.py \
@@ -308,8 +310,8 @@ jobs:
       with:
         version: "0.12.19"
 
-    # test_web_client_ag_ui.py and the test_web_ops_*.py suites install
-    # clients/web from its lockfile.
+    # test_web_client_ag_ui.py, test_web_agent_workspace.py and the
+    # test_web_ops_*.py suites install clients/web from its lockfile.
     - name: Set up Node.js 22
       uses: actions/setup-node@v4
       with:
@@ -342,6 +344,8 @@ jobs:
       timeout-minutes: 20
       run: |
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_ag_ui_threads.py \
+          tests/runtime/integration/test_web_agent_workspace.py \
           tests/runtime/integration/test_web_client_ag_ui.py \
           tests/runtime/integration/test_web_ops_annotations.py \
           tests/runtime/integration/test_web_ops_approvals.py \

@@ -7,7 +7,11 @@ are the ones the ``/v1`` surface is wired with, so a key serves both surfaces
 for the same tenant.
 
 The client holds the conversation and sends the whole of it on every run, so
-a run is self-contained exactly as a ``/v1`` request is. A run streams:
+a run is self-contained exactly as a ``/v1`` request is. Each finished run
+also saves its turn (the user message and the reply, or the user message alone
+when the run failed) to the tenant's conversation store under the run's
+thread, and ``GET /ag-ui/threads/{thread_id}`` reads a thread's saved turns
+back, so a client restores a conversation from the runtime. A run streams:
 
 - ``RUN_STARTED`` with the client's thread and run ids;
 - ``STEP_STARTED`` / ``STEP_FINISHED`` around each phase, plus a ``CUSTOM``
@@ -19,7 +23,8 @@ a run is self-contained exactly as a ``/v1`` request is. A run streams:
   ``streams_answer_tokens`` and sent when the turn completes otherwise;
 - ``STATE_SNAPSHOT`` with the agent's final payload under ``result``, which
   a client renders as results cards;
-- ``RUN_FINISHED``, or ``RUN_ERROR`` when the turn failed.
+- ``RUN_FINISHED``, or ``RUN_ERROR`` when the turn failed or its reply could
+  not be saved to the thread.
 
 A search payload carries the ``span_id`` of the search; ``POST
 /ag-ui/results/relevance`` stores a reviewer's relevance label for one of its
@@ -107,6 +112,11 @@ router = APIRouter()
 STATUS_EVENT = "cogniverse.status"
 # The step every run opens with, before the agent reports a phase.
 START_PHASE = "starting"
+
+
+def thread_context_id(thread_id: str) -> str:
+    """The conversation context an AG-UI thread's turns are saved under."""
+    return f"ag-ui:{thread_id}"
 
 
 def _openai_content(content: Any, where: str) -> Any:
@@ -216,6 +226,10 @@ class _RunWriter:
     @property
     def message_id(self) -> str:
         return self._message_id
+
+    @property
+    def thread_id(self) -> str:
+        return self._thread_id
 
     def _encode(self, event: BaseEvent) -> str:
         return self._encoder.encode(event)
@@ -426,6 +440,7 @@ async def _run_frames(
     external_tools: Optional[List[Dict[str, Any]]],
 ) -> AsyncIterator[str]:
     """The run's frames; a failure ends the run on ``RUN_ERROR``."""
+    query = dispatch_args["query"]
     try:
         yield writer.started()
         for frame in writer.status(START_PHASE, f"Running {agent_name}"):
@@ -445,6 +460,9 @@ async def _run_frames(
                     elif kind == "text":
                         frames = writer.text(event["delta"])
                     elif kind == "error":
+                        await _save_unanswered(
+                            dispatcher, writer, tenant_id, query, agent_name
+                        )
                         frames = writer.failed(event["message"], "internal_error")
                     elif kind == "tool_calls":
                         calls = event["tool_calls"]
@@ -452,7 +470,14 @@ async def _run_frames(
                             pending_tool_call_ids=[call["id"] for call in calls]
                         )
                     else:
-                        frames = writer.finished(payload=event["payload"])
+                        frames = await _answered(
+                            dispatcher,
+                            writer,
+                            tenant_id,
+                            query,
+                            event["text"],
+                            event["payload"],
+                        )
                     for frame in frames:
                         yield frame
             return
@@ -478,7 +503,16 @@ async def _run_frames(
             frames = []
             for part in split_answer_chunks(outcome["answer"]):
                 frames.extend(writer.text(part))
-            frames.extend(writer.finished(payload=outcome["payload"]))
+            frames.extend(
+                await _answered(
+                    dispatcher,
+                    writer,
+                    tenant_id,
+                    query,
+                    outcome["answer"],
+                    outcome["payload"],
+                )
+            )
         for frame in frames:
             yield frame
     except asyncio.CancelledError:
@@ -491,8 +525,55 @@ async def _run_frames(
     except Exception as exc:
         logger.exception("ag-ui run for %s failed", agent_name)
         message, code = _failure_message(exc, agent_name)
+        await _save_unanswered(dispatcher, writer, tenant_id, query, agent_name)
         for frame in writer.failed(message, code):
             yield frame
+
+
+async def _answered(
+    dispatcher: Any,
+    writer: "_RunWriter",
+    tenant_id: str,
+    query: str,
+    answer: str,
+    payload: Optional[Dict[str, Any]],
+) -> List[str]:
+    """The answered run's closing frames, once its turn (the reply as
+    delivered) has its place in the thread; a turn the ledger cannot place
+    ends the run on ``RUN_ERROR``."""
+    try:
+        await dispatcher.record_conversation_turn(
+            tenant_id, thread_context_id(writer.thread_id), query, {"answer": answer}
+        )
+    except Exception as exc:
+        logger.exception("ag-ui thread %s: the turn was not saved", writer.thread_id)
+        return writer.failed(
+            "The reply was not saved to this conversation "
+            f"({type(exc).__name__}). See server logs for detail.",
+            "conversation_not_saved",
+        )
+    return writer.finished(payload=payload)
+
+
+async def _save_unanswered(
+    dispatcher: Any,
+    writer: "_RunWriter",
+    tenant_id: str,
+    query: str,
+    agent_name: str,
+) -> None:
+    """Save a failed run's user message to its thread; the run reports its
+    own failure, so a save that fails too is logged."""
+    try:
+        await dispatcher.record_conversation_turn(
+            tenant_id, thread_context_id(writer.thread_id), query, {}
+        )
+    except Exception:
+        logger.exception(
+            "ag-ui thread %s: the failed %s run's message was not saved",
+            writer.thread_id,
+            agent_name,
+        )
 
 
 class RelevanceRequest(BaseModel):
@@ -570,6 +651,50 @@ async def rate_result(
         "result_id": request.result_id,
         "relevance": request.relevance,
         "score": score,
+    }
+
+
+@router.get("/threads/{thread_id}")
+async def read_thread(
+    thread_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """The saved turns of one of the key's tenant's threads, oldest first.
+
+    ``state`` is ``incomplete`` (with its ``reason``) when a turn is still
+    being saved or was lost; a thread with no saved turns answers none.
+    """
+    try:
+        tenant_id = await resolve_tenant_off_loop(authorization)
+    except ConfigStoreUnavailableError as exc:
+        logger.warning("harness key store unavailable on /ag-ui: %s", exc)
+        return dependency_unavailable(exc, "harness key store")
+    if tenant_id is None:
+        return error_response(**UNAUTHORIZED)
+    try:
+        dispatcher = current_dispatcher()
+    except DispatcherNotReady as exc:
+        return error_response(
+            503, str(exc), "service_unavailable", err_type="server_error"
+        )
+    except Exception as exc:
+        logger.exception("dispatcher provider failed")
+        return dependency_unavailable(exc, "dispatcher")
+    try:
+        history = await dispatcher.read_conversation(
+            tenant_id, thread_context_id(thread_id)
+        )
+    except SessionStateUnavailable as exc:
+        logger.warning("conversation ledger unavailable on /ag-ui: %s", exc)
+        return dependency_unavailable(exc, "conversation ledger")
+    except Exception as exc:
+        logger.exception("ag-ui thread %s could not be read", thread_id)
+        return dependency_unavailable(exc, "conversation store")
+    return {
+        "thread_id": thread_id,
+        "state": history.state,
+        "reason": history.reason,
+        "turns": history.turns,
     }
 
 

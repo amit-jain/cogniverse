@@ -35,9 +35,13 @@ from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryC
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 from cogniverse_foundation.telemetry.span_contract import RESULT_RELEVANCE
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_PERSIST_FAILURE_CAPACITY,
+    CONVERSATION_SAVE_LEASE_S,
+    AgentDispatcher,
+)
 from cogniverse_runtime.routers import ag_ui, agents, openai_compat
-from cogniverse_runtime.session_state import ContinuationStore
+from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
 from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.approval_review import run_in_own_loop
 from tests.utils.http_fault_proxy import InterceptFaultProxy
@@ -145,15 +149,29 @@ def runtime_url(telemetry, workflow_state_redis_url):
 
     dispatcher._get_search_agent = search_agent
 
+    # No conversation memory is configured: each run's turn takes its place in
+    # the ledger and is not stored.
+    dispatcher._conversation_store_factory = lambda tenant_id: None
+
     @asynccontextmanager
     async def lifespan(_app):
         redis = await connect_shared_state_redis(workflow_state_redis_url)
+        prefix = f"test:relevance:{uuid.uuid4().hex}"
         openai_compat.set_continuation_store(
-            ContinuationStore(redis, key_prefix=f"test:relevance:{uuid.uuid4().hex}")
+            ContinuationStore(redis, key_prefix=prefix)
+        )
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                redis,
+                save_lease_s=CONVERSATION_SAVE_LEASE_S,
+                failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
+                key_prefix=f"{prefix}:conversation",
+            )
         )
         try:
             yield
         finally:
+            dispatcher.set_conversation_ledger(None)
             openai_compat.set_continuation_store(None)
             await redis.aclose()
 

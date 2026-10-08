@@ -118,3 +118,16 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .retrieved { margin: 0; padding-left: 18px; }
 .retrieved .hit { color: #2e8b57; }
 .retrieved .miss { color: #c0392b; }
+
+.new-thread { margin-left: auto; font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+.run-notice { margin: 8px 0; padding: 8px 12px; border-radius: 8px; font-size: 13px; border: 1px solid var(--border); }
+.run-notice.error { color: #c0392b; border-color: #e6b0aa; }
+.run-notice.cancelled, .run-notice.warning { color: var(--muted); }
+.result-group { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 6px; }
+.result-snippet { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
+.code-result { display: grid; gap: 8px; margin-bottom: 12px; }
+.code-summary { margin: 0; font-size: 13px; }
+.code-file, .code-run { margin: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.code-file figcaption, .code-run figcaption { font-size: 12px; color: var(--muted); margin-bottom: 6px; overflow-wrap: anywhere; }
+.code-result pre { margin: 0; font-size: 12px; overflow-x: auto; white-space: pre; }
+.code-stderr { color: #c0392b; }

@@ -549,6 +549,7 @@ function StoreStats() {
         total_versions: number;
         total_tenants: number;
         configs_per_scope: Record<string, number>;
+        storage_backend?: string;
       }>('/admin/config/stats', { signal }),
     [],
   );
@@ -556,7 +557,9 @@ function StoreStats() {
     <Panel title="Config store" actions={<button onClick={stats.reload}>Refresh</button>}>
       {stats.error && <Alert>{stats.error}</Alert>}
       {stats.data && (
-        <dl className="facts">
+        <dl className="facts" aria-label="Config store facts">
+          <dt>Backend</dt>
+          <dd>{stats.data.storage_backend ?? '—'}</dd>
           <dt>Configs</dt>
           <dd>{stats.data.total_configs}</dd>
           <dt>Versions</dt>

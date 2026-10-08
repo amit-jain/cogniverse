@@ -487,12 +487,14 @@ def test_analytics_finds_the_root_causes_of_the_filtered_traces(
             "Optimize slow operations",
             "Profile slow operations; Add caching where appropriate; Consider "
             "asynchronous processing",
+            f"Optimize '{SEARCH}' operation or increase resources",
         ],
         [
             "medium",
             "configuration",
             "Review configuration settings",
             "Check Profile 'video_colpali' has performance issues",
+            "Review 'video_colpali' configuration and resource allocation",
         ],
     ]
 
@@ -828,6 +830,7 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
         "Unreadable": "0",
         "Accuracy": "66.7%",
         "Confidence calibration": f"{statistics.correlation([0.65, 0.3, 0.9], [1, 0, 1]):.2f}",
+        "Latency mean": "200.0 ms",
         "Latency p50": "200.0 ms",
         "Latency p95": "290.0 ms",
     }
