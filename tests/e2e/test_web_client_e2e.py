@@ -654,6 +654,10 @@ class TestConfigurationView:
         expect(summaries).to_have_count(2)
         expect(summaries.nth(0)).to_contain_text("Version 2,")
         expect(summaries.nth(0)).to_contain_text("(current)")
+        expect(summaries.nth(1)).to_contain_text("Version 1,")
+        # Each version's JSON and its Restore button sit in its collapsed
+        # details; opening version 1 shows them.
+        summaries.nth(1).click()
         history.get_by_role("button", name="Restore version 1").click()
         expect(page.get_by_role("status")).to_have_text(
             "Restored version 1 of routing/gateway_agent/routing_config as version 3."
