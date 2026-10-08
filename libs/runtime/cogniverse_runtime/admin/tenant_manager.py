@@ -1300,12 +1300,20 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
         )
 
 
-def _delete_tenant_state(config_manager, tenant_id: str) -> tuple[list[str], bool]:
+def _delete_tenant_state(
+    config_manager, schema_manager, tenant_id: str
+) -> tuple[list[str], bool]:
     """Delete every config-store row the tenant left once its schemas are
     dropped: its own rows in every scope (registry tombstones, backend
     profiles, pin quotas, signature variants and other overrides), its
     schema deployment intents, its provenance write lease and the drift
     migration's refusals of its schemas.
+
+    Its registry rows and deployment intents are deleted holding
+    ``schema_manager``'s deployment lease, under which every deployer reads
+    them to build the application package: each version of a row is its own
+    document, and a read between the deletion of a tombstone and of the
+    registration under it finds the schema registered and deploys it again.
 
     The deletion marker, its pending record and the tenant's operation lease
     are kept: the marker until the tenant is created again, the lease because
@@ -1319,6 +1327,7 @@ def _delete_tenant_state(config_manager, tenant_id: str) -> tuple[list[str], boo
     from cogniverse_core.registries.schema_deployment_intents import (
         SchemaDeploymentIntents,
     )
+    from cogniverse_core.registries.schema_registry import SCHEMA_REGISTRY_SERVICE
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
     store = config_manager.store
@@ -1346,24 +1355,51 @@ def _delete_tenant_state(config_manager, tenant_id: str) -> tuple[list[str], boo
     except Exception as exc:
         own = []
         failed("the config rows", exc)
+    leased = []
     for entry in own:
-        delete(
+        row = (
             f"{entry.service}:{entry.config_key}",
             lambda entry=entry: store.delete_config(
                 tenant_id, entry.scope, entry.service, entry.config_key
             ),
         )
+        if entry.service == SCHEMA_REGISTRY_SERVICE:
+            leased.append(row)
+        else:
+            delete(*row)
     intents = SchemaDeploymentIntents(store)
+    intents_read = False
     try:
-        names = intents.tenant_names(tenant_id)
+        with schema_manager.deployment_lease() as lease:
+            try:
+                names = intents.tenant_names(tenant_id)
+            except Exception as exc:
+                names = []
+                failed("the schema deployment intents", exc)
+            intents_read = True
+            leased += [
+                (
+                    f"schema_deployment_intents:{name}",
+                    lambda name=name: intents.delete(name),
+                )
+                for name in names
+            ]
+            for row, delete_row in leased:
+                if lease is not None:
+                    try:
+                        lease.ensure_owned()
+                    except Exception as exc:
+                        found.append(row)
+                        failed(row, exc)
+                        continue
+                delete(row, delete_row)
     except Exception as exc:
-        names = []
-        failed("the schema deployment intents", exc)
-    for name in names:
-        delete(
-            f"schema_deployment_intents:{name}",
-            lambda name=name: intents.delete(name),
-        )
+        for row, _ in leased:
+            if row not in found:
+                found.append(row)
+                failed(row, exc)
+        if not intents_read:
+            failed("the schema deployment intents", exc)
     try:
         lease = store.get_config(
             SYSTEM_TENANT_ID,
@@ -1678,7 +1714,7 @@ async def _delete_tenant(
         # go before workflows are listed, so a run one spawns meanwhile is
         # listed and stopped too.
         state_rows, state_deleted = await asyncio.to_thread(
-            _delete_tenant_state, config_manager, canonical_tid
+            _delete_tenant_state, config_manager, schema_manager, canonical_tid
         )
         projects, projects_deleted = await _delete_tenant_projects(canonical_tid)
         schedules, schedules_deleted = await _delete_tenant_cron_workflows(
