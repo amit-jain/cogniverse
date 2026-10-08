@@ -84,11 +84,13 @@ from cogniverse_runtime.routers import (
     ingestion,
     knowledge,
     openai_compat,
+    optimization_report,
     orchestration_annotations,
     routing_decisions,
     search,
     telemetry_metrics,
     tenant,
+    training_examples,
     wiki,
 )
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
@@ -1178,6 +1180,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     admin.set_schema_loader(schema_loader)
     tenant.set_config_manager(config_manager)
     approvals.set_config_manager(config_manager)
+    training_examples.set_config_manager(config_manager)
     _log_workflow_submission_status()
 
     # Wire ingestion and search routers via FastAPI dependency overrides
@@ -2034,6 +2037,12 @@ app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 app.include_router(approvals.router, prefix="/admin/tenant", tags=["approvals"])
+app.include_router(
+    training_examples.router, prefix="/admin/tenant", tags=["training-examples"]
+)
+app.include_router(
+    optimization_report.router, prefix="/admin/tenant", tags=["optimization-report"]
+)
 app.include_router(
     orchestration_annotations.router,
     prefix="/admin/tenant",

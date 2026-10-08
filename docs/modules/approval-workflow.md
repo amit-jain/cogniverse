@@ -673,6 +673,29 @@ Both raise `ValueError` for data no synthetic schema describes, and
 `parse_corrections` raises for an empty object or a field the schema does not
 let a reviewer change.
 
+`cogniverse_synthetic.approval.uploads` validates training examples an
+operator wrote for one optimizer:
+
+```python
+from cogniverse_synthetic.approval.uploads import (
+    parse_uploaded_examples,
+    upload_templates,
+)
+
+templates = upload_templates()  # {optimizer: {schema, fields, required, example}}
+records = parse_uploaded_examples("query_enhancement", examples)
+```
+
+`parse_uploaded_examples` checks each example against the optimizer's schema
+and the approved-training contract and returns the records, or raises
+`UploadedExamplesError` whose `errors` name every invalid example; nothing is
+returned for a partly invalid upload. An upload holds at most
+`MAX_UPLOADED_EXAMPLES` (100). `HumanApprovalAgent.submit_reviewed_batch(batch,
+reviewer=..., feedback=...)` saves such a batch awaiting review, waits until
+the store serves it, then approves each item by that reviewer into the
+tenant's approved training dataset in order; a failure after the save raises `ReviewedBatchIncompleteError` naming
+the items already approved, and the rest stay in the review queue.
+
 `HumanApprovalAgent` persists a successful regeneration through
 `ApprovalStorage.replace_item()`. The replacement event contains the exact
 batch, original, and replacement IDs plus the canonical Redis-selected record

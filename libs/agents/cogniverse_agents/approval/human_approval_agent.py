@@ -26,6 +26,20 @@ from cogniverse_core.common.tenant_utils import require_tenant_id
 logger = logging.getLogger(__name__)
 
 
+class ReviewedBatchIncompleteError(RuntimeError):
+    """A saved reviewed batch whose items were not all approved; the rest
+    await review."""
+
+    def __init__(self, batch_id: str, approved_item_ids: List[str], total: int):
+        super().__init__(
+            f"Approved {len(approved_item_ids)} of {total} items of reviewed "
+            f"batch {batch_id}; the rest await review"
+        )
+        self.batch_id = batch_id
+        self.approved_item_ids = approved_item_ids
+        self.total = total
+
+
 class HumanApprovalAgent:
     """
     Generic human-in-the-loop approval agent
@@ -200,6 +214,65 @@ class HumanApprovalAgent:
                 decision=decision,
                 project_context=batch.context,
             )
+
+    async def submit_reviewed_batch(
+        self, batch: ApprovalBatch, *, reviewer: str, feedback: str
+    ) -> ApprovalBatch:
+        """Persist a batch ``reviewer`` already approved, such as examples an
+        operator wrote.
+
+        The batch is saved with every item awaiting review, then each item is
+        approved by ``reviewer`` into the tenant's approved training dataset in
+        order. A failure after the save raises ``ReviewedBatchIncompleteError``
+        and leaves the items not yet approved awaiting review in the queue.
+        """
+        if self.storage is None:
+            raise ValueError("Storage required for submit_reviewed_batch")
+        persist_approved = getattr(self.storage, "persist_approved_item", None)
+        if not callable(persist_approved):
+            raise RuntimeError(
+                "Approval storage must implement persist_approved_item before "
+                "a reviewed batch can be submitted"
+            )
+        batch_tenant = require_tenant_id(
+            batch.context.get("tenant_id"),
+            source=f"approval batch {batch.batch_id} context",
+        )
+        for item in batch.items:
+            item.confidence = self._validated_confidence(item.item_id, item.confidence)
+            item.status = ApprovalStatus.PENDING_REVIEW
+        await self.storage.save_batch(batch)
+        # Approval annotates each item's span, so wait for the backend to
+        # serve the saved batch first.
+        if await self.storage.get_batch(batch.batch_id) is None:
+            raise ReviewedBatchIncompleteError(batch.batch_id, [], len(batch.items))
+        for index, item in enumerate(list(batch.items)):
+            try:
+                batch.items[index] = await persist_approved(
+                    batch_id=batch.batch_id,
+                    dataset_name=approved_synthetic_dataset_name(batch_tenant),
+                    item=item,
+                    decision=ReviewDecision(
+                        item_id=item.item_id,
+                        approved=True,
+                        feedback=feedback,
+                        reviewer=reviewer,
+                    ),
+                    project_context=batch.context,
+                )
+            except Exception as exc:
+                raise ReviewedBatchIncompleteError(
+                    batch.batch_id,
+                    [approved.item_id for approved in batch.items[:index]],
+                    len(batch.items),
+                ) from exc
+        logger.info(
+            "Approved reviewed batch %s of %d items by %s",
+            batch.batch_id,
+            len(batch.items),
+            reviewer,
+        )
+        return batch
 
     async def process_batch(
         self, items: List[Dict[str, Any]], batch_id: str, context: Dict[str, Any]

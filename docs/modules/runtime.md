@@ -470,6 +470,8 @@ The server uses modular routers for different functionality:
 | `graph` | `/graph` | Knowledge graph upsert, search, neighbors, and path queries |
 | `tenant` | `/admin/tenant` | Per-tenant self-service: instructions, memories, scheduled jobs, optimization |
 | `approvals` | `/admin/tenant` | Human review of a tenant's synthetic examples |
+| `training_examples` | `/admin/tenant` | Operator-written training examples approved into a tenant's training dataset |
+| `optimization_report` | `/admin/tenant` | A tenant's optimization report streamed from `detailed_report_agent` |
 | `orchestration_annotations` | `/admin/tenant` | Human review of a tenant's orchestration workflows |
 | `telemetry_metrics` | `/admin/tenant` | Trace analytics, profile-selection and RLM A/B metrics over a tenant's spans, and its searches scored against its golden set |
 | `routing_decisions` | `/admin/tenant` | A tenant's routing decisions with their outcomes, labels and per-agent quality; approving and correcting their labels |
@@ -1421,6 +1423,14 @@ Two label selectors feed it, because Argo does not copy a CronWorkflow's labels 
 `trigger` is `manual` for a dashboard submit and `scheduled` for a CronWorkflow-spawned run. `mode` is the `cogniverse.ai/mode` label on a manual run; a scheduled pipeline run passes a mode per step rather than per Workflow, so its `mode` is `null`. An Argo outage — unreachable, or any non-200 — answers **503** with the reason; it never answers an empty list, which would read as "this tenant has never optimized". Argo not configured on the deployment also answers 503.
 
 The dashboard's Optimization Overview reads this route for its run-count tile, its last-run tile and its Recent Optimization History table.
+
+**POST /admin/tenant/{tenant_id}/optimize/report** — Asks `detailed_report_agent` for the tenant's optimization performance report and streams the agent's events (`status`, `partial`, `final`, `error`) as server-sent events, one JSON event per `data` frame. A failure inside the stream ends it on an `error` event naming the exception type. **404** when `detailed_report_agent` is not registered; **503** `agent_registry_unavailable` when the registry cannot be read.
+
+### Tenant Training Examples
+
+**GET /admin/tenant/training-example-templates** — Per optimizer type, its example schema: `{templates: {optimizer: {schema, fields, required, example}}, max_examples}`.
+
+**POST /admin/tenant/{tenant_id}/training-examples** — Body `{optimizer, reviewer, source?, examples}`. Every example is validated against the optimizer's schema first; any invalid one answers **400** with `{message, errors}` naming each, and nothing is stored. The examples are saved as an approval batch (`context.source` `upload`, `context.source_file` the `source` file name) and approved by `reviewer` into the tenant's approved training dataset, which the optimizer's runs (`simba`, `profile`, `entity-extraction`) read; `routing` examples feed fine-tuning. Response: `{batch_id, optimizer, dataset, item_ids}`. A failure after the batch is saved answers **502** `training_examples_incomplete` with how many examples were approved; the rest await review in the approval queue. A store that fails before that answers **502** `training_examples_not_stored`; a store the system config cannot build answers **503** `approval_store_unavailable`.
 
 ### Tenant Approvals
 
