@@ -272,7 +272,13 @@ class TestThreadRoundTrip:
     async def test_a_failed_run_saves_the_users_message_alone(self, client, request):
         thread = _thread(request)
         events = await _run(client, "failing_agent", thread, [_user("break", 1)])
-        assert [event["type"] for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+        assert [event["type"] for event in events] == [
+            "RUN_STARTED",
+            "STEP_STARTED",
+            "CUSTOM",
+            "STEP_FINISHED",
+            "RUN_ERROR",
+        ]
 
         assert await _read(client, thread) == (
             200,
@@ -432,9 +438,12 @@ class TestFaults:
 
         assert [event["type"] for event in events] == [
             "RUN_STARTED",
+            "STEP_STARTED",
+            "CUSTOM",
             "TEXT_MESSAGE_START",
             "TEXT_MESSAGE_CONTENT",
             "TEXT_MESSAGE_END",
+            "STEP_FINISHED",
             "RUN_ERROR",
         ]
         assert events[-1] == {

@@ -7,6 +7,7 @@ import { TenantChooser } from './tenants';
 interface IngestEvent {
   state: string;
   source_url?: string;
+  filename?: string;
   profile?: string;
   error?: string;
   error_type?: string;
@@ -131,7 +132,7 @@ function IngestRow({ ingest }: { ingest: Followed }) {
   return (
     <tr>
       <td>{ingest.ingestId}</td>
-      <td>{ingest.filename ?? sourceName(queued?.source_url) ?? '—'}</td>
+      <td>{ingest.filename ?? queued?.filename ?? sourceName(queued?.source_url) ?? '—'}</td>
       <td>{queued?.profile ?? '—'}</td>
       <td>{latest?.state ?? (error ? '—' : 'connecting…')}</td>
       <td>

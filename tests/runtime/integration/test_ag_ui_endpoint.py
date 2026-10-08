@@ -15,6 +15,8 @@ import logging
 import socket
 import threading
 import time
+import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 import httpx
@@ -27,11 +29,16 @@ from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentO
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_PERSIST_FAILURE_CAPACITY,
+    CONVERSATION_SAVE_LEASE_S,
+    AgentDispatcher,
+)
 from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
 from cogniverse_runtime.config_loader import ConfigLoader
 from cogniverse_runtime.routers import ag_ui, openai_compat
 from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
+from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [
@@ -391,7 +398,28 @@ def _text(events: List[Dict[str, Any]]) -> str:
 
 
 @pytest.fixture()
-def live_server(ag_ui_app):
+def live_server(ag_ui_app, dispatcher, workflow_state_redis_url):
+    """``ag_ui_app`` on a real socket. The server runs its own event loop, so
+    the conversation ledger it saves turns through holds a Redis client opened
+    on that loop."""
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        redis = await connect_shared_state_redis(workflow_state_redis_url)
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                redis,
+                save_lease_s=CONVERSATION_SAVE_LEASE_S,
+                failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
+                key_prefix=f"test:conversation:{uuid.uuid4().hex}",
+            )
+        )
+        try:
+            yield
+        finally:
+            await redis.aclose()
+
+    ag_ui_app.router.lifespan_context = lifespan
     port = _free_port()
     config = uvicorn.Config(ag_ui_app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
@@ -1099,6 +1127,7 @@ class TestRunFailures:
 
         events = _events(response.text)
         assert events[1:] == [
+            *_opening_step("failing_stream_agent"),
             {
                 "type": "RUN_ERROR",
                 "message": (
@@ -1106,7 +1135,7 @@ class TestRunFailures:
                     "logs for detail."
                 ),
                 "code": "internal_error",
-            }
+            },
         ]
 
     async def test_an_unwired_dispatcher_is_503(self, client):

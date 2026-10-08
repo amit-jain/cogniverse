@@ -313,16 +313,16 @@ class TestIngestion:
         )
         follow.get_by_label("Ingest ID").fill(ingest_id)
         follow.get_by_role("button", name="Follow").click()
-        source_name = Path(
+        video_id = Path(
             _status(runtime_url, ingest_id)["history"][0]["source_url"]
-        ).name
+        ).stem
         expect(_row(other, ingest_id).get_by_role("cell")).to_have_text(
             [
                 ingest_id,
-                source_name,
+                clip.name,
                 resolve_default_profile(get_config(tenant, config_manager)),
                 "complete",
-                f"{Path(source_name).stem}: 1 chunks, 1 documents fed.",
+                f"{video_id}: 1 chunks, 1 documents fed.",
             ]
         )
 
