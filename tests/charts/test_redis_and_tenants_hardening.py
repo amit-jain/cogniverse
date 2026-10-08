@@ -61,7 +61,7 @@ def test_dev_redis_has_no_requirepass():
 @pytest.mark.unit
 @_helm
 def test_prod_redis_auth_fails_loud_without_password():
-    result = _render(values_file=PROD)
+    result = _render("web.harnessKey=x", values_file=PROD)
     assert result.returncode != 0
     assert "redis.auth.password must be set" in result.stderr
 

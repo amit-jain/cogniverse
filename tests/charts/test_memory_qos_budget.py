@@ -295,9 +295,9 @@ def test_modal_llm_serving_fits_the_host_the_overlay_targets():
     """
     total = _scheduled_memory_gib(_render_as_deployed("values.modal-llm.yaml"))
 
-    assert round(total, 2) == 109.50, (
+    assert round(total, 2) == 106.00, (
         f"resident memory requests under Modal chat serving are {total:.2f}Gi, "
-        "not the pinned 109.50Gi"
+        "not the pinned 106.00Gi"
     )
     assert total <= SYSTEM_RAM_GIB, (
         f"the release requests {total:.2f}Gi but the host has "
@@ -318,9 +318,9 @@ def test_local_chat_serving_overcommits_this_host_by_the_overlay_delta():
         f"the Modal overlay returns {local - modal:.2f}Gi, not the 44Gi its "
         "own header claims"
     )
-    assert round(local, 2) == 153.50, (
+    assert round(local, 2) == 150.00, (
         f"resident memory requests under local chat serving are {local:.2f}Gi, "
-        "not the pinned 153.50Gi"
+        "not the pinned 150.00Gi"
     )
     assert local > SYSTEM_RAM_GIB, (
         f"local chat serving now fits in {SYSTEM_RAM_GIB}Gi ({local:.2f}Gi); "
@@ -339,6 +339,8 @@ PROD_SECRETS = (
     "minio.rootPassword=overlay-secret",
     "--set",
     "openshell.server.sshHandshakeSecret=overlay-secret",
+    "--set",
+    "web.harnessKey=overlay-secret",
     "--set",
     "phoenix.postgres.auth.password=overlay-secret",
     "--set",

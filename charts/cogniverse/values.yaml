@@ -579,10 +579,75 @@ openshell:
       clientTlsSecretName: openshell-client-tls
 
 # ===========================================
+# Web client (the Cogniverse UI)
+# ===========================================
+web:
+  enabled: true
+  image:
+    repository: cogniverse/web
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  # Runtime base URL the web server calls. Empty uses this release's runtime
+  # Service.
+  runtimeUrl: ""
+
+  # Harness key the web server sends the runtime on every call; the key decides
+  # the tenant. The chart stores it in the <release>-web Secret and gives the
+  # runtime the same key as COGNIVERSE_HARNESS_API_KEY, which files/config.json
+  # maps to the "default" tenant. Set existingSecret instead to use a Secret
+  # holding the key under harness-api-key.
+  harnessKey: "cogniverse-web-dev"
+  existingSecret: ""
+
+  # Extra environment for the web server (name: value), and envFrom sources
+  # (Secrets or ConfigMaps) for configuration such as its user authentication.
+  env: {}
+  envFrom: []
+
+  service:
+    type: ClusterIP
+    port: 4000
+    nodePort: 28400
+    annotations: {}
+
+  resources:
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+    requests:
+      cpu: "100m"
+      memory: "512Mi"
+
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 2
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ===========================================
 # Dashboard Configuration
 # ===========================================
 dashboard:
-  enabled: true
+  enabled: false
   # Same backend → image selection as runtime (one image per torch
   # variant). Dashboard is Streamlit and never runs inference itself,
   # but the venv transitively imports torch via cogniverse_agents /
@@ -1712,6 +1777,9 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    # Server-sent event streams (chat replies, ingest progress) reach the
+    # browser as they are written.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
 
   hosts:
     - host: cogniverse.example.com
@@ -1722,8 +1790,8 @@ ingress:
           port: 8000
         - path: /
           pathType: Prefix
-          service: dashboard
-          port: 8501
+          service: web
+          port: 4000
 
   tls:
     - secretName: cogniverse-tls

@@ -990,6 +990,8 @@ def _render_overlay(overlay: str | None, *set_args: str) -> list[dict]:
             "--set",
             "openshell.server.sshHandshakeSecret=overlay-secret",
             "--set",
+            "web.harnessKey=overlay-secret",
+            "--set",
             "phoenix.postgres.auth.password=overlay-secret",
             "--set",
             "redis.auth.password=overlay-secret",

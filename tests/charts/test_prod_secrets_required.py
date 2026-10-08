@@ -36,6 +36,7 @@ def test_prod_values_empty_the_dev_secrets():
     assert prod["phoenix"]["postgres"]["auth"]["password"] == "", (
         "prod must not ship the phoenix postgres password"
     )
+    assert prod["web"]["harnessKey"] == "", "prod must not ship the web harness key"
 
 
 @pytest.mark.unit
@@ -60,6 +61,8 @@ def test_prod_install_fails_loud_without_minio_password():
             "redis.auth.password=x",
             "--set",
             "phoenix.postgres.auth.password=x",
+            "--set",
+            "web.harnessKey=x",
             "--show-only",
             "templates/minio.yaml",
         ],
@@ -114,6 +117,8 @@ def test_prod_install_fails_loud_without_postgres_password():
             "redis.auth.password=x",
             "--set",
             "minio.rootPassword=x",
+            "--set",
+            "web.harnessKey=x",
             "--show-only",
             "templates/phoenix-postgres.yaml",
         ],

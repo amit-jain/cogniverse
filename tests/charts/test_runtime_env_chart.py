@@ -206,6 +206,7 @@ class TestRuntimeWorkerProcesses:
         prod_secrets = (
             "minio.rootPassword=overlay-secret",
             "openshell.server.sshHandshakeSecret=overlay-secret",
+            "web.harnessKey=overlay-secret",
             "phoenix.postgres.auth.password=overlay-secret",
             "redis.auth.password=overlay-secret",
         )
@@ -354,7 +355,7 @@ class TestRuntimeSandboxHostMode:
         assert host_mounts == []
 
 
-def _render_with_values(*values_files: str) -> list:
+def _render_with_values(*values_files: str, sets: tuple[str, ...] = ()) -> list:
     args = [
         "helm",
         "template",
@@ -365,6 +366,8 @@ def _render_with_values(*values_files: str) -> list:
     ]
     for f in values_files:
         args += ["-f", str(CHART_PATH / f)]
+    for value in sets:
+        args += ["--set", value]
     result = subprocess.run(args, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise AssertionError(
@@ -399,6 +402,15 @@ class TestDeviceOverlaysKeepDevMode:
             "values.k3s.yaml", "values.cuda.yaml", "values.modal-llm.yaml"
         )
         assert _dev_mount_deployments(manifests) == [
+            "cogniverse-quality-monitor",
+            "cogniverse-runtime",
+        ]
+
+    def test_k3s_with_the_dashboard_enabled_mounts_its_dev_sources(self):
+        manifests = _render_with_values(
+            "values.k3s.yaml", "values.rocm.yaml", sets=("dashboard.enabled=true",)
+        )
+        assert _dev_mount_deployments(manifests) == [
             "cogniverse-dashboard",
             "cogniverse-quality-monitor",
             "cogniverse-runtime",
@@ -411,7 +423,6 @@ class TestDeviceOverlaysKeepDevMode:
     def test_k3s_plus_rocm_keeps_dev_mounts(self):
         manifests = _render_with_values("values.k3s.yaml", "values.rocm.yaml")
         assert _dev_mount_deployments(manifests) == [
-            "cogniverse-dashboard",
             "cogniverse-quality-monitor",
             "cogniverse-runtime",
         ]
@@ -562,6 +573,8 @@ def _cogniverse_app_containers(manifests: list) -> dict[str, dict]:
                 for server in ("/pylate", "/clap", "/gliner", "/vllm-audio")
             ):
                 continue  # model servers, not application code
+            if image.startswith("cogniverse/web:"):
+                continue  # Node server; it reaches cogniverse only via the runtime
             found[f"{name}/{c['name']}"] = {
                 e["name"]: e.get("value") for e in c.get("env", [])
             }
@@ -578,7 +591,7 @@ def test_every_cogniverse_app_container_gets_redis_url():
     the button existed 0 times inside that panel while the panel's text ended
     at the error.
     """
-    manifests = _render_chart("redis.enabled=true")
+    manifests = _render_chart("redis.enabled=true", "dashboard.enabled=true")
     containers = _cogniverse_app_containers(manifests)
     assert containers, "no cogniverse application containers found in the render"
     missing = sorted(n for n, env in containers.items() if "REDIS_URL" not in env)

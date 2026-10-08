@@ -822,6 +822,7 @@ _STUDENT_API_BASE = "https://student.example.com/v1"
 _PROD_SECRETS = (
     "minio.rootPassword=test-minio",
     "openshell.server.sshHandshakeSecret=test-handshake",
+    "web.harnessKey=test-handshake",
     "phoenix.postgres.auth.password=test-postgres",
     "redis.auth.password=test-redis",
 )
