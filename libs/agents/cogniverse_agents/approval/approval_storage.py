@@ -1713,6 +1713,45 @@ class ApprovalStorageImpl(ApprovalStorage):
                 return True
         return False
 
+    async def get_batches(self) -> List[ApprovalBatch]:
+        """Every approval batch of the tenant, newest first, each with its
+        items in their current state (decided, replaced or pending).
+
+        One project span query serves every batch. A telemetry failure
+        raises; an empty list means the tenant has no batches.
+        """
+        spans_df = await self.provider.traces.get_all_spans(
+            project=self.full_project_name,
+            filters={
+                "name": [
+                    "approval_batch",
+                    "approval_item",
+                    "approval_item_replacement",
+                ]
+            },
+        )
+        if spans_df.empty:
+            return []
+        if "attributes.batch_id" not in spans_df.columns:
+            raise RuntimeError(
+                "Approval span query omitted the batch_id attribute for "
+                f"project {self.full_project_name}"
+            )
+        batch_ids = dict.fromkeys(
+            batch_id
+            for batch_id in spans_df.loc[
+                spans_df["name"] == "approval_batch", "attributes.batch_id"
+            ]
+            if isinstance(batch_id, str) and batch_id
+        )
+        batches = []
+        for batch_id in batch_ids:
+            batch = await self.get_batch(batch_id, spans_df=spans_df)
+            if batch is not None:
+                batches.append(batch)
+        batches.sort(key=lambda batch: batch.created_at, reverse=True)
+        return batches
+
     async def get_pending_batches(
         self, context_filter: Optional[Dict[str, Any]] = None
     ) -> List[ApprovalBatch]:

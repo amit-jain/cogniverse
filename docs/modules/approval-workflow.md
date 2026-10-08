@@ -285,6 +285,7 @@ All public `ApprovalStorageImpl` methods are asynchronous:
 | `update_item(item, batch_id=None)` | Write the `item_status_update` annotation for the resolved item span |
 | `replace_item(batch_id, original, replacement)` | Select and export one canonical regenerated replacement |
 | `get_pending_batches(context_filter=None)` | Return batches whose current reconstructed view still contains pending items |
+| `get_batches()` | Return every batch of the tenant, newest first, reconstructed from one project span query; raises on a telemetry failure |
 | `record_decision(decision, item)` | Emit an optional standalone decision span without changing item status |
 | `get_item_span_id(item_id, batch_id=None)` | Resolve an original or replacement span ID, scoped to the batch when supplied |
 | `log_approval_decision(span_id, item_id, approved, feedback=None, reviewer=None, decision_timestamp=None)` | Persist reviewer history as a `human_approval` annotation |

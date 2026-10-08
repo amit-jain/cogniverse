@@ -8,6 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Coroutine
 
+from cogniverse_agents.approval import HumanApprovalAgent
 from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
 from cogniverse_agents.optimizer.entity_self_consistency import (
     AGREEMENT_KEY,
@@ -21,12 +22,14 @@ from cogniverse_agents.optimizer.entity_self_consistency import (
 from cogniverse_core.approval.interfaces import (
     ApprovalBatch,
     ApprovalStatus,
+    ReviewDecision,
     ReviewItem,
     approved_synthetic_dataset_name,
 )
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import ApprovalConfig, SystemConfig
 from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
+from cogniverse_synthetic.approval import SyntheticDataConfidenceExtractor
 from tests.utils.memory_store import InMemoryConfigStore
 
 ROUTING = {
@@ -169,3 +172,17 @@ def approved_rows_until(storage, item_id, want, timeout=30.0) -> int:
             return count
         time.sleep(2)
     return count
+
+
+async def reject_without_regenerating(storage, batch_id, item_id, **decision) -> None:
+    """Reject ``item_id`` the way an approval agent with no feedback handler
+    does: the item is rejected and nothing replaces it."""
+    agent = HumanApprovalAgent.from_approval_config(
+        ApprovalConfig(),
+        confidence_extractor=SyntheticDataConfidenceExtractor(),
+        storage=storage,
+    )
+    result = await agent.apply_decision(
+        batch_id, ReviewDecision(item_id=item_id, approved=False, **decision)
+    )
+    assert (result.item_id, result.status.value) == (item_id, "rejected")

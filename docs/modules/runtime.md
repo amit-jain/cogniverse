@@ -1431,10 +1431,16 @@ Generated examples the confidence extractor did not auto-approve wait in the ten
 **POST /admin/tenant/{tenant_id}/approvals/{batch_id}/{item_id}** — Body `{approved, reviewer, feedback?, corrections?}`. Response: `{status, item}`.
 
 - An approval appends the item to the tenant's approved training dataset and answers `approved`.
-- A rejection needs `feedback` (**400** otherwise). For an item of a synthetic example schema it regenerates with the tenant's primary LM and answers `regenerated` with the replacement awaiting review; any other item answers `rejected`. No LM for the tenant answers **503** `regeneration_unavailable`.
+- A rejection of an item of a synthetic example schema regenerates it with the tenant's primary LM, which needs `feedback` (**400** otherwise), and answers `regenerated` with the replacement awaiting review; any other item answers `rejected`, with or without feedback. No LM for the tenant answers **503** `regeneration_unavailable`.
 - `corrections` must name fields the item's schema lets a reviewer change (**400** with the field names otherwise). An item with `corrections_required` (a `WorkflowExecutionSchema` record) is not regenerated: its rejection merges the corrections into a replacement, so a rejection without one answers **400**.
 - An item that is not awaiting review answers **404**. A reviewer who loses the election to another reviewer's decision on the same item answers **409** `approval_decision_conflict`; nothing is written for the losing decision.
 - A store or LM failure answers **502** `approval_decision_failed`; a decision still running after 900 seconds answers **504** `approval_decision_timed_out`.
+
+**GET /admin/tenant/{tenant_id}/approvals/history** — Every approved and rejected item, most recently reviewed first. Response: `{approved: [...], rejected: [...]}`, each entry `{item_id, batch_id, status, confidence, query, data, created_at, reviewed_at, schema_name, reviewer, feedback, corrections, replacement_id, replacement_status}`. `approved` holds `approved` (by a reviewer) and `auto_approved` (by the confidence threshold) items. A rejected item that was regenerated carries the decision its replacement records and the replacement's ID and status. A store read failure answers **502** `approval_store_unavailable`.
+
+**GET /admin/tenant/{tenant_id}/approvals/stats** — `{total, pending, auto_approved, approved, rejected, approval_rate, average_confidence}` over every item of the tenant: `pending` counts `pending_review` and `regenerated` items, `approval_rate` is `(approved + auto_approved) / total`, and `average_confidence` maps each of the four groups that holds items to its mean confidence. A store read failure answers **502** `approval_store_unavailable`.
+
+**POST /admin/tenant/{tenant_id}/approvals/{batch_id}/{item_id}/regenerate** — Regenerates a rejected item that nothing replaced, from its recorded rejection (its feedback, corrections and reviewer), and answers `{status: "regenerated", item}` with the replacement awaiting review. Redis elects one replacement when two requests run at once. **404** for an unknown item; **409** for an item that is not rejected, was already regenerated, or has no recorded rejection; **400** for an item no schema describes, or whose rejection lacks the feedback (or, for a `WorkflowExecutionSchema` record, the corrections) regeneration needs.
 
 ### Tenant Orchestration Reviews
 
