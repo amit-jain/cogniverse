@@ -334,8 +334,11 @@ single DSPy `ChainOfThought` module, with a heuristic fallback. This is a separa
 
 - `QueryEnhancementModule`: `dspy.ChainOfThought(QueryEnhancementSignature)` producing `enhanced_query`,
   `expansion_terms`, `synonyms`, `context`, `confidence`, `reasoning`
-- Falls back to a heuristic expander when the LLM call raises, returns empty fields, or **echoes the input
-  verbatim** (an echo would otherwise poison the SIMBA training set with identity pairs)
+- Falls back to a heuristic expander when the LLM call raises, leaves `enhanced_query` blank, or **echoes the
+  input verbatim** (an echo would otherwise poison the SIMBA training set with identity pairs). Blank
+  `expansion_terms`, `synonyms` or `context` are valid LM answers. The heuristic keeps the query's meaning:
+  it appends only the spelled-out form of an acronym the query contains (`ML` -> `machine learning`) and
+  otherwise returns the query unchanged; synonyms are reported, never appended
 - `QueryEnhancementOutput.path_used` (and the A2A envelope's `path_used`) names which path answered:
   `lm` or `heuristic_fallback`, empty when the query was empty and no enhancement ran. The same value
   is the span's `enhancement.path` attribute

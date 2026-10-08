@@ -63,16 +63,30 @@ _ENVELOPE_KEYS = frozenset(
 # Where a dispatch envelope nests an agent's own output.
 _PAYLOAD_KEYS = ("orchestration_result", "result")
 
-_HIT_ID_KEYS = ("document_id", "image_id", "audio_id", "video_id", "id")
-_HIT_SCORE_KEYS = ("score", "relevance_score")
-_HIT_TEXT_KEYS = (
+# A hit is named by its title: a search hit's own, else its source's.
+_HIT_TITLE_KEYS = (
     "title",
-    "description",
+    "video_title",
+    "source_title",
+    "document_title",
+    "audio_title",
+    "image_title",
+    "filename",
+)
+# What a hit shows, in the order a reader wants it: a preview, a video
+# frame's description, a transcript, then the raw text fields.
+_HIT_TEXT_KEYS = (
     "content_preview",
+    "segment_description",
+    "description",
     "transcript",
+    "audio_transcript",
+    "full_text",
+    "image_description",
     "text",
     "content",
 )
+HIT_SNIPPET_CHARS = 200
 
 # A supporting answer field (a report's findings) is a list of entries, each
 # either a line of text or a record labelling one.
@@ -134,33 +148,117 @@ def _first_text(item: Mapping[str, Any], keys: Iterable[str]) -> Optional[str]:
     return None
 
 
+def _clock(seconds: float) -> str:
+    """75.4 -> "1:15", as the web client's result cards show a time."""
+    whole = int(seconds)
+    return f"{whole // 60}:{whole % 60:02d}"
+
+
+def _snippet(text: str) -> str:
+    """The first line of a hit's text, cut at a word under the snippet cap."""
+    line = next((part.strip() for part in text.splitlines() if part.strip()), "")
+    if len(line) <= HIT_SNIPPET_CHARS:
+        return line
+    cut = line[:HIT_SNIPPET_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:")
+    return f"{cut}…"
+
+
+def _hit_field(item: Mapping[str, Any], keys: Iterable[str]) -> Optional[str]:
+    """A hit's field, read on the hit first and then on its metadata."""
+    found = _first_text(item, keys)
+    if found is None:
+        metadata = item.get("metadata")
+        if isinstance(metadata, Mapping):
+            found = _first_text(metadata, keys)
+    return found
+
+
 def _format_search_results(results: List[Any], limit: int = 10) -> str:
-    """Render search hits as lines, so an answer carries the hits themselves
-    rather than only the "Found N results" counter. Hit shape varies per
-    modality (video/image/audio/document), hence the key precedence."""
+    """Render search hits as lines a person reads: each hit by its title (the
+    video, document, image or clip it is from) and, for a video segment, its
+    time range, then the first line of what it shows. A hit's backend
+    document id is never shown."""
     lines: List[str] = []
-    for item in results[:limit]:
+    for position, item in enumerate(results[:limit], start=1):
         if not isinstance(item, Mapping):
             continue
-        parts = [str(_first_text(item, _HIT_ID_KEYS) or "?")]
-        for key in _HIT_SCORE_KEYS:
-            score = item.get(key)
-            if isinstance(score, (int, float)) and not isinstance(score, bool):
-                parts.append(f"score {float(score):.3f}")
-                break
+        title = _hit_field(item, _HIT_TITLE_KEYS)
+        line = title or f"Result {position}"
         temporal = item.get("temporal_info")
-        if isinstance(temporal, Mapping) and temporal.get("start_time") is not None:
-            parts.append(f"{temporal.get('start_time')}s-{temporal.get('end_time')}s")
-        line = " · ".join(parts)
-        text = _first_text(item, _HIT_TEXT_KEYS)
-        if text is None:
-            metadata = item.get("metadata")
-            if isinstance(metadata, Mapping):
-                text = _first_text(metadata, _HIT_TEXT_KEYS)
+        if isinstance(temporal, Mapping):
+            start, end = temporal.get("start_time"), temporal.get("end_time")
+            if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+                line += f" ({_clock(start)}–{_clock(end)})"
+        text = _hit_field(item, _HIT_TEXT_KEYS)
         if text is not None:
-            line += f": {text[:200]}"
+            snippet = _snippet(text)
+            if snippet and snippet != title:
+                line += f": {snippet}"
         lines.append(f"- {line}")
     return "\n".join(lines)
+
+
+def _describe_entities(payload: Mapping[str, Any]) -> str:
+    entities = [
+        entity
+        for entity in payload.get("entities") or []
+        if isinstance(entity, Mapping) and _first_text(entity, ("text",))
+    ]
+    if not entities:
+        return "Found no entities."
+    named = ", ".join(
+        f"{entity['text'].strip()} ({str(entity.get('type') or 'entity').lower()})"
+        for entity in entities
+    )
+    noun = "entity" if len(entities) == 1 else "entities"
+    sentence = f"Found {len(entities)} {noun}: {named}."
+    relations = [
+        " ".join(
+            str(relation.get(key, "")).strip()
+            for key in ("subject", "relation", "object")
+        )
+        for relation in payload.get("relationships") or []
+        if isinstance(relation, Mapping)
+    ]
+    if relations:
+        sentence += f" Relationships: {'; '.join(relations)}."
+    return sentence
+
+
+def _describe_enhancement(payload: Mapping[str, Any]) -> str:
+    original = str(payload.get("original_query") or "").strip()
+    enhanced = str(payload.get("enhanced_query") or "").strip()
+    if not enhanced or enhanced == original:
+        return f'Kept the query as asked: "{original}".'
+    return f'Enhanced "{original}" to "{enhanced}".'
+
+
+def _describe_profile_selection(payload: Mapping[str, Any]) -> str:
+    sentence = f"Selected profile {payload['selected_profile']}"
+    intent = payload.get("query_intent")
+    if isinstance(intent, str) and intent.strip():
+        sentence += f" for a {intent.strip().replace('_', ' ')}"
+    confidence = payload.get("confidence")
+    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+        sentence += f" (confidence {float(confidence):.2f})"
+    return f"{sentence}."
+
+
+# Payloads that declare no answer field but whose result a person reads as a
+# sentence: the key set that identifies each, and its sentence. The web client
+# shows the full result beside it.
+_STRUCTURED_REPLIES = (
+    (("entities", "entity_count"), _describe_entities),
+    (("original_query", "enhanced_query"), _describe_enhancement),
+    (("selected_profile",), _describe_profile_selection),
+)
+
+
+def _describe_structured(payload: Mapping[str, Any]) -> Optional[str]:
+    for keys, describe in _STRUCTURED_REPLIES:
+        if all(key in payload for key in keys):
+            return describe(payload)
+    return None
 
 
 def _render_entries(value: Any) -> Optional[str]:
@@ -250,6 +348,10 @@ def _extract(result: Mapping[str, Any]) -> Optional[str]:
                 return f"{message.strip()}\n{body}"
         return message.strip()
 
+    described = _describe_structured(result)
+    if described is not None:
+        return described
+
     payload = {k: v for k, v in result.items() if k not in _ENVELOPE_KEYS}
     if payload:
         return json.dumps(payload, sort_keys=True, default=str)
@@ -261,8 +363,10 @@ def extract_answer_text(result: Mapping[str, Any]) -> str:
 
     An agent's own output is read first (nested under ``result`` /
     ``orchestration_result``, or flat for the generic path), then a gateway
-    wrapper's downstream result, then the envelope's message plus its hits. A
-    result declaring no text at all renders as structured JSON of its payload.
+    wrapper's downstream result, then the envelope's message plus its hits
+    (each by title and time range). An entity extraction, query enhancement or
+    profile selection result reads as one sentence; any other result declaring
+    no text at all renders as structured JSON of its payload.
 
     Raises:
         NoAnswerError: the result is an error envelope or carries no payload.

@@ -167,6 +167,111 @@ export function orchestrationSummaryOf(state: unknown): string | undefined {
   return text(record(record(record(state)?.result)?.orchestration_result)?.execution_summary);
 }
 
+/** An entity extraction's entities and the relationships between them. */
+export interface EntityFacts {
+  agent: string;
+  entities: { text: string; type?: string }[];
+  relationships: { subject: string; relation: string; object: string }[];
+}
+
+/** The entities of each entity extraction in a run's final state. */
+export function entitiesOf(state: unknown): EntityFacts[] {
+  return payloadsOf(state).flatMap(({ agent, payload }) => {
+    if (!Array.isArray(payload.entities) || !('entity_count' in payload)) return [];
+    return [
+      {
+        agent,
+        entities: payload.entities.flatMap((entry) => {
+          const entity = record(entry);
+          const name = text(entity?.text);
+          return name ? [{ text: name, type: text(entity?.type) }] : [];
+        }),
+        relationships: (Array.isArray(payload.relationships) ? payload.relationships : []).flatMap((entry) => {
+          const relation = record(entry);
+          const subject = text(relation?.subject);
+          const verb = text(relation?.relation);
+          const object = text(relation?.object);
+          return subject && verb && object ? [{ subject, relation: verb, object }] : [];
+        }),
+      },
+    ];
+  });
+}
+
+/** A query enhancement: the query as asked, the query searched and why. */
+export interface EnhancementFacts {
+  agent: string;
+  original: string;
+  enhanced: string;
+  expansionTerms: string[];
+  synonyms: string[];
+  variants: string[];
+  path?: string;
+  reasoning?: string;
+}
+
+const strings = (value: unknown): string[] => (Array.isArray(value) ? value.flatMap((entry) => text(entry) ?? []) : []);
+
+/** Each query enhancement in a run's final state. */
+export function enhancementsOf(state: unknown): EnhancementFacts[] {
+  return payloadsOf(state).flatMap(({ agent, payload }) => {
+    const original = text(payload.original_query);
+    const enhanced = text(payload.enhanced_query);
+    if (original === undefined || enhanced === undefined) return [];
+    return [
+      {
+        agent,
+        original,
+        enhanced,
+        expansionTerms: strings(payload.expansion_terms),
+        synonyms: strings(payload.synonyms),
+        variants: strings(payload.query_variants),
+        path: text(payload.path_used),
+        reasoning: text(payload.reasoning),
+      },
+    ];
+  });
+}
+
+/** A profile selection: the profile chosen for a query, and the runners-up. */
+export interface ProfileChoice {
+  agent: string;
+  profile: string;
+  confidence?: number;
+  intent?: string;
+  modality?: string;
+  complexity?: string;
+  reasoning?: string;
+  alternatives: { profile: string; score?: number; reasoning?: string }[];
+}
+
+/** Each profile selection in a run's final state. */
+export function profileSelectionsOf(state: unknown): ProfileChoice[] {
+  return payloadsOf(state).flatMap(({ agent, payload }) => {
+    const profile = text(payload.selected_profile);
+    if (!profile) return [];
+    return [
+      {
+        agent,
+        profile,
+        confidence: number(payload.confidence),
+        intent: text(payload.query_intent),
+        modality: text(payload.modality),
+        complexity: text(payload.complexity),
+        reasoning: text(payload.reasoning),
+        alternatives: (Array.isArray(payload.alternatives) ? payload.alternatives : []).flatMap((entry) => {
+          const candidate = record(entry);
+          const name = text(candidate?.profile_name);
+          return name ? [{ profile: name, score: number(candidate?.score), reasoning: text(candidate?.reasoning) }] : [];
+        }),
+      },
+    ];
+  });
+}
+
+/** "video_search" -> "video search". */
+const words = (value: string) => value.replace(/_/g, ' ');
+
 export interface CodingResult {
   agent: string;
   summary?: string;
@@ -256,8 +361,8 @@ export function foundLine(count: number, query?: string): string {
   return `Found ${count} result${count === 1 ? '' : 's'}${what}.`;
 }
 
-/** The hits, code, key points and orchestration account of a run's final
- * state, beside the chat; ``children`` follow them. A run's results are
+/** The hits, code, key points, orchestration account, entities, query
+ * enhancement and profile selection of a run's final state, beside the chat; ``children`` follow them. A run's results are
  * shown only while ``tenant`` is the tenant the run was produced for. */
 export function ResultPanel({
   state,
@@ -276,8 +381,12 @@ export function ResultPanel({
   const coding = codingOf(state);
   const keyPoints = keyPointsOf(state);
   const orchestration = orchestrationSummaryOf(state);
+  const entities = entitiesOf(state);
+  const enhancements = enhancementsOf(state);
+  const profileChoices = profileSelectionsOf(state);
+  const enrichments = entities.length + enhancements.length + profileChoices.length;
   const owner = resultTenantOf(state);
-  if ((groups.length || coding.length || keyPoints.length || orchestration) && owner !== tenant)
+  if ((groups.length || coding.length || keyPoints.length || orchestration || enrichments) && owner !== tenant)
     return (
       <aside className="results" aria-label="Results">
         <p className="alert error" role="alert">
@@ -287,7 +396,7 @@ export function ResultPanel({
       </aside>
     );
   const labelled = groups.length > 1;
-  const empty = !groups.length && !coding.length && !keyPoints.length && !orchestration;
+  const empty = !groups.length && !coding.length && !keyPoints.length && !orchestration && !enrichments;
   return (
     <aside className="results" aria-label="Results">
       {empty && !children && <p className="muted">Results of a run appear here.</p>}
@@ -307,6 +416,15 @@ export function ResultPanel({
           </ul>
         </section>
       )}
+      {entities.map((facts) => (
+        <EntitiesPanel key={facts.agent} facts={facts} />
+      ))}
+      {enhancements.map((facts) => (
+        <EnhancementPanel key={facts.agent} facts={facts} />
+      ))}
+      {profileChoices.map((choice) => (
+        <ProfileChoicePanel key={choice.agent} choice={choice} />
+      ))}
       {coding.map((code) => (
         <CodePanel key={code.agent} code={code} />
       ))}
@@ -380,6 +498,97 @@ function SearchGroup({
         <p className="muted">{`Showing ${shown.length} of ${group.items.length}; the rest score below ${minScore}.`}</p>
       )}
       <ResultCards results={shown} spanId={group.spanId} tenant={tenant} onRated={onRated} />
+    </section>
+  );
+}
+
+function Fact({ term, children }: { term: string; children: ReactNode }) {
+  return (
+    <div>
+      <dt>{term}</dt>
+      <dd>{children}</dd>
+    </div>
+  );
+}
+
+function EntitiesPanel({ facts }: { facts: EntityFacts }) {
+  return (
+    <section className="entities" aria-label="Entities">
+      <h2 className="results-heading">Entities</h2>
+      {facts.entities.length === 0 ? (
+        <p className="muted">No entities found.</p>
+      ) : (
+        <ul>
+          {facts.entities.map((entity, index) => (
+            <li key={index}>
+              {entity.text}
+              {entity.type && <span className="entity-type">{` ${entity.type.toLowerCase()}`}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {facts.relationships.length > 0 && (
+        <>
+          <h3 className="results-subheading">Relationships</h3>
+          <ul>
+            {facts.relationships.map((relation, index) => (
+              <li key={index}>{`${relation.subject} → ${relation.relation} → ${relation.object}`}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+function EnhancementPanel({ facts }: { facts: EnhancementFacts }) {
+  return (
+    <section className="query-enhancement" aria-label="Query enhancement">
+      <h2 className="results-heading">Query enhancement</h2>
+      <dl className="enrichment-facts">
+        <Fact term="Asked">{facts.original}</Fact>
+        <Fact term="Searched">{facts.enhanced === facts.original ? 'Unchanged' : facts.enhanced}</Fact>
+        {facts.expansionTerms.length > 0 && <Fact term="Expansion terms">{facts.expansionTerms.join(', ')}</Fact>}
+        {facts.synonyms.length > 0 && <Fact term="Synonyms">{facts.synonyms.join(', ')}</Fact>}
+        {facts.variants.length > 0 && <Fact term="Variants">{facts.variants.join(' · ')}</Fact>}
+        {facts.path && <Fact term="Path">{facts.path === 'lm' ? 'Language model' : words(facts.path)}</Fact>}
+      </dl>
+      {facts.reasoning && <p className="enrichment-reasoning">{facts.reasoning}</p>}
+    </section>
+  );
+}
+
+function ProfileChoicePanel({ choice }: { choice: ProfileChoice }) {
+  return (
+    <section className="profile-selection" aria-label="Profile selection">
+      <h2 className="results-heading">Profile selection</h2>
+      <dl className="enrichment-facts">
+        <Fact term="Profile">{choice.profile}</Fact>
+        {choice.confidence !== undefined && <Fact term="Confidence">{choice.confidence.toFixed(2)}</Fact>}
+        {choice.intent && <Fact term="Intent">{words(choice.intent)}</Fact>}
+        {choice.modality && <Fact term="Modality">{choice.modality}</Fact>}
+        {choice.complexity && <Fact term="Complexity">{choice.complexity}</Fact>}
+      </dl>
+      {choice.reasoning && <p className="enrichment-reasoning">{choice.reasoning}</p>}
+      {choice.alternatives.length > 0 && (
+        <>
+          <h3 className="results-subheading">Alternatives</h3>
+          <ul>
+            {choice.alternatives.map((alternative) => (
+              <li key={alternative.profile}>
+                {[
+                  alternative.score === undefined
+                    ? alternative.profile
+                    : `${alternative.profile} (${alternative.score.toFixed(2)})`,
+                  alternative.reasoning,
+                ]
+                  .filter(Boolean)
+                  .join(': ')}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </section>
   );
 }

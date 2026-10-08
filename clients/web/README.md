@@ -23,7 +23,12 @@ produced for is active. Runs stream over the runtime's AG-UI
 surface (`POST /ag-ui/{agent}`): the reply streams token by token and status
 phases show above the chat, with the themes and draft summary an agent reports
 while it works. A run that fails says why in the conversation, and one that is
-stopped says it was cancelled. An empty message cannot be sent.
+stopped says it was cancelled; the runtime saves a cancelled run's message with
+a cancelled marker, so after a reload the conversation shows the message and
+"The run was cancelled.". An empty message cannot be sent. A search reply names
+each hit by its title (and a video segment's time range), never by its backend
+document ID; an entity extraction, query enhancement or profile selection reply
+is one sentence, with its full result in a panel beside the chat.
 
 The session bar shows the conversation's ID and turn count and the search
 settings every run sends: results per search (`top_k`, 1-20, sent as
@@ -43,7 +48,12 @@ The run's final state renders beside the chat: search hits as result cards
 preview, images and audio with their text, each with its ranking score), the
 coding agent's files and the output of running them, and, for an orchestration,
 each planned agent's hits under its name, with the orchestration's execution
-summary, and an answer agent's key points. Each search says what it found for
+summary, and an answer agent's key points. An entity extraction shows its
+entities with their types and the relationships between them; a query
+enhancement the query as asked, the query searched ("Unchanged" when it is the
+same), its expansion terms, synonyms, variants, which path produced it and
+why; a profile selection the profile chosen, its confidence, intent, modality,
+complexity, reasoning and the runners-up with their scores. Each search says what it found for
 the question ("Found 2 results for 'q'." or "No results for 'q'."), its result
 count, the run's latency, the profile or ensemble profiles searched and the
 search mode, and warns about each ensemble profile that did not run. A card
@@ -155,12 +165,13 @@ npm test
 ```
 
 Vitest covers the result parsing and rendering for each agent's payload, search
-facts, key points and orchestration summaries, the conversation records,
+facts, key points and orchestration summaries, the entity, query enhancement
+and profile selection panels, the conversation records,
 export and settings, the summarize stream, the default agent, the run notices,
 error, route, JSON-field and event-stream parsing, the active tenant and its
 registration check, the Analytics view's figures and exports, the server's
-configuration, agent listing and status, per-tenant keys, thread restore and
-ownership, and the runtime proxy against local HTTP sockets.
+configuration, agent listing and status, per-tenant keys, thread restore
+(a cancelled run's marker as its notice) and ownership, and the runtime proxy against local HTTP sockets.
 `tests/runtime/integration/test_web_client_ag_ui.py` installs this lockfile,
 runs the server from source against the runtime's routers and drives it with
 the published `@ag-ui/client`. `tests/runtime/integration/test_web_agent_workspace.py`

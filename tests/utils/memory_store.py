@@ -431,6 +431,23 @@ def register_deployed_schema(config_manager, tenant_id: str, base_schema_name: s
     )
 
 
+def unregister_deployed_schema(
+    config_manager, tenant_id: str, base_schema_name: str
+) -> None:
+    """Mark a row ``register_deployed_schema`` wrote as deleted, through the
+    production registry write, so a later deploy on the same backend never
+    tries to reconstruct its placeholder definition."""
+    from types import SimpleNamespace
+
+    from cogniverse_core.registries.schema_registry import SchemaRegistry
+
+    SchemaRegistry(
+        config_manager=config_manager,
+        backend=SimpleNamespace(),
+        schema_loader=SimpleNamespace(),
+    ).unregister_schema(tenant_id, base_schema_name)
+
+
 def serve_listed_profiles_as_backend_config(config_manager) -> None:
     """Make a ConfigManager double's backend config carry the profiles its
     ``list_backend_profiles`` returns at call time, as the real manager's

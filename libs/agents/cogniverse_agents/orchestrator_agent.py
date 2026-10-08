@@ -299,6 +299,33 @@ def _step_answer_text(result: Any) -> str:
     return ""
 
 
+def _is_retrieval_step(result: Any) -> bool:
+    """A step that answered with search hits rather than with prose."""
+    return isinstance(result, dict) and isinstance(result.get("results"), list)
+
+
+def _retrieval_step_text(result: Dict[str, Any], query: str) -> str:
+    """A search step's answer under the question the user asked.
+
+    The serving runtime stamps a search step's answer as its ``message`` (which
+    names the query that step searched: the plan's rewrite of the question)
+    followed by one line per hit; the line naming the search is replaced by
+    one naming ``query``.
+    """
+    answer = _step_answer_text(result)
+    message = result.get("message")
+    if not isinstance(message, str) or not answer.startswith(message.strip()):
+        return answer
+    hit_lines = answer[len(message.strip()) :].strip("\n")
+    count = len(result["results"])
+    header = (
+        f"Found {count} results for '{query}'"
+        if count
+        else f"No results found for '{query}'"
+    )
+    return f"{header}\n{hit_lines}" if hit_lines else header
+
+
 # Agents whose answer grounds on retrieved search hits — a completed search
 # step's results are threaded into their step context so they reuse those hits
 # (and the answer-time keyframes derived from them) instead of re-searching.
@@ -2958,8 +2985,9 @@ class OrchestratorAgent(
         """Cross-modal fusion of the steps that produced an answer.
 
         ``aggregated_content`` is the reader's answer: each step's own answer
-        text (``_step_answer_text``), arranged by the fusion strategy selected
-        for the query and the steps' modalities. Enrichment steps (query
+        text (``_step_answer_text``; a search step's hits under ``query``, the
+        question as asked), arranged by the fusion strategy selected for the
+        query and the steps' modalities. Enrichment steps (query
         enhancement, entity extraction, profile selection) feed later steps
         and are fused only when the plan produced nothing else.
 
@@ -3002,11 +3030,17 @@ class OrchestratorAgent(
                 default=0.5,
             )
 
+            retrieval = _is_retrieval_step(result_data)
             task_results[agent_name] = {
                 "agent": agent_name,
                 "modality": modality,
                 "result": result_data,
-                "text": _step_answer_text(result_data),
+                "text": (
+                    _retrieval_step_text(result_data, query)
+                    if retrieval
+                    else _step_answer_text(result_data)
+                ),
+                "retrieval": retrieval,
                 "confidence": confidence,
             }
 
@@ -3178,15 +3212,17 @@ class OrchestratorAgent(
         return {"content": "\n\n".join(content_parts), "confidence": avg_confidence}
 
     def _fuse_simple(self, task_results: Dict[str, Dict]) -> Dict[str, Any]:
-        """Simple fusion: the steps' answers in execution order."""
+        """Simple fusion: the synthesized answers (a summary, a report) lead,
+        then the search steps' hits, each group in execution order."""
         if not task_results:
             return {"content": "", "confidence": 0.0}
 
         total_confidence = sum(tr["confidence"] for tr in task_results.values())
+        ordered = sorted(
+            task_results.values(), key=lambda tr: bool(tr.get("retrieval"))
+        )
         return {
-            "content": "\n\n".join(
-                tr["text"] for tr in task_results.values() if tr["text"]
-            ),
+            "content": "\n\n".join(tr["text"] for tr in ordered if tr["text"]),
             "confidence": total_confidence / len(task_results),
         }
 

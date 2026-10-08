@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib
+import json
 
 import pytest
 
@@ -130,7 +131,7 @@ class TestShippedOutputCoverage:
             "results": [r.model_dump() for r in output.results],
         }
         assert extract_answer_text(envelope) == (
-            "Found 1 images for 'red bike'\n- img_7 · score 0.500: Red bike on a wall"
+            "Found 1 images for 'red bike'\n- Red bike on a wall"
         )
 
 
@@ -168,19 +169,50 @@ class TestAnswerGoldens:
         assert extract_answer_text(envelope) == "Both filings name the same supplier."
 
     def test_flat_model_dump_without_text_renders_the_payload(self):
+        from cogniverse_agents.citation_tracing_agent import CitationTracingOutput
+
+        output = CitationTracingOutput(root_memory_id="mem-1")
+        envelope = {
+            "status": "success",
+            "agent": "citation_tracing_agent",
+            **output.model_dump(),
+        }
+        assert extract_answer_text(envelope) == json.dumps(
+            output.model_dump(), sort_keys=True, default=str
+        )
+
+    def test_entity_extraction_reads_as_a_sentence(self):
+        """A live entity run: every entity by name and type, then each
+        relationship, never the payload as JSON."""
         from cogniverse_agents.entity_extraction_agent import (
             Entity,
             EntityExtractionOutput,
+            Relationship,
         )
 
         output = EntityExtractionOutput(
-            query="who founded vespa",
-            entities=[Entity(text="Vespa", type="TECHNOLOGY", confidence=0.91)],
-            relationships=[],
-            entity_count=1,
+            query="Daenerys burned the castle at King's Landing, shown on HBO GO.",
+            entities=[
+                Entity(text="Daenerys", type="PERSON"),
+                Entity(text="castle", type="CONCEPT"),
+                Entity(text="King's Landing", type="PLACE"),
+                Entity(text="HBO GO", type="ORGANIZATION"),
+            ],
+            relationships=[
+                Relationship(
+                    subject="Daenerys", relation="burn", object="castle", confidence=0.8
+                ),
+                Relationship(
+                    subject="Daenerys",
+                    relation="at",
+                    object="King's Landing",
+                    confidence=0.7,
+                ),
+            ],
+            entity_count=4,
             has_entities=True,
-            dominant_types=["TECHNOLOGY"],
-            path_used="gliner",
+            dominant_types=["PERSON", "CONCEPT", "PLACE"],
+            path_used="dspy",
         )
         envelope = {
             "status": "success",
@@ -188,11 +220,74 @@ class TestAnswerGoldens:
             **output.model_dump(),
         }
         assert extract_answer_text(envelope) == (
-            '{"dominant_types": ["TECHNOLOGY"], '
-            '"entities": [{"confidence": 0.91, "context": "", "text": "Vespa", '
-            '"type": "TECHNOLOGY"}], '
-            '"entity_count": 1, "has_entities": true, "path_used": "gliner", '
-            '"query": "who founded vespa", "relationships": []}'
+            "Found 4 entities: Daenerys (person), castle (concept), "
+            "King's Landing (place), HBO GO (organization). "
+            "Relationships: Daenerys burn castle; Daenerys at King's Landing."
+        )
+
+    def test_no_entities_reads_as_a_sentence(self):
+        from cogniverse_agents.entity_extraction_agent import EntityExtractionOutput
+
+        output = EntityExtractionOutput(query="hello there", entity_count=0)
+        envelope = {
+            "status": "success",
+            "agent": "entity_extraction_agent",
+            **output.model_dump(),
+        }
+        assert extract_answer_text(envelope) == "Found no entities."
+
+    @pytest.mark.parametrize(
+        ("original", "enhanced", "reply"),
+        [
+            (
+                "fire castle video",
+                "burning castle video footage",
+                'Enhanced "fire castle video" to "burning castle video footage".',
+            ),
+            (
+                "fire castle video",
+                "fire castle video",
+                'Kept the query as asked: "fire castle video".',
+            ),
+        ],
+    )
+    def test_query_enhancement_reads_as_a_sentence(self, original, enhanced, reply):
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementOutput
+
+        output = QueryEnhancementOutput(
+            original_query=original,
+            enhanced_query=enhanced,
+            expansion_terms=["footage"],
+            query_variants=[enhanced],
+            confidence=0.8,
+            path_used="lm",
+        )
+        envelope = {
+            "status": "success",
+            "agent": "query_enhancement_agent",
+            **output.model_dump(),
+        }
+        assert extract_answer_text(envelope) == reply
+
+    def test_profile_selection_reads_as_a_sentence(self):
+        from cogniverse_agents.profile_selection_agent import ProfileSelectionOutput
+
+        output = ProfileSelectionOutput(
+            query="Which profile for a video of a burning castle?",
+            selected_profile="video_colpali_smol500_mv_frame",
+            confidence=0.95,
+            reasoning="Video search over frames.",
+            query_intent="video_search",
+            modality="video",
+        )
+        envelope = {
+            "status": "success",
+            "agent": "profile_selection_agent",
+            **output.model_dump(),
+        }
+        assert extract_answer_text(envelope) == (
+            "Selected profile video_colpali_smol500_mv_frame for a video search "
+            "(confidence 0.95)."
         )
 
     def test_orchestrator_deep_synthesis_final_output(self):
@@ -325,17 +420,76 @@ class TestAnswerGoldens:
         envelope = {
             "status": "success",
             "agent": "search_agent",
-            "message": f"Found {output.total_results} results for "
-            f"'{output.enhanced_query}'",
+            "message": f"Found {output.total_results} results for '{output.query}'",
             "results_count": output.total_results,
             "results": output.results,
             "profile": "video_colpali_smol500_mv_frame",
             "search_mode": "hybrid",
         }
         assert extract_answer_text(envelope) == (
-            "Found 2 results for 'red bicycles outdoors'\n"
-            "- v_001 · score 0.912 · 12.0s-18.5s: Cyclist in a red jersey\n"
-            "- v_002 · score 0.480: Red bike leaning on a wall"
+            "Found 2 results for 'red bikes'\n"
+            "- Cyclist in a red jersey (0:12–0:18)\n"
+            "- Red bike leaning on a wall"
+        )
+
+    def test_video_hits_read_by_title_and_time_never_by_document_id(self):
+        """Live search hits as the runtime serves them: each line names
+        the video and the segment's time range, then the first line of the
+        frame's description; no backend document id reaches the reply."""
+        hits = [
+            {
+                "id": "57985f49_seg_3",
+                "document_id": "id:content:video_colpali_smol500_mv_frame_t_main"
+                "::57985f49_seg_3",
+                "score": 14.826,
+                "metadata": {
+                    "video_id": "57985f49",
+                    "video_title": "for_bigger_blazes.mp4",
+                    "segment_description": "This is a still frame from a video "
+                    "displayed on a television screen.\n\n**Objects and Scene "
+                    "Setting:**\nA burning castle.",
+                    "audio_transcript": "Dracarys.",
+                },
+                "temporal_info": {"start_time": 5.880875, "end_time": 6.880875},
+            },
+            {
+                "id": "2bcd2065_seg_3",
+                "document_id": "id:content:video_colpali_smol500_mv_frame_t_main"
+                "::2bcd2065_seg_3",
+                "score": 10.388,
+                "metadata": {
+                    "video_id": "2bcd2065",
+                    "source_title": "v_-nl4G-00PtA.mp4",
+                    "segment_description": "A medium close-up of a young man "
+                    + "standing in a brightly lit kitchen " * 8,
+                },
+                "temporal_info": {"start_time": 66, "end_time": 67},
+            },
+            {
+                "id": "dd95bb38_seg_0",
+                "document_id": "id:content:video_colpali_smol500_mv_frame_t_main"
+                "::dd95bb38_seg_0",
+                "score": 9.129,
+                "metadata": {"video_id": "dd95bb38"},
+                "temporal_info": {"start_time": 0.0, "end_time": 1.0},
+            },
+        ]
+        envelope = {
+            "status": "success",
+            "agent": "search_agent",
+            "message": "Found 3 results for 'videos of a burning castle'",
+            "results_count": 3,
+            "results": hits,
+        }
+        assert extract_answer_text(envelope) == (
+            "Found 3 results for 'videos of a burning castle'\n"
+            "- for_bigger_blazes.mp4 (0:05–0:06): This is a still frame from a "
+            "video displayed on a television screen.\n"
+            "- v_-nl4G-00PtA.mp4 (1:06–1:07): A medium close-up of a young man "
+            "standing in a brightly lit kitchen standing in a brightly lit "
+            "kitchen standing in a brightly lit kitchen standing in a brightly "
+            "lit kitchen standing in a brightly lit…\n"
+            "- Result 3 (0:00–0:01)"
         )
 
     def test_gateway_wrapper_unwraps_the_downstream_answer(self):

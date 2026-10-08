@@ -1,4 +1,4 @@
-Found 3 results
-- ? · score 0.940: Marie Curie discovered radium in 1898 at the Sorbonne.
-- ? · score 0.880: She later won the Nobel Prize in Physics.
-- ? · score 0.870: Marie Curie was a professor at the Sorbonne in Paris.
+Found 3 results for 'What did Marie Curie discover and where did she work in 1898?'
+- Result 1: Marie Curie discovered radium in 1898 at the Sorbonne.
+- Result 2: She later won the Nobel Prize in Physics.
+- Result 3: Marie Curie was a professor at the Sorbonne in Paris.

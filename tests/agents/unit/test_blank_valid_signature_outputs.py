@@ -7,7 +7,10 @@ import json
 import dspy
 import pytest
 
-from cogniverse_agents.coding_agent import OutputEvaluationSignature
+from cogniverse_agents.coding_agent import (
+    OutputEvaluationSignature,
+    WorkspaceStepSignature,
+)
 from cogniverse_agents.orchestrator_agent import OrchestrationSignature
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementSignature
 from cogniverse_foundation.dspy.lenient_json_adapter import (
@@ -34,11 +37,18 @@ FILLED = {
         "is_successful": True,
         "feedback": "",
     },
+    WorkspaceStepSignature: {
+        "reasoning": "The plan writes the file with the client's tool.",
+        "tool_name": "write_file",
+        "tool_args_json": '{"text": "hello"}',
+        "summary": "",
+    },
 }
 BLANK_VALID = {
     OrchestrationSignature: {"parallel_steps"},
-    QueryEnhancementSignature: {"synonyms", "context"},
+    QueryEnhancementSignature: {"expansion_terms", "synonyms", "context"},
     OutputEvaluationSignature: {"feedback"},
+    WorkspaceStepSignature: {"tool_args_json", "summary"},
 }
 
 

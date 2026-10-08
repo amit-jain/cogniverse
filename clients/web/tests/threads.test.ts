@@ -87,6 +87,37 @@ describe('CogniverseThreadRunner.connect', () => {
     });
   });
 
+  it('shows a cancelled run as its message and a cancelled notice', async () => {
+    const [runner] = await runnerFor((_req, res) =>
+      json(res, 200, {
+        thread_id: 't3',
+        state: 'loaded',
+        reason: null,
+        turns: [
+          { role: 'user', content: 'stop me' },
+          { role: 'run_cancelled', content: 'Run cancelled before the turn completed.' },
+          { role: 'user', content: 'again' },
+          { role: 'assistant', content: 'two clips' },
+        ],
+      }),
+    );
+    const events = await connect(runner, 't3');
+    expect(events[1]).toEqual({
+      type: 'MESSAGES_SNAPSHOT',
+      messages: [
+        { id: 't3:0', role: 'user', content: 'stop me' },
+        {
+          id: 't3:1',
+          role: 'activity',
+          activityType: NOTICE_ACTIVITY,
+          content: { tone: 'cancelled', text: 'The run was cancelled.' },
+        },
+        { id: 't3:2', role: 'user', content: 'again' },
+        { id: 't3:3', role: 'assistant', content: 'two clips' },
+      ],
+    });
+  });
+
   it("fails the restore with the runtime's reason, never as an empty thread", async () => {
     const [runner] = await runnerFor((_req, res) =>
       json(res, 503, {

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from urllib.parse import quote
@@ -22,9 +23,20 @@ import pytest
 from fastapi import FastAPI
 from playwright.sync_api import Page, expect, sync_playwright
 
+from cogniverse_agents.entity_extraction_agent import (
+    Entity,
+    EntityExtractionOutput,
+    Relationship,
+)
+from cogniverse_agents.profile_selection_agent import ProfileSelectionOutput
+from cogniverse_agents.query_enhancement_agent import QueryEnhancementOutput
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.agent_models import AgentEndpoint
-from cogniverse_core.conversation import ConversationStore
+from cogniverse_core.conversation import (
+    RUN_CANCELLED_ROLE,
+    RUN_CANCELLED_TEXT,
+    ConversationStore,
+)
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.agent_dispatcher import (
@@ -250,7 +262,84 @@ class SlowAgent(AgentBase[WorkspaceInput, AnswerOutput, WorkspaceDeps]):
         return AnswerOutput(answer="done thinking")
 
 
+class HitsOutput(AgentOutput):
+    message: str = ""
+    results: list = []
+
+
+class HitsAgent(AgentBase[WorkspaceInput, HitsOutput, WorkspaceDeps]):
+    """Answers as a search envelope does: its message and its hits, which the
+    runtime renders as the reply."""
+
+    async def _process_impl(self, input: WorkspaceInput) -> HitsOutput:
+        return HitsOutput(
+            message=f"Found 2 results for '{input.query}'",
+            results=[VIDEO_HIT, DOCUMENT_HIT],
+        )
+
+
+class EntityAgent(AgentBase[WorkspaceInput, EntityExtractionOutput, WorkspaceDeps]):
+    """Answers with the entity extraction agent's own output type."""
+
+    async def _process_impl(self, input: WorkspaceInput) -> EntityExtractionOutput:
+        return EntityExtractionOutput(
+            query=input.query,
+            entities=[
+                Entity(text="Daenerys", type="PERSON"),
+                Entity(text="King's Landing", type="PLACE"),
+            ],
+            relationships=[
+                Relationship(
+                    subject="Daenerys",
+                    relation="at",
+                    object="King's Landing",
+                    confidence=0.7,
+                )
+            ],
+            entity_count=2,
+            has_entities=True,
+            dominant_types=["PERSON", "PLACE"],
+            path_used="dspy",
+        )
+
+
+class EnhancementAgent(
+    AgentBase[WorkspaceInput, QueryEnhancementOutput, WorkspaceDeps]
+):
+    """Answers with the query enhancement agent's own output type."""
+
+    async def _process_impl(self, input: WorkspaceInput) -> QueryEnhancementOutput:
+        return QueryEnhancementOutput(
+            original_query=input.query,
+            enhanced_query="burning castle video footage",
+            expansion_terms=["footage"],
+            synonyms=["clip"],
+            query_variants=["burning castle video footage"],
+            confidence=0.8,
+            reasoning="Spelled out the scene.",
+            path_used="lm",
+        )
+
+
+class ProfileAgent(AgentBase[WorkspaceInput, ProfileSelectionOutput, WorkspaceDeps]):
+    """Answers with the profile selection agent's own output type."""
+
+    async def _process_impl(self, input: WorkspaceInput) -> ProfileSelectionOutput:
+        return ProfileSelectionOutput(
+            query=input.query,
+            selected_profile="video_colpali_smol500_mv_frame",
+            confidence=0.95,
+            reasoning="Frame-level video search.",
+            query_intent="video_search",
+            modality="video",
+        )
+
+
 _AGENT_CLASSES = {
+    "hits_agent": f"{__name__}:HitsAgent",
+    "entity_extraction_agent": f"{__name__}:EntityAgent",
+    "query_enhancement_agent": f"{__name__}:EnhancementAgent",
+    "profile_selection_agent": f"{__name__}:ProfileAgent",
     "ensemble_agent": f"{__name__}:EnsembleAgent",
     "key_points_agent": f"{__name__}:KeyPointsAgent",
     "search_agent": f"{__name__}:SearchAgent",
@@ -290,6 +379,11 @@ def runtime_url(memory, workflow_state_redis_url):
                 streams_answer_tokens=_TOKEN_STREAMING.get(name, False),
             )
         )
+    shipped = {
+        name: ConfigLoader.AGENT_CLASSES[name]
+        for name in _AGENT_CLASSES
+        if name in ConfigLoader.AGENT_CLASSES
+    }
     ConfigLoader.AGENT_CLASSES.update(_AGENT_CLASSES)
     dispatcher = AgentDispatcher(
         agent_registry=registry, config_manager=registry_config, schema_loader=None
@@ -333,6 +427,7 @@ def runtime_url(memory, workflow_state_redis_url):
     openai_compat.set_api_keys({})
     for name in _AGENT_CLASSES:
         ConfigLoader.AGENT_CLASSES.pop(name, None)
+    ConfigLoader.AGENT_CLASSES.update(shipped)
 
 
 @pytest.fixture()
@@ -433,6 +528,42 @@ class TestRunNotices:
         expect(notice).to_have_text("You cancelled this run.", timeout=30_000)
         expect(notice).to_have_attribute("role", "status")
         expect(page.locator(".workspace-header .status")).to_have_count(0)
+
+    def test_a_cancelled_run_is_still_there_after_a_reload(
+        self, page, web_url, runtime_url
+    ):
+        slow_started.clear()
+        thread = _open(page, web_url, "slow_agent", "Slow")
+        _send(page, "Slow", "think again")
+        assert slow_started.wait(60)
+        page.get_by_test_id("copilot-send-button").click()
+        expect(page.locator(".run-notice")).to_have_text(
+            "You cancelled this run.", timeout=30_000
+        )
+        expected = {
+            "thread_id": thread,
+            "state": "loaded",
+            "reason": None,
+            "turns": [
+                {"role": "user", "content": "think again"},
+                {"role": RUN_CANCELLED_ROLE, "content": RUN_CANCELLED_TEXT},
+            ],
+        }
+        deadline = time.monotonic() + 30
+        while (
+            _saved_turns(runtime_url, thread) != expected
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.2)
+        assert _saved_turns(runtime_url, thread) == expected
+
+        page.reload()
+        expect(_user_messages(page)).to_have_text(["think again"], timeout=30_000)
+        expect(page.locator(".run-notice")).to_have_text("The run was cancelled.")
+        expect(_assistant_messages(page)).to_have_count(0)
+        expect(page.get_by_label("Conversation", exact=True)).to_have_text(
+            f"{TENANT} · 1 message"
+        )
 
 
 class TestConversations:
@@ -618,6 +749,100 @@ class TestResults:
             "No results for 'nothing at all'.", timeout=60_000
         )
         expect(search.locator(".result-card")).to_have_count(0)
+
+
+class TestReadableReplies:
+    def test_a_search_reply_names_each_hit_by_title_never_by_document_id(
+        self, page, web_url
+    ):
+        _open(page, web_url, "hits_agent", "Hits")
+        _send(page, "Hits", "goal")
+        reply = _assistant_messages(page)
+        expect(reply).to_have_text(
+            [
+                "Found 2 results for 'goal' "
+                "match.mp4 (1:05–1:11): A man throws a ball on a grassy field. "
+                "Quarterly report: Revenue grew 12% on the back of video search."
+            ],
+            timeout=60_000,
+        )
+        expect(reply).not_to_contain_text("id:video")
+
+    def test_an_entity_extraction_reads_as_a_sentence_beside_its_panel(
+        self, page, web_url
+    ):
+        _open(page, web_url, "entity_extraction_agent", "Entity extraction")
+        _send(page, "Entity extraction", "Daenerys at King's Landing")
+        expect(_assistant_messages(page)).to_have_text(
+            [
+                "Found 2 entities: Daenerys (person), King's Landing (place). "
+                "Relationships: Daenerys at King's Landing."
+            ],
+            timeout=60_000,
+        )
+        panel = page.get_by_role("complementary", name="Results").get_by_role(
+            "region", name="Entities"
+        )
+        expect(panel.locator("ul").first.get_by_role("listitem")).to_have_text(
+            ["Daenerys person", "King's Landing place"]
+        )
+        expect(panel.locator("ul").nth(1).get_by_role("listitem")).to_have_text(
+            ["Daenerys → at → King's Landing"]
+        )
+
+    def test_a_query_enhancement_reads_as_a_sentence_beside_its_panel(
+        self, page, web_url
+    ):
+        _open(page, web_url, "query_enhancement_agent", "Query enhancement")
+        _send(page, "Query enhancement", "fire castle video")
+        expect(_assistant_messages(page)).to_have_text(
+            ['Enhanced "fire castle video" to "burning castle video footage".'],
+            timeout=60_000,
+        )
+        panel = page.get_by_role("complementary", name="Results").get_by_role(
+            "region", name="Query enhancement"
+        )
+        expect(panel.locator("dt")).to_have_text(
+            ["Asked", "Searched", "Expansion terms", "Synonyms", "Variants", "Path"]
+        )
+        expect(panel.locator("dd")).to_have_text(
+            [
+                "fire castle video",
+                "burning castle video footage",
+                "footage",
+                "clip",
+                "burning castle video footage",
+                "Language model",
+            ]
+        )
+
+    def test_a_profile_selection_reads_as_a_sentence_beside_its_panel(
+        self, page, web_url
+    ):
+        _open(page, web_url, "profile_selection_agent", "Profile selection")
+        _send(page, "Profile selection", "which profile for a castle video?")
+        expect(_assistant_messages(page)).to_have_text(
+            [
+                "Selected profile video_colpali_smol500_mv_frame for a video "
+                "search (confidence 0.95)."
+            ],
+            timeout=60_000,
+        )
+        panel = page.get_by_role("complementary", name="Results").get_by_role(
+            "region", name="Profile selection"
+        )
+        expect(panel.locator("dd")).to_have_text(
+            [
+                "video_colpali_smol500_mv_frame",
+                "0.95",
+                "video search",
+                "video",
+                "simple",
+            ]
+        )
+        expect(panel.locator(".enrichment-reasoning")).to_have_text(
+            "Frame-level video search."
+        )
 
 
 class TestProgress:

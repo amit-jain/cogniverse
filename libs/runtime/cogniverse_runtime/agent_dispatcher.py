@@ -41,6 +41,8 @@ from cogniverse_core.common.tenant_utils import (
     require_tenant_id,
 )
 from cogniverse_core.conversation import (
+    RUN_CANCELLED_ROLE,
+    RUN_CANCELLED_TEXT,
     ConversationStore,
     is_transient_turn_write_error,
 )
@@ -2049,7 +2051,8 @@ class AgentDispatcher:
     async def read_conversation(
         self, tenant_id: str, context_id: str
     ) -> ConversationHistory:
-        """Every stored turn of a context, oldest first, for display.
+        """Every turn of a context a person is shown, oldest first: its user
+        and assistant turns and each cancelled run's ``run_cancelled`` marker.
 
         Waits for the context's pending saves as a dispatch does. The state
         is ``incomplete`` when a save is still pending after the budget or a
@@ -2070,7 +2073,7 @@ class AgentDispatcher:
                 raise ConversationMemoryUnavailable(
                     f"no conversation memory is configured for tenant {tenant_id}"
                 )
-            return await asyncio.to_thread(store.get_history, context_id, None)
+            return await asyncio.to_thread(store.get_thread, context_id)
 
         turns = await asyncio.wait_for(_read(), timeout=CONVERSATION_LOAD_TIMEOUT_S)
         if unsettled:
@@ -2104,8 +2107,28 @@ class AgentDispatcher:
             tenant_id, context_id, query, result
         )
 
+    async def record_cancelled_turn(
+        self, tenant_id: str, context_id: str, query: str
+    ) -> "asyncio.Task[None]":
+        """Save the user message of a run cancelled before its reply, with a
+        ``run_cancelled`` marker in the reply's place, as
+        :meth:`record_conversation_turn` saves an answered turn.
+
+        Raises:
+            SessionStateUnavailable: the ledger is missing or unreachable.
+        """
+        return await self._schedule_conversation_save(
+            tenant_id, context_id, query, {}, cancelled=True
+        )
+
     async def _schedule_conversation_save(
-        self, tenant_id: str, context_id: str, query: str, result: Dict[str, Any]
+        self,
+        tenant_id: str,
+        context_id: str,
+        query: str,
+        result: Dict[str, Any],
+        *,
+        cancelled: bool = False,
     ) -> "asyncio.Task[None]":
         """Give this turn its position, then persist it in the background.
 
@@ -2120,7 +2143,13 @@ class AgentDispatcher:
         position = await ledger.accept(tenant_id, context_id)
         task = self._spawn_background(
             self._save_conversation_turns(
-                ledger, tenant_id, context_id, query, result, position
+                ledger,
+                tenant_id,
+                context_id,
+                query,
+                result,
+                position,
+                cancelled=cancelled,
             )
         )
         self._conversation_saves.add(task)
@@ -2181,6 +2210,8 @@ class AgentDispatcher:
         query: str,
         result: Dict[str, Any],
         position: int,
+        *,
+        cancelled: bool = False,
     ) -> None:
         """Append the user + assistant turns off the event loop, time-bounded.
 
@@ -2205,7 +2236,8 @@ class AgentDispatcher:
         same text every dispatch consumer renders. An envelope with no answer
         (an error, or a turn :meth:`_stamp_answer` could not extract) persists
         the user turn alone, so history never carries text the assistant did
-        not say.
+        not say. A ``cancelled`` turn stores the user turn and a
+        ``run_cancelled`` marker in the reply's place.
         """
         answer = result.get("answer")
         assistant_text = answer if isinstance(answer, str) else ""
@@ -2221,6 +2253,16 @@ class AgentDispatcher:
             await self._append_conversation_turn(
                 store, context_id, "user", query, position, deadline
             )
+            if cancelled:
+                await self._append_conversation_turn(
+                    store,
+                    context_id,
+                    RUN_CANCELLED_ROLE,
+                    RUN_CANCELLED_TEXT,
+                    position + 1,
+                    deadline,
+                )
+                return
             if not assistant_text:
                 return
             try:
@@ -2950,12 +2992,13 @@ class AgentDispatcher:
 
         result_list = output.results
         result_count = len(result_list)
-        effective_query = output.enhanced_query or resolved_query
 
+        # The reply names the question as the caller asked it; the rewrite the
+        # search ran is reported under query_rewrite.
         if result_count > 0:
-            message = f"Found {result_count} results for '{effective_query}'"
+            message = f"Found {result_count} results for '{query}'"
         else:
-            message = f"No results found for '{effective_query}'"
+            message = f"No results found for '{query}'"
 
         response: Dict[str, Any] = {
             "status": "success",

@@ -40,7 +40,7 @@ from cogniverse_agents.graph.graph_schema import (
     ExtractionResult,
     normalize_name,
 )
-from cogniverse_agents.orchestrator_agent import _step_answer_text
+from cogniverse_agents.orchestrator_agent import _retrieval_step_text
 from cogniverse_foundation.config.unified_config import SystemConfig
 
 pytestmark = [pytest.mark.unit]
@@ -475,16 +475,21 @@ def check_iter_loop(root: Path) -> None:
         "iter_loop_trajectory_iter2.json",
         sorted([seg3, seg4, sorbonne], key=_order),
     )
-    # The orchestrator's answer for a lone search step is that step's answer.
+    # The orchestrator's answer for a lone search step is that step's hits
+    # under the question asked.
     _assert_text_golden_equals(
         root,
         "iter_loop_answer.txt",
-        _step_answer_text(iter_loop._peer_envelope([seg3, seg4, sorbonne])),
+        _retrieval_step_text(
+            iter_loop._peer_envelope([seg3, seg4, sorbonne]), iter_loop.CANONICAL_QUERY
+        ),
     )
     _assert_text_golden_equals(
         root,
         "iter_loop_answer_budget_breach.txt",
-        _step_answer_text(iter_loop._peer_envelope([seg3])),
+        _retrieval_step_text(
+            iter_loop._peer_envelope([seg3]), iter_loop.CANONICAL_QUERY
+        ),
     )
 
 

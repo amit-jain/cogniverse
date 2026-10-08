@@ -3,7 +3,8 @@
 Real FastAPI route / real AgentDispatcher -> real agent -> real DSPy/LiteLLM ->
 a real OpenAI-compatible HTTP provider replaying the pro-tier model's recorded
 responses: query enhancement leaves ``context`` blank when no contextual
-addition applies, and the orchestration planner leaves ``parallel_steps``
+addition applies and ``expansion_terms`` blank when it has no source text to
+draw terms from, and the orchestration planner leaves ``parallel_steps``
 blank when every step runs in sequence.
 """
 
@@ -51,6 +52,46 @@ ENHANCEMENT = {
     "context": "",
     "confidence": "0.8",
 }
+# Recorded from google/gemma-4-e4b-it in a live run: with no source
+# text the LM rewrote the query and left expansion_terms blank.
+BLANK_EXPANSION = {
+    "reasoning": (
+        "The user is asking for videos depicting a burning castle, and then a "
+        "summary of those videos. Since there is no source text or grounding "
+        "context, the query will be enhanced by making it more specific for "
+        "search engines, focusing on the core concepts."
+    ),
+    "enhanced_query": "Videos of a burning castle with video summary",
+    "expansion_terms": "",
+    "synonyms": "fire, blaze, inferno",
+    "context": "",
+    "confidence": "0.8",
+}
+# Recorded from google/gemma-4-e4b-it in a live run: the coding
+# agent's workspace step calls the client's write_file tool and leaves
+# summary blank, as its description asks of a tool call.
+WORKSPACE_TOOL_CALL = {
+    "reasoning": (
+        "The plan requires using the `write_file` tool to save the text "
+        "'hello from search lane'. Looking at the available tools, `write_file` "
+        "is present."
+    ),
+    "tool_name": "write_file",
+    "tool_args_json": '{"text": "hello from search lane"}',
+    "summary": "",
+}
+WRITE_FILE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "write_file",
+        "description": "Write text to a file in the user's workspace.",
+        "parameters": {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        },
+    },
+}
 PLAN = {
     "reasoning": (
         "The user wants to find 'security incident briefings' and then "
@@ -82,7 +123,14 @@ class Provider:
                 prompt = json.dumps(body["messages"])
                 case = next(
                     name
-                    for name in ("blank_context", "blank_enhanced_query", "plan")
+                    for name in (
+                        "blank_context",
+                        "blank_enhanced_query",
+                        "blank_expansion_terms",
+                        "echoed_query",
+                        "workspace_tool",
+                        "plan",
+                    )
                     if f"case:{name}" in prompt
                 )
                 with provider.lock:
@@ -92,6 +140,13 @@ class Provider:
                     barrier.wait(timeout=30)
                 if case == "plan":
                     fields = dict(PLAN)
+                elif case == "workspace_tool":
+                    fields = dict(WORKSPACE_TOOL_CALL)
+                elif case == "blank_expansion_terms":
+                    fields = dict(BLANK_EXPANSION)
+                elif case == "echoed_query":
+                    fields = dict(ENHANCEMENT)
+                    fields["enhanced_query"] = f"{QUERY} case:echoed_query"
                 else:
                     fields = dict(ENHANCEMENT)
                     if case == "blank_enhanced_query":
@@ -267,16 +322,18 @@ def lm_enhancement(case: str) -> dict:
 
 
 def fallback_enhancement(case: str) -> dict:
+    """The heuristic fallback adds nothing to a query without an acronym: the
+    query is searched as asked."""
     query = f"{QUERY} case:{case}"
     return {
         "status": "success",
         "agent": "query_enhancement_agent",
         "original_query": query,
-        "enhanced_query": f"{query} related content",
+        "enhanced_query": query,
         "expansion_terms": [],
         "synonyms": [],
         "context_additions": [],
-        "query_variants": [f"{query} related content"],
+        "query_variants": [],
         "confidence": 0.5,
         "reasoning": "Fallback enhancement with heuristic expansion",
         "path_used": "heuristic_fallback",
@@ -307,6 +364,38 @@ async def test_blank_required_output_still_falls_back(route, provider):
         "blank_enhanced_query"
     )
     assert provider.cases == ["blank_enhanced_query"]
+
+
+async def test_blank_expansion_terms_are_an_lm_enhancement(route, provider):
+    response = await route.post(
+        "/agents/query_enhancement_agent/process",
+        json=enhancement_task("blank_expansion_terms"),
+    )
+    assert response.status_code == 200, response.text
+    assert without_answer(response.json()) == {
+        "status": "success",
+        "agent": "query_enhancement_agent",
+        "original_query": f"{QUERY} case:blank_expansion_terms",
+        "enhanced_query": BLANK_EXPANSION["enhanced_query"],
+        "expansion_terms": [],
+        "synonyms": ["fire", "blaze", "inferno"],
+        "context_additions": [],
+        "query_variants": [BLANK_EXPANSION["enhanced_query"]],
+        "confidence": 0.8,
+        "reasoning": BLANK_EXPANSION["reasoning"],
+        "path_used": "lm",
+    }
+    assert provider.cases == ["blank_expansion_terms"]
+
+
+async def test_an_echoed_query_is_searched_as_asked(route, provider):
+    response = await route.post(
+        "/agents/query_enhancement_agent/process",
+        json=enhancement_task("echoed_query"),
+    )
+    assert response.status_code == 200, response.text
+    assert without_answer(response.json()) == fallback_enhancement("echoed_query")
+    assert provider.cases == ["echoed_query"]
 
 
 async def test_concurrent_tenants_keep_their_own_enhancement_path(route, provider):
@@ -353,3 +442,51 @@ async def test_blank_parallel_steps_plan_runs_every_step_in_sequence(
     ]
     assert plan.parallel_groups == []
     assert plan.reasoning == PLAN["reasoning"]
+
+
+async def test_a_tool_call_with_a_blank_summary_suspends_on_the_tool(
+    served_lm, provider, monkeypatch
+):
+    """The workspace step's summary is blank when it calls a tool; the turn
+    suspends on that call instead of failing the generation."""
+    import uuid
+
+    from cogniverse_agents import coding_agent as coding
+
+    monkeypatch.setattr(coding.uuid, "uuid4", lambda: uuid.UUID(int=7))
+    agent = coding.CodingAgent(
+        coding.CodingDeps(tenant_id=TENANTS[0]),
+        config_manager=ConfigManager(store=InMemoryConfigStore()),
+    )
+    plan = "Call write_file with the text."
+
+    output = await agent._process_workspace(
+        coding.CodingInput(
+            task="Save 'hello from search lane' with write_file case:workspace_tool",
+            tenant_id=TENANTS[0],
+            external_tools=[WRITE_FILE_TOOL],
+            continuation_state={"plan": plan, "step": 0},
+        )
+    )
+
+    assert provider.cases == ["workspace_tool"]
+    assert output.model_dump() == {
+        "plan": plan,
+        "code_changes": [],
+        "execution_results": [],
+        "summary": "",
+        "iterations_used": 1,
+        "files_modified": [],
+        "rlm_synthesis": None,
+        "rlm_telemetry": None,
+        "pending_tool_calls": [
+            {
+                "id": "call_000000000000",
+                "name": "write_file",
+                "arguments": {"text": "hello from search lane"},
+            }
+        ],
+        "continuation_state": {"mode": "workspace", "plan": plan, "step": 1},
+        "success": True,
+        "error": None,
+    }

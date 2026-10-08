@@ -154,27 +154,39 @@ class WorkspaceStepSignature(dspy.Signature):
     )
     remaining_steps: int = dspy.InputField(desc="Remaining workspace decision budget")
     tool_name: str = dspy.OutputField(desc="One advertised tool name, or finish")
-    tool_args_json: str = dspy.OutputField(desc="JSON object of tool arguments")
+    tool_args_json: str = dspy.OutputField(
+        desc="JSON object of tool arguments; empty when finishing", default=""
+    )
     summary: str = dspy.OutputField(
-        desc="Completed work when finishing; otherwise rationale"
+        desc="Completed work when finishing; empty when calling a tool", default=""
     )
 
 
 def parse_workspace_action(
-    tool_name: str, tool_args_json: str, tools: Dict[str, Dict[str, Any]]
+    tool_name: str,
+    tool_args_json: str,
+    tools: Dict[str, Dict[str, Any]],
+    summary: str = "",
 ) -> Optional[tuple[str, Dict[str, Any]]]:
-    """Return a validated action, None for finish, or raise for a failed decision."""
+    """Return a validated action, None for finish, or raise for a failed decision.
+
+    A finish must say what was done: a finish with a blank summary is a failed
+    decision, never an answer. A tool call's arguments are a JSON object; a
+    finish needs none.
+    """
     name = tool_name.strip()
     if name != "finish" and name not in tools:
         raise ValueError(f"unknown tool {name!r}")
+    if name == "finish":
+        if not summary.strip():
+            raise ValueError("finish needs a summary of the completed work")
+        return None
     try:
         arguments = json.loads(tool_args_json)
     except (ValueError, TypeError) as exc:
         raise ValueError(f"arguments for {name!r} must be valid JSON") from exc
     if not isinstance(arguments, dict):
         raise ValueError(f"arguments for {name!r} must be a JSON object")
-    if name == "finish":
-        return None
     for required in tools[name].get("parameters", {}).get("required", []):
         if required not in arguments:
             raise ValueError(f"missing required argument {required!r} for {name!r}")
@@ -521,6 +533,7 @@ class CodingAgent(
                     str(getattr(decision, "tool_name", "")),
                     getattr(decision, "tool_args_json", ""),
                     tools,
+                    str(getattr(decision, "summary", "") or ""),
                 )
             except ValueError as exc:
                 self.emit_progress("step_failed", str(exc), data={"step": step})

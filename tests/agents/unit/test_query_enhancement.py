@@ -1916,10 +1916,8 @@ class TestEnhancedQueryEnhancementAgent:
 
     @pytest.mark.asyncio
     async def test_dspy_failure_graceful_fallback(self, qe_agent):
-        """When DSPy call raises, fallback heuristics produce a real
-        enhancement.  The previous behaviour (setting enhanced_query=query)
-        silently poisoned downstream SIMBA trainsets with identity pairs —
-        the fallback must leave a non-identity signal."""
+        """When the DSPy call raises, the fallback spells out the acronym the
+        query contains and adds nothing else."""
         qe_agent.call_dspy = AsyncMock(side_effect=RuntimeError("LLM down"))
 
         inp = QueryEnhancementInput(
@@ -1931,13 +1929,12 @@ class TestEnhancedQueryEnhancementAgent:
 
         assert isinstance(output, QueryEnhancementOutput)
         assert output.original_query == "show me AI tutorials"
-        # Fallback MUST produce a non-identity enhancement.
-        assert output.enhanced_query != "show me AI tutorials"
-        assert output.enhanced_query.startswith("show me AI tutorials")
+        assert output.enhanced_query == "show me AI tutorials artificial intelligence"
         assert output.confidence == 0.5
-        # Fallback with "show" and "ai" triggers expansions
-        assert "artificial intelligence" in output.expansion_terms
-        assert isinstance(output.query_variants, list)
+        assert output.expansion_terms == ["artificial intelligence"]
+        assert output.synonyms == ["display", "present"]
+        assert output.query_variants == ["show me AI tutorials artificial intelligence"]
+        assert output.path_used == "heuristic_fallback"
 
     @pytest.mark.asyncio
     async def test_process_emits_span(self, qe_agent):
@@ -2132,8 +2129,8 @@ class TestQueryEnhancementSpanContract:
             ),
             (
                 {
-                    "enhanced_query": "show videos about machine learning",
-                    "expansion_terms": "",
+                    "enhanced_query": "",
+                    "expansion_terms": "machine learning",
                     "synonyms": "",
                     "context": "",
                     "confidence": "0.9",
@@ -2173,16 +2170,14 @@ class TestQueryEnhancementSpanContract:
                 )
             )
 
+        # The fallback searches the query as asked: no word that changes it.
         assert result.model_dump() == {
             "original_query": "show videos",
-            "enhanced_query": "show videos tutorial",
-            "expansion_terms": ["tutorial", "guide", "demonstration"],
+            "enhanced_query": "show videos",
+            "expansion_terms": [],
             "synonyms": ["display", "present"],
             "context_additions": [],
-            "query_variants": [
-                "show videos tutorial",
-                "show videos tutorial guide demonstration",
-            ],
+            "query_variants": [],
             "confidence": 0.5,
             "reasoning": "Fallback enhancement with heuristic expansion",
             "path_used": QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
@@ -2203,11 +2198,11 @@ class TestQueryEnhancementSpanContract:
         assert read_span_io(span_attrs) == {
             "input": "show videos",
             "output": {
-                "enhanced_query": "show videos tutorial",
-                "expansion_terms": ["tutorial", "guide", "demonstration"],
+                "enhanced_query": "show videos",
+                "expansion_terms": [],
                 "synonyms": ["display", "present"],
                 "context_additions": [],
-                "variant_count": 2,
+                "variant_count": 0,
                 "confidence": 0.5,
             },
             "operation": "query_enhancement",

@@ -167,6 +167,66 @@ async def test_finish_is_the_only_completed_action(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_finish_needs_no_arguments(monkeypatch):
+    agent, calls = controlled_agent(
+        monkeypatch,
+        [{"tool_name": "finish", "tool_args_json": "", "summary": "x.py holds 42"}],
+    )
+    result = await agent._process_workspace(request())
+    assert result.model_dump() == envelope(summary="x.py holds 42", iterations_used=1)
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_finish_with_a_blank_summary_is_never_an_answer(monkeypatch):
+    agent, calls = controlled_agent(
+        monkeypatch,
+        [{"tool_name": "finish", "tool_args_json": "{}", "summary": "  "}],
+    )
+    result = await agent._process_workspace(request())
+    reason = "finish needs a summary of the completed work"
+    assert result.model_dump() == envelope(
+        success=False,
+        iterations_used=3,
+        error=f"Invalid workspace action after 3 attempt(s): {reason}",
+    )
+    assert len(calls) == 3
+    assert (
+        calls[1]["observations"]
+        == f"no workspace actions taken yet\nstep 1 failed: {reason}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_blank_summary_finish_is_retried_into_the_tool_call(monkeypatch):
+    agent, calls = controlled_agent(
+        monkeypatch,
+        [
+            {"tool_name": "finish", "tool_args_json": "{}", "summary": ""},
+            {
+                "tool_name": "read_file",
+                "tool_args_json": '{"path":"x.py"}',
+                "summary": "",
+            },
+        ],
+    )
+    monkeypatch.setattr(coding.uuid, "uuid4", lambda: uuid.UUID(int=1))
+    result = await agent._process_workspace(request())
+    assert result.model_dump() == envelope(
+        pending_tool_calls=[
+            {
+                "id": "call_000000000000",
+                "name": "read_file",
+                "arguments": {"path": "x.py"},
+            }
+        ],
+        continuation_state={"mode": "workspace", "plan": "read plan", "step": 2},
+        iterations_used=2,
+    )
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_exported_cap_stops_without_another_decision(monkeypatch):
     agent, calls = controlled_agent(
         monkeypatch,

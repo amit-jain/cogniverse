@@ -1660,12 +1660,15 @@ async def _execute_plan(
 Cross-modal fusion of results from all agents. `aggregated_content` — the
 answer a reader sees — is built from each step's own answer text: the `answer`
 the serving runtime stamps on every completed dispatch (a search step's
-includes its hits), else the step's `message`; never a step's payload.
+includes its hits, each by title and time range), else the step's `message`;
+never a step's payload. A search step's line naming the query it searched (the
+plan's rewrite) is replaced by one naming `query`, the question as asked.
 Enrichment steps (`query_enhancement_agent`, `entity_extraction_agent`,
 `profile_selection_agent`) feed later steps and are fused only when the plan
 produced nothing else. The fusion strategy (SCORE_BASED, TEMPORAL,
 HIERARCHICAL, or SIMPLE) is selected from the query and the fused steps'
-modalities: SIMPLE joins the answers in execution order; SCORE_BASED puts each
+modalities: SIMPLE leads with the synthesized answers (a summary, a report)
+and follows with the search steps' hits, each group in execution order; SCORE_BASED puts each
 under `**<Agent>** (<modality>, confidence <share>)`, highest first;
 HIERARCHICAL groups them under `## <Modality> results` headings.
 
@@ -2796,7 +2799,7 @@ for result in results:
 
 Enhances user queries by adding synonyms, context, and related terms to improve search recall. It takes the sampled source text alongside the query, and the DSPy prompt requires `expansion_terms` to be token-grounded in that text while synonyms remain free-form. Every non-stopword alphanumeric token in an expansion term must appear in the sampled source text; multi-word phrases are allowed when each substantive token is grounded. Runs a DSPy `QueryEnhancementModule` and returns the enhanced query alongside the expansion terms it generated.
 
-The `cogniverse.query_enhancement` span always includes `enhancement.path` in the declared span contract. `lm` marks a genuine enhancement; `heuristic_fallback` marks the heuristic expansion used when the LM echoes the query or returns empty fields.
+The `cogniverse.query_enhancement` span always includes `enhancement.path` in the declared span contract. `lm` marks a genuine enhancement; `heuristic_fallback` marks the heuristic used when the LM call fails, echoes the query or leaves `enhanced_query` blank (blank `expansion_terms` is a valid LM answer). The heuristic only spells out an acronym the query contains and otherwise returns the query unchanged, so it never adds words that change what is searched.
 
 **Constructor:** `QueryEnhancementAgent(deps: QueryEnhancementDeps, port: int = 8012)` (standalone A2A server default; runs in-process on port 8000 in `cogniverse_runtime`)
 
@@ -2831,7 +2834,10 @@ Advertised client tools select workspace mode. The agent suspends with
 `pending_tool_calls` and `continuation_state`; replayed observations match calls
 by ID. `WORKSPACE_MAX_ROUNDS` is the shared workspace default and limit (8); an explicit
 `max_iterations` can lower it.
-`WORKSPACE_ACTION_MAX_ATTEMPTS` bounds malformed-action retries (3). Failed
+`WORKSPACE_ACTION_MAX_ATTEMPTS` bounds malformed-action retries (3). Each
+step either calls one advertised tool (its JSON arguments; the step's summary
+may be blank) or finishes with a summary of the completed work; a finish with a
+blank summary is a malformed action and is retried. Failed
 steps expose `success=False` and `error` with an empty summary. Context reads
 run in workers; sandbox staging directories are removed on success, failure,
 and cancellation.
