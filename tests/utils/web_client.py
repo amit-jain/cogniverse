@@ -7,6 +7,7 @@ are required; their absence fails the test.
 
 from __future__ import annotations
 
+import json
 import shutil
 import socket
 import subprocess
@@ -93,13 +94,13 @@ def build_web_client(root: Path) -> Path:
 def serve_web(
     client_dir: Path,
     runtime_url: str,
-    key: str,
     *,
     telemetry_url: str,
     built: bool = False,
 ) -> Iterator[str]:
     """Run the client's Node server: the built ``dist`` entry when ``built``,
-    otherwise the sources through tsx. Yields its base URL.
+    otherwise the sources through tsx. Yields its base URL. The server acts
+    for each tenant with a harness key it mints through the runtime.
 
     ``telemetry_url`` points CopilotKit's telemetry sink at a local recorder
     so a test never reports to CopilotKit's servers.
@@ -117,7 +118,6 @@ def serve_web(
         env=node_env(
             node,
             COGNIVERSE_RUNTIME_URL=runtime_url,
-            COGNIVERSE_API_KEY=key,
             PORT=str(port),
             COPILOTKIT_TELEMETRY_URL=telemetry_url,
         ),
@@ -145,6 +145,14 @@ def serve_web(
             f"the web server did not exit cleanly: {output}"
         )
         reader.join(timeout=10)
+
+
+def browse_as(context, tenant: str) -> None:
+    """Open every page of the Playwright ``context`` with ``tenant`` as the
+    web client's active tenant."""
+    context.add_init_script(
+        f"localStorage.setItem('cogniverse.tenant', {json.dumps(tenant)})"
+    )
 
 
 @contextmanager

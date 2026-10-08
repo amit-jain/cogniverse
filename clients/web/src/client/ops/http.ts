@@ -1,3 +1,5 @@
+import { TENANT_HEADER, currentTenant } from '../tenant';
+
 export class RuntimeRequestError extends Error {
   constructor(
     message: string,
@@ -41,16 +43,22 @@ export function errorMessage(body: unknown, status: number): string {
 
 /**
  * Calls a runtime route through the web server and returns its JSON body.
- * A ``FormData`` body goes as multipart; any other body as JSON.
+ * A ``FormData`` body goes as multipart; any other body as JSON. The request
+ * names ``tenant`` (by default the active tenant) for the routes the server
+ * calls as that tenant.
  */
 export async function runtimeJson<T>(
   path: string,
-  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  init: { method?: string; body?: unknown; signal?: AbortSignal; tenant?: string } = {},
 ): Promise<T> {
   const form = init.body instanceof FormData;
+  const headers: Record<string, string> = {};
+  const tenant = init.tenant ?? currentTenant();
+  if (tenant) headers[TENANT_HEADER] = tenant;
+  if (init.body !== undefined && !form) headers['content-type'] = 'application/json';
   const response = await fetch(`/ui-api/runtime${path}`, {
     method: init.method ?? 'GET',
-    headers: init.body === undefined || form ? undefined : { 'content-type': 'application/json' },
+    headers,
     body: init.body === undefined ? undefined : form ? (init.body as FormData) : JSON.stringify(init.body),
     signal: init.signal,
   });

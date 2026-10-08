@@ -21,13 +21,13 @@ from tests.utils.web_client import (
 )
 from tests.utils.web_ops import (
     memory_on_vespa,
+    register_tenant,
     serve_ops_runtime,
     token_embedding,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
-KEY = "web-ops-harness-key"
 TENANTS = ("webmem:alpha", "webmem:beta")
 SYSTEM_NOTE = (
     "A system namespace: the runtime manages these memories, so they are "
@@ -65,7 +65,7 @@ def runtime_url(config_manager, schema_loader, workflow_state_redis_url):
 def web_url(built_client, runtime_url):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -115,6 +115,7 @@ def _rows(manager, namespace):
 
 
 def _show(page: Page, web_url: str, tenant: str, namespace: str | None = None):
+    register_tenant(tenant)
     page.goto(f"{web_url}/#/ops/memory")
     expect(page.get_by_role("heading", name="Memory", level=1)).to_be_visible()
     chooser = page.get_by_role("form", name="Choose tenant")

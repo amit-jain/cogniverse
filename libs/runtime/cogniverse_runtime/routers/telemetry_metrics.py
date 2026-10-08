@@ -11,12 +11,14 @@ window.
 import asyncio
 import logging
 import math
+import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
@@ -49,7 +51,23 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-Lookback = Query(24, ge=1, le=24 * 30)
+MAX_WINDOW = timedelta(days=30)
+Lookback = Query(24, ge=1, le=MAX_WINDOW.days * 24)
+WindowStart = Query(
+    None,
+    description="Start of the window (ISO 8601 with a timezone); with ``end`` "
+    "it replaces ``lookback_hours``.",
+)
+WindowEnd = Query(None, description="End of the window (ISO 8601 with a timezone).")
+
+_phoenix_public_url: Optional[str] = None
+
+
+def set_phoenix_public_url(url: Optional[str]) -> None:
+    """The Phoenix UI address a browser reaches, for the links the
+    ``/telemetry/phoenix`` route answers; ``None`` turns the links off."""
+    global _phoenix_public_url
+    _phoenix_public_url = url.rstrip("/") if url else None
 
 
 class ModalityMetrics(BaseModel):
@@ -164,6 +182,67 @@ class Recommendation(BaseModel):
     affected_components: List[str]
 
 
+class Tally(BaseModel):
+    value: str
+    count: int
+
+
+class HourlyFailures(BaseModel):
+    hour: int
+    requests: int
+    failed: int
+    failure_rate: float
+
+
+class FailureBurst(BaseModel):
+    start_time: str
+    end_time: str
+    failures: int
+    duration_minutes: float
+    trace_ids: List[str]
+
+
+class FailureAnalysis(BaseModel):
+    """What the failed traces have in common, each tally most frequent
+    first."""
+
+    error_types: List[Tally]
+    operations: List[Tally]
+    profiles: List[Tally]
+    strategies: List[Tally]
+    hours: List[HourlyFailures]
+    bursts: List[FailureBurst]
+
+
+class SlowOperation(BaseModel):
+    operation: str
+    count: int
+    mean_ms: float
+    min_ms: float
+    max_ms: float
+    sample_ms: List[float]
+
+
+class LatencyShift(BaseModel):
+    slow_mean_ms: float
+    slow_std_ms: float
+    normal_mean_ms: float
+    normal_std_ms: float
+    slowdown_factor: float
+
+
+class PerformanceAnalysis(BaseModel):
+    """Where the slow traces sit and how much slower they are than the
+    rest of the successful traces."""
+
+    percentile: int
+    threshold_ms: float
+    operations: List[SlowOperation]
+    profiles: List[Tally]
+    strategies: List[Tally]
+    latency: LatencyShift
+
+
 class RootCauseAnalysis(BaseModel):
     traces: int
     failed: int
@@ -172,6 +251,14 @@ class RootCauseAnalysis(BaseModel):
     slow_threshold_ms: Optional[float]
     root_causes: List[RootCause]
     recommendations: List[Recommendation]
+    failure_analysis: Optional[FailureAnalysis]
+    performance_analysis: Optional[PerformanceAnalysis]
+
+
+class PhoenixLinks(BaseModel):
+    phoenix_url: Optional[str]
+    project: str
+    project_url: Optional[str]
 
 
 class StrategyScores(BaseModel):
@@ -210,12 +297,42 @@ class GoldenEvaluation(BaseModel):
     unscored_searches: int
 
 
+def _window(
+    lookback_hours: int, start: Optional[datetime], end: Optional[datetime]
+) -> tuple[datetime, datetime]:
+    """``start`` to ``end`` when both are given, else the last
+    ``lookback_hours``.
+
+    Raises:
+        HTTPException 422: only one bound given, a bound without a timezone,
+            an empty window or one longer than ``MAX_WINDOW``.
+    """
+    if start is None and end is None:
+        now = datetime.now(timezone.utc)
+        return now - timedelta(hours=lookback_hours), now
+    if start is None or end is None:
+        raise HTTPException(422, "Give both start and end, or neither.")
+    if start.tzinfo is None or end.tzinfo is None:
+        raise HTTPException(422, "start and end must carry a timezone.")
+    if start >= end:
+        raise HTTPException(422, "start must be before end.")
+    if end - start > MAX_WINDOW:
+        raise HTTPException(422, f"The window may span at most {MAX_WINDOW.days} days.")
+    return start, end
+
+
 async def _window_spans(
-    tenant_id: str, lookback_hours: int, *, span_name: str = "", roots_only=False
+    tenant_id: str,
+    lookback_hours: int,
+    *,
+    span_name: str = "",
+    roots_only=False,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
 ):
     manager = get_telemetry_manager()
     project = manager.config.get_project_name(tenant_id)
-    end = datetime.now(timezone.utc)
+    start, end = _window(lookback_hours, start, end)
     filters: Dict[str, Any] = {"roots_only": True} if roots_only else {}
     if span_name:
         filters["name"] = span_name
@@ -223,7 +340,7 @@ async def _window_spans(
         provider = manager.get_provider(tenant_id=tenant_id, project_name=project)
         return await provider.traces.get_all_spans(
             project=project,
-            start_time=end - timedelta(hours=lookback_hours),
+            start_time=start,
             end_time=end,
             filters=filters,
         )
@@ -314,25 +431,32 @@ async def rlm_ab(tenant_id: str, lookback_hours: int = Lookback):
 async def traces(
     tenant_id: str,
     lookback_hours: int = Lookback,
+    start: Optional[datetime] = WindowStart,
+    end: Optional[datetime] = WindowEnd,
     operation: str = "",
     profile: List[str] = Query([]),
     strategy: List[str] = Query([]),
 ):
-    """The tenant's traces (root spans) in the last ``lookback_hours``,
-    newest first, with their statistics.
+    """The tenant's traces (root spans) in the last ``lookback_hours`` (or
+    from ``start`` to ``end``), newest first, with their statistics.
 
-    ``operation`` keeps traces whose name contains it (any case); ``profile``
-    and ``strategy`` keep traces with one of the given values. ``facets``
-    lists the values present in the whole window.
+    ``operation`` is a regular expression (any case) a trace's name must
+    match somewhere; ``profile`` and ``strategy`` keep traces with one of the
+    given values. ``facets`` lists the values present in the whole window.
     """
     tenant_id = canonical_tenant_id(tenant_id)
-    rows = trace_rows(await _window_spans(tenant_id, lookback_hours, roots_only=True))
+    pattern = _operation_pattern(operation)
+    rows = trace_rows(
+        await _window_spans(
+            tenant_id, lookback_hours, roots_only=True, start=start, end=end
+        )
+    )
     facets = TraceFacets(
         operations=sorted({row["operation"] for row in rows}),
         profiles=sorted({row["profile"] for row in rows if row["profile"]}),
         strategies=sorted({row["strategy"] for row in rows if row["strategy"]}),
     )
-    kept = _filtered(rows, operation, profile, strategy)
+    kept = _filtered(rows, pattern, profile, strategy)
     return TraceAnalytics(
         facets=facets,
         statistics=TraceStatistics(**trace_statistics(kept)),
@@ -340,16 +464,32 @@ async def traces(
     )
 
 
+def _operation_pattern(operation: str) -> re.Pattern:
+    """``operation`` compiled as a case-insensitive regular expression.
+
+    Raises:
+        HTTPException 422: it is not a valid regular expression.
+    """
+    try:
+        return re.compile(operation, re.IGNORECASE)
+    except re.error as exc:
+        raise HTTPException(
+            422, f"operation is not a valid regular expression: {exc}"
+        ) from exc
+
+
 def _filtered(
-    rows: List[Dict[str, Any]], operation: str, profile: List[str], strategy: List[str]
+    rows: List[Dict[str, Any]],
+    operation: re.Pattern,
+    profile: List[str],
+    strategy: List[str],
 ) -> List[Dict[str, Any]]:
-    """Rows whose operation contains ``operation`` (any case) and whose
-    profile and strategy are among the given ones, when any are given."""
-    needle = operation.casefold()
+    """Rows whose operation matches ``operation`` and whose profile and
+    strategy are among the given ones, when any are given."""
     return [
         row
         for row in rows
-        if needle in row["operation"].casefold()
+        if operation.search(row["operation"])
         and (not profile or row["profile"] in profile)
         and (not strategy or row["strategy"] in strategy)
     ]
@@ -408,6 +548,85 @@ def root_cause_analysis(
             )
             for item in analysis["recommendations"]
         ],
+        failure_analysis=_failure_analysis(analysis["failure_analysis"]),
+        performance_analysis=_performance_analysis(analysis["performance_analysis"]),
+    )
+
+
+def _tallies(counter: Counter) -> List[Tally]:
+    return [
+        Tally(value=str(value), count=count) for value, count in counter.most_common()
+    ]
+
+
+def _failure_analysis(found: Dict[str, Any]) -> Optional[FailureAnalysis]:
+    """The analyzer's failure patterns; ``None`` when nothing failed."""
+    if not found:
+        return None
+    temporal = found["temporal_patterns"]
+    return FailureAnalysis(
+        error_types=_tallies(found["error_types"]),
+        operations=_tallies(found["failed_operations"]),
+        profiles=_tallies(found["failed_profiles"]),
+        strategies=_tallies(found["failed_strategies"]),
+        hours=sorted(
+            (
+                HourlyFailures(
+                    hour=item["hour"],
+                    requests=item["total_requests"],
+                    failed=item["failed_requests"],
+                    failure_rate=float(item["failure_rate"]),
+                )
+                for item in temporal
+                if item["type"] == "hourly"
+            ),
+            key=lambda item: item.hour,
+        ),
+        bursts=[
+            FailureBurst(
+                start_time=item["start_time"],
+                end_time=item["end_time"],
+                failures=item["failure_count"],
+                duration_minutes=float(item["duration_minutes"]),
+                trace_ids=list(item["trace_ids"]),
+            )
+            for item in temporal
+            if item["type"] == "burst"
+        ],
+    )
+
+
+def _performance_analysis(found: Dict[str, Any]) -> Optional[PerformanceAnalysis]:
+    """The analyzer's slow-trace patterns; ``None`` when no trace was slow."""
+    if not found:
+        return None
+    latency = found["latency_distribution"]
+    return PerformanceAnalysis(
+        percentile=int(found["threshold_percentile"]),
+        threshold_ms=float(found["threshold"]),
+        operations=sorted(
+            (
+                SlowOperation(
+                    operation=operation,
+                    count=int(stats["count"]),
+                    mean_ms=float(stats["avg_duration"]),
+                    min_ms=float(stats["min_duration"]),
+                    max_ms=float(stats["max_duration"]),
+                    sample_ms=[float(value) for value in stats["durations"]],
+                )
+                for operation, stats in found["slow_operations"].items()
+            ),
+            key=lambda item: (-item.count, item.operation),
+        ),
+        profiles=_tallies(found["slow_profiles"]),
+        strategies=_tallies(found["slow_strategies"]),
+        latency=LatencyShift(
+            slow_mean_ms=float(latency["slow_mean"]),
+            slow_std_ms=float(latency["slow_std"]),
+            normal_mean_ms=float(latency["normal_mean"]),
+            normal_std_ms=float(latency["normal_std"]),
+            slowdown_factor=float(latency["slowdown_factor"]),
+        ),
     )
 
 
@@ -415,6 +634,8 @@ def root_cause_analysis(
 async def root_causes(
     tenant_id: str,
     lookback_hours: int = Lookback,
+    start: Optional[datetime] = WindowStart,
+    end: Optional[datetime] = WindowEnd,
     operation: str = "",
     profile: List[str] = Query([]),
     strategy: List[str] = Query([]),
@@ -422,16 +643,52 @@ async def root_causes(
     slow_percentile: int = Query(95, ge=50, le=99),
 ):
     """Root-cause hypotheses for the failed (and slow) traces among the
-    tenant's traces in the last ``lookback_hours``, filtered as
-    ``/telemetry/traces`` filters them."""
+    tenant's traces in the window, filtered as ``/telemetry/traces`` filters
+    them."""
     tenant_id = canonical_tenant_id(tenant_id)
-    rows = trace_rows(await _window_spans(tenant_id, lookback_hours, roots_only=True))
-    kept = _filtered(rows, operation, profile, strategy)
+    pattern = _operation_pattern(operation)
+    rows = trace_rows(
+        await _window_spans(
+            tenant_id, lookback_hours, roots_only=True, start=start, end=end
+        )
+    )
+    kept = _filtered(rows, pattern, profile, strategy)
     return await asyncio.to_thread(
         root_cause_analysis,
         kept,
         include_slow=include_slow,
         slow_percentile=slow_percentile,
+    )
+
+
+@router.get("/{tenant_id}/telemetry/phoenix", response_model=PhoenixLinks)
+async def phoenix_links(tenant_id: str):
+    """Where a browser opens the tenant's traces in Phoenix: the Phoenix UI
+    address set with ``set_phoenix_public_url`` and the tenant's project
+    page there. Either is ``null`` when the address is not set or Phoenix
+    has no project for the tenant yet."""
+    tenant_id = canonical_tenant_id(tenant_id)
+    manager = get_telemetry_manager()
+    project = manager.config.get_project_name(tenant_id)
+    if _phoenix_public_url is None:
+        return PhoenixLinks(phoenix_url=None, project=project, project_url=None)
+    try:
+        provider = manager.get_provider(tenant_id=tenant_id, project_name=project)
+        project_id = await provider.project_id(project)
+    except Exception as exc:
+        raise failure_response(
+            502,
+            "telemetry_unavailable",
+            f"Could not read the Phoenix project of tenant {tenant_id}.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    return PhoenixLinks(
+        phoenix_url=_phoenix_public_url,
+        project=project,
+        project_url=(
+            f"{_phoenix_public_url}/projects/{project_id}" if project_id else None
+        ),
     )
 
 

@@ -53,12 +53,14 @@ from tests.utils.stub_search import (
     stub_encoder_factory,
 )
 from tests.utils.web_client import (
+    browse_as,
     build_web_client,
     install_web_client,
     recording_telemetry_sink,
     serve_app,
     serve_web,
 )
+from tests.utils.web_ops import harness_key_admin
 
 pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
 
@@ -180,8 +182,7 @@ def runtime_url(telemetry, workflow_state_redis_url):
     app.include_router(agents.router, prefix="/agents")
     agents.set_agent_registry(registry)
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
-    openai_compat.set_key_resolver(None)
-    with serve_app(app) as url:
+    with harness_key_admin(app, config_manager), serve_app(app) as url:
         yield url
     openai_compat.set_dispatcher_provider(None)
     openai_compat.set_api_keys({})
@@ -206,7 +207,7 @@ def built_client(tmp_path_factory):
 def web_url(built_client, runtime_url, tenants):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -221,8 +222,9 @@ def browser():
 
 
 @pytest.fixture()
-def page(browser):
+def page(browser, tenants):
     context = browser.new_context()
+    browse_as(context, tenants[0])
     page = context.new_page()
     yield page
     context.close()

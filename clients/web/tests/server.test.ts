@@ -1,65 +1,41 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/server/app';
 import { ConfigError, loadConfig, type ServerConfig } from '../src/server/config';
-import { RuntimeUnavailableError, cogniverseAgents, listAgents } from '../src/server/runtime';
-
-const servers: Server[] = [];
-afterEach(async () => {
-  await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(r))));
-});
-
-/** A real HTTP server standing in for the runtime's agent list. */
-async function runtimeServer(
-  handler: (req: IncomingMessage, res: ServerResponse) => void,
-): Promise<string> {
-  const server = createServer(handler);
-  servers.push(server);
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-}
-
-/** A port nothing listens on. */
-async function deadUrl(): Promise<string> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
-  await new Promise((r) => server.close(r));
-  return `http://127.0.0.1:${port}`;
-}
+import { RuntimeUnavailableError, agentsStatus, cogniverseAgents, listAgents } from '../src/server/runtime';
+import { TENANT_HEADER, TenantAuthUnavailableError, TenantKeys, UnknownTenantError } from '../src/server/tenants';
+import { deadUrl, json, runtimeServer, withAdmin } from './fakeRuntime';
 
 function config(runtimeUrl: string): ServerConfig {
-  return { runtimeUrl, apiKey: 'sk-test', port: 4000, host: '127.0.0.1', clientDir: '/nonexistent' };
+  return { runtimeUrl, port: 4000, host: '127.0.0.1', clientDir: '/nonexistent' };
 }
 
 describe('loadConfig', () => {
   it('reads and normalises the environment', () => {
     expect(
       loadConfig(
-        { COGNIVERSE_RUNTIME_URL: ' http://rt:8000/api// ', COGNIVERSE_API_KEY: ' sk-1 ', PORT: '5173' },
+        { COGNIVERSE_RUNTIME_URL: ' http://rt:8000/api// ', PORT: '5173' },
         '/srv/client',
       ),
     ).toEqual({
       runtimeUrl: 'http://rt:8000/api',
-      apiKey: 'sk-1',
       port: 5173,
       host: '127.0.0.1',
       clientDir: '/srv/client',
     });
   });
 
-  it('names every missing variable', () => {
-    expect(() => loadConfig({ COGNIVERSE_API_KEY: '  ' }, '/c')).toThrow(
-      new ConfigError('Missing required environment: COGNIVERSE_RUNTIME_URL, COGNIVERSE_API_KEY.'),
+  it('names the missing runtime URL', () => {
+    expect(() => loadConfig({ COGNIVERSE_RUNTIME_URL: '  ' }, '/c')).toThrow(
+      new ConfigError('Missing required environment: COGNIVERSE_RUNTIME_URL.'),
     );
   });
 
   it('rejects a port that is not a port', () => {
-    const env = { COGNIVERSE_RUNTIME_URL: 'http://rt', COGNIVERSE_API_KEY: 'k' };
+    const env = { COGNIVERSE_RUNTIME_URL: 'http://rt' };
     for (const port of ['0', '70000', '80.5', 'web'])
       expect(() => loadConfig({ ...env, PORT: port }, '/c')).toThrow(
         new ConfigError(`PORT must be an integer port number, got ${port}.`),
@@ -107,12 +83,185 @@ describe('listAgents', () => {
 });
 
 describe('cogniverseAgents', () => {
-  it('points each agent at its /ag-ui route with the harness key', () => {
-    const agents = cogniverseAgents(config('http://rt:8000'), ['search_agent', 'a/b']);
+  it("points each agent at its /ag-ui route and runs it with the tenant's key", async () => {
+    const seen: string[] = [];
+    const [route, admin] = withAdmin(['acme:prod'], (req, res) => {
+      seen.push(`${req.method} ${req.url} ${req.headers.authorization}`);
+      json(res, 200, {});
+    });
+    const url = await runtimeServer(route);
+    const keys = new TenantKeys(config(url), fetch, 'web-test');
+    const agents = cogniverseAgents(config(url), ['search_agent', 'a/b'], keys, 'acme:prod');
     expect(Object.keys(agents)).toEqual(['search_agent', 'a/b']);
-    expect(agents.search_agent.url).toBe('http://rt:8000/ag-ui/search_agent');
-    expect(agents['a/b'].url).toBe('http://rt:8000/ag-ui/a%2Fb');
-    expect(agents.search_agent.headers).toEqual({ Authorization: 'Bearer sk-test' });
+    expect(agents.search_agent.url).toBe(`${url}/ag-ui/search_agent`);
+    expect(agents['a/b'].url).toBe(`${url}/ag-ui/a%2Fb`);
+    expect(agents.search_agent.headers).toEqual({ [TENANT_HEADER]: 'acme:prod' });
+    await agents.search_agent.fetch(agents.search_agent.url, { method: 'POST' });
+    expect(seen).toEqual([`POST /ag-ui/search_agent ${admin.bearer('acme:prod')}`]);
+    expect(admin.calls).toEqual(['probe acme:prod', 'mint acme:prod web-test']);
+  });
+
+  it('refuses a run that names no tenant without calling the runtime', async () => {
+    const [route, admin] = withAdmin([]);
+    const url = await runtimeServer(route);
+    const agents = cogniverseAgents(config(url), ['search_agent'], new TenantKeys(config(url)), undefined);
+    const response = await agents.search_agent.fetch(agents.search_agent.url, { method: 'POST' });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Choose a tenant before talking to an agent.' });
+    expect(agents.search_agent.headers).toEqual({});
+    expect(admin.calls).toEqual([]);
+  });
+});
+
+describe('TenantKeys', () => {
+  it('mints one key per tenant however many first requests race for it', async () => {
+    const [route, admin] = withAdmin(['acme:prod', 'beta:dev']);
+    const url = await runtimeServer(route);
+    const keys = new TenantKeys(config(url), fetch, 'web-test');
+    const tenants = Array.from({ length: 12 }, (_, i) => (i % 2 ? 'acme:prod' : 'beta:dev'));
+    const issued = await Promise.all(tenants.map((tenant) => keys.keyFor(tenant)));
+    expect(new Set(issued.filter((_, i) => tenants[i] === 'acme:prod'))).toEqual(
+      new Set([admin.bearer('acme:prod').slice(7)]),
+    );
+    expect(new Set(issued.filter((_, i) => tenants[i] === 'beta:dev'))).toEqual(
+      new Set([admin.bearer('beta:dev').slice(7)]),
+    );
+    expect(admin.tenantOf(`Bearer ${await keys.keyFor('acme:prod')}`)).toBe('acme:prod');
+    expect([...admin.calls].sort()).toEqual([
+      'mint acme:prod web-test',
+      'mint beta:dev web-test',
+      'probe acme:prod',
+      'probe beta:dev',
+    ]);
+  });
+
+  it('refuses an unregistered tenant and mints nothing for it', async () => {
+    const [route, admin] = withAdmin(['acme:prod']);
+    const url = await runtimeServer(route);
+    const keys = new TenantKeys(config(url));
+    await expect(keys.keyFor('acme:typo')).rejects.toThrow(
+      new UnknownTenantError('Tenant acme:typo is not registered. Register it with POST /admin/tenants first.'),
+    );
+    expect(admin.calls).toEqual(['probe acme:typo']);
+  });
+
+  it('mints a key while the tenant registry cannot be read, and refuses what it rejects', async () => {
+    const [route, admin] = withAdmin(['acme:prod']);
+    const url = await runtimeServer((req, res) => {
+      if (req.url === '/admin/tenants/acme%3Aprod')
+        return json(res, 503, { detail: 'Tenant registry temporarily unavailable' });
+      if (req.url === '/admin/tenants/bad%20id') return json(res, 400, { detail: 'Invalid tenant_id' });
+      if (req.url === '/admin/tenants/gone%3Aroute') return json(res, 404, { detail: 'Not Found' });
+      route(req, res);
+    });
+    const keys = new TenantKeys(config(url), fetch, 'web-test');
+    expect(admin.tenantOf(`Bearer ${await keys.keyFor('acme:prod')}`)).toBe('acme:prod');
+    await expect(keys.keyFor('bad id')).rejects.toThrow(
+      new TenantAuthUnavailableError('The runtime could not confirm tenant bad id (HTTP 400: Invalid tenant_id).'),
+    );
+    await expect(keys.keyFor('gone:route')).rejects.toThrow(
+      new TenantAuthUnavailableError('The runtime could not confirm tenant gone:route (HTTP 404: Not Found).'),
+    );
+    expect(admin.calls).toEqual(['mint acme:prod web-test']);
+  });
+
+  it("names the key store's failure and the runtime that did not answer", async () => {
+    const [route] = withAdmin(['acme:prod']);
+    const url = await runtimeServer((req, res) => {
+      if (req.url === '/admin/harness/keys')
+        return json(res, 503, {
+          detail: { error: 'harness_key_store_unavailable', message: 'The harness key store did not answer; retry.' },
+        });
+      route(req, res);
+    });
+    await expect(new TenantKeys(config(url)).keyFor('acme:prod')).rejects.toThrow(
+      new TenantAuthUnavailableError(
+        'The runtime did not issue a harness key for tenant acme:prod (HTTP 503: The harness key store did not answer; retry.).',
+      ),
+    );
+    const dead = await deadUrl();
+    await expect(new TenantKeys(config(dead)).keyFor('acme:prod')).rejects.toThrow(
+      new TenantAuthUnavailableError(`The Cogniverse runtime at ${dead} did not answer (TypeError).`),
+    );
+  });
+
+  it('retries a request the runtime rejects with a newly minted key, once', async () => {
+    const rejected = new Set<string>();
+    const [route, admin] = withAdmin(['acme:prod'], (req, res) => {
+      if (rejected.has(req.headers.authorization!)) return json(res, 401, { error: { message: 'Invalid API key' } });
+      json(res, 200, { auth: admin.tenantOf(req.headers.authorization) });
+    });
+    const url = await runtimeServer(route);
+    const keys = new TenantKeys(config(url), fetch, 'web-test');
+    const agent = cogniverseAgents(config(url), ['search_agent'], keys, 'acme:prod').search_agent;
+    expect(await (await agent.fetch(agent.url, { method: 'POST', body: '{}' })).json()).toEqual({ auth: 'acme:prod' });
+    rejected.add(admin.bearer('acme:prod'));
+    const retried = await agent.fetch(agent.url, { method: 'POST', body: '{}' });
+    expect([retried.status, await retried.json()]).toEqual([200, { auth: 'acme:prod' }]);
+    expect(rejected.has(admin.bearer('acme:prod'))).toBe(false);
+    // A key the runtime rejects again is not retried a second time.
+    rejected.add(admin.bearer('acme:prod'));
+    rejected.add(`Bearer key-acme:prod-3`);
+    const refused = await agent.fetch(agent.url, { method: 'POST', body: '{}' });
+    expect(refused.status).toBe(401);
+    expect(admin.calls.filter((call) => call.startsWith('mint'))).toEqual([
+      'mint acme:prod web-test',
+      'mint acme:prod web-test',
+      'mint acme:prod web-test',
+    ]);
+  });
+
+  it('revokes every key it minted', async () => {
+    const [route, admin] = withAdmin(['acme:prod', 'beta:dev']);
+    const url = await runtimeServer(route);
+    const keys = new TenantKeys(config(url), fetch, 'web-test');
+    await keys.keyFor('acme:prod');
+    await keys.keyFor('beta:dev');
+    await keys.revokeAll();
+    expect(admin.calls.filter((call) => call.startsWith('revoke')).sort()).toEqual(['revoke hash-1', 'revoke hash-2']);
+    await keys.keyFor('acme:prod');
+    expect(admin.calls.at(-1)).toBe('mint acme:prod web-test');
+  });
+});
+
+describe('agentsStatus', () => {
+  it("reports each agent online when the runtime serves and the registry has it", async () => {
+    const url = await runtimeServer((req, res) => {
+      if (req.url === '/health') return json(res, 200, { status: 'degraded' });
+      if (req.url === '/agents/search_agent')
+        return json(res, 200, { name: 'search_agent', health_status: 'healthy' });
+      if (req.url === '/agents/gone_agent') return json(res, 404, { detail: "Agent 'gone_agent' not found" });
+      json(res, 500, {});
+    });
+    expect(await agentsStatus(config(url), ['search_agent', 'gone_agent', 'broken_agent'])).toEqual({
+      runtime: 'degraded',
+      agents: [
+        { name: 'search_agent', status: 'online', health: 'healthy' },
+        { name: 'gone_agent', status: 'offline', message: 'Not registered.' },
+        { name: 'broken_agent', status: 'offline', message: 'HTTP 500.' },
+      ],
+    });
+  });
+
+  it('reports every agent offline while the runtime is unhealthy', async () => {
+    const seen: string[] = [];
+    const url = await runtimeServer((req, res) => {
+      seen.push(req.url!);
+      json(res, 503, { status: 'unhealthy', reason: 'Backend unreachable' });
+    });
+    expect(await agentsStatus(config(url), ['search_agent'])).toEqual({
+      runtime: 'unhealthy',
+      reason: 'Backend unreachable',
+      agents: [{ name: 'search_agent', status: 'offline', message: 'The runtime is unhealthy: Backend unreachable.' }],
+    });
+    expect(seen).toEqual(['/health']);
+  });
+
+  it('answers 502 naming the runtime when it is down', async () => {
+    const url = await deadUrl();
+    const response = await createApp(config(url)).request('/ui-api/agents/status');
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: `The Cogniverse runtime at ${url} did not answer (TypeError).` });
   });
 });
 
@@ -137,7 +286,7 @@ describe('GET /ui-api/agents', () => {
 });
 
 describe('runtime proxy', () => {
-  it('forwards method, path, query, body and the harness key', async () => {
+  it('forwards method, path, query and body, and no key, to an admin route', async () => {
     const seen: unknown[] = [];
     const url = await runtimeServer((req, res) => {
       let body = '';
@@ -166,7 +315,7 @@ describe('runtime proxy', () => {
       {
         method: 'POST',
         url: '/admin/tenants?dry=1',
-        auth: 'Bearer sk-test',
+        auth: undefined,
         type: 'application/json',
         cookie: undefined,
         body: '{"tenant_id":"acme:prod"}',
@@ -218,10 +367,11 @@ describe('runtime proxy', () => {
 
   it('forwards every route the operations views call', async () => {
     const seen: string[] = [];
-    const url = await runtimeServer((req, res) => {
+    const [route] = withAdmin(['acme:prod'], (req, res) => {
       seen.push(`${req.method} ${req.url}`);
       res.end('{}');
     });
+    const url = await runtimeServer(route);
     const app = createApp(config(url));
     const calls = [
       ['GET', '/admin/organizations'],
@@ -273,16 +423,48 @@ describe('runtime proxy', () => {
       ['GET', '/admin/tenant/acme:prod/telemetry/profile-selection?lookback_hours=24'],
       ['GET', '/admin/tenant/acme:prod/telemetry/rlm-ab?lookback_hours=168'],
       ['GET', '/admin/tenant/acme:prod/telemetry/traces?lookback_hours=24&operation=search&profile=a&profile=b'],
+      ['GET', '/admin/tenant/acme:prod/telemetry/traces?start=2026-10-01T00%3A00%3A00.000Z&end=2026-10-02T00%3A00%3A00.000Z'],
+      ['GET', '/admin/tenant/acme:prod/telemetry/phoenix'],
       ['GET', '/admin/tenant/acme:prod/evaluation/golden?lookback_hours=168'],
       ['GET', '/admin/tenant/acme:prod/routing-decisions?lookback_hours=24'],
       ['POST', '/admin/tenant/acme:prod/routing-decisions/abc123/approve'],
       ['PUT', '/admin/tenant/acme:prod/routing-decisions/abc123/label'],
     ];
     for (const [method, path] of calls) {
-      const response = await app.request(`/ui-api/runtime${path}`, { method });
+      const response = await app.request(`/ui-api/runtime${path}`, {
+        method,
+        headers: { [TENANT_HEADER]: 'acme:prod' },
+      });
       expect(response.status).toBe(200);
     }
     expect(seen).toEqual(calls.map(([method, path]) => `${method} ${path}`));
+  });
+
+  it("sends an /ag-ui route with the named tenant's key, and none without a tenant", async () => {
+    const seen: string[] = [];
+    const [route, admin] = withAdmin(['acme:prod', 'beta:dev'], (req: IncomingMessage, res: ServerResponse) => {
+      seen.push(`${req.method} ${req.url} ${admin.tenantOf(req.headers.authorization)}`);
+      json(res, 200, { stored: true });
+    });
+    const url = await runtimeServer(route);
+    const app = createApp(config(url));
+    const rate = (headers: Record<string, string>) =>
+      app.request('/ui-api/runtime/ag-ui/results/relevance', { method: 'POST', headers, body: '{}' });
+    const [acme, beta] = await Promise.all([rate({ [TENANT_HEADER]: 'acme:prod' }), rate({ [TENANT_HEADER]: 'beta:dev' })]);
+    expect([acme.status, beta.status]).toEqual([200, 200]);
+    expect(seen.sort()).toEqual([
+      'POST /ag-ui/results/relevance acme:prod',
+      'POST /ag-ui/results/relevance beta:dev',
+    ]);
+    const anonymous = await rate({});
+    expect(anonymous.status).toBe(400);
+    expect(await anonymous.json()).toEqual({ error: 'Choose a tenant before talking to an agent.' });
+    const unknown = await rate({ [TENANT_HEADER]: 'acme:typo' });
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toEqual({
+      error: 'Tenant acme:typo is not registered. Register it with POST /admin/tenants first.',
+    });
+    expect(seen).toHaveLength(2);
   });
 
   it('streams server-sent events as the runtime sends them', async () => {

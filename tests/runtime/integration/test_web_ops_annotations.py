@@ -38,7 +38,6 @@ from tests.utils.web_ops import serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
 
-KEY = "web-ops-harness-key"
 QUEUE_PREFIX = f"web-ops-test:annotation-view:{uuid4().hex[:8]}"
 
 
@@ -57,7 +56,7 @@ def runtime_url(phoenix_container, schema_loader, workflow_state_redis_url):
 def web_url(built_client, runtime_url):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []

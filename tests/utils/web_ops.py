@@ -26,8 +26,10 @@ import json
 import math
 import re
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, Iterable, Iterator, Optional, Tuple
@@ -35,12 +37,15 @@ from typing import Awaitable, Callable, Dict, Iterable, Iterator, Optional, Tupl
 from fastapi import FastAPI
 
 from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+from cogniverse_core.common.tenant_utils import parse_tenant_id
 from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.admin import tenant_manager as tm
+from cogniverse_runtime.admin.models import Tenant
 from cogniverse_runtime.cluster_events import ClusterEvents
+from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_runtime.ingestion_worker import status_api
 from cogniverse_runtime.ingestion_worker import worker as ingest_worker
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
@@ -52,6 +57,7 @@ from cogniverse_runtime.routers import (
     config_entries,
     embedding_atlas,
     ingestion,
+    openai_compat,
     orchestration_annotations,
     routing_decisions,
     telemetry_metrics,
@@ -180,6 +186,58 @@ def serve_ops_runtime(
         tenant.set_config_manager(None)
         approvals.set_config_manager(None)
         BackendRegistry.get_instance().clear_instances()
+
+
+@contextmanager
+def harness_key_admin(app: FastAPI, config_manager) -> Iterator[HarnessKeyStore]:
+    """Mount on ``app`` the routes the web server acts for a tenant through,
+    and resolve the keys it mints on ``/ag-ui``; yields the key store.
+
+    The harness-key admin runs over ``config_manager``'s store. The tenant
+    registry is mounted without a metadata backend, so it answers 503 and
+    the server mints a tenant's key without confirming the tenant.
+    """
+    app.include_router(admin.router, prefix="/admin")
+    app.include_router(tm.router, prefix="/admin")
+    previous = (tm._config_manager, tm._schema_loader)
+    tm.set_config_manager(config_manager)
+    tm.set_schema_loader(None)
+    admin.set_config_manager(config_manager)
+    keys = HarnessKeyStore(config_manager.store)
+    openai_compat.set_key_resolver(keys.resolve)
+    try:
+        yield keys
+    finally:
+        openai_compat.set_key_resolver(None)
+        admin.reset_dependencies()
+        tm.set_config_manager(previous[0])
+        tm.set_schema_loader(previous[1])
+
+
+def register_tenant(tenant_id: str) -> str:
+    """Write ``tenant_id``'s row in the tenant registry the operations
+    runtime serves, as ``POST /admin/tenants`` writes it but without deploying
+    base schemas, so the web client's tenant check confirms it; returns the
+    canonical id. A test seeds the tenants its views are chosen for."""
+    org_id, tenant_name = parse_tenant_id(tenant_id)
+    tenant = Tenant(
+        tenant_full_id=f"{org_id}:{tenant_name}",
+        org_id=org_id,
+        tenant_name=tenant_name,
+        created_at=int(time.time() * 1000),
+        created_by="web-ops-test",
+        status="active",
+        schemas_deployed=[],
+    )
+    # Every field but the in-memory ``config``, which the registry does not
+    # store.
+    fields = {k: v for k, v in asdict(tenant).items() if k != "config"}
+    with tm.metadata_backend() as backend:
+        written = backend.create_metadata_document(
+            schema="tenant_metadata", doc_id=tenant.tenant_full_id, fields=fields
+        )
+    assert written, f"the tenant registry did not take {tenant.tenant_full_id}"
+    return tenant.tenant_full_id
 
 
 EMBEDDING_DIMS = 768

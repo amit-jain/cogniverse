@@ -131,3 +131,23 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .code-file figcaption, .code-run figcaption { font-size: 12px; color: var(--muted); margin-bottom: 6px; overflow-wrap: anywhere; }
 .code-result pre { margin: 0; font-size: 12px; overflow-x: auto; white-space: pre; }
 .code-stderr { color: #c0392b; }
+
+.alert.warning { color: #b9770e; }
+.active-tenant { margin: 0 0 12px; font-size: 13px; }
+.active-tenant form { display: flex; gap: 6px; align-items: flex-end; flex-wrap: wrap; }
+.active-tenant label { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.active-tenant .current-tenant { margin: 6px 0 0; }
+.agent-status { margin-left: 6px; font-size: 11px; }
+.agent-status.online { color: #2e8b57; }
+.agent-status.offline { color: #c0392b; }
+.agent-status-error { font-size: 12px; color: #c0392b; }
+.sidebar-footer { margin-top: 16px; font-size: 11px; color: #888; }
+.workspace-facts { margin: 0; font-size: 12px; color: #666; }
+.caption { margin: 6px 0 0; font-size: 12px; color: #666; }
+.explainer { margin: 0 0 8px; font-size: 13px; }
+.explainer summary { cursor: pointer; }
+.phoenix-query { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.phoenix-query code { font-size: 12px; }
+.raw-data { max-height: 420px; overflow: auto; }
+.ok-line { color: #2e8b57; }
+.analysis-detail { margin-top: 12px; }

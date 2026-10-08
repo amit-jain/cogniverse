@@ -5,8 +5,9 @@ source against the runtime's ``/ag-ui`` and ``/agents`` routers on a real
 uvicorn socket. A driver uses the published ``@ag-ui/client`` the browser
 bundle uses, POSTing runs to the CopilotKit runtime the server hosts, so each
 run crosses every hop a browser run crosses: CopilotKit runtime -> the
-server's ``HttpAgent`` with the harness key -> the AG-UI router -> the real
-dispatcher -> the agent.
+server's ``HttpAgent`` with the harness key it minted for the run's tenant
+through the runtime's ``/admin/harness/keys`` -> the AG-UI router, which
+resolves the tenant from that key -> the real dispatcher -> the agent.
 
 The driver parses the final state with the client's own ``resultsOf``, so the
 result cards are pinned against what the runtime actually sends. A recorder
@@ -27,6 +28,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -41,9 +43,11 @@ from cogniverse_runtime.agent_dispatcher import (
     AgentDispatcher,
 )
 from cogniverse_runtime.config_loader import ConfigLoader
-from cogniverse_runtime.routers import ag_ui, agents, openai_compat
+from cogniverse_runtime.routers import admin, ag_ui, agents, openai_compat
 from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
 from cogniverse_runtime.shared_state import connect_shared_state_redis
+from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.memory_store import InMemoryConfigStore
 from tests.utils.node_env import node_env
 from tests.utils.web_client import (
@@ -53,6 +57,7 @@ from tests.utils.web_client import (
     serve_app,
     serve_web,
 )
+from tests.utils.web_ops import harness_key_admin
 
 pytestmark = [
     pytest.mark.integration,
@@ -62,7 +67,7 @@ pytestmark = [
 
 
 TENANT = "acme:web"
-KEY = "web-client-harness-key"
+OTHER_TENANT = "beta:web"
 QUERY = "Which clips show the tower at night?"
 STATUS_PHASE = "retrieval"
 STATUS_MESSAGE = "Searching 2 profiles"
@@ -94,11 +99,12 @@ import { resultsOf } from './src/client/ResultCards.tsx';
 
 const WEB = process.env.WEB_URL;
 
-async function run(agentId, messages, tools = [], thread = agentId) {
+async function run(agentId, messages, tools = [], thread = agentId, tenant = process.env.TENANT) {
   const agent = new HttpAgent({
     agentId,
     url: `${WEB}/ui-api/copilotkit/agent/${agentId}/run`,
     threadId: `thread-${thread}`,
+    headers: tenant ? { 'x-cogniverse-tenant': tenant } : {},
   });
   agent.setMessages(messages);
   const events = [];
@@ -119,13 +125,55 @@ const reply = (outcome) =>
   outcome.messages.filter((m) => m.role === 'assistant').map((m) => m.content);
 
 if (process.env.SCENARIO === 'concurrent') {
+  const tenants = process.env.TENANTS.split(',');
   const queries = Array.from({ length: Number(process.env.RUNS) }, (_, i) => `query ${i}`);
   const outcomes = await Promise.all(
     queries.map((query, i) =>
-      run('search_agent', [{ id: 'u1', role: 'user', content: query }], [], `c${i}`),
+      run(
+        process.env.AGENT,
+        [{ id: 'u1', role: 'user', content: query }],
+        [],
+        `c${i}`,
+        tenants[i % tenants.length],
+      ),
     ),
   );
-  console.log(JSON.stringify(outcomes.map(reply)));
+  console.log(
+    JSON.stringify(
+      outcomes.map((outcome) => ({
+        reply: reply(outcome),
+        tenant: outcome.state.tenant_id,
+        cards: resultsOf(outcome.state).map((card) => card.id),
+      })),
+    ),
+  );
+  process.exit(0);
+}
+
+if (process.env.SCENARIO === 'sequence') {
+  const outcomes = [];
+  for (const query of process.env.QUERIES.split('|')) {
+    const events = [];
+    let error = null;
+    try {
+      const agent = new HttpAgent({
+        agentId: 'search_agent',
+        url: `${WEB}/ui-api/copilotkit/agent/search_agent/run`,
+        threadId: `seq-${outcomes.length}`,
+        headers: { 'x-cogniverse-tenant': process.env.TENANT },
+      });
+      agent.setMessages([{ id: 'u1', role: 'user', content: query }]);
+      await agent.runAgent({}, { onEvent: ({ event }) => events.push(event) });
+      outcomes.push({
+        reply: agent.messages.filter((m) => m.role === 'assistant').map((m) => m.content),
+        error: events.find((event) => event.type === 'RUN_ERROR')?.message ?? null,
+      });
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+      outcomes.push({ reply: [], error });
+    }
+  }
+  console.log(JSON.stringify(outcomes));
   process.exit(0);
 }
 
@@ -136,6 +184,7 @@ if (process.env.SCENARIO === 'fault') {
     const agent = new HttpAgent({
       agentId: 'search_agent',
       url: `${WEB}/ui-api/copilotkit/agent/search_agent/run`,
+      headers: process.env.TENANT ? { 'x-cogniverse-tenant': process.env.TENANT } : {},
     });
     agent.setMessages([{ id: 'u1', role: 'user', content: process.env.QUERY }]);
     await agent.runAgent({}, { onEvent: ({ event }) => events.push(event) });
@@ -182,6 +231,7 @@ console.log(
       custom: search.custom,
       reply: reply(search),
       agent: search.state.agent,
+      tenant: search.state.tenant_id,
       cards: resultsOf(search.state),
     },
     suspended: {
@@ -266,11 +316,46 @@ class WebToolAgent(AgentBase[WebInput, WebToolOutput, WebDeps]):
         )
 
 
+# Runs of the barrier agent wait inside the agent until ``expected`` of them
+# have entered, so they are all in flight at once.
+_barrier = {"expected": 0, "entered": 0}
+_barrier_lock = threading.Lock()
+
+
+class WebBarrierAgent(AgentBase[WebInput, WebSearchOutput, WebDeps]):
+    """Holds its turn until every run of the scenario has entered, then
+    answers with a hit named after its tenant."""
+
+    async def _process_impl(self, input: WebInput) -> WebSearchOutput:
+        with _barrier_lock:
+            _barrier["entered"] += 1
+        deadline = time.monotonic() + 60
+        while _barrier["entered"] < _barrier["expected"]:
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"only {_barrier['entered']} of {_barrier['expected']} runs entered"
+                )
+            await asyncio.sleep(0.01)
+        return WebSearchOutput(
+            summary=f"[{input.tenant_id}] {input.query}",
+            results=[
+                {
+                    "id": f"{input.tenant_id}-hit",
+                    "document_id": f"id:video:video::{input.tenant_id}-hit",
+                    "score": 1.0,
+                    "metadata": {"video_title": input.tenant_id},
+                }
+            ],
+        )
+
+
 _AGENT_CLASSES = {
     "search_agent": f"{__name__}:WebSearchAgent",
     "tool_agent": f"{__name__}:WebToolAgent",
+    "barrier_agent": f"{__name__}:WebBarrierAgent",
 }
-_TOKEN_STREAMING = {"search_agent": True, "tool_agent": False}
+_TOKEN_STREAMING = {"search_agent": True, "tool_agent": False, "barrier_agent": False}
+AGENTS = list(_AGENT_CLASSES)
 
 
 @pytest.fixture(scope="module")
@@ -311,14 +396,12 @@ def live_runtime(session_state_lifespan):
     app.include_router(agents.router, prefix="/agents")
     agents.set_agent_registry(registry)
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
-    openai_compat.set_api_keys({KEY: TENANT})
-    openai_compat.set_key_resolver(None)
+    openai_compat.set_api_keys({})
 
-    with serve_app(app) as url:
-        yield url
+    with harness_key_admin(app, config_manager) as keys, serve_app(app) as url:
+        yield SimpleNamespace(url=url, keys=keys)
 
     openai_compat.set_dispatcher_provider(None)
-    openai_compat.set_api_keys({})
     for agent_name in _AGENT_CLASSES:
         ConfigLoader.AGENT_CLASSES.pop(agent_name, None)
 
@@ -362,13 +445,14 @@ def telemetry_sink():
 @pytest.fixture()
 def web_server(web_client_dir, live_runtime, telemetry_sink):
     with serve_web(
-        web_client_dir, live_runtime, KEY, telemetry_url=telemetry_sink[0]
+        web_client_dir, live_runtime.url, telemetry_url=telemetry_sink[0]
     ) as url:
         yield url
 
 
 def _drive(client_dir: Path, web_url: str, **scenario: str):
-    """Run the driver against the web server and return its JSON report."""
+    """Run the driver against the web server and return its JSON report; runs
+    name ``TENANT`` unless the scenario says otherwise."""
     node = shutil.which("node")
     proc = subprocess.run(
         [node, "--import", "tsx", str(client_dir / "driver.ts")],
@@ -376,7 +460,9 @@ def _drive(client_dir: Path, web_url: str, **scenario: str):
         capture_output=True,
         text=True,
         timeout=180,
-        env=node_env(node, WEB_URL=web_url, QUERY=QUERY, **scenario),
+        env=node_env(
+            node, WEB_URL=web_url, QUERY=QUERY, **{"TENANT": TENANT, **scenario}
+        ),
     )
     assert proc.returncode == 0, (
         f"web driver failed:\nstdout={proc.stdout}\nstderr={proc.stderr}"
@@ -384,15 +470,24 @@ def _drive(client_dir: Path, web_url: str, **scenario: str):
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
+def _live_keys(runtime, tenant):
+    """The tenant's keys the runtime has not revoked, as (tenant, name)."""
+    return [
+        (key["tenant_id"], key["name"])
+        for key in runtime.keys.list(tenant)["keys"]
+        if not key["revoked"]
+    ]
+
+
 def test_a_browser_run_reaches_the_agent_through_copilotkit(
-    web_client_dir, web_server, telemetry_sink
+    web_client_dir, live_runtime, web_server, telemetry_sink
 ):
     result = _drive(web_client_dir, web_server, TOOL_OUTPUT=TOOL_OUTPUT)
 
     # The Dots come from the runtime's registry, in registry order, and the
     # CopilotKit runtime serves exactly those agents.
-    assert result["listed"] == {"agents": ["search_agent", "tool_agent"]}
-    assert result["infoAgents"] == ["search_agent", "tool_agent"]
+    assert result["listed"] == {"agents": AGENTS}
+    assert result["infoAgents"] == sorted(AGENTS)
 
     search = result["search"]
     summary = f"[{TENANT}] Two clips match: {QUERY}"
@@ -420,9 +515,11 @@ def test_a_browser_run_reaches_the_agent_through_copilotkit(
             "value": {"phase": STATUS_PHASE, "message": STATUS_MESSAGE},
         },
     ]
-    # The harness key the server holds resolved to the tenant.
+    # The key the server minted for the run's tenant resolved to it, and the
+    # result names the tenant it was produced for.
     assert search["reply"] == [summary]
     assert search["agent"] == "search_agent"
+    assert search["tenant"] == TENANT
     assert search["cards"] == [
         {
             "id": "v7_seg_3",
@@ -464,6 +561,12 @@ def test_a_browser_run_reaches_the_agent_through_copilotkit(
     )
     assert resumed["roles"] == ["user", "assistant", "tool", "assistant"]
 
+    # One key, minted under the server's name, served all three runs (the
+    # keys of servers that ran before are revoked).
+    assert _live_keys(live_runtime, TENANT) == [
+        (TENANT, f"cogniverse-web {socket.gethostname()}")
+    ]
+
     # CopilotKit's own usage reporting stays off in a self-hosted deployment.
     assert telemetry_sink[1] == []
 
@@ -472,44 +575,143 @@ def test_concurrent_runs_each_get_their_own_reply(web_client_dir, web_server):
     """Runs in flight together through one server, each on its own thread,
     come back with their own query and nothing of another run's."""
     runs = 6
-    replies = _drive(web_client_dir, web_server, SCENARIO="concurrent", RUNS=str(runs))
-    assert replies == [[f"[{TENANT}] Two clips match: query {i}"] for i in range(runs)]
+    outcomes = _drive(
+        web_client_dir,
+        web_server,
+        SCENARIO="concurrent",
+        AGENT="search_agent",
+        TENANTS=TENANT,
+        RUNS=str(runs),
+    )
+    assert [outcome["reply"] for outcome in outcomes] == [
+        [f"[{TENANT}] Two clips match: query {i}"] for i in range(runs)
+    ]
 
 
-def test_a_rejected_harness_key_fails_the_run_with_the_reason(
+def test_two_tenants_in_flight_together_see_only_their_own_results(
+    web_client_dir, live_runtime, web_server
+):
+    """Runs for two tenants, all inside the agent at once, each come back
+    with their own tenant's reply and hits; the first runs of each tenant
+    race for its key and share one mint."""
+    runs = 8
+    _barrier.update(expected=runs, entered=0)
+    outcomes = _drive(
+        web_client_dir,
+        web_server,
+        SCENARIO="concurrent",
+        AGENT="barrier_agent",
+        TENANTS=f"{TENANT},{OTHER_TENANT}",
+        RUNS=str(runs),
+    )
+    assert _barrier["entered"] == runs
+    tenants = [(TENANT, OTHER_TENANT)[i % 2] for i in range(runs)]
+    assert outcomes == [
+        {
+            "reply": [f"[{tenant}] query {i}"],
+            "tenant": tenant,
+            "cards": [f"{tenant}-hit"],
+        }
+        for i, tenant in enumerate(tenants)
+    ]
+    name = f"cogniverse-web {socket.gethostname()}"
+    assert [_live_keys(live_runtime, t) for t in (TENANT, OTHER_TENANT)] == [
+        [(TENANT, name)],
+        [(OTHER_TENANT, name)],
+    ]
+
+
+def test_a_revoked_key_is_replaced_without_failing_the_run(
+    web_client_dir, live_runtime, web_server
+):
+    """The runtime revokes a tenant's keys (as deleting the tenant does); the
+    next run is answered 401, and the server mints a new key and runs it."""
+    first = _drive(web_client_dir, web_server, SCENARIO="sequence", QUERIES="first")
+    before = {key["key_hash"] for key in live_runtime.keys.list(TENANT)["keys"]}
+    revoked = live_runtime.keys.revoke_tenant(TENANT)
+    second = _drive(web_client_dir, web_server, SCENARIO="sequence", QUERIES="second")
+    assert (first, revoked, second) == (
+        [{"reply": [f"[{TENANT}] Two clips match: first"], "error": None}],
+        1,
+        [{"reply": [f"[{TENANT}] Two clips match: second"], "error": None}],
+    )
+    live = [
+        key["key_hash"]
+        for key in live_runtime.keys.list(TENANT)["keys"]
+        if not key["revoked"]
+    ]
+    assert (len(live), live[0] in before) == (1, False)
+
+
+def test_the_server_revokes_its_keys_when_it_stops(
     web_client_dir, live_runtime, telemetry_sink
 ):
-    """The runtime's 401 reaches the browser as the run's error, word for
-    word; the unauthenticated agent list still answers."""
+    tenant = "gamma:web"
     with serve_web(
-        web_client_dir,
-        live_runtime,
-        "not-a-harness-key",
-        telemetry_url=telemetry_sink[0],
+        web_client_dir, live_runtime.url, telemetry_url=telemetry_sink[0]
     ) as web_url:
-        result = _drive(web_client_dir, web_url, SCENARIO="fault")
-    assert result == {
-        "events": [
+        ran = _drive(
+            web_client_dir, web_url, SCENARIO="sequence", QUERIES="hi", TENANT=tenant
+        )
+        held = _live_keys(live_runtime, tenant)
+    assert (ran, held) == (
+        [{"reply": [f"[{tenant}] Two clips match: hi"], "error": None}],
+        [(tenant, f"cogniverse-web {socket.gethostname()}")],
+    )
+    assert _live_keys(live_runtime, tenant) == []
+
+
+def test_runtime_auth_unavailable_fails_the_run_with_the_reason(
+    web_client_dir, live_runtime, telemetry_sink
+):
+    """While the runtime cannot issue a key, a run fails naming why; a run
+    that names no tenant is refused; once keys issue again runs go through."""
+    refused = admin._harness_key_store_unavailable(
+        ConfigStoreUnavailableError("config store did not answer")
+    )
+    with InterceptFaultProxy(live_runtime.url) as proxy:
+        proxy.intercept = lambda method, path, body: (
+            (refused.status_code, {"detail": refused.detail})
+            if (method, path) == ("POST", "/admin/harness/keys")
+            else None
+        )
+        with serve_web(
+            web_client_dir, proxy.url, telemetry_url=telemetry_sink[0]
+        ) as web_url:
+            down = _drive(web_client_dir, web_url, SCENARIO="fault")
+            anonymous = _drive(web_client_dir, web_url, SCENARIO="fault", TENANT="")
+            proxy.intercept = None
+            recovered = _drive(
+                web_client_dir, web_url, SCENARIO="sequence", QUERIES="back"
+            )
+    reason = (
+        f"The runtime did not issue a harness key for tenant {TENANT} "
+        f"(HTTP 503: {refused.detail['message']})."
+    )
+    assert [down["events"], anonymous["events"]] == [
+        [
             {
                 "type": "RUN_ERROR",
                 "code": "INCOMPLETE_STREAM",
-                "message": "HTTP 401: "
+                "message": "HTTP 503: "
+                + json.dumps({"error": reason}, separators=(",", ":")),
+            }
+        ],
+        [
+            {
+                "type": "RUN_ERROR",
+                "code": "INCOMPLETE_STREAM",
+                "message": "HTTP 400: "
                 + json.dumps(
-                    {
-                        "error": {
-                            "message": openai_compat.UNAUTHORIZED["message"],
-                            "type": "invalid_request_error",
-                            "code": openai_compat.UNAUTHORIZED["code"],
-                        }
-                    },
+                    {"error": "Choose a tenant before talking to an agent."},
                     separators=(",", ":"),
                 ),
             }
         ],
-        "error": None,
-        "listedStatus": 200,
-        "listed": {"agents": ["search_agent", "tool_agent"]},
-    }
+    ]
+    assert recovered == [
+        {"reply": [f"[{TENANT}] Two clips match: back"], "error": None}
+    ]
 
 
 def test_a_down_runtime_fails_the_run_and_the_agent_list(
@@ -519,7 +721,7 @@ def test_a_down_runtime_fails_the_run_and_the_agent_list(
     both fail naming the runtime that did not answer."""
     dead_runtime = f"http://127.0.0.1:{free_port()}"
     with serve_web(
-        web_client_dir, dead_runtime, KEY, telemetry_url=telemetry_sink[0]
+        web_client_dir, dead_runtime, telemetry_url=telemetry_sink[0]
     ) as web_url:
         result = _drive(web_client_dir, web_url, SCENARIO="fault")
     reason = f"The Cogniverse runtime at {dead_runtime} did not answer (TypeError)."
@@ -551,7 +753,6 @@ def test_the_server_announces_itself_only_once_it_is_listening(
             env=node_env(
                 node,
                 COGNIVERSE_RUNTIME_URL=f"http://127.0.0.1:{free_port()}",
-                COGNIVERSE_API_KEY=KEY,
                 PORT=str(port),
                 COPILOTKIT_TELEMETRY_URL=telemetry_sink[0],
             ),
@@ -585,7 +786,6 @@ def test_the_server_stops_after_a_grace_period_with_a_request_in_flight(
         with serve_web(
             web_client_dir,
             f"http://127.0.0.1:{hung.getsockname()[1]}",
-            KEY,
             telemetry_url=telemetry_sink[0],
         ) as web_url:
             connection = http.client.HTTPConnection(

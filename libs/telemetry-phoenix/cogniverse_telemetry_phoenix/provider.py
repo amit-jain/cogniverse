@@ -1543,6 +1543,23 @@ class PhoenixProvider(TelemetryProvider):
 
         return await asyncio.to_thread(_list)
 
+    async def project_id(self, name: str) -> Optional[str]:
+        """Phoenix's id for the project ``name`` (the one its UI addresses
+        the project by), or ``None`` when Phoenix has no such project."""
+        endpoint = self._require_http_endpoint()
+
+        def _read() -> Optional[str]:
+            response = httpx.get(
+                f"{endpoint.rstrip('/')}/v1/projects/{quote(name, safe='')}",
+                timeout=_PROJECT_OP_TIMEOUT_S,
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()["data"]["id"]
+
+        return await asyncio.to_thread(_read)
+
     async def delete_project(self, name: str) -> bool:
         """Delete a Phoenix project and its spans; False when Phoenix has no
         project by that name."""

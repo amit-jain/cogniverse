@@ -25,11 +25,10 @@ from tests.utils.web_client import (
     recording_telemetry_sink,
     serve_web,
 )
-from tests.utils.web_ops import serve_ops_runtime
+from tests.utils.web_ops import register_tenant, serve_ops_runtime
 
 pytestmark = [pytest.mark.integration]
 
-KEY = "web-ops-harness-key"
 # The page polls every 5 s and argo-server serves from an informer cache.
 POLL_TIMEOUT_MS = 30_000
 
@@ -68,7 +67,7 @@ def runtime_url(config_manager, schema_loader, workflow_state_redis_url):
 def web_url(built_client, runtime_url):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -91,6 +90,7 @@ def page(browser):
 
 
 def _runs_view(page: Page, web_url: str, tenant: str) -> None:
+    register_tenant(tenant)
     page.goto(f"{web_url}/#/ops/optimization")
     expect(
         page.get_by_role("heading", name="Optimization runs", level=1)

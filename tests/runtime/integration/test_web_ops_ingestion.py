@@ -34,7 +34,6 @@ from tests.utils.web_ops import serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
-KEY = "web-ops-harness-key"
 DEPLOY_TIMEOUT_MS = 240_000
 BUCKET = "web-ops-ingest"
 # Held jobs wait on this; a test releases them once it has seen them run.
@@ -139,7 +138,7 @@ def tenant(runtime_url):
 def web_url(built_client, runtime_url):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -455,7 +454,7 @@ class TestFaultContract:
         clip.write_text("frame\n")
         with recording_telemetry_sink() as (sink_url, _):
             with serve_web(
-                built_client, dead_runtime, KEY, telemetry_url=sink_url, built=True
+                built_client, dead_runtime, telemetry_url=sink_url, built=True
             ) as url:
                 _ingestion_view(page, url, "acme:production")
                 form = _upload(page, clip)

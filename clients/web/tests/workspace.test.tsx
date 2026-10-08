@@ -183,7 +183,10 @@ describe('codingOf', () => {
 describe('ResultPanel', () => {
   it("renders the code and its run output", () => {
     const html = renderToStaticMarkup(
-      <ResultPanel state={{ agent: 'coding_agent', result: { status: 'success', result: CODING_RESULT } }} />,
+      <ResultPanel
+        state={{ agent: 'coding_agent', tenant_id: 'acme:prod', result: { status: 'success', result: CODING_RESULT } }}
+        tenant="acme:prod"
+      />,
     );
     expect(html).toBe(
       '<aside class="results" aria-label="Results">' +
@@ -200,8 +203,10 @@ describe('ResultPanel', () => {
   it('labels each agent of an orchestration and rates only hits with a span', () => {
     const html = renderToStaticMarkup(
       <ResultPanel
+        tenant="acme:prod"
         state={{
           agent: 'orchestrator_agent',
+          tenant_id: 'acme:prod',
           result: {
             orchestration_result: {
               agent_results: {
@@ -231,7 +236,24 @@ describe('ResultPanel', () => {
   });
 
   it('renders nothing for a payload with neither hits nor code', () => {
-    expect(renderToStaticMarkup(<ResultPanel state={{ result: { summary: 'x' } }} />)).toBe('');
+    expect(renderToStaticMarkup(<ResultPanel state={{ result: { summary: 'x' } }} tenant="acme:prod" />)).toBe('');
+  });
+
+  it("refuses to show another tenant's results, or results that name no tenant", () => {
+    const hits = { agent: 'search_agent', result: { span_id: '00000000000000cd', results: [VIDEO_HIT] } };
+    expect(renderToStaticMarkup(<ResultPanel state={{ ...hits, tenant_id: 'beta:dev' }} tenant="acme:prod" />)).toBe(
+      '<aside class="results" aria-label="Results"><p class="alert error" role="alert">' +
+        'These results belong to tenant beta:dev, not acme:prod; they are not shown.</p></aside>',
+    );
+    expect(renderToStaticMarkup(<ResultPanel state={hits} tenant="acme:prod" />)).toBe(
+      '<aside class="results" aria-label="Results"><p class="alert error" role="alert">' +
+        'These results belong to tenant unknown, not acme:prod; they are not shown.</p></aside>',
+    );
+    expect(
+      renderToStaticMarkup(<ResultPanel state={{ ...hits, tenant_id: 'acme:prod' }} tenant="acme:prod" />).match(
+        /aria-label="Relevance of [^"]*"/g,
+      ),
+    ).toEqual(['aria-label="Relevance of id:video:video::v1_seg_3"']);
   });
 });
 

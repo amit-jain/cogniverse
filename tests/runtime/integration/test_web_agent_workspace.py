@@ -36,8 +36,13 @@ from cogniverse_runtime.routers import ag_ui, agents, openai_compat
 from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
 from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.memory_store import InMemoryConfigStore
-from tests.utils.web_client import recording_telemetry_sink, serve_app, serve_web
-from tests.utils.web_ops import memory_on_vespa
+from tests.utils.web_client import (
+    browse_as,
+    recording_telemetry_sink,
+    serve_app,
+    serve_web,
+)
+from tests.utils.web_ops import harness_key_admin, memory_on_vespa
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
@@ -265,8 +270,7 @@ def runtime_url(memory, workflow_state_redis_url):
     agents.set_agent_registry(registry)
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
     openai_compat.set_api_keys({KEY: TENANT})
-    openai_compat.set_key_resolver(None)
-    with serve_app(app) as url:
+    with harness_key_admin(app, registry_config), serve_app(app) as url:
         yield url
     openai_compat.set_dispatcher_provider(None)
     openai_compat.set_api_keys({})
@@ -279,7 +283,7 @@ def web_url(built_client, runtime_url, memory):
     _, proxy = memory
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -297,6 +301,7 @@ def browser():
 @pytest.fixture()
 def page(browser):
     context = browser.new_context()
+    browse_as(context, TENANT)
     page = context.new_page()
     yield page
     context.close()
@@ -435,6 +440,8 @@ class TestConversations:
         self, browser, web_url
     ):
         contexts = [browser.new_context() for _ in range(3)]
+        for context in contexts:
+            browse_as(context, TENANT)
         pages = [context.new_page() for context in contexts]
         try:
             threads = [_open(page, web_url, "search_agent", "Search") for page in pages]

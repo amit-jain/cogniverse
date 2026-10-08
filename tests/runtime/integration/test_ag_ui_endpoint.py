@@ -15,6 +15,8 @@ import logging
 import socket
 import threading
 import time
+import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 import httpx
@@ -27,11 +29,16 @@ from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentO
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_PERSIST_FAILURE_CAPACITY,
+    CONVERSATION_SAVE_LEASE_S,
+    AgentDispatcher,
+)
 from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
 from cogniverse_runtime.config_loader import ConfigLoader
 from cogniverse_runtime.routers import ag_ui, openai_compat
 from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
+from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [
@@ -391,9 +398,31 @@ def _text(events: List[Dict[str, Any]]) -> str:
 
 
 @pytest.fixture()
-def live_server(ag_ui_app):
+def live_server(ag_ui_app, dispatcher, workflow_state_redis_url):
+    """``ag_ui_app``'s routes on a real socket, with the dispatcher's
+    conversation ledger opened on the server's own loop (a Redis client
+    serves only the loop it was opened on)."""
+
+    @asynccontextmanager
+    async def ledger_on_server_loop(_app):
+        redis = await connect_shared_state_redis(workflow_state_redis_url)
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                redis,
+                save_lease_s=CONVERSATION_SAVE_LEASE_S,
+                failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
+                key_prefix=f"test:conversation:{uuid.uuid4().hex}",
+            )
+        )
+        try:
+            yield
+        finally:
+            await redis.aclose()
+
+    app = FastAPI(lifespan=ledger_on_server_loop)
+    app.include_router(ag_ui.router, prefix="/ag-ui")
     port = _free_port()
-    config = uvicorn.Config(ag_ui_app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -520,6 +549,7 @@ class TestTokenStreamRun:
             "type": "STATE_SNAPSHOT",
             "snapshot": {
                 "agent": "search_stream_agent",
+                "tenant_id": TENANT_A,
                 "result": SearchStreamOutput(
                     summary=summary, results=list(RESULTS)
                 ).model_dump(),
@@ -606,6 +636,7 @@ class TestDispatchRun:
                 "type": "STATE_SNAPSHOT",
                 "snapshot": {
                     "agent": "search_dispatch_agent",
+                    "tenant_id": TENANT_A,
                     "result": {
                         "status": "success",
                         "agent": "search_dispatch_agent",
@@ -1099,6 +1130,7 @@ class TestRunFailures:
 
         events = _events(response.text)
         assert events[1:] == [
+            *_opening_step("failing_stream_agent"),
             {
                 "type": "RUN_ERROR",
                 "message": (
@@ -1106,7 +1138,7 @@ class TestRunFailures:
                     "logs for detail."
                 ),
                 "code": "internal_error",
-            }
+            },
         ]
 
     async def test_an_unwired_dispatcher_is_503(self, client):
