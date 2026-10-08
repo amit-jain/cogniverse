@@ -780,6 +780,81 @@ class TestVespaConfigStoreListAllConfigs:
                 config_key="k_small",
             )
 
+    def test_a_prune_listing_hit_without_its_version_prunes_nothing(
+        self, vespa_instance, caplog
+    ):
+        """A row matching the prune query whose summary carries no version
+        comes back from Vespa as a hit without fields and without
+        ``root.errors``, the shape a row deleted between match and summary
+        fill takes. The write lands, nothing is pruned until a listing
+        answers whole, and the next whole listing prunes to ``keep``."""
+        store = VespaConfigStore(
+            backend_url="http://localhost",
+            backend_port=vespa_instance["http_port"],
+            keep_versions=2,
+        )
+        tenant = f"cs_prune_hole_{uuid.uuid4().hex[:8]}"
+        coordinates = dict(
+            tenant_id=tenant,
+            scope=ConfigScope.BACKEND,
+            service="prune_probe",
+            config_key="k1",
+        )
+        config_id = store._create_document_id(
+            tenant, ConfigScope.BACKEND, "prune_probe", "k1"
+        )
+        hole = f"config_metadata::{config_id}::hole"
+        listing = (
+            f"select version from config_metadata "
+            f'where config_id contains "{config_id}" '
+            f"order by version desc limit 100"
+        )
+
+        def history() -> list[int]:
+            return [
+                entry.version
+                for entry in store.get_config_history(**coordinates, limit=100)
+            ]
+
+        try:
+            store.set_config(**coordinates, config_value={"i": 1})
+            store.set_config(**coordinates, config_value={"i": 2})
+            store.vespa_app.feed_data_point(
+                schema="config_metadata",
+                data_id=hole,
+                fields={"config_id": config_id},
+            )
+            hits = store.vespa_app.query(yql=listing).get_json()["root"]["children"]
+            assert [sorted(hit) for hit in hits] == [
+                ["fields", "id", "relevance", "source"],
+                ["fields", "id", "relevance", "source"],
+                ["id", "relevance", "source"],
+            ]
+            hole_hit = hits[2]["id"]
+
+            with caplog.at_level(logging.WARNING, logger=config_store_module.__name__):
+                written = store.set_config(**coordinates, config_value={"i": 3})
+
+            assert (written.version, written.config_value) == (3, {"i": 3})
+            assert history() == [3, 2, 1]
+            assert [
+                r.getMessage()
+                for r in caplog.records
+                if r.name == config_store_module.__name__
+            ] == [
+                f"Could not list versions to prune {config_id!r}: Vespa returned "
+                f"hit {hole_hit} for config {config_id} without summary fields "
+                f"['version']"
+            ]
+
+            store.vespa_app.delete_data(schema="config_metadata", data_id=hole)
+            store.set_config(**coordinates, config_value={"i": 4})
+            assert history() == [4, 3]
+        finally:
+            store.vespa_app.delete_data(schema="config_metadata", data_id=hole)
+            store.delete_config(**coordinates)
+            store.close()
+
     def test_returns_only_latest_version(self, vespa_config_store):
         """Multiple writes to the same key — list returns only the latest."""
         store = vespa_config_store

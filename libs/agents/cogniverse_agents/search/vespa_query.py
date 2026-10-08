@@ -57,6 +57,24 @@ def vespa_search_children(data: dict, correlation_id: str = "") -> list:
     return root.get("children", []) or []
 
 
+def vespa_hit_fields(hit: dict, required: tuple) -> dict:
+    """The summary fields of one hit, carrying every ``required`` name.
+
+    A document removed between match and summary fill can come back as a hit
+    without ``fields`` and with no ``root.errors``; a hit missing a field every
+    matched document carries is a degraded answer, not a document.
+    """
+    fields = hit.get("fields")
+    missing = [
+        name for name in required if not isinstance(fields, dict) or name not in fields
+    ]
+    if missing:
+        raise VespaSearchDegraded(
+            f"Vespa returned hit {hit.get('id')} without summary fields {missing}"
+        )
+    return fields
+
+
 @retry_with_backoff(config=_SEARCH_RETRY)
 def vespa_search_post(
     endpoint: str, params: dict, timeout: float = 10.0

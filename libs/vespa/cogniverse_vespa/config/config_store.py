@@ -25,6 +25,7 @@ from cogniverse_sdk.interfaces.config_store import (
 from cogniverse_vespa._vespa_factory import (
     VespaQueryDegraded,
     canonical_endpoint,
+    hit_fields,
     make_persistent_vespa_ops,
     raise_if_degraded,
 )
@@ -71,6 +72,25 @@ def _raise_if_degraded(response: Any, config_id: str) -> None:
         raise_if_degraded(response, f"config {config_id}")
     except VespaQueryDegraded as exc:
         raise ConfigStoreUnavailableError(str(exc)) from exc
+
+
+def _config_hit_fields(hit: Dict[str, Any], required: tuple, config_id: str):
+    """``hit_fields`` in config context: a hit missing them is the store not
+    answering, so it raises ConfigStoreUnavailableError."""
+    try:
+        return hit_fields(hit, required, f"config {config_id}")
+    except VespaQueryDegraded as exc:
+        raise ConfigStoreUnavailableError(str(exc)) from exc
+
+
+def _visited_fields(document: Dict[str, Any]) -> Dict[str, Any]:
+    """A visited document's fields; one without them is malformed."""
+    fields = document.get("fields")
+    if not isinstance(fields, dict):
+        raise ValueError(
+            f"config_metadata document {document.get('id')} came back without fields"
+        )
+    return fields
 
 
 def _is_condition_miss(error: Exception) -> bool:
@@ -416,8 +436,8 @@ class VespaConfigStore(ImmutableConfigStore):
             if not isinstance(documents, list):
                 raise ValueError("Vespa config visit documents must be a list")
             for document in documents:
-                fields = document["fields"]
                 try:
+                    fields = _visited_fields(document)
                     config_id = fields["config_id"]
                     if latest_only:
                         known = newest.get(config_id)
@@ -482,7 +502,12 @@ class VespaConfigStore(ImmutableConfigStore):
         )
         if payload is None:
             return None
-        return self._entry_from_fields(payload["fields"])
+        fields = payload.get("fields")
+        if not isinstance(fields, dict):
+            raise ConfigStoreUnavailableError(
+                f"Immutable config {config_id} came back without fields: {payload}"
+            )
+        return self._entry_from_fields(fields)
 
     def put_immutable_config(
         self,
@@ -572,7 +597,8 @@ class VespaConfigStore(ImmutableConfigStore):
         if payload is None:
             return [], None
         entries = [
-            self._entry_from_fields(doc["fields"]) for doc in payload["documents"]
+            self._entry_from_fields(_visited_fields(doc))
+            for doc in payload["documents"]
         ]
         return entries[:page_size], _encode_immutable_cursor(
             payload.get("continuation"),
@@ -883,9 +909,9 @@ class VespaConfigStore(ImmutableConfigStore):
         entries. Best-effort — a listing or delete failure is logged but does
         not propagate, since the leading set_config write already succeeded
         and a stale row only costs query latency, not correctness. A degraded
-        listing (``root.errors``, e.g. rows another writer deleted between
-        match and summary fill, which come back without fields) prunes
-        nothing; the next write prunes again.
+        listing (``root.errors``, or a hit without its version: a row another
+        writer deleted between match and summary fill) prunes nothing; the
+        next write prunes again.
         """
         if keep < 1:
             return 0
@@ -897,16 +923,17 @@ class VespaConfigStore(ImmutableConfigStore):
         try:
             response = self.vespa_app.query(yql=yql)
             _raise_if_degraded(response, config_id)
+            versions = [
+                _config_hit_fields(hit, ("version",), config_id)["version"]
+                for hit in response.hits or []
+            ]
         except (RequestException, VespaError, RuntimeError) as exc:
             logger.warning(f"Could not list versions to prune {config_id!r}: {exc}")
             return 0
-        hits = list(response.hits or [])
-        if len(hits) <= keep:
+        if len(versions) <= keep:
             return 0
-        stale = hits[keep:]
         dropped = 0
-        for hit in stale:
-            version = hit["fields"]["version"]
+        for version in versions[keep:]:
             doc_id = f"{self.schema_name}::{config_id}::{version}"
             try:
                 self.vespa_app.delete_data(schema=self.schema_name, data_id=doc_id)

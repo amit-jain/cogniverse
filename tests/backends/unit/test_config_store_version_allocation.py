@@ -48,6 +48,7 @@ class FakeVespa:
         self.docs: dict[tuple[str, str], dict[str, Any]] = {}
         self.lock = threading.Lock()
         self.operations: list[tuple[str, str, Optional[str]]] = []
+        self.between_match_and_fill: Callable[[], None] = lambda: None
 
     @staticmethod
     def _holds(condition: str, fields: dict[str, Any]) -> bool:
@@ -108,21 +109,32 @@ class FakeVespa:
         return _Response(200, {"fields": dict(fields)})
 
     def prune_query(self, yql: str):
+        """Match, then fill summaries. A document deleted in between comes
+        back as a hit without fields and no ``root.errors``, as Vespa answers."""
         config_id = re.search(r'contains "([^"]+)"', yql).group(1)
         limit = int(re.search(r"limit (\d+)", yql).group(1))
         with self.lock:
-            versions = sorted(
+            matched = sorted(
                 (
-                    int(f["version"])
-                    for (ns, _), f in self.docs.items()
+                    (int(f["version"]), data_id)
+                    for (ns, data_id), f in self.docs.items()
                     if ns == SCHEMA and f.get("config_id") == config_id
                 ),
                 reverse=True,
             )[:limit]
-        return SimpleNamespace(
-            hits=[{"fields": {"version": v}} for v in versions],
-            json={"root": {}},
-        )
+        self.between_match_and_fill()
+        with self.lock:
+            hits = [
+                {"id": _hit_id(version), "fields": {"version": version}}
+                if (SCHEMA, data_id) in self.docs
+                else {"id": _hit_id(version), "relevance": 0.0}
+                for version, data_id in matched
+            ]
+        return SimpleNamespace(hits=hits, json={"root": {"children": hits}})
+
+
+def _hit_id(version: int) -> str:
+    return f"index:cogniverse_content/0/{version:024x}"
 
 
 class _Response:
@@ -469,3 +481,146 @@ def test_a_counter_answer_without_fields_raises_before_any_write(fake, backoffs)
     )
     assert backoffs == []
     assert fake.operations == []
+
+
+def _versions(fake: FakeVespa) -> list[int]:
+    return sorted(
+        int(fields["version"])
+        for (namespace, _), fields in fake.docs.items()
+        if namespace == SCHEMA
+    )
+
+
+def test_a_version_pruned_between_another_prunes_match_and_fill_prunes_nothing(
+    fake, caplog
+):
+    """Writer A's prune matches v3..v1; writer B appends v4 and prunes v2 and
+    v1 before A's summaries fill, so A's listing carries two hits without
+    fields. A's write still lands and A deletes nothing."""
+    store_a, _ = _store(fake, keep=2)
+    store_b, _ = _store(fake, keep=2)
+    store_b.set_config(*COORDINATES, {"writer": "b", "n": 1})
+    store_b.set_config(*COORDINATES, {"writer": "b", "n": 2})
+    fake.operations.clear()
+    a_matched, b_pruned = threading.Event(), threading.Event()
+    held: list[str] = []
+
+    def hold_the_first_listing() -> None:
+        if threading.current_thread().name == "writer-a" and not held:
+            held.append("writer-a")
+            a_matched.set()
+            assert b_pruned.wait(timeout=10)
+
+    fake.between_match_and_fill = hold_the_first_listing
+    outcome: dict[str, object] = {}
+
+    def write_a() -> None:
+        try:
+            outcome["a"] = store_a.set_config(*COORDINATES, {"writer": "a"}).version
+        except Exception as exc:
+            outcome["a"] = f"{type(exc).__name__}: {exc}"
+
+    thread_a = threading.Thread(target=write_a, name="writer-a")
+    with caplog.at_level("WARNING", logger=config_store_module.__name__):
+        thread_a.start()
+        assert a_matched.wait(timeout=10)
+        outcome["b"] = store_b.set_config(*COORDINATES, {"writer": "b", "n": 4}).version
+        b_pruned.set()
+        thread_a.join(timeout=10)
+
+    assert outcome == {"a": 3, "b": 4}
+    assert _versions(fake) == [3, 4]
+    assert [op for op in fake.operations if op[0] == "delete"] == [
+        ("delete", SCHEMA, None),
+        ("delete", SCHEMA, None),
+    ]
+    assert [r.getMessage() for r in caplog.records] == [
+        f"Could not list versions to prune {CONFIG_ID!r}: Vespa returned hit "
+        f"{_hit_id(2)} for config {CONFIG_ID} without summary fields ['version']"
+    ]
+
+
+def _strip_fields(monkeypatch, stripped: Callable[[str], bool]) -> None:
+    """Drop ``fields`` from a Document v1 GET answer, or from each visited
+    document, whose id ``stripped`` selects; the rest is served as is."""
+    real_get = requests.get
+
+    def get(path, params=None, timeout=None):
+        response = real_get(path, params=params, timeout=timeout)
+        body = response.json()
+        if "fields" in body and stripped(unquote(path)):
+            del body["fields"]
+        for document in body.get("documents", []):
+            if stripped(document["id"]):
+                del document["fields"]
+        return response
+
+    monkeypatch.setattr(requests, "get", get)
+
+
+def test_an_immutable_config_answer_without_fields_raises_unavailable(
+    fake, monkeypatch
+):
+    store, _ = _store(fake)
+    fake.put(
+        SCHEMA,
+        f"{SCHEMA}::{CONFIG_ID}::1",
+        {
+            "config_id": CONFIG_ID,
+            "tenant_id": "acme:prod",
+            "scope": "backend",
+            "service": "probe",
+            "config_key": "k1",
+            "config_value": json.dumps({"n": 1}),
+            "version": 1,
+            "created_at": "2026-10-06T00:00:00+00:00",
+            "updated_at": "2026-10-06T00:00:00+00:00",
+        },
+    )
+    assert store.get_immutable_config(*COORDINATES).config_value == {"n": 1}
+    _strip_fields(monkeypatch, lambda doc_id: doc_id.endswith(f"{CONFIG_ID}::1"))
+
+    with pytest.raises(config_store_module.ConfigStoreUnavailableError) as raised:
+        store.get_immutable_config(*COORDINATES)
+
+    assert str(raised.value) == (
+        f"Immutable config {CONFIG_ID} came back without fields: {{}}"
+    )
+
+
+def test_a_visited_document_without_fields_fails_a_strict_read_by_its_id(
+    fake, monkeypatch
+):
+    store, _ = _store(fake)
+    store.set_config(*COORDINATES, {"n": 1})
+    store.set_config(*COORDINATES, {"n": 2})
+    stripped_id = f"id:{SCHEMA}:{SCHEMA}::{SCHEMA}::{CONFIG_ID}::1"
+    _strip_fields(monkeypatch, lambda doc_id: doc_id == stripped_id)
+
+    with pytest.raises(ValueError) as raised:
+        store.get_config(*COORDINATES)
+
+    assert str(raised.value) == (
+        f"config_metadata document {stripped_id} came back without fields"
+    )
+
+
+def test_a_visited_document_without_fields_is_skipped_by_a_tolerant_listing(
+    fake, monkeypatch, caplog
+):
+    store, _ = _store(fake)
+    store.set_config(*COORDINATES, {"n": 1})
+    store.set_config(*COORDINATES, {"n": 2})
+    stripped_id = f"id:{SCHEMA}:{SCHEMA}::{SCHEMA}::{CONFIG_ID}::1"
+    _strip_fields(monkeypatch, lambda doc_id: doc_id == stripped_id)
+
+    with caplog.at_level("WARNING", logger=config_store_module.__name__):
+        listed = store.list_all_configs()
+
+    assert [(e.config_key, e.version, e.config_value) for e in listed] == [
+        ("k1", 2, {"n": 2})
+    ]
+    assert [r.getMessage() for r in caplog.records] == [
+        f"Skipping malformed config_metadata doc {stripped_id}: "
+        f"config_metadata document {stripped_id} came back without fields"
+    ]

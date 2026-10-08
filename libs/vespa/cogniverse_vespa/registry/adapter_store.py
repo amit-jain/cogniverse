@@ -12,6 +12,7 @@ from vespa.application import Vespa
 
 from cogniverse_sdk.interfaces.adapter_store import AdapterStore
 from cogniverse_vespa._vespa_factory import (
+    hit_fields,
     make_persistent_vespa_ops,
     raise_if_degraded,
 )
@@ -162,7 +163,11 @@ class VespaAdapterStore(AdapterStore):
             if not response.hits or len(response.hits) == 0:
                 return None
 
-            return {"fields": response.hits[0]["fields"]}
+            return {
+                "fields": hit_fields(
+                    response.hits[0], ("adapter_id",), f"adapter {adapter_id}"
+                )
+            }
 
         except Exception as e:
             # Absent adapter already returned None above; a failure here is a
@@ -211,7 +216,13 @@ class VespaAdapterStore(AdapterStore):
 
             results = []
             for hit in response.hits:
-                results.append({"fields": hit["fields"]})
+                results.append(
+                    {
+                        "fields": hit_fields(
+                            hit, ("adapter_id",), f"adapters for tenant {tenant_id}"
+                        )
+                    }
+                )
 
             return results
 
@@ -252,7 +263,13 @@ class VespaAdapterStore(AdapterStore):
             if not response.hits or len(response.hits) == 0:
                 return None
 
-            return {"fields": response.hits[0]["fields"]}
+            return {
+                "fields": hit_fields(
+                    response.hits[0],
+                    ("adapter_id",),
+                    f"active adapter for {tenant_id}/{agent_type}",
+                )
+            }
 
         except Exception as e:
             # No active adapter already returned None above; a failure here is
@@ -456,15 +473,17 @@ class VespaAdapterStore(AdapterStore):
             response = self.vespa_app.query(yql=yql)
             raise_if_degraded(response, "adapter stats")
 
-            total_adapters = len(response.hits)
-            unique_tenants = len(
-                set(hit["fields"]["tenant_id"] for hit in response.hits)
-            )
+            rows = [
+                hit_fields(hit, ("tenant_id",), "adapter stats")
+                for hit in response.hits
+            ]
+            total_adapters = len(rows)
+            unique_tenants = len(set(fields["tenant_id"] for fields in rows))
 
             # Count by status
             status_counts: Dict[str, int] = {}
-            for hit in response.hits:
-                status = hit["fields"].get("status", "unknown")
+            for fields in rows:
+                status = fields.get("status", "unknown")
                 status_counts[status] = status_counts.get(status, 0) + 1
 
             return {

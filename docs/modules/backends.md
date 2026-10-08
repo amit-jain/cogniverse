@@ -2462,6 +2462,11 @@ store = VespaAdapterStore(
 store.initialize()
 ```
 
+`get_adapter`, `list_adapters`, `get_active_adapter` and `get_stats` raise
+`VespaQueryDegraded` on a degraded answer: `root.errors`, a `coverage.degraded`
+flag, or a hit without `adapter_id` (`tenant_id` for `get_stats`), the shape
+Vespa gives a row deleted between match and summary fill.
+
 `set_active(adapter_id, tenant_id, agent_type)` verifies that the target
 adapter belongs to that exact tenant and agent type before changing either the
 current or target adapter.
@@ -2929,10 +2934,14 @@ backend that accepts a connection and never answers ends in
 per-attempt budget is 5s for a single document and for one bounded page,
 30s and 60s for the wider scans. Connection errors, timeouts, and 5xx responses retry;
 `404` or a genuinely empty visit returns `None` or an empty collection; other
-failures raise. A completed `set_config` is therefore immediately visible to
-those readers without sleeps or search-index convergence retries.
+failures raise. A `get_immutable_config` answer without `fields` raises
+`ConfigStoreUnavailableError`; a visited document without `fields` raises
+`ValueError` naming its id, and `list_all_configs` and `get_stats` skip it
+with a warning as they skip any malformed row. A completed `set_config` is
+therefore immediately visible to those readers without sleeps or search-index
+convergence retries.
 
-A write takes its version from the key's version counter: one document per config under the `config_version_counter` namespace, which pruning never deletes. The writer reads the counter, moves it one version forward with a conditional update (`version == <read>`), and only then writes that version's document, so no two writers are handed the same version however long either stalls. A version document's absence cannot grant a version: pruning deletes old version documents, and Vespa applies a conditional put with `create` to a missing document without evaluating its condition. A missing counter is created, conditionally on its absence, at the latest stored version, read with the same visit `get_config` uses. A counter or version read the store does not answer raises `ConfigStoreUnavailableError`; nothing is written. Visits run in the `config_metadata` namespace and the prune query matches on `config_id`, which the counter does not carry, so no reader sees a counter. `delete_config` removes the counter after the versions, so a recreated key starts at version 1. The write's prune of old versions is the one step that queries; a listing Vespa answers degraded (`root.errors` or a `coverage.degraded` flag) raises `ConfigStoreUnavailableError` chained to `VespaQueryDegraded` (`cogniverse_vespa._vespa_factory`) inside it, and the prune deletes nothing until the next write.
+A write takes its version from the key's version counter: one document per config under the `config_version_counter` namespace, which pruning never deletes. The writer reads the counter, moves it one version forward with a conditional update (`version == <read>`), and only then writes that version's document, so no two writers are handed the same version however long either stalls. A version document's absence cannot grant a version: pruning deletes old version documents, and Vespa applies a conditional put with `create` to a missing document without evaluating its condition. A missing counter is created, conditionally on its absence, at the latest stored version, read with the same visit `get_config` uses. A counter or version read the store does not answer raises `ConfigStoreUnavailableError`; nothing is written. Visits run in the `config_metadata` namespace and the prune query matches on `config_id`, which the counter does not carry, so no reader sees a counter. `delete_config` removes the counter after the versions, so a recreated key starts at version 1. The write's prune of old versions is the one step that queries; a listing Vespa answers degraded (`root.errors`, a `coverage.degraded` flag, or a hit without its `version`, which is how Vespa answers for a row another writer deleted between match and summary fill) raises `ConfigStoreUnavailableError` chained to `VespaQueryDegraded` (`cogniverse_vespa._vespa_factory`) inside it, and the prune deletes nothing until the next write.
 
 `compare_and_set_config(..., expected_version=n)` conditionally writes revision
 `n + 1` and returns `None` on contention. Its version checks and history retention

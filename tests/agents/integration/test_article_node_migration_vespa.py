@@ -23,6 +23,7 @@ import requests
 
 from cogniverse_agents.graph.article_node_migration import merge_article_nodes
 from cogniverse_agents.graph.graph_schema import Edge, Mention, Node
+from cogniverse_agents.search.vespa_query import VespaSearchDegraded
 from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
 
 pytestmark = [pytest.mark.integration]
@@ -722,6 +723,45 @@ class TestArticleNodeMigration:
         by_tenant = {r.tenant_id: r.to_dict() for r in every_tenant}
         assert by_tenant[TENANT_A] == {**_SORBONNE_REPORT, "applied": False}
         assert by_tenant[TENANT_B]["merges"] == []
+        assert vespa.snapshot() == before
+
+    def test_a_node_hit_without_fields_fails_the_run_before_any_write(
+        self, vespa, resolve_backend, monkeypatch
+    ):
+        """Vespa answers a node deleted between match and summary fill with a
+        hit carrying no fields and no ``root.errors``; the run raises
+        degraded naming that hit and writes nothing."""
+        _seed_sorbonne(vespa)
+        before = vespa.snapshot()
+        real_post = requests.Session.post
+        stripped: List[str] = []
+
+        def post(session, url, *args, **kwargs):
+            response = real_post(session, url, *args, **kwargs)
+            yql = (kwargs.get("json") or {}).get("yql", "")
+            if (
+                not stripped
+                and url.endswith("/search/")
+                and f"from {GRAPH_A} " in yql
+                and 'doc_type contains "node"' in yql
+            ):
+                body = response.json()
+                hit = body["root"]["children"][0]
+                del hit["fields"]
+                stripped.append(hit["id"])
+                response._content = json.dumps(body).encode()
+            return response
+
+        monkeypatch.setattr(requests.Session, "post", post)
+
+        with pytest.raises(VespaSearchDegraded) as raised:
+            merge_article_nodes(resolve_backend, tenant_ids=[TENANT_A], apply=True)
+
+        assert len(stripped) == 1
+        assert str(raised.value) == (
+            f"Vespa returned hit {stripped[0]} without summary fields ['doc_id']"
+        )
+        monkeypatch.undo()
         assert vespa.snapshot() == before
 
     @pytest.mark.parametrize(
