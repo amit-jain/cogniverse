@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
+import { agentLabel } from './api';
 import { messageOf } from './ops/common';
 import { runtimeJson } from './ops/http';
 
@@ -25,40 +26,133 @@ function number(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-/**
- * The search hits in a run's final payload (``state.result.results``), in the
- * runtime's public result shape. The score is the value the set is ranked by:
- * ``rrf_score`` for an ensemble, ``score`` otherwise.
- */
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+/** One hit in the runtime's public shape for its agent: a video segment, a
+ * document, an image or an audio clip. The score is the value the set is
+ * ranked by: ``rrf_score`` for an ensemble, ``score`` or ``relevance_score``
+ * otherwise. */
+function hitOf(entry: unknown): ResultItem[] {
+  const hit = record(entry);
+  if (!hit) return [];
+  const metadata = record(hit.metadata) ?? {};
+  const temporal = record(hit.temporal_info) ?? {};
+  const id =
+    text(hit.id) ??
+    text(hit.document_id) ??
+    text(hit.image_id) ??
+    text(hit.audio_id) ??
+    text(hit.video_id) ??
+    text(metadata.video_id);
+  if (!id) return [];
+  return [
+    {
+      id,
+      ratingId:
+        text(hit.document_id) ??
+        text(hit.documentid) ??
+        text(hit.id) ??
+        text(hit.source_id) ??
+        text(hit.image_id) ??
+        text(hit.audio_id) ??
+        text(hit.video_id),
+      score: number(hit.rrf_score) ?? number(hit.score) ?? number(hit.relevance_score),
+      title: text(hit.title) ?? text(metadata.title) ?? text(metadata.video_title),
+      snippet:
+        text(hit.content_preview) ??
+        text(hit.content) ??
+        text(hit.text) ??
+        text(metadata.segment_description) ??
+        text(hit.transcript) ??
+        text(hit.description) ??
+        text(metadata.audio_transcript) ??
+        text(metadata.description),
+      start: number(temporal.start_time),
+      end: number(temporal.end_time),
+    },
+  ];
+}
+
+/** The hits of a run's final payload (``state.result.results``). */
 export function resultsOf(state: unknown): ResultItem[] {
-  const result = (state as { result?: { results?: unknown } } | undefined)?.result;
-  if (!Array.isArray(result?.results)) return [];
-  return result.results.flatMap((entry: unknown): ResultItem[] => {
-    if (!entry || typeof entry !== 'object') return [];
-    const hit = entry as Record<string, unknown>;
-    const metadata = (hit.metadata ?? {}) as Record<string, unknown>;
-    const temporal = (hit.temporal_info ?? {}) as Record<string, unknown>;
-    const id =
-      text(hit.id) ?? text(hit.document_id) ?? text(hit.video_id) ?? text(metadata.video_id);
-    if (!id) return [];
+  const results = record(record(state)?.result)?.results;
+  return Array.isArray(results) ? results.flatMap(hitOf) : [];
+}
+
+/** The payload of each agent a run's final state holds: the run's own and,
+ * for an orchestration, each planned agent's in plan order. */
+function payloadsOf(state: unknown): { agent: string; payload: Record<string, unknown> }[] {
+  const root = record(state);
+  const result = record(root?.result);
+  if (!result) return [];
+  const agent = text(root?.agent) ?? text(result.agent) ?? '';
+  const steps = record(record(result.orchestration_result)?.agent_results) ?? {};
+  return [
+    { agent, payload: result },
+    ...Object.entries(steps).flatMap(([name, payload]) => {
+      const step = record(payload);
+      return step ? [{ agent: name, payload: step }] : [];
+    }),
+  ];
+}
+
+export interface ResultGroup {
+  agent: string;
+  /** The span the agent's search recorded its hits under, when it has one. */
+  spanId?: string;
+  items: ResultItem[];
+}
+
+/** The hits of a run's final state, grouped by the agent that found them. */
+export function resultGroupsOf(state: unknown): ResultGroup[] {
+  return payloadsOf(state).flatMap(({ agent, payload }) => {
+    const items = resultsOf({ result: payload });
+    return items.length ? [{ agent, spanId: text(payload.span_id), items }] : [];
+  });
+}
+
+export interface CodingResult {
+  agent: string;
+  summary?: string;
+  files: { path: string; content: string; change?: string }[];
+  runs: { command?: string; exitCode?: number; stdout: string; stderr: string }[];
+}
+
+/** The code a run wrote and the output of running it, from the coding
+ * agent's output, whether it arrives as the dispatcher's envelope
+ * (``result.result``), as the streamed output itself, or as one step of an
+ * orchestration. */
+export function codingOf(state: unknown): CodingResult[] {
+  return payloadsOf(state).flatMap(({ agent, payload }) => {
+    const output = Array.isArray(payload.code_changes) ? payload : record(payload.result);
+    if (!output || !Array.isArray(output.code_changes)) return [];
+    const runs = Array.isArray(output.execution_results) ? output.execution_results : [];
     return [
       {
-        id,
-        ratingId:
-          text(hit.document_id) ??
-          text(hit.documentid) ??
-          text(hit.id) ??
-          text(hit.source_id) ??
-          text(hit.video_id),
-        score: number(hit.rrf_score) ?? number(hit.score),
-        title: text(hit.title) ?? text(metadata.title) ?? text(metadata.video_title),
-        snippet:
-          text(hit.content) ??
-          text(hit.text) ??
-          text(metadata.audio_transcript) ??
-          text(metadata.description),
-        start: number(temporal.start_time),
-        end: number(temporal.end_time),
+        agent,
+        summary: text(output.summary),
+        files: output.code_changes.flatMap((entry) => {
+          const change = record(entry);
+          const path = text(change?.file_path);
+          return change && path
+            ? [{ path, content: typeof change.content === 'string' ? change.content : '', change: text(change.change_type) }]
+            : [];
+        }),
+        runs: runs.flatMap((entry) => {
+          const run = record(entry);
+          return run
+            ? [
+                {
+                  command: text(run.command),
+                  exitCode: number(run.exit_code),
+                  stdout: typeof run.stdout === 'string' ? run.stdout : '',
+                  stderr: typeof run.stderr === 'string' ? run.stderr : '',
+                },
+              ]
+            : [];
+        }),
       },
     ];
   });
@@ -66,8 +160,7 @@ export function resultsOf(state: unknown): ResultItem[] {
 
 /** The search's telemetry span id in a run's final payload, when it has one. */
 export function searchSpanOf(state: unknown): string | undefined {
-  const result = (state as { result?: { span_id?: unknown } } | undefined)?.result;
-  return text(result?.span_id);
+  return text(record(record(state)?.result)?.span_id);
 }
 
 /** The labels a reviewer rates a hit with, as the runtime stores them. */
@@ -77,6 +170,58 @@ export const RELEVANCE_LABELS = ['Highly Relevant', 'Somewhat Relevant', 'Not Re
 export function clock(seconds: number): string {
   const whole = Math.floor(seconds);
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
+/** The hits and code of a run's final state, beside the chat. */
+export function ResultPanel({ state }: { state: unknown }) {
+  const groups = resultGroupsOf(state);
+  const coding = codingOf(state);
+  if (!groups.length && !coding.length) return null;
+  const labelled = groups.length > 1;
+  return (
+    <aside className="results" aria-label="Results">
+      {coding.map((code) => (
+        <CodePanel key={code.agent} code={code} />
+      ))}
+      {groups.map((group) => (
+        <Fragment key={`${group.agent}-${group.spanId ?? ''}`}>
+          {labelled && <h2 className="result-group">{agentLabel(group.agent)}</h2>}
+          <ResultCards results={group.items} spanId={group.spanId} />
+        </Fragment>
+      ))}
+    </aside>
+  );
+}
+
+function CodePanel({ code }: { code: CodingResult }) {
+  return (
+    <section className="code-result" aria-label={`Code from ${agentLabel(code.agent)}`}>
+      {code.summary && <p className="code-summary">{code.summary}</p>}
+      {code.files.map((file) => (
+        <figure key={file.path} className="code-file">
+          <figcaption>{file.change ? `${file.path} (${file.change})` : file.path}</figcaption>
+          <pre>
+            <code>{file.content}</code>
+          </pre>
+        </figure>
+      ))}
+      {code.runs.map((run, index) => (
+        <figure key={index} className="code-run">
+          <figcaption>
+            {[run.command, run.exitCode === undefined ? undefined : `exit code ${run.exitCode}`]
+              .filter(Boolean)
+              .join(' — ')}
+          </figcaption>
+          {run.stdout && <pre aria-label="Output">{run.stdout}</pre>}
+          {run.stderr && (
+            <pre className="code-stderr" aria-label="Errors">
+              {run.stderr}
+            </pre>
+          )}
+        </figure>
+      ))}
+    </section>
+  );
 }
 
 export function ResultCards({ results, spanId }: { results: ResultItem[]; spanId?: string }) {

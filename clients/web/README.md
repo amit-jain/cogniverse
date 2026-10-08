@@ -3,13 +3,27 @@
 Browser UI for the Cogniverse runtime, built on CopilotKit 1.77. Every agent in
 the runtime's registry (`GET /agents/`) appears as a Dot in the sidebar; picking
 one opens a CopilotKit chat with it. Runs stream over the runtime's AG-UI
-surface (`POST /ag-ui/{agent}`): the reply streams token by token, status
-phases show above the chat, and search hits in the run's final state render as
-result cards. When the search recorded a telemetry span, each card can be
-rated Highly Relevant, Somewhat Relevant or Not Relevant; the rating is stored
-on the search's span (`POST /ag-ui/results/relevance`), where the embedding
-triplet miner reads it, and a rating that was not stored shows its reason on
-the card.
+surface (`POST /ag-ui/{agent}`): the reply streams token by token and status
+phases show above the chat. A run that fails says why in the conversation, and
+one that is stopped says it was cancelled.
+
+Each conversation is a thread named in the address (`#/agents/{agent}/{thread}`).
+The runtime saves every run's turn under its thread, and opening a thread
+restores its turns from the runtime (`GET /ag-ui/threads/{thread}`), so a
+conversation survives a reload, a server restart and switching agents: the
+browser remembers each agent's last thread, and "New conversation" starts
+another. A thread the runtime cannot read shows the reason instead of an empty
+conversation.
+
+The run's final state renders beside the chat: search hits as result cards
+(video segments with their description and time, documents with their
+preview, images and audio with their text, each with its ranking score), the
+coding agent's files and the output of running them, and, for an orchestration,
+each planned agent's hits under its name. When a search recorded a telemetry
+span, each of its cards can be rated Highly Relevant, Somewhat Relevant or Not
+Relevant; the rating is stored on the search's span
+(`POST /ag-ui/results/relevance`), where the embedding triplet miner reads it,
+and a rating that was not stored shows its reason on the card.
 
 The browser talks only to this package's Node server. The server hosts the
 CopilotKit runtime at `/api/copilotkit` and holds one harness key, which it
@@ -74,11 +88,13 @@ npm run typecheck
 npm test
 ```
 
-Vitest covers the result-card parsing, error, route, JSON-field and event-stream parsing, the server's
-configuration and agent listing, and the runtime proxy against local HTTP
-sockets.
+Vitest covers the result parsing and rendering for each agent's payload, the
+run notices, error, route, JSON-field and event-stream parsing, the server's
+configuration, agent listing and thread restore, and the runtime proxy against
+local HTTP sockets.
 `tests/runtime/integration/test_web_client_ag_ui.py` installs this lockfile,
 runs the server from source against the runtime's routers and drives it with
-the published `@ag-ui/client`. `tests/runtime/integration/test_web_ops_*.py`
-build the client, serve it, and drive each operations view in Chromium against
-the runtime's routers over real Vespa.
+the published `@ag-ui/client`. `tests/runtime/integration/test_web_agent_workspace.py`
+drives the agent workspace in Chromium (run notices, threads restored from the
+runtime, each agent's results), and `tests/runtime/integration/test_web_ops_*.py`
+drive each operations view, against the runtime's routers over real Vespa.

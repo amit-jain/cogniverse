@@ -66,8 +66,15 @@ describe('routes', () => {
       { kind: 'agent' as const, name: 'search_agent' },
       { kind: 'ops' as const, id: 'tenants' },
       { kind: 'agent' as const, name: 'a b/c' },
+      { kind: 'agent' as const, name: 'search_agent', thread: '4b5c6839-4307-44eb-a16f-cac030c76898' },
+      { kind: 'agent' as const, name: 'a b/c', thread: 'x/y z' },
     ])
       expect(parseRoute(routeHash(route))).toEqual(route);
+  });
+
+  it("puts an agent's thread after its name", () => {
+    expect(routeHash({ kind: 'agent', name: 'search_agent', thread: 't-1' })).toBe('#/agents/search_agent/t-1');
+    expect(parseRoute('#/agents/search_agent/t-1')).toEqual({ kind: 'agent', name: 'search_agent', thread: 't-1' });
   });
 
   it('treats an unknown or empty hash as the default agent', () => {
@@ -195,3 +202,4 @@ describe('matchingPoints', () => {
     expect(matchingPoints(points, 'lava')).toEqual([]);
   });
 });
+
