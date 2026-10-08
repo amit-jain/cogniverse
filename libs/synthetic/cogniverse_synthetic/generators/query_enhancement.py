@@ -224,24 +224,38 @@ class QueryEnhancementGenerator(BaseGenerator):
         batch = sampled_content[:50]
         saliency = TopicSaliency.from_records(batch)
         records = []
+        topics_without_terms: List[str] = []
         for item in batch:
             topic = extract_topic(item, saliency=saliency)
             if topic is None:
                 continue
+            expansion_terms = self._expansion_terms(topic, item)
+            if not expansion_terms:
+                logger.warning(
+                    "Skipping sampled item: no expansion terms outside topic %r",
+                    topic,
+                )
+                topics_without_terms.append(topic)
+                continue
             records.append(
                 (
                     topic,
-                    self._expansion_terms(topic, item),
+                    expansion_terms,
                     self._context(item),
                     self._source_text(item),
                 )
             )
         if not records:
+            if topics_without_terms:
+                raise ValueError(
+                    "sampled_content contains no usable topic text; topics "
+                    f"without expansion terms: {topics_without_terms!r}"
+                )
             raise ValueError("sampled_content contains no usable topic text")
         return records
 
     def _expansion_terms(self, topic: str, item: Dict[str, Any]) -> List[str]:
-        """Return expansion terms grounded in the topic's source item."""
+        """Return expansion terms grounded in the topic's source item, or []."""
         topic_words = set(topic.lower().split())
         candidates: List[str] = []
         for field in entity_candidate_text_fields():
@@ -260,10 +274,6 @@ class QueryEnhancementGenerator(BaseGenerator):
                         and candidate not in candidates
                     ):
                         candidates.append(candidate)
-        if not candidates:
-            raise ValueError(
-                f"sampled_content contains no expansion terms outside topic '{topic}'"
-            )
         return candidates[:3]
 
     @staticmethod

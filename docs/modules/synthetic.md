@@ -311,7 +311,11 @@ Bare identifier-like hex strings, including `_seg_` suffixed forms, are
 ignored. Pure non-speech annotations are also ignored in topic, expansion, and
 source-text paths; mixed speech strings remain intact. The query-enhancement
 generator then truncates the surviving topic to four words before building its
-query set.
+query set. A sampled item whose text has no candidate word longer than three
+characters outside its topic (a one-word transcript such as `Yeah`) is skipped
+with a warning; generation raises `sampled_content contains no usable topic
+text` only when no sampled item is usable, naming the topics without expansion
+terms.
 
 ### ProfileGenerator
 
@@ -378,9 +382,10 @@ configured schemas. The production selector still chooses one backend profile,
 so the example records that profile's single configured modality and the
 selector's exact query intent rather than inventing combined categorical
 values. The service selects at most one profile per modality before sampling,
-even when two higher-scoring profiles share a modality. Generation fails when
-either the configured profiles or the sampled source content contains fewer
-than two modalities. Requests above the unique cross-modal combination count
+even when two higher-scoring profiles share a modality. Sampled items without a
+topic are skipped with a warning. Generation fails when either the configured
+profiles or the remaining sampled source content contains fewer than two
+modalities. Requests above the unique cross-modal combination count
 return the surviving floor-sized subset and only raise when the floor cannot be
 met.
 Generator instances are initialized once per service even when concurrent
@@ -442,7 +447,9 @@ differently this time, so the service never receives one query twice. A full
 target-sized streak of duplicate queries ends the run early, and a repeated
 query never gets fabricated into a new example.
 Routing truncates the extracted topic to 20 words before entity labeling and
-query generation. Entity texts are deduplicated case-insensitively while
+query generation. Sampled items without a topic are skipped with a warning
+before candidates are drawn; generation raises `sampled routing content
+requires a non-empty topic` only when no sampled item has one. Entity texts are deduplicated case-insensitively while
 preserving the first surface form, so the stored example and generated query
 use the same entity set.
 
@@ -542,10 +549,10 @@ The supported pairs are `video`/`VIDEO`, `document`/`DOCUMENT`, `image`/`IMAGE`,
 types are opaque storage identifiers and never participate in modality
 inference. Agent sequences use only enabled agent IDs from configuration;
 missing, malformed, mismatched, unsupported, or unmapped modalities raise.
-Each sample also requires a non-empty topic or title. The shared topic helper
-uses the same descriptive-first order as the other generators, ignores bare
-identifier-like hex strings, and keeps the workflow contract by raising
-`ValueError` when no descriptive text exists.
+The shared topic helper uses the same descriptive-first order as the other
+generators and ignores bare identifier-like hex strings. A sample without a
+topic is skipped with a warning; generation raises `sampled workflow content
+requires a non-empty topic` only when no sample has one.
 Each source yields at most three unique plans: search, summarize, and analyze.
 Requests above the unique source-plan capacity return the surviving floor-sized
 subset instead of duplicating a query with a different workflow identifier; the

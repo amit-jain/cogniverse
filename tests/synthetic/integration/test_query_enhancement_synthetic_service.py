@@ -543,31 +543,38 @@ async def test_generator_rejects_count_above_unique_grounded_query_capacity():
 
 
 @pytest.mark.asyncio
-async def test_generator_rejects_topic_without_source_expansion_terms():
-    async def unexpected_enhancement(query: str, tenant_id: str):
-        pytest.fail(f"unexpected enhancement call: {query}, {tenant_id}")
+async def test_generator_skips_topic_without_source_expansion_terms():
+    calls: list[str] = []
 
-    generator = QueryEnhancementGenerator(query_enhancer=unexpected_enhancement)
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
+        calls.append(query)
+        return {
+            "original_query": query,
+            "enhanced_query": f"{query} radium discovery",
+            "expansion_terms": ["radium discovery"],
+            "synonyms": [],
+            "reasoning": "Production enhancement returned a grounded phrase.",
+        }
 
-    with pytest.raises(
-        ValueError,
-        match=(
-            "sampled_content contains no expansion terms outside topic "
-            "'transformer attention'"
-        ),
-    ):
-        await generator.generate(
-            sampled_content=[
-                {"title": "transformer attention", "content_type": "video"},
-                {
-                    "title": "radium discovery",
-                    "description": "chemistry isolation laboratory",
-                    "content_type": "document",
-                },
-            ],
-            target_count=1,
-            tenant_id="acme:synthetic",
-        )
+    generator = QueryEnhancementGenerator(query_enhancer=enhance_query)
+
+    examples = await generator.generate(
+        sampled_content=[
+            {"title": "transformer attention", "content_type": "video"},
+            {
+                "title": "radium discovery",
+                "description": "chemistry isolation laboratory",
+                "content_type": "document",
+            },
+        ],
+        target_count=1,
+        tenant_id="acme:synthetic",
+    )
+
+    assert [(example.query, example.context) for example in examples] == [
+        ("chemistry isolation laboratory", "document")
+    ]
+    assert calls == ["chemistry isolation laboratory"]
 
 
 @pytest.mark.asyncio

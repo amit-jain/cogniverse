@@ -548,11 +548,90 @@ def test_generator_rejects_metadata_only_source_text():
 def test_generator_rejects_non_speech_title_when_building_expansion_terms(item):
     generator = QueryEnhancementGenerator()
 
-    with pytest.raises(
-        ValueError,
-        match="sampled_content contains no expansion terms outside topic 'animal rodeo'",
+    assert generator._expansion_terms("animal rodeo", item) == []
+
+
+@pytest.mark.asyncio
+async def test_generator_skips_one_word_item_and_labels_usable_items(caplog):
+    calls: list[tuple[str, str, str]] = []
+
+    async def enhance_query(query: str, tenant_id: str, source_text: str):
+        calls.append((query, tenant_id, source_text))
+        return {
+            "original_query": query,
+            "enhanced_query": f"{query} radium discovery",
+            "expansion_terms": ["radium discovery"],
+            "synonyms": [],
+            "reasoning": "Production enhancement returned a grounded phrase.",
+        }
+
+    generator = QueryEnhancementGenerator(query_enhancer=enhance_query)
+
+    with caplog.at_level(
+        "WARNING", logger="cogniverse_synthetic.generators.query_enhancement"
     ):
-        generator._expansion_terms("animal rodeo", item)
+        examples = await generator.generate(
+            sampled_content=[
+                {"audio_transcript": "Yeah", "content_type": "video"},
+                {
+                    "title": "radium discovery",
+                    "description": "chemistry isolation laboratory",
+                    "content_type": "document",
+                },
+            ],
+            target_count=2,
+            tenant_id="acme:synthetic",
+        )
+
+    assert [example.model_dump() for example in examples] == [
+        {
+            "query": "chemistry isolation laboratory",
+            "enhanced_query": "chemistry isolation laboratory radium discovery",
+            "expansion_terms": ["radium discovery"],
+            "synonyms": [],
+            "context": "document",
+            "reasoning": "Production enhancement returned a grounded phrase.",
+        },
+        {
+            "query": "find chemistry isolation laboratory",
+            "enhanced_query": "find chemistry isolation laboratory radium discovery",
+            "expansion_terms": ["radium discovery"],
+            "synonyms": [],
+            "context": "document",
+            "reasoning": "Production enhancement returned a grounded phrase.",
+        },
+    ]
+    source_text = "radium discovery\nchemistry isolation laboratory"
+    assert calls == [
+        ("chemistry isolation laboratory", "acme:synthetic", source_text),
+        ("find chemistry isolation laboratory", "acme:synthetic", source_text),
+    ]
+    assert [record.getMessage() for record in caplog.records] == [
+        "Skipping sampled item: no expansion terms outside topic 'Yeah'"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generator_rejects_batch_where_no_item_has_expansion_terms():
+    async def unexpected_enhancement(query: str, tenant_id: str, source_text: str):
+        pytest.fail(f"unexpected enhancement call: {query}, {tenant_id}")
+
+    generator = QueryEnhancementGenerator(query_enhancer=unexpected_enhancement)
+
+    with pytest.raises(ValueError) as error:
+        await generator.generate(
+            sampled_content=[
+                {"audio_transcript": "Yeah", "content_type": "video"},
+                {"audio_transcript": "Okay", "content_type": "video"},
+            ],
+            target_count=2,
+            tenant_id="acme:synthetic",
+        )
+
+    assert str(error.value) == (
+        "sampled_content contains no usable topic text; topics without "
+        "expansion terms: ['Yeah', 'Okay']"
+    )
 
 
 @pytest.mark.parametrize(

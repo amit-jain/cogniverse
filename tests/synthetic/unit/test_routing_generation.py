@@ -453,57 +453,75 @@ def test_query_generator_uses_configured_module_and_retry_limit() -> None:
     assert query_generator.generate.__class__.__name__ == "Predict"
 
 
-async def test_generation_rejects_content_without_canonical_topic() -> None:
+async def test_generation_skips_content_without_canonical_topic(caplog) -> None:
+    class _TopicQueryGenerator:
+        max_retries = 3
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(
+                query=f"find {kwargs['topics']}",
+                reasoning=f"Used {kwargs['topics']} from this source item.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
     generator = RoutingGenerator(
         entity_extractor=_extract_entities,
         routing_decider=_route_query,
         optimizer_config=_routing_generator().optimizer_config,
     )
+    generator.query_generator = _TopicQueryGenerator()
 
-    # With saliency, need 2+ valid records; then one invalid triggers per-record check
-    with pytest.raises(
-        ValueError, match="^sampled routing content requires a non-empty topic$"
-    ):
-        await generator.generate(
+    with caplog.at_level("WARNING", logger="cogniverse_synthetic.generators.routing"):
+        examples = await generator.generate(
             sampled_content=[
-                # Invalid record first - selected in attempt 0
                 {
                     "schema_name": "document_text",
                     "embedding_type": "single_vector",
                 },
-                # Valid records needed for saliency (>= 2 with topic text)
                 {"topic": "TensorFlow tutorial video"},
                 {"topic": "PyTorch deep learning guide"},
             ],
-            target_count=1,
+            target_count=2,
             tenant_id="acme:routing",
         )
 
+    assert [
+        (example.query, example.enhanced_query, example.chosen_agent)
+        for example in examples
+    ] == [
+        (
+            "find TensorFlow tutorial video",
+            "find TensorFlow(TECHNOLOGY) tutorial video",
+            "video_search_agent",
+        ),
+        (
+            "find PyTorch deep learning guide",
+            "find PyTorch(TECHNOLOGY) deep learning guide",
+            "video_search_agent",
+        ),
+    ]
+    assert [record.getMessage() for record in caplog.records] == [
+        "Skipping sampled routing item without a topic"
+    ]
 
-async def test_query_generation_rejects_missing_source_topic() -> None:
-    # With saliency, need 2+ valid records; then one invalid triggers per-record check
-    with pytest.raises(
-        ValueError,
-        match="^sampled routing content requires a non-empty topic$",
-    ):
+
+async def test_generation_rejects_batch_without_any_canonical_topic() -> None:
+    with pytest.raises(ValueError) as error:
         await RoutingGenerator(
             entity_extractor=_extract_entities,
             routing_decider=_route_query,
             optimizer_config=_routing_generator().optimizer_config,
         ).generate(
             sampled_content=[
-                # Invalid record first - selected in attempt 0
-                {
-                    "schema_name": "document_text",
-                    "embedding_type": "single_vector",
-                },
-                # Valid records needed for saliency (>= 2 with topic text)
-                {"topic": "TensorFlow tutorial video"},
-                {"topic": "PyTorch deep learning guide"},
+                {"topic": "tutorial video"},
+                {"topic": "tutorial video"},
             ],
             target_count=1,
             tenant_id="acme:routing",
         )
+
+    assert str(error.value) == "sampled routing content requires a non-empty topic"
 
 
 async def test_generation_uses_canonical_topic_string_for_query_generation() -> None:

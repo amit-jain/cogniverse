@@ -276,6 +276,15 @@ class RoutingGenerator(BaseGenerator):
         )
 
         saliency = TopicSaliency.from_records(sampled_content)
+        sources: list[str] = []
+        for content in sampled_content:
+            topic = self._extract_topic(content, saliency=saliency)
+            if topic is None:
+                logger.warning("Skipping sampled routing item without a topic")
+                continue
+            sources.append(topic)
+        if not sources:
+            raise ValueError("sampled routing content requires a non-empty topic")
         examples = []
         duplicate_filter = DuplicateLabelFilter()
         last_validation_error: Exception | None = None
@@ -283,9 +292,8 @@ class RoutingGenerator(BaseGenerator):
         attempt_budget = self._routing_candidate_budget(target_count)
 
         while len(examples) < target_count and attempts < attempt_budget:
-            content = sampled_content[attempts % len(sampled_content)]
+            topic = sources[attempts % len(sources)]
             attempts += 1
-            topic = self._extract_topic(content, saliency=saliency)
 
             try:
                 labelled = await self.entity_labeler.generate(
@@ -555,11 +563,10 @@ class RoutingGenerator(BaseGenerator):
             ) from e
 
     @staticmethod
-    def _extract_topic(content: Dict[str, Any], *, saliency: TopicSaliency) -> str:
-        topic = extract_topic(content, saliency=saliency)
-        if topic is not None:
-            return topic
-        raise ValueError("sampled routing content requires a non-empty topic")
+    def _extract_topic(
+        content: Dict[str, Any], *, saliency: TopicSaliency
+    ) -> str | None:
+        return extract_topic(content, saliency=saliency)
 
     @staticmethod
     def _canonicalize_entities(entities: List[Dict]) -> List[Dict[str, str]]:
