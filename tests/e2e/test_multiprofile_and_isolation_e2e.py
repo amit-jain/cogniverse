@@ -394,38 +394,81 @@ class TestMultiProfileWebUI:
         """A search run's hits render as the result cards, one per hit."""
         from playwright.sync_api import expect
 
+        query = "sports throwing discus"
         ensure_web_tenant_corpus()
         open_agent(page, "search_agent")
-        state = run_agent_and_capture_state(
-            page, "search_agent", "sports throwing discus"
-        )
+        state = run_agent_and_capture_state(page, "search_agent", query)
         hits = state["result"]["results"]
         assert hits != [], state["result"]
         assert [SAMPLE_VIDEO_CONTENT_ID in json.dumps(hit) for hit in hits] == [
             True
         ] * len(hits)
+        cards = result_cards(state)
         results = page.get_by_role("complementary", name="Results")
         expect(results.locator(".result-title")).to_have_text(
-            [card["title"] for card in result_cards(state)], timeout=RUN_TIMEOUT_MS
+            [card["title"] for card in cards], timeout=RUN_TIMEOUT_MS
+        )
+        # The search's one group states what it found for the query.
+        plural = "" if len(cards) == 1 else "s"
+        expect(results.locator(".result-found")).to_have_text(
+            [f"Found {len(cards)} result{plural} for '{query}'."]
         )
 
     def test_ingestion_view_takes_the_profile_to_ingest_with(self, page):
-        """The upload form names its tenant and leaves the profile to the
-        tenant's default unless one is given."""
+        """The upload form names its tenant, offers the tenant's upload
+        profiles with the tenant's default chosen, and ingests with the
+        profiles the operator checks."""
         from playwright.sync_api import expect
+
+        listed = httpx.get(
+            f"{RUNTIME}/ingestion/profiles",
+            params={"tenant_id": TENANT_ID},
+            timeout=60.0,
+        )
+        assert listed.status_code == 200, listed.text
+        targets = listed.json()
+        assert targets["tenant_id"] == canonical_tenant_id(TENANT_ID), targets
+        by_name = {entry["name"]: entry for entry in targets["profiles"]}
+        assert by_name[PROFILE]["kind"] == "video", targets
+        names = [entry["name"] for entry in targets["profiles"]]
+        defaults = [name for name in names if name == targets["default_profile"]]
 
         open_view(page, "ingestion")
         choose_tenant(page, TENANT_ID, "Use tenant")
         expect(page.get_by_role("region", name=f"Upload to {TENANT_ID}")).to_be_visible(
             timeout=VIEW_TIMEOUT_MS
         )
-        profile = page.get_by_role("form", name="Upload content").get_by_label(
-            "Profile"
+        form = page.get_by_role("form", name="Upload content")
+        expect(
+            form.get_by_text(f"Backend: {targets['backend']}", exact=True)
+        ).to_be_visible(timeout=VIEW_TIMEOUT_MS)
+        boxes = form.get_by_role("group", name="Profiles").get_by_role("checkbox")
+        expect(boxes).to_have_count(len(names))
+
+        def checked() -> list[str]:
+            return [
+                box.get_attribute("aria-label")
+                for box in boxes.all()
+                if box.is_checked()
+            ]
+
+        assert [box.get_attribute("aria-label") for box in boxes.all()] == names
+        assert checked() == defaults
+
+        def box(name: str):
+            return form.get_by_role("group", name="Profiles").get_by_role(
+                "checkbox", name=name, exact=True
+            )
+
+        for name in defaults:
+            if name != PROFILE:
+                box(name).uncheck()
+        box(PROFILE).check()
+        expect(box(PROFILE)).to_be_checked()
+        assert checked() == [PROFILE]
+        expect(form.get_by_label("File", exact=True)).to_have_attribute(
+            "accept", ",".join(by_name[PROFILE]["extensions"])
         )
-        expect(profile).to_have_value("")
-        expect(profile).to_have_attribute("placeholder", "tenant's default")
-        profile.fill(PROFILE)
-        expect(profile).to_have_value(PROFILE)
 
     def test_tenant_switch_changes_the_views_context(self, page):
         """Choosing another tenant replaces every panel of the previous one."""
