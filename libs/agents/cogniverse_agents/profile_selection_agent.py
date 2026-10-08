@@ -9,6 +9,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Mapping, Optional
 
@@ -487,6 +488,7 @@ class ProfileSelectionAgent(
                 alternatives=[],
             )
 
+        started_ns = time.time_ns()
         profiles = await asyncio.to_thread(self._resolve_candidate_profiles, input)
 
         # Feed memory-enriched prompt to the LM but keep the caller's
@@ -574,6 +576,7 @@ class ProfileSelectionAgent(
             modality=output.modality,
             complexity=output.complexity,
             confidence=output.confidence,
+            started_ns=started_ns,
         )
 
         return output
@@ -607,8 +610,11 @@ class ProfileSelectionAgent(
         modality: str,
         complexity: str,
         confidence: float,
+        started_ns: int,
     ) -> None:
-        """Emit cogniverse.profile_selection telemetry span."""
+        """Emit a cogniverse.profile_selection telemetry span covering the
+        selection from ``started_ns`` (``time.time_ns()`` when it began) to
+        now."""
         if not self.telemetry_manager:
             logger.warning(
                 "%s has no telemetry_manager; profile_selection span not emitted (tenant=%s)",
@@ -623,6 +629,7 @@ class ProfileSelectionAgent(
             with self.telemetry_manager.span(
                 name="cogniverse.profile_selection",
                 tenant_id=validated_tenant,
+                start_time=started_ns,
             ) as span:
                 span.set_attribute("available_profiles", available_profiles)
                 record_span_io(

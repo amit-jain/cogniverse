@@ -70,6 +70,7 @@ def _emit(manager, tenants, monkeypatch, *, concurrent=False):
                 modality="video",
                 complexity="simple",
                 confidence=0.9,
+                started_ns=time.time_ns(),
             )
         )
 
