@@ -881,7 +881,13 @@ function Explorer({ traces }: { traces: Trace[] }) {
         </label>
         <label>
           Order
-          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+          <select
+            value={sort}
+            onChange={(e) => {
+              setSort(e.target.value as Sort);
+              setPage(0);
+            }}
+          >
             {Object.keys(SORTS).map((name) => (
               <option key={name}>{name}</option>
             ))}

@@ -648,6 +648,13 @@ class TestExplorer:
         ]
         expect(pager.get_by_role("button", name="Next")).to_be_disabled()
 
+        # A new order starts over at the first page.
+        explorer.get_by_label("Order").select_option("Oldest first")
+        expect(pager.locator("span")).to_have_text("Page 1 of 2")
+        assert [row[-1] for row in _rows(page, "Traces")] == [
+            trace_id for trace_id, _, _ in recorded[::-1][:20]
+        ]
+
 
 class TestRootCauses:
     def test_root_cause_details_name_the_failures_and_slow_traces(
