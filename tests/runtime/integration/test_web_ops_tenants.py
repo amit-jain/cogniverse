@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import httpx
 import pytest
@@ -22,6 +23,7 @@ from cogniverse_foundation.config.unified_config import (
     DEFAULT_ROUTER_TIER,
     ROUTER_TIERS,
 )
+from cogniverse_runtime.admin.tenant_manager import TENANT_BASE_SCHEMAS
 from tests.utils.web_client import (
     free_port,
     recording_telemetry_sink,
@@ -31,6 +33,14 @@ from tests.utils.web_ops import serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
+SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
+# Deployed once for the whole deployment, never per tenant.
+DEPLOYMENT_SCHEMAS = {
+    "adapter_registry",
+    "config_metadata",
+    "organization_metadata",
+    "tenant_metadata",
+}
 # A tenant's base schemas deploy on creation; that is the slow step.
 DEPLOY_TIMEOUT_MS = 240_000
 
@@ -67,6 +77,10 @@ def page(browser):
     page = context.new_page()
     yield page
     context.close()
+
+
+def _counted(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
 def _tenants_view(page: Page, web_url: str) -> None:
@@ -135,9 +149,16 @@ class TestTenantLifecycle:
             "active",
         )
 
+        listed = httpx.get(f"{runtime_url}/admin/organizations").json()["organizations"]
+        expect(page.get_by_label("Organization count")).to_have_text(
+            f"{_counted(len(listed), 'organization')}, "
+            f"{_counted(sum(org['tenant_count'] for org in listed), 'tenant')} "
+            "in all."
+        )
         row.get_by_role("button", name=org_id).click()
         tenants = page.get_by_role("region", name=f"Tenants of {org_id}")
         expect(tenants.get_by_text(f"No tenants in {org_id}.")).to_be_visible()
+        expect(tenants.get_by_label("Tenant count")).to_have_count(0)
 
         _create_tenant(page, org_id, "production")
         created = httpx.get(f"{runtime_url}/admin/tenants/{tenant_id}").json()
@@ -151,6 +172,9 @@ class TestTenantLifecycle:
             ", ".join(created["schemas_deployed"])
         )
         expect(_org_row(page, org_id).get_by_role("cell").nth(3)).to_have_text("1")
+        expect(tenants.get_by_label("Tenant count")).to_have_text(
+            f"1 tenant in {org_id}."
+        )
 
         tier = tenant_row.get_by_label(f"Router tier for {tenant_id}")
         expect(tier).to_have_value(DEFAULT_ROUTER_TIER)
@@ -229,6 +253,117 @@ class TestTenantLifecycle:
         assert (
             httpx.get(f"{runtime_url}/admin/organizations/{org_id}").status_code == 404
         )
+
+
+class TestBaseSchemasAndRefresh:
+    def test_the_base_schemas_are_the_shipped_tenant_schemas(self, runtime_url):
+        shipped = {
+            path.name.removesuffix("_schema.json")
+            for path in SCHEMAS_DIR.glob("*_schema.json")
+        }
+        listed = httpx.get(f"{runtime_url}/admin/base-schemas", timeout=60)
+        assert listed.status_code == 200, listed.text
+        assert listed.json() == {
+            "schemas": sorted(shipped - DEPLOYMENT_SCHEMAS),
+            "default": list(TENANT_BASE_SCHEMAS),
+        }
+
+    def test_the_base_schemas_without_the_schema_loader_answer_503(
+        self, runtime_url, schema_loader
+    ):
+        from cogniverse_runtime.admin import tenant_manager
+
+        tenant_manager.set_schema_loader(None)
+        try:
+            listed = httpx.get(f"{runtime_url}/admin/base-schemas", timeout=60)
+        finally:
+            tenant_manager.set_schema_loader(schema_loader)
+        assert (listed.status_code, listed.json()["detail"]) == (
+            503,
+            "SchemaLoader not initialized — refusing to reconcile orphans "
+            "without the shipped base-schema list. Call set_schema_loader() "
+            "during app startup.",
+        )
+
+    def test_a_tenant_gets_exactly_the_base_schemas_checked(
+        self, page, web_url, runtime_url
+    ):
+        org_id = f"webops{uuid.uuid4().hex[:8]}"
+        tenant_id = f"{org_id}:memories"
+        _tenants_view(page, web_url)
+        form = page.get_by_role("form", name="Create tenant")
+        bases = form.get_by_role("group", name="Base schemas")
+        listed = httpx.get(f"{runtime_url}/admin/base-schemas").json()
+        expect(bases.locator("label")).to_have_text(listed["schemas"])
+        checked = [
+            schema
+            for schema in listed["schemas"]
+            if bases.get_by_label(schema, exact=True).is_checked()
+        ]
+        assert checked == sorted(TENANT_BASE_SCHEMAS)
+
+        for schema in TENANT_BASE_SCHEMAS:
+            bases.get_by_label(schema, exact=True).uncheck()
+        form.get_by_label("Organization").fill(org_id)
+        form.get_by_label("Tenant name").fill("memories")
+        form.get_by_role("button", name="Create tenant").click()
+        expect(form.get_by_role("alert")).to_have_text(
+            "Choose at least one base schema."
+        )
+        assert httpx.get(f"{runtime_url}/admin/tenants/{tenant_id}").status_code == 404
+
+        bases.get_by_label("agent_memories", exact=True).check()
+        form.get_by_role("button", name="Create tenant").click()
+        expect(form.get_by_role("status")).to_have_text(
+            f"Created {tenant_id} with schemas agent_memories.",
+            timeout=DEPLOY_TIMEOUT_MS,
+        )
+        created = httpx.get(f"{runtime_url}/admin/tenants/{tenant_id}").json()
+        assert created["schemas_deployed"] == ["agent_memories"]
+        deleted = httpx.delete(
+            f"{runtime_url}/admin/tenants/{tenant_id}",
+            timeout=DEPLOY_TIMEOUT_MS / 1000,
+        )
+        assert deleted.status_code == 200, deleted.text
+
+    def test_refresh_shows_a_tenant_created_elsewhere(self, page, web_url, runtime_url):
+        org_id = f"webops{uuid.uuid4().hex[:8]}"
+        _tenants_view(page, web_url)
+        _create_org(page, org_id, "Refreshed")
+        _org_row(page, org_id).get_by_role("button", name=org_id).click()
+        tenants = page.get_by_role("region", name=f"Tenants of {org_id}")
+        expect(tenants.get_by_text(f"No tenants in {org_id}.")).to_be_visible()
+
+        tenant_id = f"{org_id}:elsewhere"
+        created = httpx.post(
+            f"{runtime_url}/admin/tenants",
+            json={
+                "tenant_id": tenant_id,
+                "created_by": "another-operator",
+                "base_schemas": ["agent_memories"],
+            },
+            timeout=DEPLOY_TIMEOUT_MS / 1000,
+        )
+        assert created.status_code == 200, created.text
+        expect(_tenant_row(page, org_id, tenant_id)).to_have_count(0)
+        tenants.get_by_role("button", name="Refresh").click()
+        row = _tenant_row(page, org_id, tenant_id)
+        cells = row.get_by_role("cell")
+        expect(cells.nth(0)).to_have_text(tenant_id)
+        expect(cells.nth(1)).to_have_text("active")
+        expect(cells.nth(2)).to_have_text("agent_memories")
+        expect(cells.nth(4)).to_have_text(re.compile(r".+ by another-operator$"))
+        expect(row.get_by_label(f"Router tier for {tenant_id}")).to_have_value(
+            DEFAULT_ROUTER_TIER
+        )
+        expect(tenants.get_by_label("Tenant count")).to_have_text(
+            f"1 tenant in {org_id}."
+        )
+        deleted = httpx.delete(
+            f"{runtime_url}/admin/tenants/{tenant_id}",
+            timeout=DEPLOY_TIMEOUT_MS / 1000,
+        )
+        assert deleted.status_code == 200, deleted.text
 
 
 class TestConcurrency:

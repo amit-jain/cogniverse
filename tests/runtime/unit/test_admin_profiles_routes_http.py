@@ -1142,6 +1142,7 @@ async def test_create_profile_adds_profile_without_deploy(env):
         "tenant_id": "acme",
         "schema_deployed": False,
         "tenant_schema_name": None,
+        "schema_deploy_error": None,
         "version": _WRITTEN_VERSION,
     }
     assert env.cm.store.get_config_calls == []

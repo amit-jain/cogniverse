@@ -30,6 +30,7 @@ import re
 import signal
 import socket
 import threading
+import uuid
 from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
@@ -39,6 +40,12 @@ import redis.asyncio as aioredis
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.schema_deploy_lease import LeaseWaitTimeout
+from cogniverse_runtime.cluster_events import (
+    CONFIG_EVENT_CHANNEL,
+    CONFIGS_CHANGED,
+    ClusterEvents,
+    release_held_configs,
+)
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.queue import IngestJob
@@ -1144,49 +1151,61 @@ async def run(
         )
         return
 
-    redis = await get_redis(config.redis_url)
-    global _task_events
-    _task_events = TaskEventStore(redis)
-    _task_events.start()
-    if processor is None:
-        processor = partial(
-            _default_processor,
-            service_urls=config.inference_service_urls,
-            mark_graph_pending=partial(_mark_graph_pending, redis),
-            graph_deadline_s=config.graph_deadline_s,
-            media_config=media_config,
-        )
-    logger.info(
-        "Worker %s started: group=%s redis=%s reaper=%s",
-        config.consumer_id,
-        config.consumer_group,
+    # A config saved, restored or imported through the runtime is dropped
+    # from what this worker holds before the write answers.
+    config_events = ClusterEvents(
         config.redis_url,
-        "on" if config.reaper_enabled else "off",
+        f"ingestion:{config.consumer_id}:{os.getpid()}:{uuid.uuid4().hex[:8]}",
+        {CONFIGS_CHANGED: release_held_configs},
+        channel=CONFIG_EVENT_CHANNEL,
     )
-    reaper_task = None
+    await config_events.start()
     try:
-        if config.reaper_enabled:
-            from cogniverse_runtime.ingestion_worker.reaper import reaper_loop
-
-            reaper_task = asyncio.create_task(
-                reaper_loop(redis, config, stop, processor=processor)
+        redis = await get_redis(config.redis_url)
+        global _task_events
+        _task_events = TaskEventStore(redis)
+        _task_events.start()
+        if processor is None:
+            processor = partial(
+                _default_processor,
+                service_urls=config.inference_service_urls,
+                mark_graph_pending=partial(_mark_graph_pending, redis),
+                graph_deadline_s=config.graph_deadline_s,
+                media_config=media_config,
             )
-        await _claim_loop(
-            redis,
-            config,
-            stop,
-            processor=processor,
-            telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+        logger.info(
+            "Worker %s started: group=%s redis=%s reaper=%s",
+            config.consumer_id,
+            config.consumer_group,
+            config.redis_url,
+            "on" if config.reaper_enabled else "off",
         )
+        reaper_task = None
+        try:
+            if config.reaper_enabled:
+                from cogniverse_runtime.ingestion_worker.reaper import reaper_loop
+
+                reaper_task = asyncio.create_task(
+                    reaper_loop(redis, config, stop, processor=processor)
+                )
+            await _claim_loop(
+                redis,
+                config,
+                stop,
+                processor=processor,
+                telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+            )
+        finally:
+            logger.info("Worker %s stopping", config.consumer_id)
+            if reaper_task is not None:
+                reaper_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await reaper_task
+            await _task_events.close()
+            _task_events = None
+            await close_redis()
     finally:
-        logger.info("Worker %s stopping", config.consumer_id)
-        if reaper_task is not None:
-            reaper_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await reaper_task
-        await _task_events.close()
-        _task_events = None
-        await close_redis()
+        await config_events.close()
 
 
 def _install_signal_handlers(stop: asyncio.Event) -> None:

@@ -251,6 +251,23 @@ def test_quality_monitor_cli_resolves_before_telemetry(monkeypatch):
     assert deno_check._skip_deno_check is True
 
 
+def _recording_config_events(events: list[str]):
+    """The worker's config events subscription, recorded instead of
+    connected."""
+
+    class _ConfigEvents:
+        def __init__(self, redis_url, worker_id, handlers, *, channel):
+            self.redis_url = redis_url
+
+        async def start(self):
+            events.append(f"config-events:start:{self.redis_url}")
+
+        async def close(self):
+            events.append("config-events:close")
+
+    return _ConfigEvents
+
+
 @pytest.mark.asyncio
 async def test_ingestion_worker_resolves_before_telemetry(monkeypatch):
     events: list[str] = []
@@ -304,15 +321,18 @@ async def test_ingestion_worker_resolves_before_telemetry(monkeypatch):
     monkeypatch.setattr(worker, "get_redis", _fake_get_redis)
     monkeypatch.setattr(worker, "close_redis", _fake_close_redis)
     monkeypatch.setattr(worker, "_claim_loop", _fake_claim_loop)
+    monkeypatch.setattr(worker, "ClusterEvents", _recording_config_events(events))
 
     await worker.run(stop=asyncio.Event(), processor=lambda job: {"status": "ok"})
 
     assert events == [
         "resolve",
+        "config-events:start:redis://stub",
         "redis:redis://stub",
         "claim-loop",
         f"telemetry:{{'otlp_endpoint': '{TELEMETRY_OTLP_ENDPOINT}'}}",
         "close",
+        "config-events:close",
     ]
 
 
@@ -413,7 +433,9 @@ async def test_worker_bootstrap_sets_exact_s3_defaults(monkeypatch):
     monkeypatch.setattr(
         worker,
         "WorkerConfig",
-        lambda: SimpleNamespace(redis_url="redis://stub", startup_grace_s=300.0),
+        lambda: SimpleNamespace(
+            redis_url="redis://stub", startup_grace_s=300.0, consumer_id="worker-1"
+        ),
     )
 
     async def _fake_get_redis(url):
@@ -433,6 +455,7 @@ async def test_worker_bootstrap_sets_exact_s3_defaults(monkeypatch):
     monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
     monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
     monkeypatch.setattr(worker, "get_redis", _fake_get_redis)
+    monkeypatch.setattr(worker, "ClusterEvents", _recording_config_events([]))
 
     with pytest.raises(RuntimeError, match="stop after bootstrap"):
         await worker.run(stop=asyncio.Event())

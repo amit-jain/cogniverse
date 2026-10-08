@@ -75,7 +75,8 @@ class ConfigManager:
     """
 
     # Every manager in this process, so a write another process made can be
-    # dropped from all of them (``forget_held_backend_configs``).
+    # dropped from all of them (``forget_held_backend_configs``,
+    # ``forget_held_tenant_configs``).
     _live: ClassVar["weakref.WeakSet[ConfigManager]"] = weakref.WeakSet()
     _live_lock: ClassVar[threading.Lock] = threading.Lock()
 
@@ -1061,4 +1062,22 @@ def forget_held_backend_configs(tenant_id: str) -> int:
         managers = list(ConfigManager._live)
     for manager in managers:
         manager._invalidate_scoped_config(ConfigScope.BACKEND, tenant_id)
+    return len(managers)
+
+
+def forget_held_tenant_configs(tenant_id: str) -> int:
+    """Drop everything every ConfigManager in this process holds for
+    ``tenant_id`` (the system config for the system tenant ``_system``); the
+    number of managers.
+
+    The runtime runs it on every runtime and ingestion worker when a config
+    is saved, restored or imported, so another process's write is read at
+    once instead of within the staleness bound.
+    """
+    if not isinstance(tenant_id, str) or not tenant_id:
+        raise ValueError("forget_held_tenant_configs needs a tenant id")
+    with ConfigManager._live_lock:
+        managers = list(ConfigManager._live)
+    for manager in managers:
+        manager.forget_held_configs(tenant_id)
     return len(managers)

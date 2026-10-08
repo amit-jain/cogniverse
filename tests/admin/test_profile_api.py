@@ -773,6 +773,44 @@ class TestProfileAPICRUD:
             (set(shipped) | _system_profile_names()) - {"image_colpali_mv"}
         )
 
+    def test_templates_carry_the_values_each_choice_field_takes(
+        self, test_client: TestClient
+    ):
+        from cogniverse_core.common.models.model_loaders import (
+            EMBEDDING_MODEL_LOADERS,
+        )
+        from cogniverse_core.validation.profile_validator import ProfileValidator
+        from cogniverse_foundation.config.unified_config import PROCESS_TYPES
+
+        shipped = json.loads(
+            (
+                Path(__file__).resolve().parents[2] / "configs" / "config.json"
+            ).read_text()
+        )["backend"]["profiles"]
+        shipped_types = list(dict.fromkeys(p["type"] for p in shipped.values()))
+
+        body = test_client.get("/admin/profile-templates?tenant_id=tmpl_choices")
+        assert body.status_code == 200
+        choices = {
+            key: body.json()[key]
+            for key in (
+                "profile_types",
+                "embedding_types",
+                "model_loaders",
+                "process_types",
+            )
+        }
+        assert choices == {
+            "profile_types": shipped_types,
+            "embedding_types": ProfileValidator.VALID_EMBEDDING_TYPES,
+            "model_loaders": sorted(EMBEDDING_MODEL_LOADERS),
+            "process_types": sorted(PROCESS_TYPES),
+        }
+        assert (choices["model_loaders"], choices["embedding_types"]) == (
+            ["colbert", "colpali", "colqwen", "xclip"],
+            ["multi_vector", "single_vector"],
+        )
+
     def test_a_profile_stored_for_the_system_is_offered_to_every_tenant(
         self, test_client: TestClient
     ):

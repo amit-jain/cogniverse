@@ -61,7 +61,7 @@ from cogniverse_runtime.admin.profile_models import (
     SchemaDeploymentResponse,
 )
 from cogniverse_runtime.harness_keys import HarnessKeyStore
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import failure_response, record_failure
 from cogniverse_sdk.interfaces.config_store import (
     ConfigScope,
     ConfigStoreUnavailableError,
@@ -262,7 +262,8 @@ async def create_profile(
         HTTPException 400: Validation errors
         HTTPException 409: Concurrent writes to the tenant's backend config
             outlasted every compare-and-set attempt
-        HTTPException 500: Creation or deployment failed
+        HTTPException 500: Creation failed; a requested schema deploy that
+            fails answers 201 with schema_deploy_error
         HTTPException 503: The profile is stored, but a runtime worker did
             not confirm dropping the profiles it held
     """
@@ -323,6 +324,7 @@ async def create_profile(
 
         schema_deployed = False
         tenant_schema_name = None
+        schema_deploy_error = None
 
         if request.deploy_schema:
 
@@ -344,17 +346,28 @@ async def create_profile(
                     request.tenant_id, request.schema_name
                 )
 
-            tenant_schema_name = await asyncio.to_thread(_deploy)
-            schema_deployed = True
-            logger.info(
-                f"Deployed schema '{tenant_schema_name}' for profile '{request.profile_name}'"
-            )
+            # The profile is stored; a deploy that fails leaves it for a
+            # deploy from the profile, and the answer says so.
+            try:
+                tenant_schema_name = await asyncio.to_thread(_deploy)
+                schema_deployed = True
+                logger.info(
+                    f"Deployed schema '{tenant_schema_name}' for profile "
+                    f"'{request.profile_name}'"
+                )
+            except Exception as exc:
+                record_failure(exc, "profile_schema_deploy_failed")
+                schema_deploy_error = (
+                    f"Deploying schema '{request.schema_name}' failed "
+                    f"({type(exc).__name__}); the runtime log names the cause."
+                )
 
         return ProfileCreateResponse(
             profile_name=request.profile_name,
             tenant_id=request.tenant_id,
             schema_deployed=schema_deployed,
             tenant_schema_name=tenant_schema_name,
+            schema_deploy_error=schema_deploy_error,
             created_at=datetime.now(timezone.utc).isoformat(),
             version=version,
         )
@@ -379,9 +392,11 @@ async def create_profile(
 async def list_profile_templates(
     tenant_id: str,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    validator: ProfileValidator = Depends(get_profile_validator_dependency),
 ) -> ProfileTemplateListResponse:
     """The shipped profiles a tenant's new profile can start from, each with
-    its whole configuration as ingestion reads it.
+    its whole configuration as ingestion reads it, and the values a new
+    profile's type, embedding type, model loader and process type take.
 
     Raises:
         HTTPException 500: The config store could not be read
@@ -412,7 +427,16 @@ async def list_profile_templates(
             e,
             tenant_id=tenant_id,
         )
-    return ProfileTemplateListResponse(tenant_id=tenant_id, templates=templates)
+    from cogniverse_foundation.config.unified_config import PROCESS_TYPES
+
+    return ProfileTemplateListResponse(
+        tenant_id=tenant_id,
+        templates=templates,
+        profile_types=validator.profile_types,
+        embedding_types=list(ProfileValidator.VALID_EMBEDDING_TYPES),
+        model_loaders=ProfileValidator.model_loaders(),
+        process_types=sorted(PROCESS_TYPES),
+    )
 
 
 @router.get("/profiles", response_model=ProfileListResponse)

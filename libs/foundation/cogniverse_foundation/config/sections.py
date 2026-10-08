@@ -11,8 +11,8 @@ change and with secrets withheld).
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -33,6 +33,18 @@ from cogniverse_sdk.interfaces.config_store import ConfigScope
 # The tenant id system-wide configs are stored under.
 SYSTEM_CONFIG_TENANT = "_system"
 
+# The values a form offers for the fields that take one of a fixed set.
+SEARCH_BACKENDS = ("vespa",)
+ENVIRONMENTS = ("development", "staging", "production")
+ROUTING_MODES = ("tiered", "direct", "adaptive")
+PORT_RANGE = (1, 65535)
+
+
+def _telemetry_providers() -> List[str]:
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
+
+    return sorted(get_telemetry_registry().list_available())
+
 
 class ConfigValueError(ValueError):
     """A form value the section's dataclass does not accept; ``errors`` names
@@ -50,7 +62,9 @@ class ConfigSection:
     ``service`` is the fixed service the config is stored under, or None
     when each entry of the section is its own service (one per agent).
     ``fixed_fields`` are set by the location, not the form (the tenant id a
-    tenant's config carries).
+    tenant's config carries). ``choices`` gives, per top-level field, the
+    values it takes; ``ranges`` the inclusive bounds of an integer field. A
+    stored value outside them is kept when a save leaves it unchanged.
     """
 
     name: str
@@ -65,6 +79,8 @@ class ConfigSection:
     default: Callable[[str, str], Any]
     secret_fields: frozenset = frozenset()
     fixed_fields: frozenset = frozenset()
+    choices: Dict[str, Callable[[], Sequence[str]]] = field(default_factory=dict)
+    ranges: Dict[str, Tuple[int, int]] = field(default_factory=dict)
 
     @property
     def _adapter(self) -> TypeAdapter:
@@ -83,6 +99,10 @@ class ConfigSection:
             ]
         for name in self.secret_fields:
             properties[name] = {**properties[name], "writeOnly": True}
+        for name, options in self.choices.items():
+            properties[name] = _with_enum(properties[name], list(options()))
+        for name, (low, high) in self.ranges.items():
+            properties[name] = {**properties[name], "minimum": low, "maximum": high}
         return schema
 
     def form_value(self, config: Any) -> Dict[str, Any]:
@@ -125,6 +145,9 @@ class ConfigSection:
                 merged[name] = None
         for name in self.fixed_fields:
             merged[name] = current_value[name]
+        refused = self._outside_choices_and_ranges(value, current_value)
+        if refused:
+            raise ConfigValueError(refused)
         try:
             return self._adapter.validate_python(merged)
         except ValidationError as exc:
@@ -134,6 +157,31 @@ class ConfigSection:
                     for error in exc.errors()
                 ]
             ) from exc
+
+    def _outside_choices_and_ranges(
+        self, value: Dict[str, Any], current_value: Dict[str, Any]
+    ) -> List[str]:
+        """A problem per submitted field whose new value is not one of its
+        choices or lies outside its range."""
+        problems = []
+        for name, options in self.choices.items():
+            submitted = value.get(name, current_value.get(name))
+            allowed = list(options())
+            if (
+                submitted is not None
+                and submitted != current_value.get(name)
+                and submitted not in allowed
+            ):
+                problems.append(f"{name}: must be one of {', '.join(allowed)}")
+        for name, (low, high) in self.ranges.items():
+            submitted = value.get(name, current_value.get(name))
+            if (
+                isinstance(submitted, int)
+                and submitted != current_value.get(name)
+                and not low <= submitted <= high
+            ):
+                problems.append(f"{name}: must be between {low} and {high}")
+        return problems
 
     def entry_service(self, service: Optional[str]) -> str:
         """The service an entry of this section is stored under."""
@@ -146,6 +194,23 @@ class ConfigSection:
         if not service:
             raise ConfigValueError([f"section {self.name} needs a service name"])
         return service
+
+
+def _with_enum(property_schema: Dict[str, Any], options: List[str]) -> Dict[str, Any]:
+    """``property_schema`` restricted to ``options``; a nullable string stays
+    nullable."""
+    branches = property_schema.get("anyOf")
+    if branches:
+        return {
+            **property_schema,
+            "anyOf": [
+                {**branch, "enum": options}
+                if branch.get("type") == "string"
+                else branch
+                for branch in branches
+            ],
+        }
+    return {**property_schema, "enum": options}
 
 
 def _unknown_keys(schema: Dict[str, Any], value: Any, path: str) -> List[str]:
@@ -222,6 +287,11 @@ CONFIG_SECTIONS: Dict[str, ConfigSection] = {
             dump=lambda config, tenant_id: config.to_dict(redact=False),
             default=lambda tenant_id, service: SystemConfig(),
             secret_fields=frozenset({"llm_api_key"}),
+            choices={
+                "search_backend": lambda: SEARCH_BACKENDS,
+                "environment": lambda: ENVIRONMENTS,
+            },
+            ranges={"backend_port": PORT_RANGE},
         ),
         ConfigSection(
             name="routing",
@@ -237,6 +307,7 @@ CONFIG_SECTIONS: Dict[str, ConfigSection] = {
                 tenant_id=tenant_id
             ),
             fixed_fields=frozenset({"tenant_id"}),
+            choices={"routing_mode": lambda: ROUTING_MODES},
         ),
         ConfigSection(
             name="telemetry",
@@ -249,6 +320,7 @@ CONFIG_SECTIONS: Dict[str, ConfigSection] = {
             load=TelemetryConfig.from_dict,
             dump=lambda config, tenant_id: config.to_dict(),
             default=lambda tenant_id, service: TelemetryConfig(),
+            choices={"provider": _telemetry_providers},
         ),
         ConfigSection(
             name="agent",

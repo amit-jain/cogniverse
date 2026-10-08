@@ -1089,6 +1089,31 @@ def profile_change_events(request):
         channel.close()
 
 
+@pytest.fixture(scope="module")
+def config_change_events(request):
+    """Wire the config routes' events channel, as the runtime's lifespan
+    does, with this process as its one worker: a config save, restore or
+    import publishes ``configs_changed`` and this process drops what its
+    config managers hold for the tenant before the write answers."""
+    from cogniverse_runtime.cluster_events import (
+        CONFIGS_CHANGED,
+        release_held_configs,
+    )
+    from cogniverse_runtime.routers import config_entries
+
+    redis_url = os.environ.get("COGNIVERSE_TEST_REDIS_URL") or request.getfixturevalue(
+        "workflow_state_redis_url"
+    )
+    channel = ClusterEventsOnOwnLoop(redis_url, {CONFIGS_CHANGED: release_held_configs})
+    previous = config_entries._config_events
+    config_entries.set_config_events(channel)
+    try:
+        yield channel
+    finally:
+        config_entries.set_config_events(previous)
+        channel.close()
+
+
 @pytest.fixture
 def dead_redis_url():
     """A Redis URL on a port nothing listens on."""

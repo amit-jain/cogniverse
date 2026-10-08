@@ -28,6 +28,11 @@ from redis.exceptions import RedisError
 logger = logging.getLogger(__name__)
 
 CLUSTER_EVENT_CHANNEL = "cogniverse:runtime:events"
+# Config writes reach every runtime worker and every ingestion worker on a
+# channel of their own: an ingestion worker holds configs, but none of the
+# state the runtime-only events release.
+CONFIG_EVENT_CHANNEL = "cogniverse:config:events"
+CONFIGS_CHANGED = "configs_changed"
 # Seconds an acknowledgement list outlives its event, so one a publisher
 # stopped waiting for does not stay in Redis.
 _REPLY_TTL_S = 120
@@ -37,6 +42,19 @@ _REPLY_POLL_S = 1.0
 _RECONNECT_BACKOFF_S = (0.5, 1.0, 2.0, 5.0)
 
 Handler = Callable[[Dict[str, Any]], Dict[str, Any]]
+
+
+def release_held_configs(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """The ``configs_changed`` handler: drop everything this process's config
+    managers hold for the payload's stored tenant id, so its next read of any
+    of the tenant's configs comes from the store."""
+    from cogniverse_foundation.config.manager import forget_held_tenant_configs
+
+    tenant_id = payload["tenant_id"]
+    return {
+        "tenant_id": tenant_id,
+        "config_managers": forget_held_tenant_configs(tenant_id),
+    }
 
 
 class ClusterEventError(RuntimeError):

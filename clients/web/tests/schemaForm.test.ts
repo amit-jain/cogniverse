@@ -7,8 +7,8 @@ const schema: JsonSchema = {
   properties: {
     enabled: { type: 'boolean', default: true },
     level: { $ref: '#/$defs/TelemetryLevel', default: 'detailed' },
-    provider: { anyOf: [{ type: 'string' }, { type: 'null' }], default: null },
-    max_cached_tenants: { type: 'integer' },
+    provider: { anyOf: [{ type: 'string', enum: ['phoenix'] }, { type: 'null' }], default: null },
+    max_cached_tenants: { type: 'integer', minimum: 1, maximum: 65535 },
     retirement_lease_timeout_seconds: { type: 'number' },
     batch_config: { $ref: '#/$defs/BatchExportConfig' },
     extra_resource_attributes: { type: 'object', additionalProperties: { type: 'string' } },
@@ -23,7 +23,17 @@ const schema: JsonSchema = {
       type: 'object',
       properties: { max_queue_size: { type: 'integer' }, use_sync_export: { type: 'boolean' } },
     },
-    OptimizerConfig: { type: 'object', properties: { optimizer_type: { type: 'string' } } },
+    OptimizerConfig: {
+      type: 'object',
+      properties: {
+        optimizer_type: { $ref: '#/$defs/OptimizerType' },
+        num_trials: { type: 'integer', default: 10 },
+        metric: { anyOf: [{ type: 'string' }, { type: 'null' }], default: null },
+        teacher_settings: { type: 'object', additionalProperties: true },
+      },
+      required: ['optimizer_type'],
+    },
+    OptimizerType: { enum: ['bootstrap_few_shot', 'mipro_v2'], type: 'string' },
   },
 };
 
@@ -44,16 +54,17 @@ const value = {
 describe('formFields', () => {
   it('gives each property its input, resolving refs and nullable branches', () => {
     expect(formFields(schema)).toEqual([
-      { name: 'enabled', kind: 'boolean', nullable: false, description: undefined },
+      { name: 'enabled', kind: 'boolean', nullable: false, description: undefined, default: true },
       {
         name: 'level',
         kind: 'choice',
         nullable: false,
         options: ['disabled', 'basic', 'detailed', 'verbose'],
         description: 'Telemetry collection levels.',
+        default: 'detailed',
       },
-      { name: 'provider', kind: 'text', nullable: true, description: undefined },
-      { name: 'max_cached_tenants', kind: 'integer', nullable: false, description: undefined },
+      { name: 'provider', kind: 'choice', nullable: true, options: ['phoenix'], description: undefined, default: null },
+      { name: 'max_cached_tenants', kind: 'integer', nullable: false, description: undefined, min: 1, max: 65535 },
       { name: 'retirement_lease_timeout_seconds', kind: 'number', nullable: false, description: undefined },
       {
         name: 'batch_config',
@@ -67,9 +78,27 @@ describe('formFields', () => {
       },
       { name: 'extra_resource_attributes', kind: 'json', nullable: false, empty: {}, description: undefined },
       { name: 'capabilities', kind: 'json', nullable: false, empty: [], description: undefined },
-      { name: 'llm_max_tokens', kind: 'integer', nullable: true, description: undefined },
-      { name: 'optimizer_config', kind: 'json', nullable: true, empty: {}, description: undefined },
-      { name: 'llm_api_key', kind: 'secret', nullable: true, description: undefined },
+      { name: 'llm_max_tokens', kind: 'integer', nullable: true, description: undefined, default: null },
+      {
+        name: 'optimizer_config',
+        kind: 'optional',
+        nullable: true,
+        description: undefined,
+        default: null,
+        fields: [
+          {
+            name: 'optimizer_type',
+            kind: 'choice',
+            nullable: false,
+            options: ['bootstrap_few_shot', 'mipro_v2'],
+            description: undefined,
+          },
+          { name: 'num_trials', kind: 'integer', nullable: false, description: undefined, default: 10 },
+          { name: 'metric', kind: 'text', nullable: true, description: undefined, default: null },
+          { name: 'teacher_settings', kind: 'json', nullable: false, empty: {}, description: undefined },
+        ],
+      },
+      { name: 'llm_api_key', kind: 'secret', nullable: true, description: undefined, default: null },
     ]);
   });
 });
@@ -118,11 +147,57 @@ describe('toFormState and fromFormState', () => {
     expect(() => fromFormState(fields, number)).toThrow('retirement_lease_timeout_seconds must be a number.');
   });
 
-  it('reads a blank JSON input as its empty value or, when nullable, null', () => {
+  it('reads a blank JSON input as its empty value', () => {
     const state = toFormState(fields, value);
     state.capabilities = '';
-    state.optimizer_config = '';
-    const read = fromFormState(fields, state);
-    expect([read.capabilities, read.optimizer_config]).toEqual([[], null]);
+    expect(fromFormState(fields, state).capabilities).toEqual([]);
+  });
+
+  it('sets an optional object from its defaults and leaves it null when unset', () => {
+    const state = toFormState(fields, value);
+    expect(state.optimizer_config).toEqual({
+      set: false,
+      fields: { optimizer_type: 'bootstrap_few_shot', num_trials: '10', metric: '', teacher_settings: '{}' },
+    });
+    expect(fromFormState(fields, state).optimizer_config).toBeNull();
+    const optimizer = state.optimizer_config as { set: boolean; fields: Record<string, string> };
+    optimizer.set = true;
+    optimizer.fields.optimizer_type = 'mipro_v2';
+    optimizer.fields.teacher_settings = '{"temperature": 0.2}';
+    expect(fromFormState(fields, state).optimizer_config).toEqual({
+      optimizer_type: 'mipro_v2',
+      num_trials: 10,
+      metric: null,
+      teacher_settings: { temperature: 0.2 },
+    });
+  });
+
+  it('reads a stored optional object back as set, with its values', () => {
+    const stored = {
+      ...value,
+      optimizer_config: { optimizer_type: 'mipro_v2', num_trials: 3, metric: 'f1', teacher_settings: {} },
+    };
+    const state = toFormState(fields, stored);
+    expect(state.optimizer_config).toEqual({
+      set: true,
+      fields: { optimizer_type: 'mipro_v2', num_trials: '3', metric: 'f1', teacher_settings: '{}' },
+    });
+    expect(fromFormState(fields, state)).toEqual(stored);
+  });
+
+  it('refuses a number outside its bounds, naming them', () => {
+    const state = toFormState(fields, value);
+    state.max_cached_tenants = '70000';
+    expect(() => fromFormState(fields, state)).toThrow('max_cached_tenants must be between 1 and 65535.');
+    state.max_cached_tenants = '0';
+    expect(() => fromFormState(fields, state)).toThrow('max_cached_tenants must be between 1 and 65535.');
+  });
+
+  it('reads an unset nullable choice as null', () => {
+    const state = toFormState(fields, value);
+    expect(state.provider).toBe('');
+    expect(fromFormState(fields, state).provider).toBeNull();
+    state.provider = 'phoenix';
+    expect(fromFormState(fields, state).provider).toBe('phoenix');
   });
 });

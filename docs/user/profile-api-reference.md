@@ -167,10 +167,15 @@ curl -X POST http://localhost:8000/admin/profiles \
   "tenant_id": "acme_corp",
   "schema_deployed": false,
   "tenant_schema_name": null,
+  "schema_deploy_error": null,
   "created_at": "2024-01-15T10:00:00.000Z",
   "version": 1
 }
 ```
+
+With `deploy_schema`, a deploy that fails after the profile is stored still
+answers `201`: `schema_deployed` is false and `schema_deploy_error` names the
+schema and the failure, for a deploy from the profile.
 
 **Validation Rules:**
 
@@ -222,9 +227,16 @@ own profile under is left out.
         "...": "..."
       }
     }
-  ]
+  ],
+  "profile_types": ["video", "image", "audio", "document", "code", "wiki"],
+  "embedding_types": ["multi_vector", "single_vector"],
+  "model_loaders": ["colbert", "colpali", "colqwen", "xclip"],
+  "process_types": ["direct_video", "frame_based", "video_chunks"]
 }
 ```
+
+`profile_types`, `embedding_types`, `model_loaders` and `process_types` are the
+values a new profile's choice fields take.
 
 A template becomes a create request by moving its named keys to the fields of
 the same name and every other key into `extra_config`.
