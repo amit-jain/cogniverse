@@ -1879,7 +1879,7 @@ uses the same scores.
 
 **File:** `libs/evaluation/cogniverse_evaluation/recorded_searches.py`
 
-`score_recorded_searches(spans, golden_rows)` scores a tenant's `search_service.search` spans (`SEARCH_SPAN_NAME`) against its canonical golden rows (`query`, list of `expected_videos`), without running a search. A span whose stripped `query` is a golden query is scored under its `profile` and `strategy`; the latest successful search per profile, strategy and query counts. Result rows name their source by `result_source_title_key`, and a source counts once, at its best rank. Each query gets `mrr`, `ndcg` (at 10), `recall_at_1`, `recall_at_5` and `precision_at_5` from `calculate_metrics_suite`.
+`score_recorded_searches(spans, golden_rows)` scores a tenant's `search_service.search` spans (`SEARCH_SPAN_NAME`, recorded by `SearchService.search` and by every `SearchAgent` text search) against its canonical golden rows (`query`, list of `expected_videos`), without running a search. A span whose stripped `query` is a golden query is scored under its `profile` and `strategy`; the latest successful search per profile, strategy and query counts. Result rows name their source by `result_source_title_key`, and a source counts once, at its best rank. Each query gets `mrr`, `ndcg` (at 10), `recall_at_1`, `recall_at_5` and `precision_at_5` from `calculate_metrics_suite`.
 
 `dataset_golden_rows(examples)` turns an evaluation dataset's examples (Phoenix's `input`/`output` columns, as `DatasetManager` writes them: `input.query`, comma-joined `output.expected_videos`) into the same canonical golden rows; examples without a query or an expected source are left out, and a repeated query keeps its first position and its last expectation.
 

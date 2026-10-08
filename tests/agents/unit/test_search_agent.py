@@ -1510,6 +1510,7 @@ class TestMultiQueryFusion:
         ]
 
         results = agent._search_multi_query_fusion(
+            recorded_query="robots playing soccer",
             query_variants=variants,
             tenant_id="test_tenant",
             modality="video",
@@ -1538,6 +1539,7 @@ class TestMultiQueryFusion:
         agent._get_backend = lambda: mock_backend
 
         results = agent._search_multi_query_fusion(
+            recorded_query="robots playing soccer",
             query_variants=[
                 {"name": "original", "query": "nonexistent topic xyz"},
                 {"name": "expansion", "query": "nonexistent topic xyz expanded"},
@@ -1570,6 +1572,7 @@ class TestMultiQueryFusion:
 
         with pytest.raises(RuntimeError, match="connection refused"):
             agent._search_multi_query_fusion(
+                recorded_query="robots playing soccer",
                 query_variants=[
                     {"name": "original", "query": "robots"},
                     {"name": "expansion", "query": "robots and machines"},
@@ -1603,6 +1606,7 @@ class TestMultiQueryFusion:
         agent._get_backend = lambda: mock_backend
 
         results = agent._search_multi_query_fusion(
+            recorded_query="robots playing soccer",
             query_variants=[
                 {"name": "original", "query": "robots"},
                 {"name": "expansion", "query": "robots expansion"},
@@ -1675,6 +1679,7 @@ class TestMultiQueryFusion:
         ]
 
         results = agent._search_multi_query_fusion(
+            recorded_query="robots playing soccer",
             query_variants=variants,
             tenant_id="test_tenant",
             modality="video",
@@ -2230,6 +2235,7 @@ class TestEnsembleEncodingConcurrency:
             return np.zeros((2, 128), dtype=np.float32)
 
         agent = SearchAgent.__new__(SearchAgent)
+        agent._backend_type = "vespa"
         agent.active_profile = "p_active"
         agent.query_encoder = SimpleNamespace(encode=blocking_encode)
         agent.search_config = {
@@ -2373,6 +2379,7 @@ class TestEnsembleEncodeDedupe:
             return SimpleNamespace(encode=counting_encode)
 
         agent = SearchAgent.__new__(SearchAgent)
+        agent._backend_type = "vespa"
         agent.active_profile = "p_active"
         agent.query_encoder = SimpleNamespace(encode=counting_encode)
         agent.search_config = {
@@ -2425,6 +2432,7 @@ class TestEnsembleEncodeDedupe:
             raise AssertionError("a text-only ensemble built a query encoder")
 
         agent = SearchAgent.__new__(SearchAgent)
+        agent._backend_type = "vespa"
         agent.active_profile = "p_active"
         agent._query_encoder_model = None
         agent.search_config = {
@@ -2471,6 +2479,7 @@ class TestEnsembleEncodeDedupe:
             return SimpleNamespace(encode=lambda _q: np.zeros((2, 128)))
 
         agent = SearchAgent.__new__(SearchAgent)
+        agent._backend_type = "vespa"
         agent.active_profile = "p_active"
         agent._query_encoder_model = None
         agent.query_encoder = SimpleNamespace(encode=lambda _q: np.zeros((2, 128)))
