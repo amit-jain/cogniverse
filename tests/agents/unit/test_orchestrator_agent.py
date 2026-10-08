@@ -39,6 +39,7 @@ from cogniverse_foundation.config.unified_config import (
     SemanticRouterConfig,
     SystemConfig,
 )
+from tests.utils.memory_store import serve_every_shipped_profile
 from tests.utils.recorded_endpoints import RECORDED_REFUSAL, recorded_completion_lm
 from tests.utils.tenant_helpers import config_manager_with_tiers
 
@@ -65,6 +66,18 @@ def _plan_executes_to_completion(plan) -> bool:
     return True
 
 
+_PLANNED_TENANTS = (
+    "test:unit",
+    "acme:acme",
+    "acme:prod",
+    "acme:production",
+    "prodfixagents:a",
+    "prodfixagents:deep",
+    "prodfixagents:held",
+    "prodfixagents:stopped",
+)
+
+
 def _make_mock_config_manager() -> Mock:
     """Mock ConfigManager whose ``get_system_config()`` returns a real
     SystemConfig dataclass. The orchestrator reads
@@ -86,6 +99,9 @@ def _make_mock_config_manager() -> Mock:
             RoutingConfigUnified(tenant_id=tenant_id)
         )
     )
+    # Every tenant these tests plan for serves every shipped profile, so the
+    # planner is offered every registered agent.
+    serve_every_shipped_profile(cm, _PLANNED_TENANTS, "http://127.0.0.1:29071")
     return cm
 
 
@@ -464,7 +480,10 @@ class TestOrchestratorAgent:
             )
         )
 
-        plan = await orchestrator_agent._create_plan("Show me ML videos")
+        plan = await orchestrator_agent._create_plan(
+            "Show me ML videos",
+            available_agents=orchestrator_agent.registry.list_agents(),
+        )
 
         assert isinstance(plan, OrchestrationPlan)
         assert plan.query == "Show me ML videos"
@@ -484,7 +503,10 @@ class TestOrchestratorAgent:
             )
         )
 
-        plan = await orchestrator_agent._create_plan("Test query")
+        plan = await orchestrator_agent._create_plan(
+            "Test query",
+            available_agents=orchestrator_agent.registry.list_agents(),
+        )
 
         # nonexistent_agent should be skipped
         agent_names = [step.agent_name for step in plan.steps]
@@ -611,7 +633,10 @@ class TestOrchestratorAgent:
             )
         )
 
-        plan = await orchestrator_agent._create_plan("Test query")
+        plan = await orchestrator_agent._create_plan(
+            "Test query",
+            available_agents=orchestrator_agent.registry.list_agents(),
+        )
 
         agent_names = [step.agent_name for step in plan.steps]
         assert agent_names == [
@@ -651,7 +676,10 @@ class TestOrchestratorAgent:
             )
         )
 
-        plan = await orchestrator_agent._create_plan("Test query")
+        plan = await orchestrator_agent._create_plan(
+            "Test query",
+            available_agents=orchestrator_agent.registry.list_agents(),
+        )
 
         agent_names = [step.agent_name for step in plan.steps]
         assert agent_names == [
@@ -676,7 +704,10 @@ class TestOrchestratorAgent:
             )
         )
 
-        plan = await orchestrator_agent._create_plan("Test query")
+        plan = await orchestrator_agent._create_plan(
+            "Test query",
+            available_agents=orchestrator_agent.registry.list_agents(),
+        )
 
         assert len(plan.parallel_groups) == 1
         assert plan.parallel_groups[0] == [0, 1]
@@ -697,7 +728,10 @@ class TestOrchestratorAgent:
             )
         )
 
-        plan = await orchestrator_agent._create_plan("Test query")
+        plan = await orchestrator_agent._create_plan(
+            "Test query",
+            available_agents=orchestrator_agent.registry.list_agents(),
+        )
 
         assert len(plan.parallel_groups) == 2
         assert plan.parallel_groups[0] == [0, 1]
@@ -1309,64 +1343,132 @@ class TestOrchestratorFusion:
         assert strategy == FusionStrategy.TEMPORAL
 
     def test_fuse_by_score(self, orchestrator_agent):
-        """Test score-based fusion method"""
+        """Each step's answer under its agent, highest confidence first."""
         task_results = {
-            "video_search_agent": {
-                "agent": "video_search_agent",
-                "modality": "video",
-                "result": "video result",
-                "confidence": 0.9,
-            },
             "image_search_agent": {
                 "agent": "image_search_agent",
                 "modality": "image",
-                "result": "image result",
+                "text": "Found 1 images for 'dogs'\n- img_7 · score 0.810: a dog",
                 "confidence": 0.3,
+            },
+            "video_search_agent": {
+                "agent": "video_search_agent",
+                "modality": "video",
+                "text": "Found 1 results for 'dogs'\n- v_2 · score 0.920: a dog runs",
+                "confidence": 0.9,
             },
         }
 
         fused = orchestrator_agent._fuse_by_score(task_results)
 
-        assert fused["confidence"] > 0
-        assert "VIDEO" in fused["content"]
-        assert "IMAGE" in fused["content"]
+        assert fused == {
+            "content": (
+                "**Video search** (video, confidence 0.75)\n\n"
+                "Found 1 results for 'dogs'\n- v_2 · score 0.920: a dog runs\n\n"
+                "**Image search** (image, confidence 0.25)\n\n"
+                "Found 1 images for 'dogs'\n- img_7 · score 0.810: a dog"
+            ),
+            "confidence": pytest.approx(0.75),
+        }
 
     def test_fuse_hierarchically(self, orchestrator_agent):
-        """Test hierarchical fusion method"""
+        """Answers grouped under a heading per modality, video before text."""
         task_results = {
-            "video_agent": {
-                "agent": "video_agent",
-                "modality": "video",
-                "result": "video data",
-                "confidence": 0.8,
-            },
-            "text_agent": {
-                "agent": "text_agent",
+            "summarizer_agent": {
+                "agent": "summarizer_agent",
                 "modality": "text",
-                "result": "text data",
+                "text": "Two clips show dogs playing fetch.",
                 "confidence": 0.6,
             },
+            "video_search_agent": {
+                "agent": "video_search_agent",
+                "modality": "video",
+                "text": "Found 2 results for 'dogs'",
+                "confidence": 0.8,
+            },
         }
-        agent_modalities = {"video_agent": "video", "text_agent": "text"}
+        agent_modalities = {
+            "summarizer_agent": "text",
+            "video_search_agent": "video",
+        }
 
         fused = orchestrator_agent._fuse_hierarchically(task_results, agent_modalities)
 
-        assert "VIDEO RESULTS" in fused["content"]
-        assert "TEXT RESULTS" in fused["content"]
-        assert fused["confidence"] > 0
+        assert fused == {
+            "content": (
+                "## Video results\n\n**Video search**\n\nFound 2 results for "
+                "'dogs'\n\n## Text results\n\n**Summarizer**\n\nTwo clips "
+                "show dogs playing fetch."
+            ),
+            "confidence": pytest.approx(0.7),
+        }
 
     def test_fuse_simple(self, orchestrator_agent):
-        """Test simple fusion method"""
+        """The answers in execution order; a step with no text adds nothing."""
         task_results = {
-            "agent_a": {"result": "result A", "confidence": 0.8},
-            "agent_b": {"result": "result B", "confidence": 0.6},
+            "search_agent": {"text": "Found 1 results for 'q'", "confidence": 0.8},
+            "text_analysis_agent": {"text": "", "confidence": 0.6},
+            "summarizer_agent": {"text": "A summary.", "confidence": 0.7},
         }
 
         fused = orchestrator_agent._fuse_simple(task_results)
 
-        assert "result A" in fused["content"]
-        assert "result B" in fused["content"]
-        assert fused["confidence"] == pytest.approx(0.7, abs=0.01)
+        assert fused == {
+            "content": "Found 1 results for 'q'\n\nA summary.",
+            "confidence": pytest.approx(0.7),
+        }
+
+    def test_aggregated_content_is_the_steps_answers_not_their_payloads(
+        self, orchestrator_agent
+    ):
+        """The answer a reader sees is the steps' answer text: no step's
+        payload dict, and the enrichment step that fed them is not fused."""
+        agent_results = {
+            "query_enhancement_agent": {
+                "status": "success",
+                "agent": "query_enhancement_agent",
+                "enhanced_query": "dogs playing fetch outdoors",
+                "answer": '{"enhanced_query": "dogs playing fetch outdoors"}',
+            },
+            "search_agent": {
+                "status": "success",
+                "agent": "search_agent",
+                "message": "Found 1 results for 'dogs'",
+                "results": [{"id": "v_2", "score": 0.92}],
+                "answer": "Found 1 results for 'dogs'\n- v_2 · score 0.920",
+            },
+            "summarizer_agent": {
+                "status": "success",
+                "agent": "summarizer_agent",
+                "result": {"summary": "One clip shows a dog playing fetch."},
+                "answer": "One clip shows a dog playing fetch.",
+            },
+        }
+
+        output = orchestrator_agent._aggregate_results("dogs", agent_results)
+
+        assert output["aggregated_content"] == (
+            "Found 1 results for 'dogs'\n- v_2 · score 0.920\n\n"
+            "One clip shows a dog playing fetch."
+        )
+        assert output["fusion_quality"]["modalities"] == ["text"]
+        assert output["fusion_strategy"] == "simple"
+        assert output["status"] == "success"
+        assert output["results"] == agent_results
+
+    def test_a_plan_of_only_enrichment_answers_with_it(self, orchestrator_agent):
+        agent_results = {
+            "query_enhancement_agent": {
+                "status": "success",
+                "answer": "dogs playing fetch outdoors",
+            }
+        }
+
+        output = orchestrator_agent._aggregate_results("dogs", agent_results)
+
+        assert output["aggregated_content"] == "dogs playing fetch outdoors"
+        assert output["status"] == "success"
+        assert output["fusion_quality"]["modalities"] == ["text"]
 
     def test_detect_agent_modality(self, orchestrator_agent):
         """Test modality detection from agent name"""
@@ -2112,7 +2214,7 @@ class TestOrchestrationTerminalOutcome:
         output = orchestrator_agent._aggregate_results("find evidence", children)
         assert output["status"] == "partial"
         assert output["results"] == children
-        assert output["aggregated_content"] == str(valid)
+        assert output["aggregated_content"] == "The exact measured value is 42."
         assert (
             output["message"]
             == "Some orchestration steps did not complete successfully"
@@ -2125,7 +2227,7 @@ class TestOrchestrationTerminalOutcome:
         children = {"summarizer_agent": {"status": "partial", "answer": "42"}}
         output = orchestrator_agent._aggregate_results("find evidence", children)
         assert output["status"] == "partial"
-        assert output["aggregated_content"] == str(children["summarizer_agent"])
+        assert output["aggregated_content"] == "42"
         assert orchestrator_agent._execution_outcome(
             agent_sequence=list(children), agent_results=children
         ) == (False, 0)

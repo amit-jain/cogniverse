@@ -470,7 +470,10 @@ class TestOrchestratorAgentStreaming:
         dspy_lm_planning,
         real_telemetry,
         gliner_url,
+        tomoro_search_url,
     ):
+        """The tenant serves video (its ColPali profile's encoder resolves),
+        so the planner is offered the video search agent."""
         from cogniverse_agents.orchestrator_agent import (
             OrchestratorAgent,
             OrchestratorDeps,

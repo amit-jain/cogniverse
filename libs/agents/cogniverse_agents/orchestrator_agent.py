@@ -272,6 +272,33 @@ def _merge_enrichment(
             agent_input["profiles"] = [selected]
 
 
+# Steps whose output enriches the steps after them rather than answering.
+_ENRICHMENT_AGENTS = frozenset(_ENRICHMENT_FIELD_MAP) | {"profile_selection_agent"}
+
+
+def _canonical_agent_name(agent_name: str) -> str:
+    return agent_name if agent_name.endswith("_agent") else f"{agent_name}_agent"
+
+
+def _agent_label(agent_name: str) -> str:
+    """``image_search_agent`` -> ``Image search``."""
+    words = _canonical_agent_name(agent_name)[: -len("_agent")].replace("_", " ")
+    return words[:1].upper() + words[1:]
+
+
+def _step_answer_text(result: Any) -> str:
+    """A completed step's answer text: the ``answer`` the serving runtime
+    stamps on every completed dispatch (its search hits included), else the
+    step's ``message``; empty when it carries neither."""
+    if not isinstance(result, dict):
+        return ""
+    for key in ("answer", "message"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 # Agents whose answer grounds on retrieved search hits — a completed search
 # step's results are threaded into their step context so they reuse those hits
 # (and the answer-time keyframes derived from them) instead of re-searching.
@@ -430,7 +457,7 @@ class OrchestrationPlan(BaseModel):
     reasoning: str = Field(default="", description="Overall plan reasoning")
     unavailable_agents: List[str] = Field(
         default_factory=list,
-        description="Agent names proposed by LLM but not in registry",
+        description="Agent names proposed by LLM but not available for the plan",
     )
 
 
@@ -1231,7 +1258,13 @@ class OrchestratorAgent(
                 logger.info(f"Workflow intelligence matched template: {template.name}")
         gateway_context = "; ".join(gateway_hints)
 
-        plan = await self._create_plan(query, conversation_context, gateway_context)
+        planning_agents = await self._planning_agents(tenant_id)
+        plan = await self._create_plan(
+            query,
+            conversation_context,
+            gateway_context,
+            available_agents=planning_agents,
+        )
         agent_sequence = [step.agent_name for step in plan.steps]
         duplicate_agents = sorted(
             {
@@ -1288,7 +1321,7 @@ class OrchestratorAgent(
             for agent_name in plan.unavailable_agents:
                 agent_results[agent_name] = {
                     "status": "error",
-                    "message": f"Agent '{agent_name}' is not available in the registry",
+                    "message": f"Agent '{agent_name}' is not available for this plan",
                 }
 
             # A planned step the loop never reached (budget, wall clock, an
@@ -1430,34 +1463,108 @@ class OrchestratorAgent(
                         exc,
                     )
 
+    async def _planning_agents(self, tenant_id: str) -> List[str]:
+        """The registered agents a plan for ``tenant_id`` may use.
+
+        A retrieval agent (one whose declared modality and capabilities make
+        it the retrieval agent for that modality) is left out when the tenant
+        serves none of its modalities: it can only answer that the tenant has
+        no such content. Every other registered agent is kept. The tenant's
+        served modalities come from its servable profiles, so a store or
+        registry outage raises rather than planning against a guess.
+        """
+        from cogniverse_agents.gateway_agent import MODALITY_PROFILE_TYPES
+        from cogniverse_agents.profile_selection_agent import (
+            servable_tenant_profiles,
+        )
+        from cogniverse_foundation.config.utils import get_config
+
+        def read() -> tuple[Dict[str, Any], set[str]]:
+            agents_config = get_config(
+                tenant_id=tenant_id, config_manager=self._config_manager
+            ).get("agents", {})
+            served_types = {
+                (profile.type or "").lower()
+                for _, profile in servable_tenant_profiles(
+                    self._config_manager, tenant_id
+                )
+            }
+            served = {
+                modality
+                for modality, types in MODALITY_PROFILE_TYPES.items()
+                if types & served_types
+            }
+            return agents_config, served
+
+        try:
+            agents_config, served = await asyncio.to_thread(read)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cannot plan for tenant {tenant_id!r}: its servable profiles "
+                f"could not be read ({type(exc).__name__}: {exc})"
+            ) from exc
+
+        planning_agents = []
+        for agent_name in self.registry.list_agents():
+            agent_config = agents_config.get(agent_name)
+            retrieves = set()
+            if isinstance(agent_config, dict):
+                declared = {
+                    str(value).strip().lower()
+                    for value in agent_config.get("modalities", [])
+                }
+                capabilities = {
+                    str(value).strip().lower()
+                    for value in agent_config.get("capabilities", [])
+                }
+                retrieves = {
+                    modality
+                    for modality in _COVERAGE_CAPABILITIES_BY_MODALITY
+                    if self._agent_supports_detected_modality(
+                        modality, declared, capabilities
+                    )
+                }
+            if retrieves and not retrieves & served:
+                logger.info(
+                    "Planning for tenant %s without %s: it retrieves %s, the "
+                    "tenant serves %s",
+                    tenant_id,
+                    agent_name,
+                    sorted(retrieves),
+                    sorted(served),
+                )
+                continue
+            planning_agents.append(agent_name)
+        return planning_agents
+
     async def _create_plan(
         self,
         query: str,
         conversation_context: str = "",
         gateway_context: str = "",
+        *,
+        available_agents: List[str],
     ) -> OrchestrationPlan:
         """
         Planning Phase: Create execution plan using LLM reasoning.
-
-        Uses dynamic agent discovery from AgentRegistry instead of a hardcoded enum.
 
         Args:
             query: User query to analyze
             conversation_context: Formatted previous conversation turns
             gateway_context: Classification context from gateway agent
+            available_agents: The agents the plan may use
+                (``_planning_agents``)
 
         Returns:
             OrchestrationPlan with agent sequence and parallelization
         """
-        # Dynamic agent discovery from registry
-        registered_agents = self.registry.list_agents()
-        available_agents = ", ".join(registered_agents)
+        registered_agents = list(available_agents)
 
         result = await self.call_dspy(
             self.dspy_module,
             output_field="agent_sequence",
             query=query,
-            available_agents=available_agents,
+            available_agents=", ".join(registered_agents),
             conversation_context=conversation_context,
             gateway_context=gateway_context,
         )
@@ -1503,8 +1610,8 @@ class OrchestratorAgent(
             agent_name = _agent_lookup.get(agent_name, agent_name)
             if agent_name not in registered_agents:
                 logger.warning(
-                    f"LLM proposed unknown agent '{agent_name}', "
-                    f"not in registry ({registered_agents}), skipping"
+                    f"LLM proposed agent '{agent_name}', not available for "
+                    f"this plan ({registered_agents}), skipping"
                 )
                 unavailable_agents.append(agent_name)
                 continue
@@ -2850,9 +2957,11 @@ class OrchestratorAgent(
     ) -> Dict[str, Any]:
         """Cross-modal fusion of the steps that produced an answer.
 
-        Detects modality per result, selects fusion strategy, and dispatches
-        to the appropriate fusion method. Falls back to simple aggregation
-        for single-modality results.
+        ``aggregated_content`` is the reader's answer: each step's own answer
+        text (``_step_answer_text``), arranged by the fusion strategy selected
+        for the query and the steps' modalities. Enrichment steps (query
+        enhancement, entity extraction, profile selection) feed later steps
+        and are fused only when the plan produced nothing else.
 
         A step that failed carries no answer, so its error entry is kept in
         ``results`` for the caller but never fused into ``aggregated_content``.
@@ -2897,6 +3006,7 @@ class OrchestratorAgent(
                 "agent": agent_name,
                 "modality": modality,
                 "result": result_data,
+                "text": _step_answer_text(result_data),
                 "confidence": confidence,
             }
 
@@ -2915,19 +3025,27 @@ class OrchestratorAgent(
                 "aggregated_content": "",
             }
 
+        answering = {
+            name: entry
+            for name, entry in task_results.items()
+            if _canonical_agent_name(name) not in _ENRICHMENT_AGENTS
+        }
+        fused_steps = answering or task_results
+        fused_modalities = {name: agent_modalities[name] for name in fused_steps}
+
         # Select fusion strategy
-        fusion_strategy = self._select_fusion_strategy(query, agent_modalities)
+        fusion_strategy = self._select_fusion_strategy(query, fused_modalities)
 
         # Dispatch to fusion method
         if fusion_strategy == FusionStrategy.SCORE_BASED:
-            fused = self._fuse_by_score(task_results)
+            fused = self._fuse_by_score(fused_steps)
         elif fusion_strategy == FusionStrategy.HIERARCHICAL:
-            fused = self._fuse_hierarchically(task_results, agent_modalities)
+            fused = self._fuse_hierarchically(fused_steps, fused_modalities)
         else:
-            fused = self._fuse_simple(task_results)
+            fused = self._fuse_simple(fused_steps)
 
         # Calculate fusion quality
-        modalities = set(agent_modalities.values())
+        modalities = set(fused_modalities.values())
         fusion_quality = {
             "strategy": fusion_strategy.value,
             "modality_count": len(modalities),
@@ -2992,7 +3110,8 @@ class OrchestratorAgent(
         return FusionStrategy.SIMPLE
 
     def _fuse_by_score(self, task_results: Dict[str, Dict]) -> Dict[str, Any]:
-        """Score-based fusion: weight results by confidence scores."""
+        """Score-based fusion: each step's answer under its agent, highest
+        confidence first, with its share of the total confidence."""
         if not task_results:
             return {"content": "", "confidence": 0.0}
 
@@ -3006,14 +3125,14 @@ class OrchestratorAgent(
                 for tid, tr in task_results.items()
             }
 
-        content_parts = []
-        for tid, tr in sorted(
-            task_results.items(), key=lambda x: weights[x[0]], reverse=True
-        ):
-            modality = tr["modality"]
-            content_parts.append(
-                f"[{modality.upper()} - confidence: {weights[tid]:.2f}]\n{str(tr['result'])}"
+        content_parts = [
+            f"**{_agent_label(tr['agent'])}** ({tr['modality']}, confidence "
+            f"{weights[tid]:.2f})\n\n{tr['text']}"
+            for tid, tr in sorted(
+                task_results.items(), key=lambda x: weights[x[0]], reverse=True
             )
+            if tr["text"]
+        ]
 
         aggregated_confidence = sum(
             tr["confidence"] * weights[tid] for tid, tr in task_results.items()
@@ -3027,16 +3146,14 @@ class OrchestratorAgent(
     def _fuse_hierarchically(
         self, task_results: Dict[str, Dict], agent_modalities: Dict[str, str]
     ) -> Dict[str, Any]:
-        """Hierarchical fusion: structured combination by modality groups."""
+        """Hierarchical fusion: the steps' answers grouped under a heading per
+        modality, in a fixed modality order."""
         if not task_results:
             return {"content": "", "confidence": 0.0}
 
         modality_groups: Dict[str, List] = {}
         for tid, tr in task_results.items():
-            modality = tr["modality"]
-            if modality not in modality_groups:
-                modality_groups[modality] = []
-            modality_groups[modality].append((tid, tr))
+            modality_groups.setdefault(tr["modality"], []).append(tr)
 
         content_parts = []
         total_confidence = 0.0
@@ -3047,35 +3164,29 @@ class OrchestratorAgent(
                 continue
             modality_count += 1
             tasks = modality_groups[modality]
-            content_parts.append(
-                f"## {modality.upper()} RESULTS ({len(tasks)} sources)"
+            content_parts.append(f"## {modality.capitalize()} results")
+            content_parts.extend(
+                f"**{_agent_label(tr['agent'])}**\n\n{tr['text']}"
+                for tr in tasks
+                if tr["text"]
             )
-            modality_conf = 0.0
-            for tid, tr in tasks:
-                content_parts.append(f"- {str(tr['result'])}")
-                modality_conf += tr["confidence"]
-            avg = modality_conf / len(tasks)
-            total_confidence += avg
-            content_parts.append("")
+            total_confidence += sum(tr["confidence"] for tr in tasks) / len(tasks)
 
         avg_confidence = (
             total_confidence / modality_count if modality_count > 0 else 0.0
         )
-        return {"content": "\n".join(content_parts), "confidence": avg_confidence}
+        return {"content": "\n\n".join(content_parts), "confidence": avg_confidence}
 
     def _fuse_simple(self, task_results: Dict[str, Dict]) -> Dict[str, Any]:
-        """Simple fusion: basic concatenation."""
+        """Simple fusion: the steps' answers in execution order."""
         if not task_results:
             return {"content": "", "confidence": 0.0}
 
-        content_parts = []
-        total_confidence = 0.0
-        for tr in task_results.values():
-            content_parts.append(str(tr["result"]))
-            total_confidence += tr["confidence"]
-
+        total_confidence = sum(tr["confidence"] for tr in task_results.values())
         return {
-            "content": "\n\n".join(content_parts),
+            "content": "\n\n".join(
+                tr["text"] for tr in task_results.values() if tr["text"]
+            ),
             "confidence": total_confidence / len(task_results),
         }
 

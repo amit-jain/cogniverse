@@ -1509,8 +1509,10 @@ async def _process_impl(
 
     query = input.query
 
-    # Planning
-    plan = await self._create_plan(query)
+    # Planning, with the agents that can serve this tenant
+    plan = await self._create_plan(
+        query, available_agents=await self._planning_agents(tenant_id)
+    )
 
     # Action
     agent_results = await self._execute_plan(plan)
@@ -1532,52 +1534,59 @@ async def _process_impl(
     )
 ```
 
-**`_create_plan(query, conversation_context, gateway_context) -> OrchestrationPlan`**
+**`_planning_agents(tenant_id) -> List[str]`**
 
-Planning Phase: Create execution plan using LLM reasoning with dynamic agent discovery.
+The registered agents a plan for the tenant may use. A retrieval agent — one
+whose configured `modalities` and `capabilities` make it the retrieval agent
+for a modality (`search_agent` for video, `image_search_agent`,
+`audio_analysis_agent`, `document_agent`) — is left out when none of the
+modalities it retrieves is served by the tenant's servable profiles
+(`servable_tenant_profiles`, mapped through `MODALITY_PROFILE_TYPES`). A
+video-only tenant is therefore never planned an image or audio search. A
+store or registry outage raises `RuntimeError` naming the tenant instead of
+planning against a guess.
+
+**`_create_plan(query, conversation_context, gateway_context, *, available_agents) -> OrchestrationPlan`**
+
+Planning Phase: the DSPy planner proposes an agent sequence from
+`available_agents` (the `_planning_agents` list).
 
 ```text
 async def _create_plan(
-    self, query: str, conversation_context: str = "", gateway_context: str = ""
+    self,
+    query: str,
+    conversation_context: str = "",
+    gateway_context: str = "",
+    *,
+    available_agents: List[str],
 ) -> OrchestrationPlan:
-    """
-    Create execution plan using dynamic agent discovery from AgentRegistry.
-
-    Args:
-        query: User query to analyze
-        conversation_context: Formatted previous conversation turns
-        gateway_context: Classification context from gateway agent
-
-    Returns:
-        OrchestrationPlan with agent sequence and parallelization
-    """
-    # Dynamic agent discovery from registry (no hardcoded enum)
-    registered_agents = self.registry.list_agents()
-    available_agents = ", ".join(registered_agents)
+    registered_agents = list(available_agents)
 
     result = await self.call_dspy(
         self.dspy_module,
         output_field="agent_sequence",
         query=query,
-        available_agents=available_agents,
+        available_agents=", ".join(registered_agents),
         conversation_context=conversation_context,
         gateway_context=gateway_context,
     )
 
     # Normalize the LM output into an executable plan:
-    #   - "name" / "name_agent" aliases resolve to the registered name
-    #   - unknown agents are dropped (warning logged)
+    #   - "name" / "name_agent" aliases resolve to the offered name
+    #   - an agent not offered is dropped and listed in unavailable_agents
     #   - a repeated agent keeps its first step only (results are keyed
     #     by agent name)
     #   - parallel_steps / dependency indices are remapped from the raw
     #     sequence to the surviving step positions
-    #   - an empty result falls back to a single search_agent step
+    #   - an empty result falls back to a single search_agent step when
+    #     search_agent was offered
     ...
     return OrchestrationPlan(
         query=query,
         steps=steps,
         parallel_groups=parallel_groups,
         reasoning=result.reasoning,
+        unavailable_agents=unavailable_agents,
     )
 ```
 
@@ -1638,9 +1647,17 @@ async def _execute_plan(
 
 **`_aggregate_results(query: str, agent_results: Dict) -> Dict[str, Any]`**
 
-Cross-modal fusion of results from all agents. Detects modality per result,
-selects fusion strategy (SCORE_BASED, TEMPORAL, HIERARCHICAL, or SIMPLE),
-and dispatches to the appropriate fusion method.
+Cross-modal fusion of results from all agents. `aggregated_content` — the
+answer a reader sees — is built from each step's own answer text: the `answer`
+the serving runtime stamps on every completed dispatch (a search step's
+includes its hits), else the step's `message`; never a step's payload.
+Enrichment steps (`query_enhancement_agent`, `entity_extraction_agent`,
+`profile_selection_agent`) feed later steps and are fused only when the plan
+produced nothing else. The fusion strategy (SCORE_BASED, TEMPORAL,
+HIERARCHICAL, or SIMPLE) is selected from the query and the fused steps'
+modalities: SIMPLE joins the answers in execution order; SCORE_BASED puts each
+under `**<Agent>** (<modality>, confidence <share>)`, highest first;
+HIERARCHICAL groups them under `## <Modality> results` headings.
 
 `status` is the orchestration's outcome and the one every consumer reads:
 `failed` when no step produced an answer, `partial` when a step failed or
@@ -2345,6 +2362,7 @@ class DocumentAgent(MemoryAwareMixin, A2AAgent[DocumentSearchInput, DocumentSear
 | Field | Type | Description |
 |-------|------|-------------|
 | `query` | str | Search query |
+| `tenant_id` | Optional[str] | Tenant whose project the process span is recorded in |
 | `strategy` | str | Strategy: visual, text, hybrid, auto |
 | `limit` | int | Number of results (default: 20) |
 
@@ -2353,6 +2371,11 @@ class DocumentAgent(MemoryAwareMixin, A2AAgent[DocumentSearchInput, DocumentSear
 |-------|------|-------------|
 | `results` | List[DocumentResult] | Search results with page info |
 | `count` | int | Total result count |
+| `span_id` | Optional[str] | Id of the `DocumentAgent.process` span, which records the query, modality `document` and one row per hit (`document_id`, score, content, title); `None` when telemetry is off |
+
+The runtime dispatches a document search through `process`, with its
+telemetry manager attached, and its envelope carries `span_id`, so a client
+rates the hits against that span (`POST /ag-ui/results/relevance`).
 
 **Usage:**
 

@@ -87,7 +87,9 @@ async def runtime(monkeypatch):
         )
 
     class PreparedOrchestrator(OrchestratorAgent):
-        async def _create_plan(self, query, conversation_context, gateway_context):
+        async def _create_plan(
+            self, query, conversation_context, gateway_context, *, available_agents
+        ):
             return OrchestrationPlan(
                 query=query,
                 reasoning="two required sources",
@@ -216,7 +218,7 @@ async def test_one_step_failing_keeps_the_other_step_s_answer(runtime):
 
     assert result["status"] == "partial"
     assert result["message"] == "Some orchestration steps did not complete successfully"
-    assert result["answer"] == "{'status': 'success', 'answer': 'first:mixed'}"
+    assert result["answer"] == "first:mixed"
     output = result["orchestration_result"]["final_output"]
     assert output["status"] == "partial"
     assert output["results"]["first"] == {"status": "success", "answer": "first:mixed"}
@@ -229,10 +231,7 @@ async def test_every_step_succeeding_is_a_success_and_is_remembered(runtime):
     result = await _process(runtime, "fine")
 
     assert result["status"] == "success"
-    assert result["answer"] == (
-        "{'status': 'success', 'answer': 'first:fine'}\n\n"
-        "{'status': 'success', 'answer': 'second:fine'}"
-    )
+    assert result["answer"] == ("first:fine\n\nsecond:fine")
     assert result["orchestration_result"]["final_output"]["status"] == "success"
     assert runtime.memory_writes == [
         ("fine", "Executed 2/2 steps (2 successful). Plan: two required sources")
@@ -344,5 +343,5 @@ async def test_a_partial_orchestration_carries_its_answer_to_a2a(runtime):
     payload = json.loads(get_message_text(event.status.message))
     assert payload["status"] == "partial"
     assert payload["orchestration_result"]["final_output"]["status"] == "partial"
-    assert payload["answer"] == "{'status': 'success', 'answer': 'first:mixed'}"
+    assert payload["answer"] == "first:mixed"
     assert runtime.memory_writes == []
