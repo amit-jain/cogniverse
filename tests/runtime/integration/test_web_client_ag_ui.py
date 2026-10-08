@@ -381,6 +381,9 @@ def test_a_browser_run_reaches_the_agent_through_copilotkit(
         "RUN_STARTED",
         "STEP_STARTED",
         "CUSTOM",
+        "STEP_FINISHED",
+        "STEP_STARTED",
+        "CUSTOM",
         "TEXT_MESSAGE_START",
         *["TEXT_MESSAGE_CONTENT"] * len(range(0, len(summary), 9)),
         "TEXT_MESSAGE_END",
@@ -391,8 +394,12 @@ def test_a_browser_run_reaches_the_agent_through_copilotkit(
     assert search["custom"] == [
         {
             "name": ag_ui.STATUS_EVENT,
+            "value": {"phase": "starting", "message": "Running search_agent"},
+        },
+        {
+            "name": ag_ui.STATUS_EVENT,
             "value": {"phase": STATUS_PHASE, "message": STATUS_MESSAGE},
-        }
+        },
     ]
     # The harness key the server holds resolved to the tenant.
     assert search["reply"] == [summary]
@@ -418,9 +425,12 @@ def test_a_browser_run_reaches_the_agent_through_copilotkit(
     suspended = result["suspended"]
     assert suspended["events"] == [
         "RUN_STARTED",
+        "STEP_STARTED",
+        "CUSTOM",
         "TOOL_CALL_START",
         "TOOL_CALL_ARGS",
         "TOOL_CALL_END",
+        "STEP_FINISHED",
         "RUN_FINISHED",
     ]
     assert suspended["toolCall"] == {

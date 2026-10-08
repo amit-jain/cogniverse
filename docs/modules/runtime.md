@@ -1628,8 +1628,8 @@ tools. The response is SSE, one AG-UI event per `data:` line:
 | Event | When |
 |---|---|
 | `RUN_STARTED` | first, with the client's `threadId` and `runId` |
-| `STEP_STARTED` / `STEP_FINISHED` | around each agent phase |
-| `CUSTOM` `cogniverse.status` | each progress event, `value: {phase, message}` |
+| `STEP_STARTED` / `STEP_FINISHED` | around each phase: first `starting`, sent before the agent runs, then each phase the agent reports |
+| `CUSTOM` `cogniverse.status` | each phase's message, `value: {phase, message}`; `starting` carries `Running <agent_name>` |
 | `TEXT_MESSAGE_START` / `_CONTENT` / `_END` | the reply, one message per run |
 | `TOOL_CALL_START` / `_ARGS` / `_END` | one sequence per frontend tool the agent suspends on |
 | `STATE_SNAPSHOT` | the final payload, `snapshot: {agent, result}` |
@@ -1639,7 +1639,11 @@ tools. The response is SSE, one AG-UI event per `data:` line:
 Token streaming, the answer-field filter and the reconciliation with the final
 payload are the `/v1` live-token path (`openai_compat.answer_token_events`); an
 agent without `streams_answer_tokens`, or a run resuming a tool exchange, runs
-on the dispatch path and its reply arrives as one content event. A suspended
+on the dispatch path. There the turn runs inside `collect_progress()`
+(`cogniverse_core.agents.base`), so every `emit_progress` / `report_phase` the
+agent makes, from the loop or a worker thread, streams as a step while the
+turn runs; its reply arrives when the turn completes, in 256-character content
+events. A suspended
 run stores its `continuation_state` in the shared store; the client runs the
 tools and starts a new run with the tool messages appended, which resumes the
 turn on whichever replica receives it.
