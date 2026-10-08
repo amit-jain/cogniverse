@@ -1265,6 +1265,20 @@ async def _argo_list_workflows(
 # Phases after which Argo runs nothing more for a Workflow.
 _FINISHED_WORKFLOW_PHASES = frozenset({"Succeeded", "Failed", "Error"})
 
+# The phase a finished run reports when it was shut down (cancelled): Argo
+# itself ends such a run Succeeded (still waiting on the mutex, its step
+# Skipped) or Failed (stopped while running).
+CANCELLED_PHASE = "Cancelled"
+
+
+def _run_phase(data: Dict[str, Any]) -> Optional[str]:
+    """The phase a run reports: Argo's, except ``Cancelled`` for a finished
+    run that was shut down."""
+    phase = (data.get("status") or {}).get("phase")
+    if (data.get("spec") or {}).get("shutdown") and phase in _FINISHED_WORKFLOW_PHASES:
+        return CANCELLED_PHASE
+    return phase
+
 
 async def _argo_delete(resource: str, name: str) -> Optional[str]:
     """Delete one Argo object; None when it is gone (a 404 counts), else why
@@ -1459,7 +1473,7 @@ def _optimize_run_summary(data: Dict[str, Any]) -> OptimizeRunSummary:
         mode=labels.get("cogniverse.ai/mode") or _workflow_parameter(data, "mode"),
         trigger=labels.get("cogniverse.ai/trigger")
         or ("scheduled" if labels.get(_CRON_WORKFLOW_LABEL) else "unknown"),
-        phase=status_block.get("phase"),
+        phase=_run_phase(data),
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
     )
@@ -1533,7 +1547,7 @@ async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(
         workflow_name=workflow_name,
-        phase=status_block.get("phase"),
+        phase=_run_phase(data),
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
@@ -1605,7 +1619,7 @@ async def cancel_manual_optimization(tenant_id: str, workflow_name: str):
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(
         workflow_name=workflow_name,
-        phase=status_block.get("phase"),
+        phase=_run_phase(data),
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
@@ -1631,7 +1645,7 @@ async def retry_manual_optimization(tenant_id: str, workflow_name: str):
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(
         workflow_name=workflow_name,
-        phase=status_block.get("phase"),
+        phase=_run_phase(data),
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),

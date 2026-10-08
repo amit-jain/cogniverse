@@ -21,8 +21,8 @@ export interface RunStatus {
   blocked_reason: string | null;
 }
 
-/** Phases after which Argo changes nothing about a run. */
-export const SETTLED = new Set(['Succeeded', 'Failed', 'Error']);
+/** Phases after which nothing changes about a run; Cancelled is a run that was shut down. */
+export const SETTLED = new Set(['Succeeded', 'Failed', 'Error', 'Cancelled']);
 export const POLL_MS = 5000;
 
 export async function recentRuns(tenant: string, limit: number, signal?: AbortSignal): Promise<RunSummary[]> {
@@ -145,6 +145,8 @@ export interface SyntheticRunResults {
   phase: string | null;
   settled: boolean;
   status: string | null;
+  /** Why the run failed before generating for any optimizer. */
+  error: string | null;
   parameters: Record<string, unknown>;
   outcomes: OptimizerOutcome[];
 }

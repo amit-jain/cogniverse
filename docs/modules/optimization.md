@@ -1098,12 +1098,19 @@ curl http://localhost:8000/admin/tenant/acme:production/optimize/runs/opt-gatewa
 
 # Terminate a running Workflow:
 curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize/runs/opt-gateway-acme-.../cancel
-# Returns: {"phase": "Failed", "message": "Terminated by user", ...}
+# Returns the run as Argo holds it right after the terminate, e.g. {"phase": "Running", ...};
+# once Argo finishes it, status and the run list report it as {"phase": "Cancelled", ...}
 
 # Retry a failed Workflow (restarts only the failed nodes, reuses successful ones):
 curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize/runs/opt-gateway-acme-.../retry
 # Returns: {"phase": "Running", ...}
 ```
+
+A finished run that was shut down (its Workflow's `spec.shutdown` is set)
+reports phase `Cancelled` in the status and run-list endpoints: Argo itself
+ends a run cancelled while it waited on the tenant mutex `Succeeded` (its step
+`Skipped`) and one cancelled while running `Failed`. A cancelled run is not
+retried; start a new one.
 
 The status, cancel, and retry endpoints scope each action to the path
 tenant. Before returning status or issuing the terminate/retry, the runtime

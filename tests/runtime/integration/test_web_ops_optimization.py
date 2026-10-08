@@ -42,7 +42,11 @@ from cogniverse_runtime.routers.optimization_report import REPORT_AGENT, REPORT_
 from cogniverse_synthetic.approval.uploads import upload_templates
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 from tests.utils.approval_review import review_config_manager, run_in_own_loop
-from tests.utils.argo_api import argo_api_server, set_workflow_status
+from tests.utils.argo_api import (
+    argo_api_server,
+    recorded_optimizer_run,
+    set_workflow_status,
+)
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.k8s_api_server import _kubectl
 from tests.utils.memory_store import InMemoryConfigStore
@@ -318,11 +322,38 @@ class TestOptimizationRuns:
             },
         )
         detail = page.get_by_role("region", name=f"Run {name}")
+        # Argo ends a run stopped while running Failed; it was cancelled.
+        expect(detail.locator("dt:text-is('Phase') + dd")).to_have_text(
+            "Cancelled", timeout=POLL_TIMEOUT_MS
+        )
+        expect(detail.locator("dt:text-is('Message') + dd")).to_have_text(
+            "Stopped with strategy 'Terminate'"
+        )
+        expect(_row(page, tenant, name).get_by_role("cell")).to_have_text(
+            [
+                name,
+                "simba",
+                "manual",
+                "Cancelled",
+                "2026-10-04 09:00 UTC",
+                "2026-10-04 09:10 UTC",
+            ],
+            timeout=POLL_TIMEOUT_MS,
+        )
+        expect(detail.get_by_role("button", name="Cancel run")).to_have_count(0)
+        expect(detail.get_by_role("button", name="Retry failed steps")).to_have_count(0)
+
+        # A run that failed on its own is retried.
+        name = _start(page, "simba")
+        detail = page.get_by_role("region", name=f"Run {name}")
+        set_workflow_status(
+            argo["kubeconfig"], name, recorded_optimizer_run("mixed", name)
+        )
         expect(detail.locator("dt:text-is('Phase') + dd")).to_have_text(
             "Failed", timeout=POLL_TIMEOUT_MS
         )
         expect(detail.locator("dt:text-is('Message') + dd")).to_have_text(
-            "Stopped with strategy 'Terminate'"
+            "Error (exit code 1)"
         )
         expect(detail.get_by_role("button", name="Cancel run")).to_have_count(0)
         detail.get_by_role("button", name="Retry failed steps").click()
@@ -470,6 +501,35 @@ class TestRunLifecycle:
             "cogniverse/optimize-mutex",
             timeout=POLL_TIMEOUT_MS,
         )
+
+        # Cancelled while it waits, Argo ends it Succeeded with its step
+        # Skipped; the page says it was cancelled.
+        detail.get_by_role("button", name="Cancel run").click()
+        expect(page.get_by_role("status")).to_have_text(
+            f"Cancelled {name}; Argo reports Pending."
+        )
+        assert _workflow(argo, name)["spec"]["shutdown"] == "Terminate"
+        set_workflow_status(
+            argo["kubeconfig"],
+            name,
+            # A merge patch: null drops the mutex wait the run no longer has.
+            {
+                **recorded_optimizer_run("cancelled_pending", name),
+                "synchronization": None,
+            },
+        )
+        detail = page.get_by_role("region", name=f"Run {name}")
+        expect(detail.locator("dt:text-is('Phase') + dd")).to_have_text(
+            "Cancelled", timeout=POLL_TIMEOUT_MS
+        )
+        expect(
+            detail.get_by_role("table", name="Steps").get_by_role("cell")
+        ).to_have_text([name, "Skipped"])
+        expect(_row(page, tenant, name).get_by_role("cell").nth(3)).to_have_text(
+            "Cancelled", timeout=POLL_TIMEOUT_MS
+        )
+        expect(detail.get_by_role("button", name="Cancel run")).to_have_count(0)
+        expect(detail.get_by_role("button", name="Retry failed steps")).to_have_count(0)
 
     def test_the_last_run_line_selects_its_run(self, page, web_url, argo):
         tenant = f"webopt{uuid.uuid4().hex[:8]}:main"

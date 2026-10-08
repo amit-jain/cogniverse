@@ -26,6 +26,7 @@ def reset_config_manager():
 
 
 from cogniverse_runtime.config_loader import WorkflowSettings, get_workflow_settings
+from tests.utils.argo_api import recorded_optimizer_run
 
 
 def _configure_workflow(
@@ -1605,6 +1606,56 @@ class TestGetManualOptimizeStatus:
         with patch("httpx.AsyncClient.get", new=fake_get):
             resp = client.get("/acme/optimize/runs/wf1")
         assert resp.status_code == 502
+
+    @pytest.mark.parametrize(
+        ("case", "shutdown", "phase"),
+        [
+            ("cancelled_pending", "Terminate", "Cancelled"),
+            ("cancelled_running", "Terminate", "Cancelled"),
+            ("mixed", None, "Failed"),
+            ("succeeded", None, "Succeeded"),
+        ],
+    )
+    def test_a_run_that_was_shut_down_reads_as_cancelled(
+        self, argo_configured_client, case, shutdown, phase
+    ):
+        """Argo ends a run cancelled while it waited on the mutex Succeeded
+        (its step Skipped) and one cancelled while running Failed; both were
+        shut down, which is what the operator did."""
+        recorded = recorded_optimizer_run(case, "wf-recorded")
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            spec = {**_ACME_SPEC["spec"]}
+            if shutdown:
+                spec["shutdown"] = shutdown
+            resp.json = MagicMock(return_value={"spec": spec, "status": recorded})
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = argo_configured_client.get("/acme/optimize/runs/wf-recorded")
+
+        assert (resp.status_code, resp.json()["phase"]) == (200, phase)
+
+    def test_a_run_still_stopping_keeps_argos_phase(self, argo_configured_client):
+        """Until Argo finishes it, a shut-down run is still running."""
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(
+                return_value={
+                    "spec": {**_ACME_SPEC["spec"], "shutdown": "Terminate"},
+                    "status": {"phase": "Running"},
+                }
+            )
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = argo_configured_client.get("/acme/optimize/runs/wf-stopping")
+
+        assert (resp.status_code, resp.json()["phase"]) == (200, "Running")
 
     def test_pending_due_to_mutex_wait_surfaces_reason(self, argo_configured_client):
         """When Argo records a mutex wait under ``synchronization.mutex.waiting``,

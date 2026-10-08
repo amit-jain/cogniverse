@@ -164,7 +164,7 @@ Each entry in `dropped_examples` carries `candidate`, `reason`, and `category`.
 | `ungrounded_source` | The sampled text supported no grounded example |
 | `ungrounded_output` | The model's output was not grounded in the source topic |
 | `invalid_label` | The model's label failed a shape or vocabulary rule |
-| `duplicate_label` | The candidate repeats a label already accepted |
+| `duplicate_label` | The candidate repeats a query already accepted |
 | `unexpected_error` | An exception the generator did not anticipate |
 
 A generator declares the category at the point it refuses a candidate, by
@@ -178,6 +178,8 @@ holds the four deliberate categories; `ContentRejection` refuses
 trace of the sampled backend rows. Each trace item carries `profile_name`,
 `schema_name`, `source_id`, `segment_id`, and `description`, so callers can
 recompute the same saliency pass against the exact text the generator used.
+`metadata.generation_time_ms` is the wall time of the whole `generate()` call in
+milliseconds.
 
 Direct construction of routing, profile-selection, and query-enhancement
 generators exposes a positive, finite `production_label_timeout_seconds`
@@ -431,13 +433,14 @@ async def generate_examples(documents: list[dict], entity_extractor, routing_dec
 Each routing example is grounded in one sampled item. Generation keeps drawing
 candidates in their returned order until it either fills the requested count or
 hits a 5x candidate budget. That surplus buys room for a few duplicate
-canonical labels without letting the 3-call routing path spin forever. A
+queries without letting the 3-call routing path spin forever. A
 document item therefore cannot receive entities from a video item or a video
 route, and the same invariant holds for every supported modality. Reusing a
-source is permitted only when it produces a distinct `(query, entities,
-chosen_agent)` label; a full target-sized streak of duplicate canonical labels
-ends the run early, and an exact repeated label never gets fabricated into a
-new example.
+source is permitted only when it produces a new query: a query drawn again is
+dropped as a duplicate even when the entity agent or the gateway labels it
+differently this time, so the service never receives one query twice. A full
+target-sized streak of duplicate queries ends the run early, and a repeated
+query never gets fabricated into a new example.
 Routing truncates the extracted topic to 20 words before entity labeling and
 query generation. Entity texts are deduplicated case-insensitively while
 preserving the first surface form, so the stored example and generated query

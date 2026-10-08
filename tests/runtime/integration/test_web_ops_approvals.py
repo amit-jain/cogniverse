@@ -233,6 +233,7 @@ class TestApprovalsView:
             "Schema": "RoutingExperienceSchema",
             "Status": "pending_review",
             "Confidence": "0.40",
+            "Band": "Very low",
             "Retry count": "0",
             "Created": served[routing]["created_at"],
             "Query": ROUTING["query"],
@@ -247,6 +248,8 @@ class TestApprovalsView:
                 "Agreement (5 samples): lecture (MEDIA) 1.00"
             ),
         }
+        # The band reads in its tone, as on the synthetic results.
+        expect(_item(page, routing).locator("dd.band.error")).to_have_text("Very low")
         assert served[routing]["metadata"][SELF_CONSISTENCY_METADATA_KEY] == (
             SELF_CONSISTENCY
         )

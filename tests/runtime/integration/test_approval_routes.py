@@ -438,6 +438,10 @@ async def test_history_and_stats_report_every_decision(review):
         auto_entry["reviewer"],
     ) == ("auto_approved", "play the intro clip", 0.95, None)
     (rejected_entry,) = history["rejected"]
+    assert (
+        rejected_entry["reviewed_at"]
+        == rejected.json()["item"]["metadata"]["decision"]["timestamp"]
+    )
     assert {
         key: rejected_entry[key]
         for key in (
@@ -477,6 +481,91 @@ async def test_history_and_stats_report_every_decision(review):
             "rejected": 0.3,
         },
     }
+
+
+async def test_the_rejected_list_puts_the_latest_decision_first(review):
+    """An item rejected and replaced was reviewed when its rejection was
+    decided, so it sorts by that time against items rejected outright."""
+    batch, tenant, storage = review["batch"], review["tenant"], review["storage"]
+    routing, workflow = f"{batch}_routing", f"{batch}_workflow"
+    await reject_without_regenerating(
+        storage,
+        batch,
+        routing,
+        feedback="the gateway chose the wrong agent",
+        reviewer="first@example.com",
+    )
+    async with await _client(review["app"]) as client:
+        rejected = await client.post(
+            f"/admin/tenant/{tenant}/approvals/{batch}/{workflow}",
+            json={
+                "approved": False,
+                "reviewer": "second@example.com",
+                "corrections": {"agent_sequence": CORRECTED},
+            },
+        )
+        assert rejected.status_code == 200, rejected.text
+        history = await _get_until(
+            client,
+            f"/admin/tenant/{tenant}/approvals/history",
+            lambda body: set(_ids(body["rejected"])) == {routing, workflow},
+        )
+
+    first, second = history["rejected"]
+    decided = rejected.json()["item"]["metadata"]["decision"]["timestamp"]
+    assert (first["item_id"], first["reviewed_at"], second["item_id"]) == (
+        workflow,
+        decided,
+        routing,
+    )
+    assert second["reviewed_at"] < decided
+
+
+async def test_two_reviewers_rejecting_at_once_leave_the_elected_decision_time(
+    review,
+):
+    """Of two rejections at once one decision is elected; the rejected
+    original reads that decision's reviewer and time, never the loser's."""
+    batch, tenant = review["batch"], review["tenant"]
+    workflow = f"{batch}_workflow"
+    url = f"/admin/tenant/{tenant}/approvals/{batch}/{workflow}"
+    async with await _client(review["app"]) as client:
+        await _pending_until(client, tenant, {f"{batch}_routing", workflow})
+        responses = await asyncio.gather(
+            *(
+                client.post(
+                    url,
+                    json={
+                        "approved": False,
+                        "reviewer": reviewer,
+                        "corrections": {"agent_sequence": sequence},
+                    },
+                )
+                for reviewer, sequence in (
+                    ("first@example.com", CORRECTED),
+                    ("second@example.com", ["video_search_agent"]),
+                )
+            )
+        )
+        [won] = [r for r in responses if r.status_code == 200]
+        [lost] = [r for r in responses if r.status_code != 200]
+        decision = won.json()["item"]["metadata"]["decision"]
+        history = await _get_until(
+            client,
+            f"/admin/tenant/{tenant}/approvals/history",
+            lambda body: _ids(body["rejected"]) == [workflow],
+        )
+
+    assert (lost.status_code, lost.json()["detail"]["error"]) == (
+        409,
+        "approval_decision_conflict",
+    )
+    (entry,) = history["rejected"]
+    assert (
+        entry["reviewer"],
+        entry["reviewed_at"],
+        entry["replacement_id"],
+    ) == (decision["reviewer"], decision["timestamp"], won.json()["item"]["item_id"])
 
 
 async def test_a_rejected_item_nothing_replaced_is_regenerated_once(review):

@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react';
 import { Alert, Panel, useAction, useLoad } from './common';
 import { jsonText, sameJson, type JsonObject } from './forms';
+import { confidenceBand } from './framework';
 import { runtimeJson, seg } from './http';
 import { Bars, percent } from './metrics';
 import { TenantChooser } from './tenants';
@@ -275,6 +276,7 @@ function ReviewItem({
   const entities = entityLabels(item.data);
   const generation = generationMetadata(item.data);
   const query = typeof item.data.query === 'string' ? item.data.query : '';
+  const band = confidenceBand(item.confidence);
   const decide = (body: JsonObject) =>
     action.run(async () => {
       if (!reviewer.trim()) throw new Error('Enter your name as the reviewer first.');
@@ -295,6 +297,8 @@ function ReviewItem({
         <dd>{item.status}</dd>
         <dt>Confidence</dt>
         <dd>{item.confidence.toFixed(2)}</dd>
+        <dt>Band</dt>
+        <dd className={`band ${band.tone}`}>{band.label}</dd>
         <dt>Retry count</dt>
         <dd>{retryCount(item.data)}</dd>
         <dt>Created</dt>

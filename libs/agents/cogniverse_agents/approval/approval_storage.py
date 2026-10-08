@@ -1378,7 +1378,14 @@ class ApprovalStorageImpl(ApprovalStorage):
                         f"{replacement.item_id!r} in batch {batch_id!r}"
                     )
 
-                items_by_id[original_item_id].status = ApprovalStatus.REJECTED
+                original = items_by_id[original_item_id]
+                original.status = ApprovalStatus.REJECTED
+                # Rejected with feedback, the original's decision lives on its
+                # replacement; its time is when the original was reviewed.
+                if original.reviewed_at is None:
+                    original.reviewed_at = datetime.fromisoformat(
+                        replacement.metadata["decision"]["timestamp"]
+                    )
                 if existing is None:
                     items.append(replacement)
                     items_by_id[replacement.item_id] = replacement

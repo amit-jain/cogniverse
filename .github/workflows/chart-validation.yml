@@ -27,6 +27,8 @@ on:
       # test_ingress_runtime.py builds and runs the web client image.
       - 'clients/web/**'
       - 'tests/utils/web_image.py'
+      # test_optimization_pod_parity.py pins the recorded optimizer runs.
+      - 'tests/utils/argo_optimizer_runs.json'
       - 'libs/cli/cogniverse_cli/images.py'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
@@ -57,6 +59,8 @@ on:
       # test_ingress_runtime.py builds and runs the web client image.
       - 'clients/web/**'
       - 'tests/utils/web_image.py'
+      # test_optimization_pod_parity.py pins the recorded optimizer runs.
+      - 'tests/utils/argo_optimizer_runs.json'
       - 'libs/cli/cogniverse_cli/images.py'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
