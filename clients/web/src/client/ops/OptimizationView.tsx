@@ -505,7 +505,7 @@ function ReportPanel({ tenant }: { tenant: string }) {
     setRunning(true);
     setProgress(REPORT_START);
     try {
-      const response = await fetch(`/api/runtime${runsPath(tenant)}/report`, {
+      const response = await fetch(`/ui-api/runtime${runsPath(tenant)}/report`, {
         method: 'POST',
         headers: { accept: 'text/event-stream' },
       });
