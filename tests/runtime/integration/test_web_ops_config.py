@@ -18,9 +18,7 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.web_client import (
-    build_web_client,
     free_port,
-    install_web_client,
     recording_telemetry_sink,
     serve_web,
 )
@@ -29,11 +27,6 @@ from tests.utils.web_ops import serve_ops_runtime
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
 KEY = "web-ops-harness-key"
-
-
-@pytest.fixture(scope="module")
-def built_client(tmp_path_factory):
-    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(scope="module")

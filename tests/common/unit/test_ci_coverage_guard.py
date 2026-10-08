@@ -81,8 +81,14 @@ def _expression(marker_expr: str) -> Expression:
 
 
 def selects(selection: Selection, test_path: str, markers: Sequence[str]) -> bool:
-    """Whether ``selection`` both names ``test_path`` and keeps ``markers``."""
+    """Whether ``selection`` names ``test_path``, does not ``--ignore`` it, and
+    keeps ``markers``."""
     if not selection.names(test_path):
+        return False
+    if any(
+        test_path == ignored or test_path.startswith(ignored + "/")
+        for ignored in selection.ignores
+    ):
         return False
     if selection.marker_expr is None:
         return True
@@ -605,6 +611,30 @@ def test_detector_reports_a_test_its_selection_deselects() -> None:
     }
     assert unreachable_ci_tests(marker_map, [_CI_FAST_INTEGRATION]) == [
         "tests/covered/test_a.py::dropped"
+    ]
+
+
+def test_detector_reports_a_test_its_selection_ignores() -> None:
+    """A file a selection ``--ignore``s runs only if another selection names it."""
+    ignoring = Selection(
+        "w.yml",
+        "job",
+        ("tests/covered",),
+        None,
+        ("tests/covered/test_moved.py", "tests/covered/moved_dir"),
+    )
+    moved = Selection("w.yml", "other", ("tests/covered/test_moved.py",), None)
+    marker_map = {
+        "tests/covered/test_a.py::kept": ["ci_fast", "unit"],
+        "tests/covered/test_moved.py::moved": ["ci_fast", "unit"],
+        "tests/covered/moved_dir/test_b.py::nested": ["ci_fast", "unit"],
+    }
+    assert unreachable_ci_tests(marker_map, [ignoring]) == [
+        "tests/covered/moved_dir/test_b.py::nested",
+        "tests/covered/test_moved.py::moved",
+    ]
+    assert unreachable_ci_tests(marker_map, [ignoring, moved]) == [
+        "tests/covered/moved_dir/test_b.py::nested"
     ]
 
 

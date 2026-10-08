@@ -21,8 +21,6 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.vespa_test_helpers import deploy_tenant_schema
 from tests.utils.web_client import (
-    build_web_client,
-    install_web_client,
     recording_telemetry_sink,
     serve_web,
 )
@@ -89,11 +87,6 @@ def store(memory_store):
         rows = manager.memory.get_all(user_id=manager.tenant_id, limit=None)
         for row in rows["results"]:
             manager.memory.delete(row["id"])
-
-
-@pytest.fixture(scope="module")
-def built_client(tmp_path_factory):
-    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(scope="module")

@@ -21,9 +21,7 @@ from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 from tests.utils.argo_api import argo_api_server, set_workflow_status
 from tests.utils.k8s_api_server import _kubectl
 from tests.utils.web_client import (
-    build_web_client,
     free_port,
-    install_web_client,
     recording_telemetry_sink,
     serve_web,
 )
@@ -56,11 +54,6 @@ def workflow_settings(argo):
     _configure_workflow(argo["url"])
     yield
     del get_workflow_settings._instance
-
-
-@pytest.fixture(scope="module")
-def built_client(tmp_path_factory):
-    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(scope="module")

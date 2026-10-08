@@ -17,9 +17,7 @@ from playwright.sync_api import Page, expect, sync_playwright
 from tests.utils.document_ingest import ingest_texts
 from tests.utils.pylate_stub import serve_pylate_stub
 from tests.utils.web_client import (
-    build_web_client,
     free_port,
-    install_web_client,
     recording_telemetry_sink,
     serve_web,
 )
@@ -33,11 +31,6 @@ TEXTS = {
     "glaciers.txt": "Glaciers grind valleys into wide troughs",
     "volcanoes.txt": "Volcanoes build islands from cooling lava",
 }
-
-
-@pytest.fixture(scope="module")
-def built_client(tmp_path_factory):
-    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(scope="module")

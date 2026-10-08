@@ -31,8 +31,6 @@ from cogniverse_foundation.telemetry.span_contract import record_span_io
 from cogniverse_runtime.routers import agents
 from tests.utils.approval_review import review_config_manager, run_in_own_loop
 from tests.utils.web_client import (
-    build_web_client,
-    install_web_client,
     recording_telemetry_sink,
     serve_web,
 )
@@ -42,11 +40,6 @@ pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
 
 KEY = "web-ops-harness-key"
 QUEUE_PREFIX = f"web-ops-test:annotation-view:{uuid4().hex[:8]}"
-
-
-@pytest.fixture(scope="module")
-def built_client(tmp_path_factory):
-    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(scope="module")

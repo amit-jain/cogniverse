@@ -32,8 +32,6 @@ from tests.utils.approval_review import (
     save_review_batch,
 )
 from tests.utils.web_client import (
-    build_web_client,
-    install_web_client,
     recording_telemetry_sink,
     serve_web,
 )
@@ -47,11 +45,6 @@ KEY = "web-ops-harness-key"
 @pytest.fixture(scope="module")
 def review_config(phoenix_container, workflow_state_redis_url):
     return review_config_manager(phoenix_container, workflow_state_redis_url)
-
-
-@pytest.fixture(scope="module")
-def built_client(tmp_path_factory):
-    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(scope="module")

@@ -20,9 +20,7 @@ from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 from tests.utils.web_client import (
-    build_web_client,
     free_port,
-    install_web_client,
     recording_telemetry_sink,
     serve_web,
 )
@@ -43,11 +41,6 @@ STRATEGIES = {
     "embedding": {"class": "MultiVectorEmbeddingStrategy", "params": {}},
 }
 SCHEMA_CONFIG = {"embedding_dim": 320, "num_patches": 1024}
-
-
-@pytest.fixture(scope="module")
-def built_client(tmp_path_factory):
-    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(scope="module")

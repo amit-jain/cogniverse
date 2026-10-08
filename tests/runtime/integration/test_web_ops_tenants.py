@@ -23,9 +23,7 @@ from cogniverse_foundation.config.unified_config import (
     ROUTER_TIERS,
 )
 from tests.utils.web_client import (
-    build_web_client,
     free_port,
-    install_web_client,
     recording_telemetry_sink,
     serve_web,
 )
@@ -36,11 +34,6 @@ pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 KEY = "web-ops-harness-key"
 # A tenant's base schemas deploy on creation; that is the slow step.
 DEPLOY_TIMEOUT_MS = 240_000
-
-
-@pytest.fixture(scope="module")
-def built_client(tmp_path_factory):
-    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(scope="module")

@@ -41,8 +41,6 @@ from tests.utils.telemetry_metric_spans import (
     record_search,
 )
 from tests.utils.web_client import (
-    build_web_client,
-    install_web_client,
     recording_telemetry_sink,
     serve_web,
 )
@@ -79,11 +77,6 @@ def telemetry(phoenix_container, phoenix_proxy):
     yield manager
     TelemetryManager.reset()
     get_telemetry_registry().clear_cache()
-
-
-@pytest.fixture(scope="module")
-def built_client(tmp_path_factory):
-    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(scope="module")
