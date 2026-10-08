@@ -1909,7 +1909,17 @@ class ApprovalStorageImpl(ApprovalStorage):
                     filters={"name": span_names},
                 )
 
-                if not project_spans.empty:
+                # A batch's root span ends after its item spans, so the items
+                # can be indexed before it: their frame has no batch_id column
+                # yet, which reads as not visible yet, not as a malformed reply.
+                batch_root_pending = (
+                    batch_id is not None
+                    and not project_spans.empty
+                    and "attributes.batch_id" not in project_spans.columns
+                    and "name" in project_spans.columns
+                    and not (project_spans["name"] == "approval_batch").any()
+                )
+                if not project_spans.empty and not batch_root_pending:
                     required_columns = {
                         "attributes.item_id",
                         "context.span_id",

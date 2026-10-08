@@ -2905,6 +2905,82 @@ class TestApprovalStorageEventLoop:
         )
 
     @pytest.mark.asyncio
+    async def test_item_spans_indexed_before_their_batch_root_are_retried(self):
+        """A batch's root span ends after its items, so Phoenix can serve the
+        items alone; that frame has no batch_id column and means the batch is
+        not visible yet."""
+        from unittest.mock import AsyncMock
+
+        import pandas as pd
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+
+        item = {
+            "name": "approval_item",
+            "attributes.item_id": "upload-item",
+            "context.span_id": "item-span",
+            "parent_id": "batch-span",
+            "start_time": "2026-10-08T00:00:01Z",
+        }
+        items_only = pd.DataFrame([item])
+        both = pd.DataFrame(
+            [
+                {
+                    "name": "approval_batch",
+                    "attributes.batch_id": "upload-batch",
+                    "attributes.item_id": None,
+                    "context.span_id": "batch-span",
+                    "parent_id": None,
+                    "start_time": "2026-10-08T00:00:00Z",
+                },
+                dict(item, **{"attributes.batch_id": None}),
+            ]
+        )
+        get_all_spans = AsyncMock(
+            side_effect=[items_only, pd.DataFrame(), both, pd.DataFrame()]
+        )
+        storage = object.__new__(ApprovalStorageImpl)
+        storage.full_project_name = "cogniverse-acme:acme-synthetic_data"
+        storage.provider = SimpleNamespace(
+            traces=SimpleNamespace(get_all_spans=get_all_spans)
+        )
+
+        span_id = await storage.get_item_span_id("upload-item", batch_id="upload-batch")
+
+        assert (span_id, get_all_spans.await_count) == ("item-span", 3)
+
+    @pytest.mark.asyncio
+    async def test_a_batch_frame_without_batch_ids_is_still_malformed(self):
+        from unittest.mock import AsyncMock
+
+        import pandas as pd
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+
+        malformed = pd.DataFrame(
+            [
+                {
+                    "name": "approval_batch",
+                    "attributes.item_id": None,
+                    "context.span_id": "batch-span",
+                    "parent_id": None,
+                    "start_time": "2026-10-08T00:00:00Z",
+                }
+            ]
+        )
+        storage = object.__new__(ApprovalStorageImpl)
+        storage.full_project_name = "cogniverse-acme:acme-synthetic_data"
+        storage.provider = SimpleNamespace(
+            traces=SimpleNamespace(get_all_spans=AsyncMock(return_value=malformed))
+        )
+
+        with pytest.raises(RuntimeError) as raised:
+            await storage.get_item_span_id("upload-item", batch_id="upload-batch")
+        assert str(raised.value) == (
+            "Approval span response is missing required columns ['attributes.batch_id']"
+        )
+
+    @pytest.mark.asyncio
     async def test_item_span_lookup_scopes_duplicate_item_id_to_batch(self):
         from unittest.mock import AsyncMock
 
