@@ -1,8 +1,21 @@
 # cogniverse-web
 
 Browser UI for the Cogniverse runtime, built on CopilotKit 1.77. Every agent in
-the runtime's registry (`GET /agents/`) appears as a Dot in the sidebar; picking
-one opens a CopilotKit chat with it. Runs stream over the runtime's AG-UI
+the runtime's registry (`GET /agents/`) appears as a Dot in the sidebar, marked
+online or offline (the runtime's `/health` answers healthy or degraded and its
+registry has the agent, checked every 30 seconds); picking one opens a
+CopilotKit chat with it.
+
+Everything acts for one tenant at a time: the active tenant, chosen in the
+sidebar or in any operations view's Tenant form, is shared by every view and
+agent and kept across reloads. A choice is checked with the runtime's tenant
+registry (`GET /admin/tenants/{id}`): a registered tenant becomes active in
+its canonical `org:tenant` form, an unknown one is refused with how to
+register it, and one the registry cannot answer for is taken with a warning
+that names why (a tenant confirmed earlier keeps being used through such an
+outage). Changing the active tenant starts every view and conversation over
+for the new tenant, and a run's results show only while the tenant they were
+produced for is active. Runs stream over the runtime's AG-UI
 surface (`POST /ag-ui/{agent}`): the reply streams token by token and status
 phases show above the chat. A run that fails says why in the conversation, and
 one that is stopped says it was cancelled.
@@ -26,12 +39,23 @@ Relevant; the rating is stored on the search's span
 and a rating that was not stored shows its reason on the card.
 
 The browser talks only to this package's Node server. The server hosts the
-CopilotKit runtime at `/ui-api/copilotkit` and holds one harness key, which it
-sends to the Cogniverse runtime on every run; the key decides the tenant. The
-operations views reach the runtime's admin, ingestion and event routes through
-`/ui-api/runtime/*`, which forwards an allowlist of those routes (`src/server/proxy.ts`)
-and streams their server-sent events. There is no user login, so anyone who can
-reach the server can use those routes.
+CopilotKit runtime at `/ui-api/copilotkit` and acts for the tenant each request
+names in its `x-cogniverse-tenant` header. For a tenant's first run it mints a
+harness key named `cogniverse-web <host>` through the runtime's `POST
+/admin/harness/keys` (refusing a tenant the registry says is unknown), and
+sends every run, thread restore and relevance rating of that tenant with that
+key, so the runtime resolves the tenant from the key and one browser can never
+read another tenant's runs. Concurrent first runs of a tenant share one mint;
+a key the runtime rejects (revoked when its tenant is deleted, say) is
+replaced by a new one and the request retried once; a running conversation
+can only be joined for the tenant that started it; and the server revokes the
+keys it minted when it stops. A runtime that cannot issue a key fails the run
+with its reason. The operations views reach the runtime's admin, ingestion and
+event routes through `/ui-api/runtime/*`, which forwards an allowlist of those
+routes (`src/server/proxy.ts`) and streams their server-sent events; those
+routes take their tenant from their path. `GET /ui-api/agents/status` reports the
+runtime's health and each agent's. There is no user login, so anyone who can
+reach the server can use those routes and act for any registered tenant.
 
 ## Operations views
 
@@ -51,7 +75,7 @@ runtime's existing routes through `/ui-api/runtime/*`.
 | Workflow reviews | For a chosen tenant and window, the orchestration workflows the orchestrator recorded, newest first, with their query, pattern, agents, time, outcome and latest review. As a named reviewer, rate a workflow's quality and say whether its pattern, agents and execution order were right, with suggestions and notes; the review is stored on the workflow's span and shows in the list at once. A telemetry outage shows as an error, never as an empty list. | `/admin/tenant/{tenant}/orchestration-workflows`, `/admin/tenant/{tenant}/orchestration-workflows/{span}/annotation` |
 | Profile metrics | For a chosen tenant and window, its profile selections per modality: count, P50, P95 and P99 latency and success rate, with bars for selections and P95 latency per modality. A telemetry outage shows as an error, never as an empty window. | `/admin/tenant/{tenant}/telemetry/profile-selection` |
 | RLM A/B | For a chosen tenant and window, its RLM A/B comparisons: average latency, token and judge-score change with RLM and how often RLM fell back, the same per queries dataset with a latency bar per dataset, and each comparison newest first. | `/admin/tenant/{tenant}/telemetry/rlm-ab` |
-| Analytics | For a chosen tenant and window, its traces filtered by operation, profiles and strategies: counts, success rate and latency, then an overview (latency percentiles and traces per operation), latency and trace counts over time, latency histograms and spread grouped by operation, profile, strategy or outcome, a mean-latency heatmap over two chosen fields, the traces outside Tukey's outlier bounds, and a searchable, sortable list of every trace. Charts are Plotly, loaded the first time one is shown. Root causes runs over the filtered traces: their failed ones and, optionally, the successful ones slower than a chosen percentile, giving the hypotheses (with evidence, affected traces and a suggested action) and the recommendations with the components they affect. A telemetry outage shows as an error, never as no traces. | `/admin/tenant/{tenant}/telemetry/traces`, `/admin/tenant/{tenant}/telemetry/root-causes` |
+| Analytics | For a chosen tenant, its traces in a window (the last 15 minutes, hour, 6 hours, day or week, or a custom UTC range of up to 30 days) filtered by an operation regular expression, profiles and strategies: counts, success rate against the 95% target and latency, refreshed on demand or automatically every 5-300 seconds, with when it was last refreshed. A read that takes over 5.5 seconds says the figures shown may be stale until it answers; a telemetry outage shows as an error with a retry hint, never as no traces. Then an overview (latency percentiles, traces per operation as bars and a donut, and a per-operation table), latency and trace counts over 1, 5, 15 or 60 minute buckets, latency histogram, box, violin and cumulative distribution (with P50, P90, P95 and P99) grouped by operation, profile, strategy or outcome, a mean-latency heatmap over two chosen fields, latency outliers (Tukey's bounds, with the bound and P50, P95 and P99 drawn) or hourly error-rate outliers, and every trace, searchable by trace ID and/or operation, sortable by time, duration, operation or outcome, 20 to a page. "Show raw data" lists every field of every trace, and the window's traces download as JSON (with their statistics and the root causes found), CSV or an HTML report. Root causes runs over the filtered traces, previewing the slow threshold as the percentile changes: their failed ones and, optionally, the successful ones slower than a chosen percentile, giving the totals, the hypotheses (with evidence, affected traces and the Phoenix query and link to find them, and a suggested action), the recommendations with the components they affect, the failures by error kind, operation, profile, strategy, hour and burst, and the slow traces by operation, profile and strategy with how much slower they are. A found analysis stays while the traces it covers do. Charts are Plotly, loaded the first time one is shown, and each section explains how to read it. | `/admin/tenant/{tenant}/telemetry/traces`, `/admin/tenant/{tenant}/telemetry/root-causes`, `/admin/tenant/{tenant}/telemetry/phoenix` |
 | Evaluation | For a chosen tenant and window, its searches of its golden set's queries, scored against the golden set: MRR, nDCG@10, recall@1 and @5, precision@5 and success (first result expected) per profile and strategy, a Plotly success matrix, each query's expected and retrieved sources marked hit or miss for a chosen profile and strategy, and the golden queries nobody searched. A tenant without a golden set sees how to upload one; a telemetry outage shows as an error. | `/admin/tenant/{tenant}/evaluation/golden` |
 | Embedding atlas | For a chosen tenant and one of its profiles (its own or shipped), a Plotly map of up to the chosen number of its documents placed by their embeddings on the set's two principal axes, with the share of variance each axis shows, and the mapped documents listed by title with their coordinates and text, searchable by title or text. | `/admin/tenant/{tenant}/embeddings/atlas`, `/admin/profiles`, `/admin/profile-templates` |
 | Routing evaluation | For a chosen tenant and window, its routing decisions: counts by outcome, accuracy, confidence calibration and mean, P50 and P95 latency, a per-agent table, Plotly charts of confidence by outcome, success rate by confidence and decisions per hour, and each decision with its label. A reviewer approves an LLM label or relabels a decision, filtering to LLM labels awaiting review; "Label with the LLM" starts an `llm-annotate` run (followed in Optimization runs). A telemetry outage shows as an error. | `/admin/tenant/{tenant}/routing-decisions`, `/admin/tenant/{tenant}/routing-decisions/{span}/(approve\|label)`, `/admin/tenant/{tenant}/optimize` |
@@ -62,10 +86,12 @@ Use Node.js 22. Copy `.env.example` to `.env` and set:
 
 | Variable | Meaning |
 |---|---|
-| `COGNIVERSE_RUNTIME_URL` | Runtime base URL, including any ingress prefix |
-| `COGNIVERSE_API_KEY` | Harness key the server sends to the runtime |
+| `COGNIVERSE_RUNTIME_URL` | Runtime base URL, including any ingress prefix; the server needs its `/admin` routes, `/admin/harness/keys` among them |
 | `PORT` | Port the server listens on (default `4000`) |
 | `HOST` | Interface the server binds (default `127.0.0.1`) |
+
+The Analytics view's Phoenix links point at the runtime's `PHOENIX_PUBLIC_URL`
+(the Phoenix UI address browsers reach); without it they are left out.
 
 ```bash
 cd clients/web
@@ -77,9 +103,10 @@ npm run build && npm start   # one server serving the built client
 The server turns off CopilotKit's usage telemetry unless
 `COPILOTKIT_TELEMETRY_DISABLED=false` is set.
 
-On `SIGTERM` or `SIGINT` the server stops accepting connections and exits once
-its requests finish; a request still running after 5 seconds (an ingest event
-stream, a runtime that does not answer) is cut.
+On `SIGTERM` or `SIGINT` the server stops accepting connections, revokes the
+harness keys it minted, and exits once its requests finish; a request still
+running after 5 seconds (an ingest event stream, a runtime that does not
+answer) is cut.
 
 ## Deploy
 
@@ -98,12 +125,17 @@ npm test
 ```
 
 Vitest covers the result parsing and rendering for each agent's payload, the
-run notices, error, route, JSON-field and event-stream parsing, the server's
-configuration, agent listing and thread restore, and the runtime proxy against
-local HTTP sockets.
+run notices, error, route, JSON-field and event-stream parsing, the active
+tenant and its registration check, the Analytics view's figures and exports,
+the server's configuration, agent listing and status, per-tenant keys, thread
+restore and ownership, and the runtime proxy against local HTTP sockets.
 `tests/runtime/integration/test_web_client_ag_ui.py` installs this lockfile,
 runs the server from source against the runtime's routers and drives it with
 the published `@ag-ui/client`. `tests/runtime/integration/test_web_agent_workspace.py`
 drives the agent workspace in Chromium (run notices, threads restored from the
-runtime, each agent's results), and `tests/runtime/integration/test_web_ops_*.py`
-drive each operations view, against the runtime's routers over real Vespa.
+runtime, each agent's results), `tests/runtime/integration/test_web_ops_shell.py`
+the active tenant, the tenant gate, the agents' status and two sessions on
+different tenants against the real tenant registry and key store,
+`tests/runtime/integration/test_web_ops_analytics.py` the Analytics view against
+real Phoenix, and `tests/runtime/integration/test_web_ops_*.py` each other
+operations view, against the runtime's routers over real Vespa.

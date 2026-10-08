@@ -48,8 +48,6 @@ from tests.utils.web_ops import serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
 
-KEY = "web-ops-harness-key"
-
 
 @pytest.fixture(scope="module")
 def phoenix_proxy(phoenix_container):
@@ -93,7 +91,7 @@ def runtime_url(phoenix_container, schema_loader, workflow_state_redis_url, tele
 def web_url(built_client, runtime_url, phoenix_proxy):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -409,7 +407,7 @@ def test_analytics_charts_and_explores_a_tenants_traces(page, web_url, telemetry
 
     _section(page, "Trace explorer")
     assert [row[-1] for row in _rows(page, "Traces")] == [r["trace_id"] for r in rows]
-    page.get_by_label("Trace ID or operation").fill("DISPATCH")
+    page.get_by_label("Trace ID or operation", exact=True).fill("DISPATCH")
     assert [row[1:] for row in _rows(page, "Traces")] == [
         [
             "agent.dispatch",
@@ -420,7 +418,7 @@ def test_analytics_charts_and_explores_a_tenants_traces(page, web_url, telemetry
             rows[5]["trace_id"],
         ]
     ]
-    page.get_by_label("Trace ID or operation").fill("")
+    page.get_by_label("Trace ID or operation", exact=True).fill("")
     page.get_by_label("Order").select_option("Slowest first")
     assert [row[2] for row in _rows(page, "Traces")] == [
         "1000.0 ms",
@@ -464,6 +462,7 @@ def test_analytics_finds_the_root_causes_of_the_filtered_traces(
     expect(page.locator('dl[aria-label="Root cause summary"]')).to_be_visible()
     assert _facts(page, "Root cause summary") == {
         "Traces analyzed": "6",
+        "Total issues": "2",
         "Failed": "1 (16.7%)",
         "Slow": "1 (slower than 300.0 ms)",
     }
@@ -511,6 +510,7 @@ def test_analytics_finds_the_root_causes_of_the_filtered_traces(
     ).to_be_visible()
     assert _facts(page, "Root cause summary") == {
         "Traces analyzed": "1",
+        "Total issues": "1",
         "Failed": "1 (100.0%)",
         "Slow": "0",
     }
@@ -522,7 +522,7 @@ def test_analytics_shows_an_outage_rather_than_no_traces(page, web_url, phoenix_
     _show(page, web_url, "analytics", "Analytics", "Show traces", tenant)
     region = page.get_by_role("region", name=f"Traces of {tenant}", exact=True)
     expect(region.get_by_role("alert")).to_have_text(
-        f"Could not read the traces of tenant {tenant}."
+        f"Could not read the traces of tenant {tenant}. Refresh to retry."
     )
     expect(region.get_by_text("No traces match in this window.")).to_have_count(0)
 
