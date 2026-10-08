@@ -13,6 +13,7 @@ import weakref
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Dict, Generator, List, Optional, Sequence
+from urllib.parse import quote
 
 import httpx
 import pandas as pd
@@ -108,6 +109,8 @@ def _prune_closed_loops() -> None:
 # Dataset ops run the sync phoenix Client, whose per-request default is 5s —
 # too short for a large trigger dataset or a loaded Phoenix. Pass this to every dataset call.
 _DATASET_OP_TIMEOUT_S = 120
+# Listing and deleting projects: a project delete removes all of its spans.
+_PROJECT_OP_TIMEOUT_S = 60
 _SPAN_QUERY_WINDOW_MIN_STEP = timedelta(microseconds=1)
 
 # A projected span row carries only the requested columns: 82 bytes per row for
@@ -1521,6 +1524,48 @@ class PhoenixProvider(TelemetryProvider):
                 f"Failed to configure Phoenix span export for {project_name}: {e}"
             )
             raise RuntimeError(f"Phoenix span export configuration failed: {e}") from e
+
+    async def list_projects(self, name_contains: str) -> List[str]:
+        """Names of the Phoenix projects whose name contains ``name_contains``
+        (Phoenix matches it case-insensitively)."""
+        from phoenix.client import Client
+
+        endpoint = self._require_http_endpoint()
+
+        def _list() -> List[str]:
+            with httpx.Client(
+                base_url=endpoint, timeout=_PROJECT_OP_TIMEOUT_S
+            ) as http_client:
+                projects = Client(http_client=http_client).projects.list(
+                    name_contains=name_contains
+                )
+            return [project["name"] for project in projects]
+
+        return await asyncio.to_thread(_list)
+
+    async def delete_project(self, name: str) -> bool:
+        """Delete a Phoenix project and its spans; False when Phoenix has no
+        project by that name."""
+        endpoint = self._require_http_endpoint()
+
+        def _delete() -> bool:
+            response = httpx.delete(
+                f"{endpoint.rstrip('/')}/v1/projects/{quote(name, safe='')}",
+                timeout=_PROJECT_OP_TIMEOUT_S,
+            )
+            if response.status_code == 404:
+                return False
+            response.raise_for_status()
+            return True
+
+        return await asyncio.to_thread(_delete)
+
+    def _require_http_endpoint(self) -> str:
+        if not self._http_endpoint:
+            raise RuntimeError(
+                "PhoenixProvider not initialized - call initialize() first"
+            )
+        return self._http_endpoint
 
     @property
     def client(self):

@@ -104,9 +104,16 @@ async def task_events(shared_state_redis):
 
 
 @pytest.fixture
-def wired_tenant_manager(config_manager, schema_loader, cluster_events, task_events):
+def wired_tenant_manager(
+    config_manager,
+    schema_loader,
+    cluster_events,
+    task_events,
+    telemetry_manager_with_phoenix,
+):
     """tenant_manager wired to the test Vespa, this process's cluster-events
-    channel and a task event store, module seams restored after."""
+    channel, a task event store and a Phoenix of this module's own, module
+    seams restored after."""
     previous_config_manager = tm._config_manager
     previous_schema_loader = tm._schema_loader
     previous_cluster_events = tm._cluster_events
@@ -2834,3 +2841,479 @@ async def test_a_registration_that_cannot_take_the_deployment_lease_writes_no_ro
     assert result["deleted_schemas"] == sorted([provenance_schema, wiki])
     assert _deployed_for(tenant_id) == []
     assert _tenant_rows(store, tenant_id) == []
+
+
+def _phoenix_names(http_endpoint: str) -> set:
+    from phoenix.client import Client
+
+    return {
+        project["name"] for project in Client(base_url=http_endpoint).projects.list()
+    }
+
+
+def _create_projects(http_endpoint: str, names: list) -> None:
+    from phoenix.client import Client
+
+    projects = Client(base_url=http_endpoint).projects
+    for name in names:
+        projects.create(name=name)
+
+
+def _telemetry_projects(tenant_id: str) -> list:
+    """The projects a tenant's spans land in: its own and two service ones."""
+    return [
+        f"cogniverse-{tenant_id}",
+        f"cogniverse-{tenant_id}-routing",
+        f"cogniverse-{tenant_id}-synthetic_data",
+    ]
+
+
+def _use_telemetry_endpoint(http_endpoint: str, grpc_endpoint: str) -> None:
+    """Make ``http_endpoint`` the Phoenix every telemetry read goes to."""
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
+
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+    telemetry_manager_module._telemetry_manager = TelemetryManager(
+        config=TelemetryConfig(
+            otlp_endpoint=grpc_endpoint,
+            provider_config={
+                "http_endpoint": http_endpoint,
+                "grpc_endpoint": grpc_endpoint,
+            },
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+    )
+
+
+def _error_lines(caplog) -> list:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == tm.logger.name and record.levelno == logging.ERROR
+    ]
+
+
+async def _create_bare_tenant(tenant_id: str) -> None:
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=tenant_id, created_by="cleanup-test", base_schemas=["provenance"]
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_delete_removes_the_tenants_telemetry_projects_and_no_others(
+    wired_tenant_manager, phoenix_container, caplog
+):
+    """The tenant's own and service projects go; a tenant whose id its own
+    id begins, a project merely naming it and a shared project stay."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+
+    phoenix = phoenix_container["http_endpoint"]
+    tenant_id = _unique_tenant()
+    neighbour = f"{tenant_id}0"
+    survivors = {
+        *_telemetry_projects(neighbour),
+        f"{tenant_id}-notes",
+        f"cogniverse-shared-{uuid.uuid4().hex[:8]}",
+    }
+    _create_projects(phoenix, [*_telemetry_projects(tenant_id), *sorted(survivors)])
+    await _create_bare_tenant(tenant_id)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+
+    result = await tm.delete_tenant_internal(tenant_id)
+
+    assert result["status"] == "deleted"
+    assert _phoenix_names(phoenix) & {*_telemetry_projects(tenant_id), *survivors} == (
+        survivors
+    )
+    assert _error_lines(caplog) == []
+    assert (
+        tenant_is_deleted(tm._config_manager.store, tenant_id),
+        tenant_delete_pending(tm._config_manager.store, tenant_id),
+    ) == (True, False)
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_phoenix_leaves_the_delete_pending_until_its_retry(
+    wired_tenant_manager, phoenix_container, cluster_events, caplog
+):
+    """Phoenix does not answer. The delete still drops the tenant, logs at
+    ERROR that its telemetry projects were not removed, and stays pending;
+    its retry, once Phoenix answers, removes them and completes it."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+
+    phoenix = phoenix_container["http_endpoint"]
+    store = tm._config_manager.store
+    tenant_id = _unique_tenant()
+    _create_projects(phoenix, _telemetry_projects(tenant_id))
+    await _create_bare_tenant(tenant_id)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        dead = f"http://127.0.0.1:{probe.getsockname()[1]}"
+    _use_telemetry_endpoint(dead, phoenix_container["grpc_endpoint"])
+    try:
+        result = await tm.delete_tenant_internal(tenant_id)
+    finally:
+        _use_telemetry_endpoint(phoenix, phoenix_container["grpc_endpoint"])
+    logged = _error_lines(caplog)
+    pending = tenant_delete_pending(store, tenant_id)
+    left = _phoenix_names(phoenix) & set(_telemetry_projects(tenant_id))
+    caplog.clear()
+
+    retried = await tm.delete_tenant_internal(tenant_id)
+
+    assert (result["status"], result["deleted_schemas"]) == (
+        "deleted",
+        [_schema_names(tenant_id)[1]],
+    )
+    assert [message.split(" (", 1)[0] for message in logged] == [
+        f"Cannot list the telemetry projects of deleted tenant {tenant_id}"
+    ]
+    assert logged[0].endswith(
+        "; the delete stays pending and its retry, or the next create of the "
+        "tenant, deletes them"
+    ), logged
+    assert (pending, left) == (True, set(_telemetry_projects(tenant_id)))
+    assert retried == {
+        "status": "deleted",
+        "tenant_full_id": tenant_id,
+        "schemas_deleted": 0,
+        "deleted_schemas": [],
+        "organization_deleted": False,
+        "workers_released": [cluster_events.worker_id],
+    }
+    assert _phoenix_names(phoenix) & set(_telemetry_projects(tenant_id)) == set()
+    assert _error_lines(caplog) == []
+    assert tenant_delete_pending(store, tenant_id) is False
+
+
+@pytest.mark.asyncio
+async def test_a_project_phoenix_refuses_to_delete_is_named_and_removed_on_retry(
+    wired_tenant_manager, phoenix_container, caplog
+):
+    """Phoenix refuses one project's delete: the others go, the refused one
+    is named at ERROR and stays, the delete stays pending, and its retry
+    removes it."""
+    from urllib.parse import unquote
+
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+    phoenix = phoenix_container["http_endpoint"]
+    store = tm._config_manager.store
+    tenant_id = _unique_tenant()
+    refused = f"cogniverse-{tenant_id}-routing"
+    _create_projects(phoenix, _telemetry_projects(tenant_id))
+    await _create_bare_tenant(tenant_id)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+
+    def refuse_one(method, path, _body):
+        if method == "DELETE" and unquote(path).endswith(f"/v1/projects/{refused}"):
+            return 500, {"detail": "injected storage failure"}
+        return None
+
+    with InterceptFaultProxy(phoenix, refuse_one) as proxy:
+        _use_telemetry_endpoint(
+            f"http://127.0.0.1:{proxy.port}", phoenix_container["grpc_endpoint"]
+        )
+        try:
+            await tm.delete_tenant_internal(tenant_id)
+        finally:
+            _use_telemetry_endpoint(phoenix, phoenix_container["grpc_endpoint"])
+        deletes = sorted(
+            unquote(path) for method, path, _ in proxy.requests if method == "DELETE"
+        )
+    logged = _error_lines(caplog)
+    pending = tenant_delete_pending(store, tenant_id)
+    left = _phoenix_names(phoenix) & set(_telemetry_projects(tenant_id))
+    caplog.clear()
+
+    await tm.delete_tenant_internal(tenant_id)
+
+    assert deletes == sorted(
+        f"/v1/projects/{name}" for name in _telemetry_projects(tenant_id)
+    )
+    assert [message.split(" (", 1)[0] for message in logged] == [
+        f"Cannot delete telemetry project {refused} of deleted tenant {tenant_id}"
+    ]
+    assert (pending, left) == (True, {refused})
+    assert _phoenix_names(phoenix) & set(_telemetry_projects(tenant_id)) == set()
+    assert tenant_delete_pending(store, tenant_id) is False
+
+
+@pytest.mark.asyncio
+async def test_two_tenants_deleted_together_each_remove_only_their_projects(
+    wired_tenant_manager, phoenix_container, caplog
+):
+    """Two deletes, one tenant's id beginning the other's, reach Phoenix
+    together: each holds at a barrier until the other's first project delete
+    has arrived. Each removes exactly its own projects."""
+    from urllib.parse import unquote
+
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+    phoenix = phoenix_container["http_endpoint"]
+    store = tm._config_manager.store
+    first = _unique_tenant()
+    second = f"{first}0"
+    shared = f"cogniverse-shared-{uuid.uuid4().hex[:8]}"
+    _create_projects(
+        phoenix, [*_telemetry_projects(first), *_telemetry_projects(second), shared]
+    )
+    await _create_bare_tenant(first)
+    await _create_bare_tenant(second)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+    together = threading.Barrier(2)
+    arrived: set = set()
+    lock = threading.Lock()
+
+    def hold_until_both(method, path, _body):
+        if method != "DELETE":
+            return None
+        tenant = unquote(path).rsplit("/", 1)[1].removeprefix("cogniverse-")
+        owner = second if tenant.startswith(second) else first
+        with lock:
+            first_arrival = owner not in arrived
+            arrived.add(owner)
+        if first_arrival:
+            together.wait(timeout=120)
+        return None
+
+    with InterceptFaultProxy(phoenix, hold_until_both) as proxy:
+        _use_telemetry_endpoint(
+            f"http://127.0.0.1:{proxy.port}", phoenix_container["grpc_endpoint"]
+        )
+        try:
+            results = await asyncio.gather(
+                tm.delete_tenant_internal(first), tm.delete_tenant_internal(second)
+            )
+        finally:
+            _use_telemetry_endpoint(phoenix, phoenix_container["grpc_endpoint"])
+
+    assert [result["status"] for result in results] == ["deleted", "deleted"]
+    assert (arrived, together.broken) == ({first, second}, False)
+    assert _phoenix_names(phoenix) & {
+        *_telemetry_projects(first),
+        *_telemetry_projects(second),
+        shared,
+    } == {shared}
+    assert _error_lines(caplog) == []
+    assert (
+        tenant_delete_pending(store, first),
+        tenant_delete_pending(store, second),
+    ) == (False, False)
+
+
+_CRON_WORKFLOW_LABEL = "workflows.argoproj.io/cron-workflow"
+
+
+@pytest.fixture(scope="module")
+def argo_cluster(tmp_path_factory):
+    """A real Argo API over a Kubernetes datastore of this module's own."""
+    from tests.utils.argo_api import argo_api_server
+
+    with argo_api_server(tmp_path_factory.mktemp("delete-argo")) as cluster:
+        yield cluster
+
+
+def _use_argo(api_url) -> None:
+    from cogniverse_runtime.config_loader import WorkflowSettings, get_workflow_settings
+
+    get_workflow_settings._instance = WorkflowSettings(
+        api_url=api_url,
+        namespace="cogniverse",
+        job_template="cogniverse-job-runner",
+        optimization_template="cogniverse-optimization-runner",
+    )
+
+
+@pytest.fixture
+def argo(argo_cluster):
+    """Workflow settings naming the module's Argo; the previous ones after."""
+    from cogniverse_runtime.config_loader import get_workflow_settings
+
+    previous = getattr(get_workflow_settings, "_instance", None)
+    _use_argo(argo_cluster["url"])
+    yield argo_cluster
+    if previous is None:
+        del get_workflow_settings._instance
+    else:
+        get_workflow_settings._instance = previous
+
+
+def _workflow(name: str, tenant_id: str, phase: str, *, label: str, cron: bool):
+    """A Workflow as the runtime submits it (tenant label) or as a
+    CronWorkflow spawns it (cron label only); both carry the raw tenant id
+    as their ``tenant-id`` argument."""
+    from cogniverse_foundation.common.tenant_utils import sanitize_k8s_label_value
+
+    labels = (
+        {_CRON_WORKFLOW_LABEL: "tenant-job"}
+        if cron
+        else {"cogniverse.ai/tenant": sanitize_k8s_label_value(label)}
+    )
+    return {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": name, "namespace": "cogniverse", "labels": labels},
+        "spec": {
+            "entrypoint": "run",
+            "arguments": {"parameters": [{"name": "tenant-id", "value": tenant_id}]},
+            "workflowTemplateRef": {"name": "cogniverse-optimization-runner"},
+        },
+        "status": {"phase": phase},
+    }
+
+
+def _seed_workflows(kubeconfig, tenant_id: str, peer: str) -> dict:
+    """The tenant's finished and running Workflows, and a peer's finished one
+    carrying the tenant's label; returns their names by role."""
+    from tests.utils.argo_api import apply_manifest
+
+    stem = uuid.uuid4().hex[:8]
+    names = {
+        "succeeded": f"optimize-succeeded-{stem}",
+        "failed_scheduled": f"job-failed-{stem}",
+        "errored": f"optimize-error-{stem}",
+        "running": f"optimize-running-{stem}",
+        "peer": f"optimize-peer-{stem}",
+    }
+    for role, owner, phase, cron in (
+        ("succeeded", tenant_id, "Succeeded", False),
+        ("failed_scheduled", tenant_id, "Failed", True),
+        ("errored", tenant_id, "Error", False),
+        ("running", tenant_id, "Running", False),
+        ("peer", peer, "Succeeded", False),
+    ):
+        apply_manifest(
+            kubeconfig,
+            _workflow(names[role], owner, phase, label=tenant_id, cron=cron),
+        )
+    return names
+
+
+def _argo_workflows(api_url: str) -> set:
+    listed = requests.get(f"{api_url}/api/v1/workflows/cogniverse", timeout=10)
+    assert listed.status_code == 200, listed.text
+    return {item["metadata"]["name"] for item in listed.json().get("items") or []}
+
+
+@pytest.mark.asyncio
+async def test_a_delete_removes_the_tenants_finished_workflows(
+    wired_tenant_manager, argo, caplog
+):
+    """Its succeeded, failed and errored Workflows go, scheduled or not; its
+    running one, and a peer's run carrying the same label, stay."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+
+    tenant_id = _unique_tenant()
+    names = _seed_workflows(argo["kubeconfig"], tenant_id, f"{tenant_id}0")
+    await _create_bare_tenant(tenant_id)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+
+    result = await tm.delete_tenant_internal(tenant_id)
+
+    assert result["status"] == "deleted"
+    assert _argo_workflows(argo["url"]) & set(names.values()) == {
+        names["running"],
+        names["peer"],
+    }
+    assert _error_lines(caplog) == []
+    assert tenant_delete_pending(tm._config_manager.store, tenant_id) is False
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_argo_leaves_the_delete_pending_until_its_retry(
+    wired_tenant_manager, argo, cluster_events, caplog
+):
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+
+    store = tm._config_manager.store
+    tenant_id = _unique_tenant()
+    names = _seed_workflows(argo["kubeconfig"], tenant_id, f"{tenant_id}0")
+    finished = {names["succeeded"], names["failed_scheduled"], names["errored"]}
+    await _create_bare_tenant(tenant_id)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        dead = f"http://127.0.0.1:{probe.getsockname()[1]}"
+
+    _use_argo(dead)
+    try:
+        result = await tm.delete_tenant_internal(tenant_id)
+    finally:
+        _use_argo(argo["url"])
+    logged = _error_lines(caplog)
+    pending = tenant_delete_pending(store, tenant_id)
+    left = _argo_workflows(argo["url"]) & finished
+    caplog.clear()
+
+    retried = await tm.delete_tenant_internal(tenant_id)
+
+    assert result["status"] == "deleted"
+    assert [message.split(" (", 1)[0] for message in logged] == [
+        f"Cannot list the workflows of deleted tenant {tenant_id}"
+    ]
+    assert logged[0].endswith(
+        "; the delete stays pending and its retry, or the next create of the "
+        "tenant, deletes them"
+    ), logged
+    assert (pending, left) == (True, finished)
+    assert retried["workers_released"] == [cluster_events.worker_id]
+    assert _argo_workflows(argo["url"]) & finished == set()
+    assert _error_lines(caplog) == []
+    assert tenant_delete_pending(store, tenant_id) is False
+
+
+@pytest.mark.asyncio
+async def test_a_workflow_argo_refuses_to_delete_is_named_and_removed_on_retry(
+    wired_tenant_manager, argo, caplog
+):
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+    store = tm._config_manager.store
+    tenant_id = _unique_tenant()
+    names = _seed_workflows(argo["kubeconfig"], tenant_id, f"{tenant_id}0")
+    finished = {names["succeeded"], names["failed_scheduled"], names["errored"]}
+    refused = names["errored"]
+    await _create_bare_tenant(tenant_id)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+
+    def refuse_one(method, path, _body):
+        if method == "DELETE" and path.endswith(
+            f"/api/v1/workflows/cogniverse/{refused}"
+        ):
+            return 500, {"code": 13, "message": "injected storage failure"}
+        return None
+
+    with InterceptFaultProxy(argo["url"], refuse_one) as proxy:
+        _use_argo(proxy.url)
+        try:
+            await tm.delete_tenant_internal(tenant_id)
+        finally:
+            _use_argo(argo["url"])
+    logged = _error_lines(caplog)
+    pending = tenant_delete_pending(store, tenant_id)
+    left = _argo_workflows(argo["url"]) & finished
+    caplog.clear()
+
+    await tm.delete_tenant_internal(tenant_id)
+
+    assert [message.split(" (", 1)[0] for message in logged] == [
+        f"Cannot delete workflow {refused} of deleted tenant {tenant_id}"
+    ]
+    assert (pending, left) == (True, {refused})
+    assert _argo_workflows(argo["url"]) & finished == set()
+    assert tenant_delete_pending(store, tenant_id) is False

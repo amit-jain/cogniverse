@@ -508,6 +508,24 @@ class TelemetryProvider(ABC):
         span export imports nothing lazily keep this default.
         """
 
+    @abstractmethod
+    async def list_projects(self, name_contains: str) -> List[str]:
+        """Names of the backend's projects whose name contains
+        ``name_contains``.
+
+        Raises:
+            Exception: the backend did not answer; never an empty list.
+        """
+
+    @abstractmethod
+    async def delete_project(self, name: str) -> bool:
+        """Delete the project ``name`` and its spans. Returns False when no
+        such project exists.
+
+        Raises:
+            Exception: the backend did not answer or refused the delete.
+        """
+
     @property
     def traces(self) -> TraceStore:
         """Get trace store (query spans)"""

@@ -627,6 +627,17 @@ class TelemetryProvider(ABC):
         TelemetryManager.preload_span_export before serving, so a tenant's
         first span does not import them on the event loop. Default: no-op."""
 
+    @abstractmethod
+    async def list_projects(self, name_contains: str) -> List[str]:
+        """Names of the projects whose name contains ``name_contains``.
+        Raises when the backend does not answer, never an empty list."""
+
+    @abstractmethod
+    async def delete_project(self, name: str) -> bool:
+        """Delete a project and its spans; False when it does not exist.
+        Raises when the backend does not answer or refuses. A tenant delete
+        removes the tenant's projects through these two."""
+
     @property
     def traces(self) -> TraceStore:
         """Get trace store (query spans). Raises RuntimeError if not initialized."""
@@ -1377,6 +1388,17 @@ project = config.get_project_name("acme-corp", "routing")
 
 project_default = config.get_project_name("acme-corp")
 # Returns: "cogniverse-acme-corp" (tenant_project_template, no service suffix)
+```
+
+---
+
+#### `is_tenant_project(name: str, tenant_id: str) -> bool`
+Whether project `name` is the tenant's own project or one of its service projects, by `tenant_project_template` and `tenant_service_template`. `tenant_id` is canonical. A tenant whose id begins another's (`acme:prod` and `acme:prod2`) never claims the other's projects.
+
+```python
+config = TelemetryConfig()
+config.is_tenant_project("cogniverse-acme:prod-routing", "acme:prod")   # True
+config.is_tenant_project("cogniverse-acme:prod2", "acme:prod")          # False
 ```
 
 ---

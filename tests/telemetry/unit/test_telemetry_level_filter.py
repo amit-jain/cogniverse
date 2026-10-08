@@ -4,6 +4,9 @@ Two layers tested:
 1. ``TelemetryConfig.should_instrument_component`` — pure filter logic.
 2. ``TelemetryManager.span()`` — when the filter says no, yields a
    NoOpSpan unconditionally (no tracer lookup, no OTel call).
+
+Also ``TelemetryConfig.is_tenant_project``, which names the projects a tenant
+delete removes.
 """
 
 from unittest.mock import MagicMock
@@ -173,3 +176,38 @@ def test_span_default_component_is_agents_admitted_at_detailed():
     with mgr_detailed.span("t", tenant_id="t1") as _:
         pass
     assert [s.name for s in exporter.get_finished_spans()] == ["t"]
+
+
+@pytest.mark.parametrize(
+    ("name", "owned"),
+    [
+        ("cogniverse-acme:prod", True),
+        ("cogniverse-acme:prod-routing", True),
+        ("cogniverse-acme:prod-synthetic_data", True),
+        ("cogniverse-acme:prod2", False),
+        ("cogniverse-acme:prod2-routing", False),
+        ("cogniverse-acme:prod-", False),
+        ("cogniverse-acme", False),
+        ("acme:prod-notes", False),
+        ("cogniverse-search", False),
+    ],
+)
+def test_a_tenants_projects_are_its_own_and_its_service_ones(name, owned):
+    assert TelemetryConfig().is_tenant_project(name, "acme:prod") is owned
+
+
+@pytest.mark.parametrize(
+    ("name", "owned"),
+    [
+        ("traces/acme:prod", True),
+        ("traces/acme:prod/routing/live", True),
+        ("traces/acme:prod/live", False),
+        ("traces/acme:prod2/routing/live", False),
+    ],
+)
+def test_custom_templates_decide_which_projects_are_the_tenants(name, owned):
+    config = TelemetryConfig(
+        tenant_project_template="traces/{tenant_id}",
+        tenant_service_template="traces/{tenant_id}/{service}/live",
+    )
+    assert config.is_tenant_project(name, "acme:prod") is owned

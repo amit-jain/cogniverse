@@ -1157,6 +1157,59 @@ async def _argo_list_workflows(label_selector: str) -> List[Dict[str, Any]]:
     return [item for item in (body.get("items") or []) if isinstance(item, dict)]
 
 
+# Phases after which Argo runs nothing more for a Workflow.
+_FINISHED_WORKFLOW_PHASES = frozenset({"Succeeded", "Failed", "Error"})
+
+
+async def delete_finished_tenant_workflows(
+    tenant_id: str,
+) -> tuple[List[str], Dict[str, str]]:
+    """Delete every finished Workflow ``tenant_id`` owns.
+
+    Found as ``list_manual_optimization_runs`` finds a tenant's runs: by the
+    tenant label and, for scheduled runs, the cron-workflow label, owned by
+    the raw ``tenant-id`` argument. A deployment without Argo has none.
+    Returns the names deleted (a Workflow already gone counts) and, for each
+    one Argo did not delete, why.
+
+    Raises:
+        ArgoListUnavailableError: Argo could not be listed.
+    """
+    settings = get_workflow_settings()
+    if settings.api_url is None:
+        return [], {}
+    listed = await _argo_list_workflows(
+        f"cogniverse.ai/tenant={_sanitize_label_value(tenant_id)}"
+    )
+    listed += await _argo_list_workflows(_CRON_WORKFLOW_LABEL)
+    names = sorted(
+        {
+            item["metadata"]["name"]
+            for item in listed
+            if (item.get("metadata") or {}).get("name")
+            and (item.get("status") or {}).get("phase") in _FINISHED_WORKFLOW_PHASES
+            and _workflow_belongs_to_tenant(item, tenant_id)
+        }
+    )
+    deleted: List[str] = []
+    failed: Dict[str, str] = {}
+    client = await _shared_argo_client()
+    for name in names:
+        try:
+            response = await client.delete(
+                f"{settings.api_url}/api/v1/workflows/{settings.namespace}/{name}",
+                headers=_argo_auth_headers(),
+            )
+        except httpx.HTTPError as exc:
+            failed[name] = f"{type(exc).__name__}: {exc}"
+            continue
+        if response.status_code in (200, 404):
+            deleted.append(name)
+        else:
+            failed[name] = f"HTTP {response.status_code}: {response.text[:200]}"
+    return deleted, failed
+
+
 def _references_template(node: Any, template_name: str) -> bool:
     """Whether any ``templateRef``/``workflowTemplateRef`` in ``node`` names
     ``template_name``. A manual run references it at the spec root; a
