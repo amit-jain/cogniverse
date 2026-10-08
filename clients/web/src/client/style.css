@@ -131,3 +131,6 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .code-file figcaption, .code-run figcaption { font-size: 12px; color: var(--muted); margin-bottom: 6px; overflow-wrap: anywhere; }
 .code-result pre { margin: 0; font-size: 12px; overflow-x: auto; white-space: pre; }
 .code-stderr { color: #c0392b; }
+.band.ok { color: #2e8b57; }
+.band.warn { color: #b9770e; }
+.band.error { color: #c0392b; }
