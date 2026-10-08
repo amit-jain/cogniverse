@@ -246,6 +246,27 @@ class DatasetReplaceRestoreFailedError(RuntimeError):
 # The dataset metadata key naming the tenant that owns a dataset.
 DATASET_TENANT_KEY = "tenant_id"
 
+# The optimization artifacts a tenant keeps in the dataset store (prompts,
+# demonstrations, experiment rows, model and config blobs) are datasets named
+# ``{ARTIFACT_DATASET_PREFIX}{kind}-{tenant_id}-{key}``, ``kind`` one word.
+ARTIFACT_DATASET_PREFIX = "dspy-"
+
+
+def artifact_dataset_name(kind: str, tenant_id: str, key: str) -> str:
+    """The name of ``tenant_id``'s artifact dataset ``kind``/``key``."""
+    if not kind or "-" in kind:
+        raise ValueError(f"artifact kind must be one word without '-', got {kind!r}")
+    return f"{ARTIFACT_DATASET_PREFIX}{kind}-{tenant_id}-{key}"
+
+
+def is_artifact_dataset(name: str, tenant_id: str) -> bool:
+    """Whether ``name`` is one of ``tenant_id``'s artifact datasets, as
+    ``artifact_dataset_name`` names them."""
+    if not name.startswith(ARTIFACT_DATASET_PREFIX):
+        return False
+    kind, sep, rest = name[len(ARTIFACT_DATASET_PREFIX) :].partition("-")
+    return bool(kind) and bool(sep) and rest.startswith(f"{tenant_id}-")
+
 
 @dataclass(frozen=True)
 class DatasetSummary:

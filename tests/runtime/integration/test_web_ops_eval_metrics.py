@@ -19,6 +19,7 @@ import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
 import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_evaluation.data.datasets import INPUT_KEYS, OUTPUT_KEYS
 from cogniverse_foundation.telemetry.config import (
@@ -340,6 +341,34 @@ class TestPhoenixDatasets:
         expect(
             older_scores.locator('dl[aria-label="Evaluation summary"] dd')
         ).to_have_text(["1", "1", "0", "0", "0"])
+
+    def test_the_tenants_optimization_artifacts_are_not_offered(
+        self, page, web_url, store, telemetry
+    ):
+        """Artifact datasets written after the evaluation dataset (a golden-set
+        upload, an optimizer's prompts) are not listed, so the evaluation
+        dataset is the one chosen."""
+        tenant = _tenant("webdsartifacts")
+        suffix = uuid4().hex[:8]
+        evaluation = _create_dataset(store, tenant, f"eval-{suffix}")
+        time.sleep(1.1)
+        artifacts = ArtifactManager(telemetry.get_provider(tenant_id=tenant), tenant)
+        run_in_own_loop(artifacts.save_blob("config", "golden_set_ground_truth", "[]"))
+        run_in_own_loop(
+            artifacts.save_prompts("query_enhancement", {"system": "Expand."})
+        )
+        newest = run_in_own_loop(store.describe_datasets())[0]
+        assert newest.name == f"dspy-prompts-{tenant}-query_enhancement"
+
+        _show(page, web_url, "evaluation", "Evaluation", "Evaluate", tenant)
+        page.get_by_role("tablist", name="Evaluate against").get_by_role(
+            "tab", name="Phoenix datasets"
+        ).click()
+        listing = _region(page, f"Phoenix datasets of {tenant}")
+        dataset = listing.get_by_role("combobox", name="Dataset")
+        expect(dataset.locator("option")).to_have_text([f"eval-{suffix} (3 examples)"])
+        expect(dataset).to_have_value(evaluation.id)
+        expect(_region(page, f"Evaluation of eval-{suffix}")).to_be_visible()
 
     def test_a_tenant_without_datasets_is_told_and_no_link_is_offered(
         self, page, web_url, store, monkeypatch
