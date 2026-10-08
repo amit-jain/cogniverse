@@ -738,6 +738,9 @@ class _ApprovedDatasetIntegrityStore(DatasetStore):
     async def delete_dataset(self, name: str) -> bool:
         return await self._delegate.delete_dataset(name=name)
 
+    async def list_datasets(self) -> List[Dict[str, Any]]:
+        return await self._delegate.list_datasets()
+
 
 class ApprovalStorageImpl(ApprovalStorage):
     """
