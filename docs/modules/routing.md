@@ -531,7 +531,9 @@ orchestration-workflow-level annotations, under `ORCHESTRATION_ANNOTATION_NAME`
 the label, score and reasoning and adds `human_reviewed: true`, `requires_review: false`,
 `approved_by` and `approval_timestamp` to the metadata, returning the stored annotation. A
 span without an annotation raises `LLMAnnotationNotFoundError`; one labelled by someone other
-than the LLM raises `NotAnLLMAnnotationError`. `store_llm_annotation` and
+than the LLM raises `NotAnLLMAnnotationError`; one the LLM flagged for review
+(`requires_review: true`) raises `LLMAnnotationNeedsReviewError`, since a reviewer labels it
+instead. `store_llm_annotation` and
 `store_human_annotation` replace any earlier label of the span (Phoenix keeps one annotation
 per span and name).
 

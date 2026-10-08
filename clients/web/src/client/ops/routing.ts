@@ -93,6 +93,13 @@ export function labelState(decision: RoutingDecision): LabelState {
   return decision.label.human_reviewed ? 'reviewed' : 'llm';
 }
 
+/** Whether a reviewer may approve the decision's label as it is: an LLM
+ * label the LLM was sure of. One it flagged for review needs a reviewer's
+ * own label. */
+export function approvable(decision: RoutingDecision): boolean {
+  return labelState(decision) === 'llm' && !decision.label!.requires_review;
+}
+
 export const LABEL_FILTERS: { value: LabelState | 'all'; label: string }[] = [
   { value: 'all', label: 'All decisions' },
   { value: 'llm', label: 'LLM labels to review' },

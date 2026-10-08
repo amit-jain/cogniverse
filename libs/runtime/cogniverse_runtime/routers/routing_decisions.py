@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from cogniverse_agents.routing.annotation_agent import AnnotationAgent
 from cogniverse_agents.routing.annotation_storage import (
     AnnotationStorage,
+    LLMAnnotationNeedsReviewError,
     LLMAnnotationNotFoundError,
     NotAnLLMAnnotationError,
 )
@@ -392,6 +393,14 @@ async def approve_llm_label(tenant_id: str, span_id: str, request: DecisionRef):
         raise HTTPException(
             status_code=404,
             detail=f"Routing decision {span_id} has no LLM label to approve.",
+        ) from exc
+    except LLMAnnotationNeedsReviewError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The LLM flagged its label of routing decision {span_id} for "
+                "review; label the decision instead of approving it."
+            ),
         ) from exc
     except NotAnLLMAnnotationError as exc:
         raise HTTPException(

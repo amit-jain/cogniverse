@@ -9,6 +9,7 @@ fail its reads and writes.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import statistics
 import threading
 import time
@@ -276,11 +277,13 @@ LLM_LABEL = AutoAnnotation(
     suggested_correct_agent="summarizer_agent",
     requires_human_review=True,
 )
+# A label the LLM is sure of, which a reviewer may approve as it is.
+SURE_LLM_LABEL = dataclasses.replace(LLM_LABEL, requires_human_review=False)
 
 
-def _store_llm_label(tenant, span_id):
+def _store_llm_label(tenant, span_id, label=LLM_LABEL):
     run_in_own_loop(
-        AnnotationStorage(tenant_id=tenant).store_llm_annotation(span_id, LLM_LABEL)
+        AnnotationStorage(tenant_id=tenant).store_llm_annotation(span_id, label)
     )
 
 
@@ -299,15 +302,15 @@ def _decision(body, span_id):
     return decision
 
 
-async def _recorded_decision(client, telemetry, tenant, *, llm_label=True):
+async def _recorded_decision(client, telemetry, tenant, *, llm_label=LLM_LABEL):
     """One routing decision of ``tenant`` as the list serves it, labelled
-    by the LLM unless ``llm_label`` is false."""
+    by the LLM with ``llm_label`` unless it is None."""
     span_id = record_routing(telemetry, tenant, "search_agent", 0.4, 50, minutes_ago=1)
     telemetry.force_flush(timeout_millis=10000)
-    if not llm_label:
+    if llm_label is None:
         body = await _until(client, _routing_path(tenant), _routed(1))
         return _decision(body, span_id)
-    _store_llm_label(tenant, span_id)
+    _store_llm_label(tenant, span_id, llm_label)
     body = await _until(
         client, _routing_path(tenant), _labelled(span_id, lambda label: True)
     )
@@ -330,11 +333,13 @@ LLM_LABEL_FIELDS = {
 async def test_approving_an_llm_label_keeps_it(telemetry, app):
     tenant = _tenant("approve")
     async with _client(app) as client:
-        decision = await _recorded_decision(client, telemetry, tenant)
+        decision = await _recorded_decision(
+            client, telemetry, tenant, llm_label=SURE_LLM_LABEL
+        )
         assert decision["label"] == {
             **LLM_LABEL_FIELDS,
             "human_reviewed": False,
-            "requires_review": True,
+            "requires_review": False,
             "approved_by": None,
         }
         response = await client.post(
@@ -355,6 +360,48 @@ async def test_approving_an_llm_label_keeps_it(telemetry, app):
             _labelled(decision["span_id"], lambda label: label["human_reviewed"]),
         )
     assert _decision(body, decision["span_id"])["label"] == approved
+
+
+async def test_a_label_the_llm_flagged_for_review_is_labelled_not_approved(
+    telemetry, app
+):
+    tenant = _tenant("needsreview")
+    async with _client(app) as client:
+        decision = await _recorded_decision(client, telemetry, tenant)
+        assert decision["label"] == {
+            **LLM_LABEL_FIELDS,
+            "human_reviewed": False,
+            "requires_review": True,
+            "approved_by": None,
+        }
+        refused = await client.post(
+            _decision_path(tenant, decision, "approve"),
+            json={"start_time": decision["start_time"], "reviewer": "dana"},
+        )
+    stored = run_in_own_loop(
+        AnnotationStorage(tenant_id=tenant).get_annotation(decision["span_id"])
+    )
+    assert (refused.status_code, refused.json()["detail"]) == (
+        409,
+        f"The LLM flagged its label of routing decision {decision['span_id']} "
+        "for review; label the decision instead of approving it.",
+    )
+    # Nothing was written: the label is the LLM's, still awaiting review.
+    assert (
+        stored["label"],
+        {
+            key: stored["metadata"].get(key)
+            for key in ("annotator", "human_reviewed", "requires_review", "approved_by")
+        },
+    ) == (
+        "wrong_routing",
+        {
+            "annotator": "llm",
+            "human_reviewed": False,
+            "requires_review": True,
+            "approved_by": None,
+        },
+    )
 
 
 async def test_a_reviewer_label_replaces_the_llm_label(telemetry, app):
@@ -402,7 +449,7 @@ async def test_a_reviewer_label_replaces_the_llm_label(telemetry, app):
 async def test_review_refuses_what_it_cannot_apply(telemetry, app):
     tenant = _tenant("refuse")
     async with _client(app) as client:
-        decision = await _recorded_decision(client, telemetry, tenant, llm_label=False)
+        decision = await _recorded_decision(client, telemetry, tenant, llm_label=None)
         unlabelled = await client.post(
             _decision_path(tenant, decision, "approve"),
             json={"start_time": decision["start_time"], "reviewer": "dana"},
@@ -457,7 +504,9 @@ async def test_concurrent_approvals_and_reads_hold_their_own_state(
 ):
     tenants = [_tenant("concurrentrouting"), _tenant("concurrentrouting")]
     async with _client(app) as client:
-        decision = await _recorded_decision(client, telemetry, tenants[0])
+        decision = await _recorded_decision(
+            client, telemetry, tenants[0], llm_label=SURE_LLM_LABEL
+        )
         record_routing(telemetry, tenants[1], "summarizer_agent", 0.9, 5, minutes_ago=2)
         record_routing(telemetry, tenants[1], "summarizer_agent", 0.9, 5, minutes_ago=3)
         telemetry.force_flush(timeout_millis=10000)
@@ -514,7 +563,9 @@ async def test_an_unreadable_or_unwritable_telemetry_backend_answers_502(
 ):
     tenant = _tenant("routingoutage")
     async with _client(app) as client:
-        decision = await _recorded_decision(client, telemetry, tenant)
+        decision = await _recorded_decision(
+            client, telemetry, tenant, llm_label=SURE_LLM_LABEL
+        )
         span_id = decision["span_id"]
         approve = {"start_time": decision["start_time"], "reviewer": "dana"}
 
