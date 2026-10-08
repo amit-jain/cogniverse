@@ -1,8 +1,15 @@
-"""The Embedding Atlas route's tensor reading and projection."""
+"""The Embedding Atlas routes' tensor reading, projections and clusters."""
 
 import numpy as np
 import pytest
 
+from cogniverse_runtime.atlas_projection import (
+    TooFewDocumentsError,
+    automatic_clusters,
+    build_map,
+    most_similar,
+    unit_rows,
+)
 from cogniverse_runtime.routers.embedding_atlas import (
     embedding_fields,
     pooled_vector,
@@ -74,3 +81,73 @@ def test_projection_orientation_does_not_depend_on_row_order():
 def test_too_few_rows_sit_at_the_origin(rows):
     coords, shares = project(np.ones((rows, 4)))
     assert (coords.tolist(), shares) == ([[0.0, 0.0]] * rows, [0.0, 0.0])
+
+
+def test_a_schema_without_a_float_tensor_has_no_embedding_field():
+    schema = {
+        "document": {
+            "fields": [
+                {"name": "title", "type": "string"},
+                {"name": "embedding_binary", "type": "tensor<int8>(token{}, v[16])"},
+            ]
+        }
+    }
+    assert embedding_fields(schema) == []
+
+
+def test_an_encoder_array_pools_like_a_stored_tensor():
+    assert pooled_vector(np.array([[1.0, 1.0], [3.0, 5.0]])).tolist() == [2.0, 3.0]
+    assert pooled_vector(np.array([0.5, 1.5])).tolist() == [0.5, 1.5]
+
+
+def _blobs():
+    rng = np.random.default_rng(3)
+    left = rng.normal(loc=(-10, 0), scale=0.2, size=(5, 2))
+    right = rng.normal(loc=(10, 0), scale=0.2, size=(5, 2))
+    return np.vstack([left, right])
+
+
+def test_clusters_split_separate_groups_and_are_named_by_distinctive_terms():
+    texts = ["rivers carve canyons"] * 5 + ["volcanoes build islands"] * 5
+    labels, names = automatic_clusters(_blobs(), texts)
+    groups = {
+        int(label): [i for i, x in enumerate(labels) if x == label]
+        for label in set(labels)
+    }
+    assert sorted(groups.values()) == [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]]
+    assert {names[label] for label in groups} == {
+        "canyons, carve, rivers",
+        "build, islands, volcanoes",
+    }
+
+
+def test_clusters_without_terms_are_numbered():
+    labels, names = automatic_clusters(_blobs(), [""] * 10)
+    assert sorted(names.values()) == ["Cluster 1", "Cluster 2"]
+    assert sorted(set(int(x) for x in labels)) == [0, 1]
+
+
+def test_most_similar_ranks_by_cosine_and_keeps_document_order_on_ties():
+    document_map = build_map(
+        [{"id": str(i), "title": None, "text": None} for i in range(5)],
+        np.array([[1.0, 0, 0], [0, 1.0, 0], [2.0, 0, 0], [1.0, 1.0, 0], [0, 0, 1.0]]),
+    )
+    ranked = most_similar(document_map, np.array([3.0, 0, 0]))
+    assert [(i, round(s, 6)) for i, s in ranked] == [
+        (0, 1.0),
+        (2, 1.0),
+        (3, round(1 / np.sqrt(2), 6)),
+    ]
+
+
+def test_a_map_needs_four_documents():
+    with pytest.raises(TooFewDocumentsError) as refused:
+        build_map([{"id": str(i)} for i in range(3)], np.eye(3))
+    assert (refused.value.count, str(refused.value)) == (3, "3 documents, fewer than 4")
+
+
+def test_unit_rows_leave_a_zero_row_at_zero():
+    assert unit_rows(np.array([[3.0, 4.0], [0.0, 0.0]])).tolist() == [
+        [0.6, 0.8],
+        [0.0, 0.0],
+    ]

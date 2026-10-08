@@ -1875,6 +1875,8 @@ serves it.
 
 `score_recorded_searches(spans, golden_rows)` scores a tenant's `search_service.search` spans (`SEARCH_SPAN_NAME`) against its canonical golden rows (`query`, list of `expected_videos`), without running a search. A span whose stripped `query` is a golden query is scored under its `profile` and `strategy`; the latest successful search per profile, strategy and query counts. Result rows name their source by `result_source_title_key`, and a source counts once, at its best rank. Each query gets `mrr`, `ndcg` (at 10), `recall_at_1`, `recall_at_5` and `precision_at_5` from `calculate_metrics_suite`.
 
+`dataset_golden_rows(examples)` turns an evaluation dataset's examples (Phoenix's `input`/`output` columns, as `DatasetManager` writes them: `input.query`, comma-joined `output.expected_videos`) into the same canonical golden rows; examples without a query or an expected source are left out, and a repeated query keeps its first position and its last expectation.
+
 It returns `golden_queries`; `strategies` (per profile and strategy, sorted: `queries`, the mean of each metric, and `success_rate`, the share of queries whose first result is expected); `queries` (per profile and strategy, in golden order: `query`, `expected`, `retrieved` (first 10), `searched_at`, `trace_id` and the metrics); `unsearched_queries` (golden order); `failed_searches` (searches with an `ERROR` status); and `unscored_searches` (searches with a result that has no source title, or no result rows). The runtime serves it as `GET /admin/tenant/{tenant_id}/evaluation/golden`.
 
 ---
@@ -1900,6 +1902,10 @@ manager.delete_dataset(dataset_name: str) -> bool
 manager.export_dataset(dataset_name: str, output_path: str) -> bool  # raises if missing
 manager.create_test_dataset() -> str
 ```
+
+A dataset the manager creates is owned by its tenant (the store records
+`tenant_id`), which scopes the runtime's dataset evaluation
+(`GET /admin/tenant/{tenant_id}/evaluation/datasets`) to it.
 
 `expected_videos` lists are persisted comma-joined (`"v1,v2"`) — the form that
 `core.ground_truth._resolve_expected_items` and `core.task` split back into

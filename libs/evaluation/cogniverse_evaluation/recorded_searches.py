@@ -148,3 +148,25 @@ def score_recorded_searches(
         "failed_searches": failed,
         "unscored_searches": unscored,
     }
+
+
+def dataset_golden_rows(examples: pd.DataFrame) -> List[Dict[str, Any]]:
+    """Canonical golden rows of an evaluation dataset's examples, as
+    ``DatasetManager`` writes them: ``input.query`` and a comma-joined
+    ``output.expected_videos``.
+
+    An example without a query or an expected source is left out; a query
+    listed again keeps its first position and its last expectation.
+    """
+    expected: Dict[str, List[str]] = {}
+    for _, example in examples.iterrows():
+        query = str((example["input"] or {}).get("query") or "").strip()
+        raw = (example["output"] or {}).get("expected_videos") or ""
+        items = raw.split(",") if isinstance(raw, str) else list(raw)
+        sources = [str(item).strip() for item in items if str(item).strip()]
+        if query and sources:
+            expected[query] = sources
+    return [
+        {"query": query, "expected_videos": sources}
+        for query, sources in expected.items()
+    ]

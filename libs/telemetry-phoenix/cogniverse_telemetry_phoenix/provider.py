@@ -28,10 +28,12 @@ from phoenix.client import AsyncClient
 
 from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
 from cogniverse_foundation.telemetry.providers.base import (
+    DATASET_TENANT_KEY,
     AnnotationStore,
     DatasetNotFoundError,
     DatasetStore,
     DatasetStoreUnavailableError,
+    DatasetSummary,
     TelemetryProvider,
     TraceStore,
 )
@@ -1085,6 +1087,10 @@ class PhoenixAnnotationStore(AnnotationStore):
             raise
 
 
+class DatasetOwnedByAnotherTenantError(ValueError):
+    """A dataset write named a dataset another tenant owns."""
+
+
 class PhoenixDatasetStore(DatasetStore):
     """Phoenix implementation of DatasetStore using dataset API."""
 
@@ -1092,7 +1098,8 @@ class PhoenixDatasetStore(DatasetStore):
         """
         Initialize Phoenix dataset store.
 
-        Tenant scoping is caller-side (dataset names carry the tenant).
+        A dataset created with a ``tenant_id`` records that tenant as its
+        owner in the dataset's metadata; other datasets have no owner.
 
         Args:
             http_endpoint: Phoenix HTTP API endpoint
@@ -1117,31 +1124,36 @@ class PhoenixDatasetStore(DatasetStore):
                 - input_keys: List of input column names
                 - output_keys: List of output/expected column names
                 - metadata_keys: List of metadata column names
+                - tenant_id: The owning tenant, recorded in the dataset's
+                  metadata when the dataset is created. A new dataset whose
+                  rows cannot be added is deleted again; appending (the
+                  name exists) to a dataset another tenant owns, or no
+                  tenant owns, raises DatasetOwnedByAnotherTenantError.
 
         Returns:
-            Dataset identifier (name in Phoenix's case)
+            Dataset identifier
         """
-        try:
-            # Extract Phoenix-specific metadata
-            metadata = metadata or {}
-            input_keys = metadata.get("input_keys", [])
-            output_keys = metadata.get("output_keys", [])
-            metadata_keys = metadata.get("metadata_keys", [])
-            description = metadata.get("description", "")
+        metadata = metadata or {}
+        input_keys = metadata.get("input_keys", [])
+        output_keys = metadata.get("output_keys", [])
+        metadata_keys = metadata.get("metadata_keys", [])
+        description = metadata.get("description", "")
+        owner = metadata.get(DATASET_TENANT_KEY)
 
-            def _upload(action: str) -> str:
-                return upload_dataset_rows(
-                    self.http_endpoint,
-                    name=name,
-                    data=data,
-                    action=action,
-                    input_keys=input_keys,
-                    output_keys=output_keys,
-                    metadata_keys=metadata_keys,
-                    description=description,
-                )
+        def _upload(action: str) -> str:
+            return upload_dataset_rows(
+                self.http_endpoint,
+                name=name,
+                data=data,
+                action=action,
+                input_keys=input_keys,
+                output_keys=output_keys,
+                metadata_keys=metadata_keys,
+                description=description,
+            )
 
-            def _create() -> str:
+        def _create() -> str:
+            if owner is None:
                 try:
                     return _upload("create")
                 except httpx.HTTPStatusError as create_err:
@@ -1151,20 +1163,123 @@ class PhoenixDatasetStore(DatasetStore):
                     if _http_status(create_err) == 409:
                         return _upload("append")
                     raise
+            dataset_id = self._create_owned(name, description, owner)
+            if dataset_id is None:
+                existing = self._summary_by_name(name)
+                if existing is None or existing.tenant_id != owner:
+                    raise DatasetOwnedByAnotherTenantError(
+                        f"Dataset {name!r} exists and is not owned by tenant {owner!r}"
+                    )
+                return _upload("append")
+            try:
+                _upload("append")
+            except Exception:
+                self._delete_by_id(dataset_id)
+                raise
+            return dataset_id
 
+        try:
             # Sync Phoenix HTTP off the event loop so a large upload doesn't
             # stall the whole runtime (mirrors log_evaluations).
             dataset_id = await asyncio.to_thread(_create)
-
-            logger.info(
-                f"Created dataset '{name}' with {len(data)} records "
-                f"(inputs={input_keys}, outputs={output_keys})"
-            )
-            return dataset_id
-
         except Exception as e:
             logger.error(f"Failed to create dataset '{name}': {e}")
             raise
+        logger.info(
+            f"Created dataset '{name}' with {len(data)} records "
+            f"(inputs={input_keys}, outputs={output_keys})"
+        )
+        return dataset_id
+
+    def _create_owned(
+        self, name: str, description: str, tenant_id: str
+    ) -> Optional[str]:
+        """Create an empty dataset ``name`` owned by ``tenant_id`` and return
+        its id, or None when the name is taken."""
+        response = httpx.post(
+            f"{self.http_endpoint.rstrip('/')}/graphql",
+            json={
+                "query": (
+                    "mutation($name: String!, $description: String,"
+                    " $metadata: JSON) { createDataset(input: {name: $name,"
+                    " description: $description, metadata: $metadata})"
+                    " { dataset { id } } }"
+                ),
+                "variables": {
+                    "name": name,
+                    "description": description,
+                    "metadata": {DATASET_TENANT_KEY: tenant_id},
+                },
+            },
+            timeout=_DATASET_OP_TIMEOUT_S,
+        )
+        response.raise_for_status()
+        body = response.json()
+        errors = body.get("errors")
+        if errors:
+            if [e.get("message") for e in errors] == [
+                f"A dataset named {name!r} already exists."
+            ]:
+                return None
+            raise RuntimeError(f"Phoenix refused to create dataset {name!r}: {errors}")
+        return body["data"]["createDataset"]["dataset"]["id"]
+
+    def _delete_by_id(self, dataset_id: str) -> None:
+        response = httpx.delete(
+            f"{self.http_endpoint.rstrip('/')}/v1/datasets/{dataset_id}",
+            timeout=_DATASET_OP_TIMEOUT_S,
+        )
+        if response.status_code not in (204, 404):
+            response.raise_for_status()
+
+    def _summaries(self, name: Optional[str] = None) -> List[DatasetSummary]:
+        """Every dataset (or the one named ``name``) as Phoenix lists it."""
+        summaries: List[DatasetSummary] = []
+        params: Dict[str, Any] = {"limit": 100}
+        if name is not None:
+            params["name"] = name
+        while True:
+            response = httpx.get(
+                f"{self.http_endpoint.rstrip('/')}/v1/datasets",
+                params=params,
+                timeout=_DATASET_OP_TIMEOUT_S,
+            )
+            response.raise_for_status()
+            page = response.json()
+            for row in page["data"]:
+                metadata = row.get("metadata") or {}
+                owner = metadata.get(DATASET_TENANT_KEY)
+                summaries.append(
+                    DatasetSummary(
+                        id=row["id"],
+                        name=row["name"],
+                        example_count=int(row["example_count"]),
+                        created_at=datetime.fromisoformat(row["created_at"]),
+                        description=row.get("description") or "",
+                        tenant_id=str(owner) if owner else None,
+                        metadata=dict(metadata),
+                    )
+                )
+            if not page.get("next_cursor"):
+                return summaries
+            params = {**params, "cursor": page["next_cursor"]}
+
+    def _summary_by_name(self, name: str) -> Optional[DatasetSummary]:
+        found = self._summaries(name)
+        return found[0] if found else None
+
+    async def describe_datasets(self) -> List[DatasetSummary]:
+        """Every dataset Phoenix stores, newest first."""
+        try:
+            summaries = await asyncio.to_thread(self._summaries)
+        except Exception as e:
+            raise DatasetStoreUnavailableError(
+                f"dataset store at {self.http_endpoint} could not list its "
+                f"datasets: {type(e).__name__}: {e}",
+                endpoint=self.http_endpoint,
+                dataset="*",
+            ) from e
+        return sorted(summaries, key=lambda d: d.created_at, reverse=True)
 
     async def delete_dataset(self, name: str) -> bool:
         """Delete a dataset by name via the Phoenix REST API.

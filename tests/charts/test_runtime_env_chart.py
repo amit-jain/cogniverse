@@ -649,3 +649,9 @@ def test_no_container_declares_the_same_env_var_twice():
             if dupes:
                 offenders[f"{m['metadata']['name']}/{c['name']}"] = dupes
     assert offenders == {}, f"containers declaring an env var twice: {offenders}"
+
+
+def test_phoenix_ui_url_reaches_the_runtime_only_when_set():
+    assert "PHOENIX_UI_URL" not in _runtime_container_env(_render_chart())
+    env = _runtime_container_env(_render_chart("phoenix.uiUrl=http://localhost:33006"))
+    assert env["PHOENIX_UI_URL"] == "http://localhost:33006"

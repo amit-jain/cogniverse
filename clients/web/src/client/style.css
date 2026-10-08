@@ -167,3 +167,13 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .summary-text { white-space: pre-line; }
 .check-list { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; }
 .results-heading { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 6px; }
+.tabs [role=tabpanel] { margin-top: 10px; }
+td.score { font-variant-numeric: tabular-nums; font-weight: 600; }
+td.score.good { background: #d4edda; color: #155724; }
+td.score.fair { background: #fff3cd; color: #856404; }
+td.score.poor { background: #f8d7da; color: #721c24; }
+.metric-cards { list-style: none; display: flex; flex-wrap: wrap; gap: 10px; padding: 0; margin: 10px 0; }
+.metric-cards li { display: grid; gap: 2px; min-width: 120px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.card-label { font-size: 12px; color: var(--muted); letter-spacing: .05em; }
+.card-value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.card-delta { font-size: 12px; color: var(--muted); }

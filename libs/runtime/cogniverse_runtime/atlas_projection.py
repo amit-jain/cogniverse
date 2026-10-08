@@ -1,0 +1,237 @@
+"""UMAP maps of a tenant's documents under one profile.
+
+A map places each document's pooled embedding on a 2D UMAP layout, groups
+the layout into automatic clusters named by their most distinctive terms, and
+keeps the fitted layout so queries can be placed on it and compared with
+every document.
+
+Maps are cached per tenant, profile and document limit. Each tenant and
+profile has a generation counter in Redis; a cached map is used only while
+its generation is current, so ``invalidate`` on any replica makes every
+replica rebuild on its next read. Concurrent reads of a map that is being
+built share that one build.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+
+# UMAP cannot lay out fewer documents than this.
+MIN_DOCUMENTS = 4
+# The fixed seed that makes a layout reproducible for a given set.
+UMAP_SEED = 42
+UNCLUSTERED = -1
+CLUSTER_LABEL_TERMS = 3
+CACHE_CAPACITY = 8
+GENERATION_KEY = "cogniverse:embedding-atlas:generation:{tenant}:{profile}"
+
+
+@dataclass
+class DocumentMap:
+    """One built map: the documents, their unit pooled vectors, the fitted
+    layout, each document's place and cluster, and the cluster names."""
+
+    documents: List[Dict[str, Any]]
+    vectors: np.ndarray
+    reducer: Any
+    coords: np.ndarray
+    clusters: np.ndarray
+    cluster_names: Dict[int, str]
+    computed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    generation: int = 0
+    # What the caller read the documents from, kept with the map.
+    source: Any = None
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+def unit_rows(vectors: np.ndarray) -> np.ndarray:
+    """Each row scaled to length one; an all-zero row stays zero."""
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    return np.divide(vectors, norms, out=np.zeros_like(vectors), where=norms > 0)
+
+
+def umap_layout(vectors: np.ndarray) -> Tuple[Any, np.ndarray]:
+    """The fitted UMAP reducer of ``vectors`` and each row's 2D place."""
+    from umap import UMAP
+
+    reducer = UMAP(
+        n_components=2,
+        n_neighbors=min(15, len(vectors) - 1),
+        random_state=UMAP_SEED,
+        n_jobs=1,
+    )
+    coords = reducer.fit_transform(vectors)
+    return reducer, np.asarray(coords, dtype=np.float64)
+
+
+def automatic_clusters(
+    coords: np.ndarray, texts: Sequence[str]
+) -> Tuple[np.ndarray, Dict[int, str]]:
+    """Density clusters of the 2D places (``UNCLUSTERED`` for a document in
+    none) and each cluster's name: its ``CLUSTER_LABEL_TERMS`` most
+    distinctive terms by TF-IDF across the clusters' texts."""
+    from sklearn.cluster import HDBSCAN
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    labels = HDBSCAN(min_cluster_size=max(2, len(coords) // 10)).fit_predict(coords)
+    ids = sorted({int(label) for label in labels if label != UNCLUSTERED})
+    if not ids:
+        return labels, {}
+    corpus = [
+        " ".join(text for text, label in zip(texts, labels) if label == cluster)
+        for cluster in ids
+    ]
+    try:
+        vectorizer = TfidfVectorizer(stop_words="english")
+        weights = vectorizer.fit_transform(corpus).toarray()
+    except ValueError:
+        # No cluster has a term to name it by.
+        return labels, {cluster: f"Cluster {cluster + 1}" for cluster in ids}
+    terms = vectorizer.get_feature_names_out()
+    names = {}
+    for cluster, row in zip(ids, weights):
+        ranked = sorted(
+            (i for i in range(len(terms)) if row[i] > 0),
+            key=lambda i: (-row[i], terms[i]),
+        )[:CLUSTER_LABEL_TERMS]
+        names[cluster] = (
+            ", ".join(terms[i] for i in ranked) if ranked else f"Cluster {cluster + 1}"
+        )
+    return labels, names
+
+
+def build_map(documents: List[Dict[str, Any]], vectors: np.ndarray) -> DocumentMap:
+    """The map of ``documents`` (each with ``title`` and ``text``) from their
+    pooled ``vectors``."""
+    if len(documents) < MIN_DOCUMENTS:
+        raise TooFewDocumentsError(len(documents))
+    reducer, coords = umap_layout(vectors)
+    clusters, names = automatic_clusters(
+        coords,
+        [" ".join(filter(None, (d.get("title"), d.get("text")))) for d in documents],
+    )
+    return DocumentMap(
+        documents=documents,
+        vectors=unit_rows(vectors),
+        reducer=reducer,
+        coords=coords,
+        clusters=clusters,
+        cluster_names=names,
+    )
+
+
+def place_queries(document_map: DocumentMap, vectors: np.ndarray) -> np.ndarray:
+    """Each query vector's place on the map's fitted layout."""
+    with document_map.lock:
+        return np.asarray(document_map.reducer.transform(vectors), dtype=np.float64)
+
+
+def most_similar(
+    document_map: DocumentMap, vector: np.ndarray, count: int = 3
+) -> List[Tuple[int, float]]:
+    """The ``count`` documents whose pooled vector is most similar to
+    ``vector`` by cosine similarity, most similar first, as (index,
+    similarity); ties keep document order."""
+    query = unit_rows(vector.reshape(1, -1))[0]
+    scores = document_map.vectors @ query
+    order = sorted(range(len(scores)), key=lambda i: (-scores[i], i))[:count]
+    return [(i, float(scores[i])) for i in order]
+
+
+class TooFewDocumentsError(ValueError):
+    """A map needs at least ``MIN_DOCUMENTS`` documents with an embedding."""
+
+    def __init__(self, count: int) -> None:
+        super().__init__(f"{count} documents, fewer than {MIN_DOCUMENTS}")
+        self.count = count
+
+
+class ProjectionCache:
+    """Built maps per (tenant, profile, limit), current while their tenant and
+    profile's Redis generation is unchanged."""
+
+    def __init__(self, redis: Any, capacity: int = CACHE_CAPACITY) -> None:
+        self._redis = redis
+        self._capacity = capacity
+        self._maps: "OrderedDict[Tuple[str, str, int], DocumentMap]" = OrderedDict()
+        self._building: Dict[Tuple[Tuple[str, str, int], int], asyncio.Task] = {}
+
+    @staticmethod
+    def _key(tenant_id: str, profile: str) -> str:
+        return GENERATION_KEY.format(tenant=tenant_id, profile=profile)
+
+    async def generation(self, tenant_id: str, profile: str) -> int:
+        value = await self._redis.get(self._key(tenant_id, profile))
+        return int(value or 0)
+
+    async def invalidate(self, tenant_id: str, profile: str) -> int:
+        """Retire every cached map of ``tenant_id`` and ``profile`` on every
+        replica; returns the new generation."""
+        return int(await self._redis.incr(self._key(tenant_id, profile)))
+
+    async def get(
+        self,
+        tenant_id: str,
+        profile: str,
+        limit: int,
+        generation: int,
+        build: Callable[[], DocumentMap],
+    ) -> DocumentMap:
+        """The map of ``generation`` (the current one, read with
+        ``generation``), built with ``build`` in a worker thread when there is
+        none. A build that fails is not kept, and every reader waiting on it
+        receives its error."""
+        key = (tenant_id, profile, limit)
+        cached = self._maps.get(key)
+        if cached is not None and cached.generation == generation:
+            self._maps.move_to_end(key)
+            return cached
+        flight = (key, generation)
+        task = self._building.get(flight)
+        if task is None:
+            task = asyncio.create_task(self._build(key, generation, build))
+            self._building[flight] = task
+            task.add_done_callback(lambda done: self._settled(flight, done))
+        return await asyncio.shield(task)
+
+    def _settled(self, flight, task: asyncio.Task) -> None:
+        self._building.pop(flight, None)
+        if not task.cancelled():
+            # Every waiter has its error already; mark it retrieved for the
+            # case where all of them were cancelled first.
+            task.exception()
+
+    async def _build(
+        self,
+        key: Tuple[str, str, int],
+        generation: int,
+        build: Callable[[], DocumentMap],
+    ) -> DocumentMap:
+        document_map = await asyncio.to_thread(build)
+        document_map.generation = generation
+        current = self._maps.get(key)
+        if current is None or current.generation <= generation:
+            self._maps[key] = document_map
+            self._maps.move_to_end(key)
+            while len(self._maps) > self._capacity:
+                self._maps.popitem(last=False)
+        return document_map
+
+
+_cache: Optional[ProjectionCache] = None
+
+
+def set_projection_cache(cache: Optional[ProjectionCache]) -> None:
+    global _cache
+    _cache = cache
+
+
+def projection_cache() -> Optional[ProjectionCache]:
+    return _cache

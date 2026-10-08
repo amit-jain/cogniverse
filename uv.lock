@@ -1195,6 +1195,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "redis" },
     { name = "transformers" },
+    { name = "umap-learn" },
     { name = "uvicorn" },
 ]
 
@@ -1250,6 +1251,7 @@ requires-dist = [
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "redis", specifier = "==5.2.1" },
     { name = "transformers", specifier = "==4.56.2" },
+    { name = "umap-learn", specifier = "==0.5.12" },
     { name = "uvicorn", specifier = "==0.44.0" },
 ]
 provides-extras = ["agents", "all", "torch-local", "vespa", "whisper-local"]

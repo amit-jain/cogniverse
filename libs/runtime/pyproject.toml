@@ -54,6 +54,10 @@ dependencies = [
     "pdf2image==1.17.0",
     "pypdf2==3.0.1",
 
+    # Embedding Atlas UMAP projection (pulls numba, which needs NumPy <= 2.4;
+    # the workspace lock pins NumPy 2.4.4).
+    "umap-learn==0.5.12",
+
     # Utilities
     "msgpack==1.1.2",
     # Quality-monitor startup distinguishes retryable config-store transport

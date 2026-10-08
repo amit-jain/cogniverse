@@ -550,6 +550,14 @@ class DatasetStore(ABC):
         """
         raise NotImplementedError
 
+    async def describe_datasets(self) -> List[DatasetSummary]:
+        """Every stored dataset, newest first, as DatasetSummary(id, name,
+        example_count, created_at, description, tenant_id, metadata).
+        Raises DatasetStoreUnavailableError when the store cannot answer.
+        Not ``@abstractmethod``; the default raises NotImplementedError.
+        """
+        raise NotImplementedError
+
     async def replace_dataset(
         self, name: str, data: pd.DataFrame, metadata: Optional[Dict[str, Any]] = None
     ) -> str:
@@ -560,6 +568,14 @@ class DatasetStore(ABC):
         recreated before the exception propagates.
         """
 ```
+
+A dataset created with `metadata["tenant_id"]` (`DATASET_TENANT_KEY`) is owned by
+that tenant: `PhoenixDatasetStore` creates it with the owner in the dataset's
+Phoenix metadata (GraphQL `createDataset`) and then uploads its rows, deleting it
+again when the upload fails; `describe_datasets` reports the owner as
+`DatasetSummary.tenant_id` (None for a dataset created without one). Creating a
+name that exists appends to it only for its owner; any other tenant gets
+`DatasetOwnedByAnotherTenantError` (a `ValueError`).
 
 `DatasetNotFoundError` (`cogniverse_foundation.telemetry.providers.base`) subclasses
 `ValueError` so existing `except ValueError` callers keep working, while letting
