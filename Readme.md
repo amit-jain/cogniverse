@@ -10,7 +10,7 @@ Multi-agent platform for search and analysis over video, audio, image, and docum
 - **Cross-modal fusion**: The orchestrator combines results from agents working on different modalities
 - **Embedding models**: ColQwen3 (`TomoroAI/tomoro-colqwen3-embed-4b`) for video frames, images, and visual documents; X-CLIP for video clips; LateOn, LateOn-Code, and DenseOn for text and code; CLAP for audio
 - **Multi-tenant**: Schema-per-tenant Vespa isolation, per-tenant Phoenix projects, and per-tenant memory
-- **Observability**: Phoenix traces and experiments, plus a Streamlit dashboard
+- **Observability**: Phoenix traces and experiments, plus the Cogniverse web client (chat with every agent and operations views)
 - **Evaluation**: Provider-agnostic reference-free, visual LLM, and classical retrieval metrics
 - **Layered workspace**: 13 packages (Foundation → Core → Implementation → Application)
 
@@ -29,7 +29,7 @@ Multi-agent platform for search and analysis over video, audio, image, and docum
 
 **For Teams & Organizations:**
 - Deploy multi-tenant applications with per-tenant schemas, telemetry projects, and memory
-- Monitor and optimize from the Phoenix UI and the Streamlit dashboard
+- Monitor and optimize from the Phoenix UI and the Cogniverse web client
 - Deploy with Helm on k3d or on an existing Kubernetes cluster
 
 ## Quick Start
@@ -59,7 +59,7 @@ source .venv/bin/activate
 export UV_NO_SYNC=1
 
 # Create a k3d cluster and deploy the Helm chart: Vespa, Phoenix, runtime,
-# dashboard, Argo Workflows, and the LLM and inference pods for this host
+# web client, Argo Workflows, and the LLM and inference pods for this host
 cogniverse up
 
 # Verify services
@@ -120,9 +120,8 @@ uv run python scripts/run_experiments_with_visualization.py \
     --all-strategies \
     --quality-evaluators
 
-# Streamlit dashboard: deployed by `cogniverse up` at http://localhost:28501,
-# or run locally at http://localhost:8501
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
+# Web client: deployed by `cogniverse up` at http://localhost:28400;
+# see docs/modules/web-client.md to run it locally
 ```
 
 ## UV Workspace Structure
@@ -188,6 +187,8 @@ cogniverse/
 │       └── cogniverse_messaging/
 │           ├── telegram_handler.py  # Telegram bot integration
 │           └── gateway.py           # Messaging gateway
+├── clients/
+│   └── web/                      # Web client (Node server + React UI)
 ├── docs/                         # Documentation
 │   ├── architecture/             # System architecture
 │   ├── modules/                  # Module documentation
@@ -432,13 +433,15 @@ routing_config = RoutingConfigUnified(
 
 ## Monitoring & Evaluation
 
-### Dashboard
-The Streamlit dashboard runs at http://localhost:28501 and the Phoenix UI at http://localhost:26006. Dashboard tabs include:
-- **Analytics**: Phoenix traces for the active tenant
-- **Evaluation**: Phoenix experiment results
-- **Profile Routing Metrics**: Per-modality profile-selection metrics from Phoenix spans
-- **Memory**: View, search, add, and delete agent memories
-- **Configuration**: Per-tenant configuration with version history
+### Web Client
+The web client runs at http://localhost:28400 and the Phoenix UI at http://localhost:26006. It chats with every registered agent and has operations views, including:
+- **Tenants**, **Backend profiles** and **Configuration** (with version history, export and import)
+- **Ingestion** with live progress
+- **Optimization runs**, **Approvals**, **Annotation queue** and **Workflow reviews**
+- **Analytics**, **Evaluation**, **Embedding atlas**, **Routing evaluation**, **Profile metrics** and **RLM A/B**
+- **Memory**: view, search, add, and delete agent memories
+
+See [docs/modules/web-client.md](docs/modules/web-client.md).
 
 ### Evaluation Metrics
 - **Reference-Free**: Query-result relevance, result diversity, temporal coverage
@@ -568,6 +571,6 @@ MIT. See [LICENSE](LICENSE).
 
 - GitHub Issues: [Report bugs](https://github.com/amit-jain/cogniverse/issues)
 - Documentation: [Read the docs](https://amit-jain.github.io/cogniverse/)
-- Dashboard: http://localhost:28501 (Phoenix UI: http://localhost:26006)
+- Web client: http://localhost:28400 (Phoenix UI: http://localhost:26006)
 
 ---

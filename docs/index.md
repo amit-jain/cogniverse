@@ -85,9 +85,8 @@ uv sync
 # Start services (Vespa, Phoenix, Ollama)
 cogniverse up
 
-# Launch dashboard
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
-# Open http://localhost:8501
+# Open the web client
+open http://localhost:28400
 ```
 
 See [Getting Started](operations/setup-installation.md) for ingestion and configuration.

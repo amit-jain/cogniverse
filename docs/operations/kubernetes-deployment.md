@@ -14,7 +14,7 @@ Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
   deploys the LLM as a Deployment instead (see LLM serving below)
 
 - **Deployments**: Runtime (with an optional in-pod `quality-monitor`
-  sidecar container), Dashboard, Ingestor workers (dequeue ingestion
+  sidecar container), Web client, Ingestor workers (dequeue ingestion
   jobs from Redis), MinIO, Redis, Semantic Router (`Envoy` +
   `vllm-sr` router), Messaging Gateway (Telegram/Slack, disabled by
   default), LLM (only when `llm.engine: vllm`), and one Deployment per
@@ -145,12 +145,12 @@ kubectl get pods -n cogniverse
 # Port-forward Runtime API
 kubectl port-forward -n cogniverse svc/cogniverse-runtime 8000:8000
 
-# Port-forward Dashboard
-kubectl port-forward -n cogniverse svc/cogniverse-dashboard 8501:8501
+# Port-forward the web client
+kubectl port-forward -n cogniverse svc/cogniverse-web 4000:4000
 
 # Access
 open http://localhost:8000/docs
-open http://localhost:8501
+open http://localhost:4000
 ```
 
 ---
@@ -196,6 +196,12 @@ runtime:
     maxReplicas: 20
     targetCPUUtilizationPercentage: 70
 
+# Web client: the harness key it sends the runtime, from your own Secret
+# (key harness-api-key). values.prod.yaml leaves web.harnessKey empty, so an
+# install fails until one of the two is set.
+web:
+  existingSecret: cogniverse-web-key
+
 # Ingress with SSL
 ingress:
   enabled: true
@@ -211,8 +217,8 @@ ingress:
           port: 8000
         - path: /
           pathType: Prefix
-          service: dashboard
-          port: 8501
+          service: web
+          port: 4000
   tls:
     - secretName: cogniverse-tls
       hosts:
@@ -445,15 +451,15 @@ runtime:
       cpu: "1"
       memory: "4Gi"
 
-dashboard:
+web:
   replicaCount: 1
   resources:
     requests:
-      cpu: "250m"
-      memory: "1Gi"
+      cpu: "100m"
+      memory: "512Mi"
     limits:
-      cpu: "500m"
-      memory: "2Gi"
+      cpu: "1"
+      memory: "512Mi"
 
 phoenix:
   replicaCount: 1
@@ -502,8 +508,8 @@ ingress:
           port: 8000
         - path: /
           pathType: Prefix
-          service: dashboard
-          port: 8501
+          service: web
+          port: 4000
   tls: []  # No TLS for local development
 
 # Local development tenant
@@ -793,9 +799,9 @@ Or use port-forwarding:
 kubectl port-forward -n cogniverse svc/cogniverse-runtime 8000:8000
 open http://localhost:8000/docs
 
-# Dashboard
-kubectl port-forward -n cogniverse svc/cogniverse-dashboard 8501:8501
-open http://localhost:8501
+# Web client
+kubectl port-forward -n cogniverse svc/cogniverse-web 4000:4000
+open http://localhost:4000
 
 # Phoenix
 kubectl port-forward -n cogniverse svc/cogniverse-phoenix 6006:6006

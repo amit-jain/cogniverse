@@ -1232,14 +1232,14 @@ def search_acme_videos(query: str, caller_tenant_id: str, config_manager):
 
 ### Per-Tenant Performance Metrics
 
-Per-modality runtime metrics (request counts, P50/P95/P99 latency, success rate) are available per tenant in the **Profile Routing Metrics** dashboard tab (`libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`).
+Per-modality runtime metrics (request counts, P50/P95/P99 latency, success rate) are available per tenant in the web client's **Profile metrics** view.
 
-The tab reads `cogniverse.profile_selection` spans from the tenant's Phoenix project and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. Tenant isolation is provided natively by the telemetry layer — each tenant has its own Phoenix project (`cogniverse-{tenant_id}`, derived through `tenant_project_name`), so span queries are scoped automatically.
+The runtime reads `cogniverse.profile_selection` spans from the tenant's Phoenix project and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. Tenant isolation is provided natively by the telemetry layer — each tenant has its own Phoenix project (`cogniverse-{tenant_id}`, derived through `tenant_project_name`), so span queries are scoped automatically.
 
 To view metrics for a specific tenant:
-1. Open the dashboard: `uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501`
-2. Select the tenant from the sidebar.
-3. Navigate to the "Profile Routing Metrics" tab.
+1. Open the web client (http://localhost:28400 under `cogniverse up`).
+2. Choose **Profile metrics** under Operations.
+3. Pick the tenant and window.
 
 ### Tenant-Specific Optimization
 

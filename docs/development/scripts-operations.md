@@ -1301,29 +1301,19 @@ python scripts/manage_datasets.py --tenant-id acme:acme --info golden_eval_v1
 #   description: Golden evaluation dataset v1
 ```
 
-### Example 8: Interactive Dashboard
+### Example 8: Web Client
 
 ```bash
-# Start Phoenix dashboard
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
+# Deployed by `cogniverse up`
+open http://localhost:28400
 
-# Output:
-# You can now view your Streamlit app in your browser.
-#
-#   Local URL: http://localhost:8501
-#   Network URL: http://192.168.1.100:8501
-#
-# Dashboard tabs (top tab bar, left to right):
-# Analytics, Evaluation, Embedding Atlas, Routing Evaluation,
-# Orchestration Annotation, Profile Routing Metrics, Optimization,
-# Synthetic Data & Optimization, Approval Queue, Ingestion Testing,
-# Interactive Search, Chat, Configuration, Tenant Management,
-# Memory, RLM A/B Compare
-
-# Access in browser: http://localhost:8501
-# The sidebar holds tenant selection, time range, and agent status —
-# pick a tab from the top tab bar to explore each feature area.
+# The sidebar lists every agent (chat) and the Operations views:
+# Tenants, Backend profiles, Configuration, Ingestion, Optimization runs,
+# Memory, Approvals, Annotation queue, Workflow reviews, Profile metrics,
+# RLM A/B, Analytics, Evaluation, Embedding atlas, Routing evaluation
 ```
+
+See [Web Client](../modules/web-client.md) to run it locally.
 
 ---
 

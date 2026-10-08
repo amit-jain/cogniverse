@@ -461,13 +461,9 @@ Provides per-modality runtime observability by querying `cogniverse.profile_sele
 
 #### Usage
 
-The tab is rendered automatically when the dashboard is running. To view per-modality metrics:
-
-```bash
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
-```
-
-Select a tenant in the sidebar and open the "Profile Routing Metrics" tab. No extra instrumentation is required — metrics are derived entirely from `cogniverse.profile_selection` spans already emitted by `ProfileSelectionAgent`.
+To view per-modality metrics, open the web client (http://localhost:28400
+under `cogniverse up`), choose **Profile metrics** under Operations, and pick
+the tenant and window. No extra instrumentation is required — metrics are derived entirely from `cogniverse.profile_selection` spans already emitted by `ProfileSelectionAgent`.
 
 ---
 

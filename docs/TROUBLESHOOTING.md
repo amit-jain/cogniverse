@@ -122,7 +122,8 @@ Bind for 0.0.0.0:28000 failed: port is already allocated
 **Solution:**
 
 `cogniverse up` maps a fixed set of host ports through the k3d loadbalancer:
-`8080`/`19071` (Vespa), `28000` (runtime), `28501` (dashboard), `26006`
+`8080`/`19071` (Vespa), `28000` (runtime), `28400` (web client), `28501`
+(dashboard, when enabled), `26006`
 (Phoenix), `4317` (OTLP), `11434` (Ollama), `2746` (Argo), plus `29001`-`29011`
 for inference sidecars.
 
@@ -177,7 +178,7 @@ cogniverse status
 # List pods and their state directly
 kubectl get pods -n cogniverse
 
-# Tail logs for a specific service (runtime, dashboard, vespa, phoenix, llm, argo)
+# Tail logs for a specific service (runtime, web, dashboard, vespa, phoenix, llm, argo)
 cogniverse logs runtime -f
 
 # Describe a pod for scheduling/image-pull failures
@@ -756,27 +757,28 @@ curl -v http://localhost:8000/search/ -X POST \
   -d '{"query": "test", "tenant_id": "acme"}'
 ```
 
-### Streamlit Dashboard Crashes
+### Web Client Shows "did not answer" or Is Unreachable
 
 **Error:**
 ```text
-StreamlitAPIError: Unable to connect
+The Cogniverse runtime at http://cogniverse-runtime:8000 did not answer (TypeError).
 ```
 
 **Solution:**
 ```bash
-# Check dependencies
-uv pip list | grep streamlit
+# The web server itself is up when /healthz answers
+curl http://localhost:28400/healthz   # {"status":"ok"}
 
-# Clear cache
-streamlit cache clear
+# Its logs name the runtime URL it calls
+cogniverse logs web
 
-# Run with debug
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --logger.level=debug
-
-# Check port
-lsof -i :8501
+# The runtime must be healthy and accept the web client's harness key
+curl http://localhost:28000/health
+kubectl get secret -n cogniverse cogniverse-web -o jsonpath='{.data.harness-api-key}' | base64 -d
 ```
+
+A k3d cluster created before port 28400 was published needs the mapping added:
+`k3d cluster edit cogniverse --port-add 28400:28400@loadbalancer`.
 
 ---
 
