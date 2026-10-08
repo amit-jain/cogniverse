@@ -1870,6 +1870,16 @@ class ApprovalStorageImpl(ApprovalStorage):
                     filters={"name": span_names},
                 )
 
+                if (
+                    batch_id is not None
+                    and not project_spans.empty
+                    and not (project_spans["name"] == "approval_batch").any()
+                ):
+                    # Item spans end, and export, before their batch root; a
+                    # frame without the root is one Phoenix has not finished
+                    # indexing, so it reads as not found yet.
+                    project_spans = project_spans.iloc[0:0]
+
                 if not project_spans.empty:
                     required_columns = {
                         "attributes.item_id",
