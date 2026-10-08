@@ -25,12 +25,13 @@ from tests.agents.integration.conftest import skip_if_no_lm  # noqa: F401
 
 
 @pytest.fixture(scope="module")
-def dspy_lm():
-    """Module-scoped DSPy LM from config."""
+def dspy_lm(ensure_host_ollama):
+    """Module-scoped DSPy LM on the session's provisioned primary endpoint."""
     import json
+    import os
     from pathlib import Path
 
-    config_path = Path(__file__).resolve().parents[3] / "configs" / "config.json"
+    config_path = Path(os.environ["COGNIVERSE_CONFIG"])
     with open(config_path) as f:
         config = json.load(f)
     primary = config.get("llm_config", {}).get("primary", {})
@@ -45,32 +46,47 @@ def dspy_lm():
         model=model,
         api_base=api_base,
         temperature=0.0,
-        max_tokens=300,
+        max_tokens=1000,
         extra_body=extra_body,
     )
-    lm = create_dspy_lm(endpoint)
-    dspy.configure(lm=lm)
-    yield lm
+    return create_dspy_lm(endpoint)
 
 
-@pytest.fixture(scope="module")
-def enhancement_module(dspy_lm):
-    """Module-scoped QueryEnhancementModule (DSPy module, not the full A2A agent)."""
+@pytest.fixture
+def enhancement_module(dspy_lm, caplog):
+    """QueryEnhancementModule (DSPy module, not the full A2A agent) on the
+    session LM with the runtime's adapter; every test reaches the LM, so a
+    fallback for a failed call fails the test."""
     from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+    from cogniverse_foundation.dspy import LenientJSONAdapter
 
-    return QueryEnhancementModule()
+    with (
+        caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.query_enhancement_agent"
+        ),
+        dspy.context(lm=dspy_lm, adapter=LenientJSONAdapter()),
+    ):
+        yield QueryEnhancementModule()
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "reason=DSPy failure" in record.getMessage()
+    ] == []
 
 
 @skip_if_no_lm
 def test_enhances_short_query(enhancement_module):
-    """A single-word query must produce a longer, more descriptive enhanced query."""
+    """A single-word query is either rewritten by the LM or, when the LM
+    echoes it, searched exactly as asked: never padded with words that change
+    it."""
     result = enhancement_module.forward(query="cats")
 
     enhanced = result.enhanced_query
-    assert enhanced, "enhanced_query must not be empty"
-    assert len(enhanced) > len("cats"), (
-        f"Enhanced query must be longer than original 'cats'. Got: {enhanced!r}"
-    )
+    assert (result.path_used, enhanced == "cats") in {
+        ("lm", False),
+        ("heuristic_fallback", True),
+    }, (result.path_used, enhanced)
+    assert "cat" in enhanced.lower(), enhanced
 
 
 @skip_if_no_lm

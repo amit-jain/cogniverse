@@ -84,13 +84,8 @@ class TestQueryEnhancementModule:
         assert result.confidence == "0.85"
 
     def test_forward_fallback(self):
-        """Test fallback when DSPy fails.
-
-        The fallback must NOT echo the input — that was the old bug which
-        silently poisoned SIMBA trainsets with identity pairs.  It must
-        append at least one heuristic expansion so enhanced_query differs
-        from the original while still containing it.
-        """
+        """A failed LM call falls back to the meaning-preserving heuristic:
+        the query keeps every word and gains only the spelled-out acronym."""
         module = QueryEnhancementModule()
         module.enhancer = Mock(side_effect=Exception("DSPy failed"))
 
@@ -99,10 +94,11 @@ class TestQueryEnhancementModule:
             source_text="Show me ML videos source text about machine learning clips",
         )
 
-        assert result.enhanced_query != "Show me ML videos"
-        assert result.enhanced_query.startswith("Show me ML videos")
-        assert "machine learning" in result.expansion_terms.lower()
+        assert result.enhanced_query == "Show me ML videos machine learning"
+        assert result.expansion_terms == "machine learning"
+        assert result.synonyms == "display, present"
         assert result.confidence == "0.5"
+        assert result.path_used == "heuristic_fallback"
 
     def test_fallback_ai_expansion(self):
         """Test fallback expands AI acronym"""
@@ -114,22 +110,64 @@ class TestQueryEnhancementModule:
             source_text="AI tutorials source text about artificial intelligence",
         )
 
-        assert "artificial intelligence" in result.expansion_terms.lower()
+        assert result.enhanced_query == "AI tutorials artificial intelligence"
+        assert result.expansion_terms == "artificial intelligence"
 
-    def test_fallback_video_context(self):
-        """Test fallback adds video-related context"""
+    def test_fallback_adds_no_words_that_change_the_query(self):
+        """A video query with no acronym is searched as asked: no "tutorial",
+        "guide", "demonstration", "locate" or "related content" is appended."""
         module = QueryEnhancementModule()
         module.enhancer = Mock(side_effect=Exception("DSPy failed"))
 
-        result = module.forward(
-            query="Show videos about Python",
-            source_text="Show videos about Python source text with tutorial clips",
+        result = module.forward(query="find the video of a burning castle")
+
+        assert result.enhanced_query == "find the video of a burning castle"
+        assert result.expansion_terms == ""
+        assert result.synonyms == "search, locate, clip"
+        assert result.path_used == "heuristic_fallback"
+
+    def test_blank_expansion_terms_are_an_lm_enhancement(self):
+        """With no source text the LM often has no expansion terms; its
+        rewritten query is still the enhancement."""
+        module = QueryEnhancementModule()
+        module.enhancer = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="Videos of a burning castle with video summary",
+                expansion_terms="",
+                synonyms="fire, blaze, inferno",
+                context="",
+                confidence="0.8",
+                reasoning="Kept the core concepts.",
+            )
         )
 
-        expansions_lower = result.expansion_terms.lower()
-        assert any(
-            term in expansions_lower for term in ["tutorial", "guide", "demonstration"]
+        result = module.forward(query="burning castle videos and a summary")
+
+        assert result.enhanced_query == "Videos of a burning castle with video summary"
+        assert result.expansion_terms == ""
+        assert result.path_used == "lm"
+
+    def test_an_echoed_query_falls_back_unchanged(self):
+        """An echo is marked as the fallback (never trained on) and the
+        query reaches the search as asked."""
+        module = QueryEnhancementModule()
+        module.enhancer = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="fire castle video",
+                expansion_terms="castle fire",
+                synonyms="",
+                context="",
+                confidence="0.8",
+                reasoning="Already specific.",
+            )
         )
+
+        result = module.forward(query="fire castle video")
+
+        assert result.enhanced_query == "fire castle video"
+        assert result.expansion_terms == ""
+        assert result.synonyms == "clip"
+        assert result.path_used == "heuristic_fallback"
 
 
 class TestQueryEnhancementAgent:
