@@ -26,9 +26,7 @@ from cogniverse_foundation.config.utils import get_config, resolve_default_profi
 from cogniverse_runtime.ingestion_worker.worker import _media_config_from_defaults
 from tests.system.minio_test_manager import MinIOTestManager
 from tests.utils.web_client import (
-    build_web_client,
     free_port,
-    install_web_client,
     recording_telemetry_sink,
     serve_web,
 )
@@ -41,11 +39,6 @@ DEPLOY_TIMEOUT_MS = 240_000
 BUCKET = "web-ops-ingest"
 # Held jobs wait on this; a test releases them once it has seen them run.
 _release = threading.Event()
-
-
-@pytest.fixture(scope="module")
-def built_client(tmp_path_factory):
-    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(scope="module")

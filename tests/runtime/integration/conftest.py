@@ -42,6 +42,7 @@ from tests.conftest import shared_vespa  # noqa: F401, E402
 from tests.utils.a2a_protocol import a2a_app
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 from tests.utils.vespa_test_helpers import deploy_tenant_schema, shipped_profile
+from tests.utils.web_client import build_web_client, install_web_client
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +277,13 @@ def config_manager(vespa_instance):
 def schema_loader():
     """FilesystemSchemaLoader from configs/schemas/."""
     return FilesystemSchemaLoader(SCHEMAS_DIR)
+
+
+@pytest.fixture(scope="session")
+def built_client(tmp_path_factory):
+    """``clients/web`` installed from its lockfile and built once for the
+    session; the browser suites serve its ``dist`` and never write to it."""
+    return build_web_client(install_web_client(tmp_path_factory.mktemp("web_ops")))
 
 
 @pytest.fixture(autouse=True, scope="module")

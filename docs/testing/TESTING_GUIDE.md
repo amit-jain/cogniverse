@@ -972,7 +972,7 @@ and two manual/release workflows not tied to a single module:
 | `ingestion-tests.yml` | cogniverse-runtime (ingestion) | unit + integration | Vespa |
 | `messaging-tests.yml` | cogniverse-messaging | unit + integration | None |
 | `routing-tests.yml` | cogniverse-agents (routing) | unit + integration | Vespa |
-| `runtime-tests.yml` | cogniverse-runtime, cogniverse-foundation, cogniverse-cli, events, cogniverse-messaging (unit for all; integration for runtime + the small events/foundation/messaging suites) | unit + integration | Vespa |
+| `runtime-tests.yml` | cogniverse-runtime, cogniverse-foundation, cogniverse-cli, events, cogniverse-messaging (unit for all; integration for runtime + the small events/foundation/messaging suites; the web client's browser suites, `test_web_ops_*.py` and `test_web_client_ag_ui.py`, run in their own `web-ops-integration-tests` job) | unit + integration | Vespa |
 | `synthetic-tests.yml` | cogniverse-synthetic | unit + integration | Phoenix |
 | `telemetry-tests.yml` | cogniverse-telemetry-phoenix | unit + integration | Phoenix |
 | `test-integrity.yml` | Whole-repo test guards (no `paths` filter) | assertion strength + CI coverage | None |
