@@ -26,17 +26,17 @@ Relevant; the rating is stored on the search's span
 and a rating that was not stored shows its reason on the card.
 
 The browser talks only to this package's Node server. The server hosts the
-CopilotKit runtime at `/api/copilotkit` and holds one harness key, which it
+CopilotKit runtime at `/ui-api/copilotkit` and holds one harness key, which it
 sends to the Cogniverse runtime on every run; the key decides the tenant. The
 operations views reach the runtime's admin, ingestion and event routes through
-`/api/runtime/*`, which forwards an allowlist of those routes (`src/server/proxy.ts`)
+`/ui-api/runtime/*`, which forwards an allowlist of those routes (`src/server/proxy.ts`)
 and streams their server-sent events. There is no user login, so anyone who can
 reach the server can use those routes.
 
 ## Operations views
 
 The sidebar's Operations section manages the runtime. Each view calls the
-runtime's existing routes through `/api/runtime/*`.
+runtime's existing routes through `/ui-api/runtime/*`.
 
 | View | What it does | Runtime routes |
 |---|---|---|
@@ -70,7 +70,7 @@ Use Node.js 22. Copy `.env.example` to `.env` and set:
 ```bash
 cd clients/web
 npm ci
-npm run dev        # server on PORT, Vite on :5173 proxying /api to it
+npm run dev        # server on PORT, Vite on :5173 proxying /ui-api to it
 npm run build && npm start   # one server serving the built client
 ```
 
@@ -80,6 +80,15 @@ The server turns off CopilotKit's usage telemetry unless
 On `SIGTERM` or `SIGINT` the server stops accepting connections and exits once
 its requests finish; a request still running after 5 seconds (an ingest event
 stream, a runtime that does not answer) is cut.
+
+## Deploy
+
+`Dockerfile` builds the image (`docker build -f clients/web/Dockerfile -t cogniverse/web:dev clients/web`):
+the built client served by the Node server on port 4000, with `/healthz` for
+probes. The Helm chart deploys it as the `web` component behind the ingress's
+`/` path; `cogniverse up` builds and imports it and serves it at
+http://localhost:28400. Chart values and deployment are in
+[docs/modules/web-client.md](../../docs/modules/web-client.md).
 
 ## Tests
 

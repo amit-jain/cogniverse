@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -113,19 +116,19 @@ describe('cogniverseAgents', () => {
   });
 });
 
-describe('GET /api/agents', () => {
+describe('GET /ui-api/agents', () => {
   it('relays the registry', async () => {
     const url = await runtimeServer((_req, res) =>
       res.end(JSON.stringify({ agents: ['search_agent'] })),
     );
-    const response = await createApp(config(url)).request('/api/agents');
+    const response = await createApp(config(url)).request('/ui-api/agents');
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ agents: ['search_agent'] });
   });
 
   it('answers 502 with the reason when the runtime is down', async () => {
     const url = await deadUrl();
-    const response = await createApp(config(url)).request('/api/agents');
+    const response = await createApp(config(url)).request('/ui-api/agents');
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({
       error: `The Cogniverse runtime at ${url} did not answer (TypeError).`,
@@ -154,7 +157,7 @@ describe('runtime proxy', () => {
         res.end(JSON.stringify({ detail: 'Tenant acme:prod already exists' }));
       });
     });
-    const response = await createApp(config(url)).request('/api/runtime/admin/tenants?dry=1', {
+    const response = await createApp(config(url)).request('/ui-api/runtime/admin/tenants?dry=1', {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: 'session=x' },
       body: JSON.stringify({ tenant_id: 'acme:prod' }),
@@ -212,7 +215,7 @@ describe('runtime proxy', () => {
       ['POST', '/admin/tenant/acme:prod/routing-decisions/abc123/delete'],
       ['GET', '/admin/tenant/acme:prod/routing-decisions/abc123'],
     ]) {
-      const response = await app.request(`/api/runtime${path}`, { method });
+      const response = await app.request(`/ui-api/runtime${path}`, { method });
       expect(response.status).toBe(404);
     }
     expect(calls).toBe(0);
@@ -287,7 +290,7 @@ describe('runtime proxy', () => {
       ['PUT', '/admin/tenant/acme:prod/routing-decisions/abc123/label'],
     ];
     for (const [method, path] of calls) {
-      const response = await app.request(`/api/runtime${path}`, { method });
+      const response = await app.request(`/ui-api/runtime${path}`, { method });
       expect(response.status).toBe(200);
     }
     expect(seen).toEqual(calls.map(([method, path]) => `${method} ${path}`));
@@ -300,7 +303,7 @@ describe('runtime proxy', () => {
       res.write('data: {"state":"running"}\n\n');
       release = () => res.end('data: {"state":"done"}\n\n');
     });
-    const response = await createApp(config(url)).request('/api/runtime/ingestion/job-1/events');
+    const response = await createApp(config(url)).request('/ui-api/runtime/ingestion/job-1/events');
     expect(response.headers.get('content-type')).toBe('text/event-stream');
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
@@ -315,10 +318,38 @@ describe('runtime proxy', () => {
 
   it('answers 502 naming the runtime when it is down', async () => {
     const url = await deadUrl();
-    const response = await createApp(config(url)).request('/api/runtime/admin/organizations');
+    const response = await createApp(config(url)).request('/ui-api/runtime/admin/organizations');
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({
       error: `The Cogniverse runtime at ${url} did not answer (TypeError).`,
     });
+  });
+});
+
+describe('GET /healthz', () => {
+  it('answers without calling the runtime', async () => {
+    const response = await createApp(config(await deadUrl())).request('/healthz');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: 'ok' });
+  });
+
+  it('is not shadowed by the built client', async () => {
+    const clientDir = mkdtempSync(path.join(tmpdir(), 'cogniverse-web-'));
+    writeFileSync(path.join(clientDir, 'index.html'), '<html>client</html>');
+    const app = createApp({ ...config(await deadUrl()), clientDir });
+    const health = await app.request('/healthz');
+    expect(health.headers.get('content-type')).toMatch(/^application\/json/);
+    expect(await health.json()).toEqual({ status: 'ok' });
+    const page = await app.request('/tenants');
+    expect(await page.text()).toBe('<html>client</html>');
+  });
+});
+
+describe('server routes', () => {
+  it('serves nothing under /api, which the ingress gives to the runtime', async () => {
+    const url = await runtimeServer((_req, res) => res.end(JSON.stringify({ agents: ['x'] })));
+    const app = createApp(config(url));
+    for (const route of ['/api/agents', '/api/copilotkit/info', '/api/runtime/agents/'])
+      expect((await app.request(route)).status).toBe(404);
   });
 });
