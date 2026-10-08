@@ -44,7 +44,6 @@ from tests.utils.web_ops import serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast, pytest.mark.no_shared_vespa]
 
-KEY = "web-ops-harness-key"
 SUNSET, RED_CAR, DOG = "sunset over the sea", "a red car", "dog on a beach"
 QUERIES = [
     {"query": SUNSET, "expected_videos": ["sunset"]},
@@ -93,7 +92,7 @@ def runtime_url(phoenix_container, schema_loader, workflow_state_redis_url, tele
 def web_url(built_client, runtime_url, phoenix_proxy):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -146,6 +145,11 @@ def _show(page: Page, web_url: str, view: str, heading: str, action: str, tenant
     chooser = page.get_by_role("form", name="Choose tenant")
     chooser.get_by_label("Tenant ID").fill(tenant)
     chooser.get_by_role("button", name=action).click()
+    # A choice becomes the active tenant once the runtime's registry has
+    # answered; the view starts over for it then.
+    expect(
+        page.get_by_role("region", name="Active tenant").locator("p.current-tenant")
+    ).to_have_text(f"Current tenant: {tenant}")
 
 
 def _region(page: Page, name: str):

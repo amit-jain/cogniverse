@@ -31,7 +31,7 @@ from tests.utils.web_client import (
     recording_telemetry_sink,
     serve_web,
 )
-from tests.utils.web_ops import serve_ops_runtime
+from tests.utils.web_ops import register_tenant, serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
@@ -462,7 +462,8 @@ class TestDeployOutcomes:
         self, page, web_url, runtime_url, config_manager
     ):
         """The profile is stored; the operator is told its schema is not."""
-        tenant = f"webprofgone{uuid.uuid4().hex[:8]}:main"
+        # Registered, so the view can be chosen for it, then marked deleted.
+        tenant = register_tenant(f"webprofgone{uuid.uuid4().hex[:8]}:main")
         name = f"web_{uuid.uuid4().hex[:8]}"
         mark_tenant_deleted(config_manager.store, tenant)
         try:

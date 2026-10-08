@@ -47,7 +47,6 @@ from tests.utils.web_ops import serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast, pytest.mark.no_shared_vespa]
 
-KEY = "web-ops-harness-key"
 # The page polls every 5 s; Phoenix serves spans after a short indexing delay.
 POLL_TIMEOUT_MS = 60_000
 VIEW = "Optimization framework"
@@ -117,7 +116,7 @@ def runtime_url(review_config, schema_loader, workflow_state_redis_url, telemetr
 def web_url(built_client, runtime_url, phoenix_proxy):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []

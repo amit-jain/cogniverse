@@ -124,6 +124,11 @@ def _show(page: Page, web_url: str, view: str, heading: str, action: str, tenant
     chooser = page.get_by_role("form", name="Choose tenant")
     chooser.get_by_label("Tenant ID").fill(tenant)
     chooser.get_by_role("button", name=action).click()
+    # A choice becomes the active tenant once the runtime's registry has
+    # answered; the view starts over for it then.
+    expect(
+        page.get_by_role("region", name="Active tenant").locator("p.current-tenant")
+    ).to_have_text(f"Current tenant: {tenant}")
 
 
 def _table(page: Page, table: str):
@@ -1038,7 +1043,10 @@ def _labelling_facts(page: Page, want: dict, timeout=90.0):
     (Phoenix serves a new label after a short indexing delay)."""
     deadline = time.monotonic() + timeout
     while True:
-        expect(page.locator('dl[aria-label="Stored labels"]')).to_be_visible()
+        # The facts reload from Phoenix after each refresh.
+        expect(page.locator('dl[aria-label="Stored labels"]')).to_be_visible(
+            timeout=30_000
+        )
         facts = _facts(page, "Stored labels")
         if facts == want or time.monotonic() > deadline:
             return facts

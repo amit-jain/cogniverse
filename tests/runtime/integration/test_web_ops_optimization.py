@@ -413,7 +413,7 @@ class TestLlmLabellingRun:
     def test_label_with_the_llm_starts_a_run_over_the_routing_window(
         self, page, web_url, argo
     ):
-        tenant = f"webllm{uuid.uuid4().hex[:8]}:main"
+        tenant = register_tenant(f"webllm{uuid.uuid4().hex[:8]}:main")
         page.goto(f"{web_url}/#/ops/routing")
         chooser = page.get_by_role("form", name="Choose tenant")
         chooser.get_by_label("Tenant ID").fill(tenant)
