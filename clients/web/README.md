@@ -4,7 +4,9 @@ Browser UI for the Cogniverse runtime, built on CopilotKit 1.77. Every agent in
 the runtime's registry (`GET /agents/`) appears as a Dot in the sidebar, marked
 online or offline (the runtime's `/health` answers healthy or degraded and its
 registry has the agent, checked every 30 seconds); picking one opens a
-CopilotKit chat with it.
+CopilotKit chat with it. The gateway agent opens when the address names no
+agent; an address naming an agent the runtime does not serve opens the gateway
+with a warning naming it.
 
 Everything acts for one tenant at a time: the active tenant, chosen in the
 sidebar or in any operations view's Tenant form, is shared by every view and
@@ -17,8 +19,14 @@ outage). Changing the active tenant starts every view and conversation over
 for the new tenant, and a run's results show only while the tenant they were
 produced for is active. Runs stream over the runtime's AG-UI
 surface (`POST /ag-ui/{agent}`): the reply streams token by token and status
-phases show above the chat. A run that fails says why in the conversation, and
-one that is stopped says it was cancelled.
+phases show above the chat, with the themes and draft summary an agent reports
+while it works. A run that fails says why in the conversation, and one that is
+stopped says it was cancelled. An empty message cannot be sent.
+
+The session bar shows the conversation's ID and turn count and the search
+settings every run sends: results per search (`top_k`, 1-20, sent as
+`forwardedProps.cogniverse.top_k`) and a minimum score below which hits are
+hidden. Settings are remembered in the browser.
 
 Each conversation is a thread named in the address (`#/agents/{agent}/{thread}`).
 The runtime saves every run's turn under its thread, and opening a thread
@@ -32,11 +40,26 @@ The run's final state renders beside the chat: search hits as result cards
 (video segments with their description and time, documents with their
 preview, images and audio with their text, each with its ranking score), the
 coding agent's files and the output of running them, and, for an orchestration,
-each planned agent's hits under its name. When a search recorded a telemetry
+each planned agent's hits under its name, with the orchestration's execution
+summary, and an answer agent's key points. Each search says what it found for
+the question ("Found 2 results for 'q'." or "No results for 'q'."), its result
+count, the run's latency, the profile or ensemble profiles searched and the
+search mode, and warns about each ensemble profile that did not run. A card
+shows the hit's video and document IDs. When a search recorded a telemetry
 span, each of its cards can be rated Highly Relevant, Somewhat Relevant or Not
 Relevant; the rating is stored on the search's span
 (`POST /ag-ui/results/relevance`), where the embedding triplet miner reads it,
 and a rating that was not stored shows its reason on the card.
+
+Below the results: "Summarize results" runs the summarizer agent grounded in
+the hits on screen (`POST /ag-ui/summarizer_agent` with
+`forwardedProps.cogniverse.search_results`) and shows its streamed summary and
+key points; the count of ratings saved in the conversation, with "Export
+annotations" downloading them as JSON; "Evaluate this conversation", which
+stores an outcome (success, partial, failure) and a 0-1 quality on each search
+span of the conversation (`POST /ag-ui/threads/{thread}/evaluation`); and the
+conversation's history, each run's question, result count and time. The
+browser keeps each conversation's run records and ratings by thread.
 
 The browser talks only to this package's Node server. The server hosts the
 CopilotKit runtime at `/ui-api/copilotkit` and acts for the tenant each request
@@ -67,7 +90,7 @@ runtime's existing routes through `/ui-api/runtime/*`.
 | Tenants | List, create and delete organizations and tenants, with the organization, tenant and per-organization counts; refresh an organization's tenants; set a tenant's router tier. A new tenant gets the base schemas checked from the runtime's list, its defaults checked to start with. Deletes need the name typed to confirm. | `/admin/organizations`, `/admin/tenants`, `/admin/router-tiers`, `/admin/base-schemas` |
 | Backend profiles | For a chosen tenant: list and count the profiles created for it, create one, either blank (its pipeline, strategies and schema config filled with the frame-based ColPali layout) or started from a shipped profile whose every key fills the form, choosing type, embedding type, model loader and process type from the values the runtime lists, with JSON fields for pipeline, strategies, schema config, model-specific parameters and extra config such as inference services; edit its description, pipeline, strategies and model-specific parameters, deploy (or force-redeploy) its schema, and delete it with or without its schema. A create whose requested deploy did not happen says so with the reason; a failed deploy or delete shows the request it made beside the runtime's answer. Shipped profiles are not listed. | `/admin/profiles`, `/admin/profile-templates` |
 | Configuration | The system config and, for a chosen tenant, its routing, telemetry and durable-execution configs and each agent's config, as forms generated from the runtime's schema for each section, so a new config field appears without client changes. A save applies to the version the form was loaded at: one made over another operator's save is refused with both versions named. Secrets are never shown; a blank secret keeps its value and one marked to clear is removed. Fields with a fixed set of values are dropdowns, a port outside 1 to 65535 is refused before saving, and an agent's optimizer is set or cleared with a checkbox and edited field by field. Every stored config of the system and of the tenant is listed with its versions, each with when it was created and updated, any of which can be restored as the next version. A tenant's configs export to a JSON download (secrets included, every version when asked) and import from one, whole or not at all, after a preview listing the configs the file holds. The config store's implementation, health, backend and counts are shown. | `/admin/config/sections`, `/admin/config/entries`, `/admin/config/history`, `/admin/config/rollback`, `/admin/config/export`, `/admin/config/import`, `/admin/config/stats`, `/admin/config/health` |
-| Ingestion | Upload a file to a tenant (optionally naming a profile, or forcing a re-ingest of identical bytes) and follow each ingest live through queued, running, and complete, failed or cancelled, with its result, error or cancellation reason. A completion that fed no documents shows as a failure. Follow an existing ingest by its ID. | `/ingestion/upload`, `/ingestion/{id}/events`, `/ingestion/{id}/status` |
+| Ingestion | Upload a file to a tenant: the form lists the tenant's profiles that ingest an uploaded file (the default one chosen) and the backend, offers only the files the chosen profiles read, and refuses a file a chosen profile cannot read before anything is sent; a runtime that does not answer is reported and nothing can be uploaded. The file goes to each chosen profile (optionally forcing a re-ingest of identical bytes), and each ingest is followed live through queued, running, and complete, failed or cancelled, with its result, error or cancellation reason; an upload answer without an ingest ID is an error. A completion that fed no documents shows as a failure, and an ingest with no terminal state after 900 s is given up. Each upload's batch line says when all its profiles ingested, or which failed. Followed ingests and batches survive a reload. Follow an existing ingest by its ID. | `/ingestion/profiles`, `/ingestion/upload`, `/ingestion/{id}/events`, `/ingestion/{id}/status` |
 | Optimization runs | For a chosen tenant: start a run in any mode the runtime accepts over a chosen lookback (for the synthetic mode, generating training data for the optimizers chosen, which then wait in Approvals), list its runs with mode, trigger, phase and times (polled while any run is unsettled), open a run to see its steps and Argo message, cancel an unsettled run, and retry the failed steps of a failed one. | `/admin/tenant/optimize-modes`, `/admin/tenant/{tenant}/optimize`, `/admin/tenant/{tenant}/optimize/runs`, `/admin/tenant/{tenant}/optimize/runs/{name}`, `.../cancel`, `.../retry` |
 | Memory | For a chosen tenant and namespace (the user's memories, an agent's, or a system one): its store's health (checked on opening and on demand), user and agent IDs, and live and archived counts; list or semantically search up to the chosen number of memories, a search showing each one's similarity score, with created and updated times and each memory's every field and metadata on opening it; add one with a category and JSON metadata, the saved record shown; delete one, and clear the namespace after typing its name. System namespaces are read-only. A store outage shows as an error, never as an empty namespace. | `/admin/tenant/{tenant}/memories`, `/admin/tenant/{tenant}/memories/stats`, `/admin/tenant/{tenant}/memories/health`, `/admin/tenant/{tenant}/memories/{id}`, `/agents/` |
 | Approvals | A tenant's generated examples awaiting review, each with its schema, confidence, reasoning, the entity self-consistency check's agreement per sampled mention, and data. As a named reviewer, approve an item into the training dataset, or reject it with feedback and edits to its correctable fields, which regenerates it (or, for a workflow record, merges the corrections) for another review. A decision another reviewer already made is refused rather than overwritten. | `/admin/tenant/{tenant}/approvals`, `/admin/tenant/{tenant}/approvals/{batch}/{item}` |
@@ -124,16 +147,21 @@ npm run typecheck
 npm test
 ```
 
-Vitest covers the result parsing and rendering for each agent's payload, the
-run notices, error, route, JSON-field and event-stream parsing, the active
-tenant and its registration check, the Analytics view's figures and exports,
-the server's configuration, agent listing and status, per-tenant keys, thread
-restore and ownership, and the runtime proxy against local HTTP sockets.
+Vitest covers the result parsing and rendering for each agent's payload, search
+facts, key points and orchestration summaries, the conversation records,
+export and settings, the summarize stream, the default agent, the run notices,
+error, route, JSON-field and event-stream parsing, the active tenant and its
+registration check, the Analytics view's figures and exports, the server's
+configuration, agent listing and status, per-tenant keys, thread restore and
+ownership, and the runtime proxy against local HTTP sockets.
 `tests/runtime/integration/test_web_client_ag_ui.py` installs this lockfile,
 runs the server from source against the runtime's routers and drives it with
 the published `@ag-ui/client`. `tests/runtime/integration/test_web_agent_workspace.py`
 drives the agent workspace in Chromium (run notices, threads restored from the
-runtime, each agent's results), `tests/runtime/integration/test_web_ops_shell.py`
+runtime, each agent's results, progress, navigation),
+`tests/runtime/integration/test_web_search_session.py` a search conversation
+against the dispatcher's own search agent and real Phoenix (settings, results,
+ratings export, summarize, evaluation), `tests/runtime/integration/test_web_ops_shell.py`
 the active tenant, the tenant gate, the agents' status and two sessions on
 different tenants against the real tenant registry and key store,
 `tests/runtime/integration/test_web_ops_analytics.py` the Analytics view against

@@ -529,12 +529,16 @@ def test_a_browser_run_reaches_the_agent_through_copilotkit(
             "snippet": "the tower lights up",
             "start": 42.0,
             "end": 48.5,
+            "videoId": "v7",
+            "documentId": "id:video:video::v7_seg_3",
         },
         {
             "id": "v2_seg_0",
             "ratingId": "id:video:video::v2_seg_0",
             "score": 0.64,
             "snippet": "a skyline at dusk",
+            "videoId": "v2",
+            "documentId": "id:video:video::v2_seg_0",
         },
     ]
 

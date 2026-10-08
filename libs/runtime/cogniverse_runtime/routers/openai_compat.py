@@ -761,8 +761,10 @@ async def run_turn(
     external_tools: Optional[List[Dict[str, Any]]] = None,
     sampling: Optional[Dict[str, Any]] = None,
     tools_forbidden: bool = False,
+    top_k: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Execute one dispatch turn.
+    """Execute one dispatch turn; ``top_k``, when given, is how many hits a
+    searching agent returns.
 
     Returns ``{"kind": "answer", "answer": str, "usage": {...}}`` for a
     completed turn, or ``{"kind": "tool_calls", "tool_calls": [...],
@@ -790,7 +792,10 @@ async def run_turn(
 
     with track_usage() as tracker:
         result = await dispatcher.dispatch(
-            agent_name=agent_name, query=query, context=context
+            agent_name=agent_name,
+            query=query,
+            context=context,
+            **({} if top_k is None else {"top_k": top_k}),
         )
 
     pending = result.get("pending_tool_calls") if isinstance(result, dict) else None
@@ -969,6 +974,25 @@ async def _stream_turn(
         _in_flight.discard(task)
 
 
+def progress_details(event: Dict[str, Any]) -> Dict[str, Any]:
+    """What a partial progress event shows beside its message: the themes an
+    agent found (``themes``, a list of strings) and a summary it drafted
+    (``summary``). Anything else a partial carries is not shown."""
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return {}
+    details: Dict[str, Any] = {}
+    themes = data.get("themes")
+    if isinstance(themes, list):
+        named = [theme for theme in themes if isinstance(theme, str) and theme]
+        if named:
+            details["themes"] = named
+    summary = data.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        details["summary"] = summary
+    return details
+
+
 def use_token_stream(dispatcher: Any, agent_name: str, has_tool_results: bool) -> bool:
     """Whether a streamed request takes the live-token path.
 
@@ -998,7 +1022,8 @@ async def answer_token_events(
     Yields, in order of arrival:
 
     - ``{"kind": "status", "phase", "message"}`` for each progress event that
-      is not an answer token;
+      is not an answer token, with the ``themes`` and ``summary`` of a partial
+      event (``progress_details``);
     - ``{"kind": "text", "delta"}`` for each piece of reply text;
     - exactly one terminal event: ``{"kind": "answer", "text", "payload"}``,
       ``{"kind": "tool_calls", "tool_calls", "payload"}`` (OpenAI
@@ -1062,6 +1087,7 @@ async def answer_token_events(
                     "kind": "status",
                     "phase": str(event.get("phase", "")),
                     "message": str(event.get("message", "")),
+                    **progress_details(event),
                 }
                 continue
             if event.get("type") != "final":

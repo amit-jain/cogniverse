@@ -951,6 +951,12 @@ Form fields: `file` (required), `profile` (optional), `backend` (default `"vespa
 
 Response always includes `ingest_id`, `sha`, `state` (the status stream's newest event: `queued`|`in_flight`|`running`|`retrying`|`complete`|`failed`|`cancelled`), `existing` (`true` on an idempotency hit, where `state` reports the existing run and its status stream is re-seeded if it has been reclaimed, so the returned `ingest_id` always resolves through `GET /ingestion/{id}/status`), `filename`, `source_url`, `wait_timed_out`. The object key is the content hash; the name the file was uploaded under travels as `filename` on the job's first status event (`queued`, or the re-seeded snapshot), so a client following the ingest by its id shows that name. The `error` of a `failed` or `retrying` event names files by their file name only: the worker reduces every absolute path in it to its last component. Without `wait=true` the response stops there with `status: "queued"`. When `wait=true` reaches a terminal state, the response (200) additionally includes `video_id`, `chunks_created`, `documents_fed`, `status` (`"success"` or the terminal `state`), and `graph_nodes`/`graph_edges` — the worker's per-segment KG-extraction counts carried through the terminal event (the route surfaces them verbatim rather than re-extracting). A `failed` terminal additionally carries the worker's `error` and `error_type`. When `wait_timeout` lapses first, the response is **202** with `status: "wait_timeout"`, `wait_timed_out: true`, `state` as the stream last showed it, and the `error`/`error_type` of a `retrying` job; poll `GET /ingestion/{id}/status` for the terminal. 429 on backpressure rejection (`axis`, `current`, `limit`, `message`); 503 if Redis/MinIO aren't configured, or if the job's status stream yielded no event at all during the wait (its state is unknown, never rendered as `queued`).
 
+**GET /ingestion/profiles?tenant_id=...** - What an upload can go to
+```bash
+curl "http://localhost:8000/ingestion/profiles?tenant_id=acme:production"
+```
+Answers `{tenant_id, backend, default_profile, profiles: [{name, type, kind, extensions}]}`: the backend uploads ingest to, every profile of the tenant whose segmentation reads one uploaded file with the kind of file (`video`, `document`, `PDF`, `audio`, `image`, `source`) and its suffixes (the same `ingested_files` mapping the upload route refuses by), sorted by name, and the profile an upload naming none goes to (`null` when the tenant's default cannot take uploads). A malformed tenant is 400, an unregistered one 404, a tenant without a usable profile catalog 503, and a config store that does not answer 503 `upload_profile_unavailable`.
+
 **GET /ingestion/status/{job_id}** - Check processing status
 ```bash
 curl http://localhost:8000/ingestion/status/job-123
@@ -1656,13 +1662,22 @@ so a run is a self-contained turn exactly as a `/v1` request is. Messages map
 onto the `/v1` transcript: developer messages become system messages, image
 parts (a URL or base64 data) become attachments, and activity and reasoning
 messages are left out. The run's `tools` reach the agent as its external
-tools. The response is SSE, one AG-UI event per `data:` line:
+tools. Per-run parameters travel in `forwardedProps.cogniverse` (the rest of
+`forwardedProps` is the client framework's and is not read): `top_k`, an
+integer 1-100, is how many hits a searching agent returns (the dispatch's
+`top_k`); `search_results`, 1-50 hit objects, grounds an answer agent such as
+the summarizer in hits the client already shows instead of a new search
+(`context["search_results"]`). Both are also placed on the dispatch context,
+where an agent input field of the same name reads them. Any other key, or a
+value of the wrong type or range, is 400 `forwardedProps.cogniverse is
+invalid: <field>: <problem>`. The run's `state` and `context` are not read.
+The response is SSE, one AG-UI event per `data:` line:
 
 | Event | When |
 |---|---|
 | `RUN_STARTED` | first, with the client's `threadId` and `runId` |
 | `STEP_STARTED` / `STEP_FINISHED` | around each phase: first `starting`, sent before the agent runs, then each phase the agent reports |
-| `CUSTOM` `cogniverse.status` | each phase's message, `value: {phase, message}`; `starting` carries `Running <agent_name>` |
+| `CUSTOM` `cogniverse.status` | each phase's message, `value: {phase, message}`, plus `themes` (strings) and `summary` when the agent reported them as a partial result (`openai_compat.progress_details`); `starting` carries `Running <agent_name>` |
 | `TEXT_MESSAGE_START` / `_CONTENT` / `_END` | the reply, one message per run |
 | `TOOL_CALL_START` / `_ARGS` / `_END` | one sequence per frontend tool the agent suspends on |
 | `STATE_SNAPSHOT` | the final payload, `snapshot: {agent, tenant_id, result}`; `tenant_id` is the tenant the key resolved to |
@@ -1726,6 +1741,21 @@ in the tenant's telemetry project 404 `span_not_found`, and a telemetry
 backend that fails the read or the write 502 `annotation_not_stored`. The
 triplet miner (`TripletExtractor`) counts a `Highly Relevant` result as a
 positive for the search's query.
+
+**POST /ag-ui/threads/{thread_id}/evaluation** — stores a reviewer's verdict
+on a whole conversation as a `session_evaluation` annotation (the name the
+trajectory converter reads) on each search span of it, in the key's tenant.
+Body `{outcome, score, span_ids}`: `outcome` one of `success`, `partial`,
+`failure` (the annotation's label), `score` 0-1, `span_ids` 1-200 span ids
+of the conversation's searches. Every span is read back from the tenant's
+project before any is written; the annotation's metadata carries
+`session_id` (the thread) and `num_spans`, and evaluating the thread again
+replaces its verdict on each span. The answer is `{thread_id, outcome, score,
+span_ids}` with the spans sorted. An unknown key is 401, a key-store outage
+503, an invalid body or a malformed span id 400, a span not in the tenant's
+project 404 `span_not_found` naming it (nothing is written), and a telemetry
+backend that fails a read or write 502 `annotation_not_stored`
+(`span_contract.persist_session_evaluation`).
 
 The browser UI in `clients/web` drives this surface through a CopilotKit
 runtime that acts for the tenant each browser chose, with a harness key it mints

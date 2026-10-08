@@ -13,7 +13,10 @@ worker's own success, failure and summary handling shape every event.
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -57,7 +60,8 @@ def ingest_redis_url(workflow_state_redis_url):
 async def _pipeline(job, *, endpoint: str) -> dict:
     """Localise the upload and return a pipeline envelope: one keyframe and
     one fed document per line, none fed when the first line is ``unfed``; an
-    empty file fails as the pipeline fails."""
+    empty file, or one whose first line is ``fail:<the job's profile>``, fails
+    as the pipeline fails."""
     locator = MediaLocator(
         tenant_id=job.tenant_id,
         config=_media_config_from_defaults({"minio_endpoint": endpoint}),
@@ -67,7 +71,7 @@ async def _pipeline(job, *, endpoint: str) -> dict:
     name = Path(job.source_url).name
     if lines and lines[0] == "hold":
         await asyncio.to_thread(_release.wait, 120)
-    if not lines:
+    if not lines or lines[0] == f"fail:{job.profile}":
         return {
             "status": "failed",
             "error": "no keyframes extracted",
@@ -192,6 +196,16 @@ def _status(runtime_url: str, ingest_id: str) -> dict:
     return response.json()
 
 
+def _wait_for_state(runtime_url: str, ingest_id: str, state: str, timeout=60.0) -> str:
+    """The ingest's state once it is ``state``, or its last state at the timeout."""
+    deadline = time.monotonic() + timeout
+    while True:
+        current = _status(runtime_url, ingest_id)["state"]
+        if current == state or time.monotonic() > deadline:
+            return current
+        time.sleep(0.5)
+
+
 def _stored_keys(minio, tenant: str) -> list:
     listed = minio.boto3_client().list_objects_v2(Bucket=BUCKET, Prefix=f"{tenant}/")
     return sorted(item["Key"] for item in listed.get("Contents", []))
@@ -312,16 +326,16 @@ class TestIngestion:
         )
         follow.get_by_label("Ingest ID").fill(ingest_id)
         follow.get_by_role("button", name="Follow").click()
-        source_name = Path(
+        video_id = Path(
             _status(runtime_url, ingest_id)["history"][0]["source_url"]
-        ).name
+        ).stem
         expect(_row(other, ingest_id).get_by_role("cell")).to_have_text(
             [
                 ingest_id,
-                source_name,
+                clip.name,
                 resolve_default_profile(get_config(tenant, config_manager)),
                 "complete",
-                f"{Path(source_name).stem}: 1 chunks, 1 documents fed.",
+                f"{video_id}: 1 chunks, 1 documents fed.",
             ]
         )
 
@@ -408,6 +422,229 @@ class TestIngestion:
         ]
 
 
+def _upload_targets(runtime_url: str, tenant: str) -> dict:
+    response = httpx.get(
+        f"{runtime_url}/ingestion/profiles", params={"tenant_id": tenant}, timeout=60
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _profile_box(page: Page, name: str):
+    return (
+        page.get_by_role("form", name="Upload content")
+        .get_by_role("group", name="Profiles")
+        .get_by_role("checkbox", name=name, exact=True)
+    )
+
+
+def _second_video_profile(targets: dict) -> str:
+    """A video profile of the tenant other than its default."""
+    others = [
+        profile["name"]
+        for profile in targets["profiles"]
+        if profile["kind"] == "video" and profile["name"] != targets["default_profile"]
+    ]
+    assert others, targets
+    return others[0]
+
+
+class TestUploadChoices:
+    def test_the_form_offers_the_tenants_profiles_and_the_files_they_read(
+        self, page, web_url, runtime_url, tenant, config_manager
+    ):
+        targets = _upload_targets(runtime_url, tenant)
+        default = resolve_default_profile(get_config(tenant, config_manager))
+        assert targets["tenant_id"] == tenant
+        assert targets["backend"] == "vespa"
+        assert targets["default_profile"] == default
+        by_name = {profile["name"]: profile for profile in targets["profiles"]}
+        assert by_name[default]["kind"] == "video"
+        assert by_name[default]["extensions"] == [
+            ".avi",
+            ".mkv",
+            ".mov",
+            ".mp4",
+            ".webm",
+        ]
+        _ingestion_view(page, web_url, tenant)
+        form = page.get_by_role("form", name="Upload content")
+
+        boxes = form.get_by_role("group", name="Profiles").get_by_role("checkbox")
+        expect(boxes).to_have_count(len(targets["profiles"]))
+        assert [box.get_attribute("aria-label") for box in boxes.all()] == sorted(
+            by_name
+        )
+        assert [
+            box.get_attribute("aria-label") for box in boxes.all() if box.is_checked()
+        ] == [default]
+        expect(form.get_by_text("Backend: vespa", exact=True)).to_be_visible()
+        file_input = form.get_by_label("File", exact=True)
+        expect(file_input).to_have_attribute("accept", ".avi,.mkv,.mov,.mp4,.webm")
+
+        second = _second_video_profile(targets)
+        _profile_box(page, second).check()
+        expect(file_input).to_have_attribute(
+            "accept",
+            ",".join(
+                dict.fromkeys(
+                    by_name[default]["extensions"] + by_name[second]["extensions"]
+                )
+            ),
+        )
+        _profile_box(page, default).uncheck()
+        _profile_box(page, second).uncheck()
+        expect(form.get_by_role("button", name="Upload and ingest")).to_be_disabled()
+        expect(
+            form.get_by_text("Choose at least one profile.", exact=True)
+        ).to_be_visible()
+
+    def test_one_file_goes_to_each_chosen_profile_and_the_batch_reads_as_one(
+        self, page, web_url, runtime_url, tenant, config_manager, tmp_path
+    ):
+        default = resolve_default_profile(get_config(tenant, config_manager))
+        second = _second_video_profile(_upload_targets(runtime_url, tenant))
+        good = tmp_path / f"pair-{uuid.uuid4().hex[:6]}.mp4"
+        good.write_text(f"frame {uuid.uuid4().hex}\nframe two\n")
+        half = tmp_path / f"half-{uuid.uuid4().hex[:6]}.mp4"
+        half.write_text(f"fail:{second}\nframe {uuid.uuid4().hex}\n")
+        _ingestion_view(page, web_url, tenant)
+        _profile_box(page, second).check()
+
+        rows = {}
+        for clip in (good, half):
+            _upload(page, clip)
+            notice = page.get_by_role("status")
+            expect(notice).to_contain_text(f"Queued {clip.name} as ingest ")
+            ids = re.findall(
+                rf"Queued {re.escape(clip.name)} as ingest (\S+) \(([^)]+)\)\.",
+                notice.inner_text(),
+            )
+            assert [profile for _, profile in ids] == [default, second]
+            rows[clip.name] = dict((profile, ingest) for ingest, profile in ids)
+
+        for profile, ingest_id in rows[good.name].items():
+            video_id = Path(
+                _status(runtime_url, ingest_id)["history"][0]["source_url"]
+            ).stem
+            expect(_row(page, ingest_id).get_by_role("cell")).to_have_text(
+                [
+                    ingest_id,
+                    good.name,
+                    profile,
+                    "complete",
+                    f"{video_id}: 2 chunks, 2 documents fed.",
+                ]
+            )
+        expect(
+            _row(page, rows[half.name][second]).get_by_role("cell").nth(3)
+        ).to_have_text("failed")
+        expect(
+            page.get_by_role("region", name="Batches").get_by_role("listitem")
+        ).to_have_text(
+            [
+                f"{half.name}: ingestion failed for {second} (1 of 2 profiles).",
+                f"{good.name}: all 2 profiles ingested.",
+            ]
+        )
+
+    def test_an_upload_answer_without_an_ingest_id_is_an_error(
+        self, page, web_url, tenant, config_manager, tmp_path
+    ):
+        """A runtime answer that names no ingest is not followed as one."""
+        clip = tmp_path / f"noid-{uuid.uuid4().hex[:6]}.mp4"
+        clip.write_text("frame\n")
+        page.route(
+            "**/ui-api/runtime/ingestion/upload",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {"state": "queued", "existing": False, "filename": clip.name}
+                ),
+            ),
+        )
+        _ingestion_view(page, web_url, tenant)
+        form = _upload(page, clip)
+
+        expect(form.get_by_role("alert")).to_have_text(
+            f"The runtime accepted {clip.name} but answered no ingest ID."
+        )
+        expect(
+            page.get_by_role("region", name="Ingests").get_by_role("table")
+        ).to_have_count(0)
+        expect(
+            page.get_by_role("region", name="Batches").get_by_role("listitem")
+        ).to_have_text(
+            [
+                f"{clip.name}: ingestion failed for "
+                f"{resolve_default_profile(get_config(tenant, config_manager))} "
+                "(1 of 1 profiles)."
+            ]
+        )
+
+    def test_an_ingest_that_never_ends_is_given_up_after_the_deadline(
+        self, page, web_url, runtime_url, tenant, tmp_path
+    ):
+        _release.clear()
+        held = tmp_path / f"stuck-{uuid.uuid4().hex[:6]}.mp4"
+        held.write_text(f"hold\n{uuid.uuid4().hex}\n")
+        page.clock.install()
+        _ingestion_view(page, web_url, tenant)
+        _upload(page, held)
+        ingest_id = _ingest_id_from_notice(page, held.name)
+        row = _row(page, ingest_id)
+        expect(row.get_by_role("cell").nth(3)).to_have_text("running")
+
+        page.clock.fast_forward("15:00")
+
+        expect(row.get_by_role("cell").nth(4).get_by_role("alert")).to_have_text(
+            "No terminal state within 900 s; the last state was running. "
+            "Follow it by ID to keep watching."
+        )
+        _release.set()
+        assert _wait_for_state(runtime_url, ingest_id, "complete") == "complete"
+        # The page stopped following it at the deadline.
+        page.wait_for_timeout(2000)
+        expect(row.get_by_role("cell").nth(3)).to_have_text("running")
+
+    def test_followed_ingests_and_batches_survive_a_reload(
+        self, page, web_url, runtime_url, tenant, config_manager, tmp_path
+    ):
+        clip = tmp_path / f"kept-{uuid.uuid4().hex[:6]}.mp4"
+        clip.write_text(f"frame {uuid.uuid4().hex}\n")
+        _ingestion_view(page, web_url, tenant)
+        _upload(page, clip)
+        ingest_id = _ingest_id_from_notice(page, clip.name)
+        video_id = Path(
+            _status(runtime_url, ingest_id)["history"][0]["source_url"]
+        ).stem
+        expected = [
+            ingest_id,
+            clip.name,
+            resolve_default_profile(get_config(tenant, config_manager)),
+            "complete",
+            f"{video_id}: 1 chunks, 1 documents fed.",
+        ]
+        expect(_row(page, ingest_id).get_by_role("cell")).to_have_text(expected)
+
+        page.reload()
+        expect(page.get_by_role("heading", name="Ingestion", level=1)).to_be_visible()
+
+        expect(_row(page, ingest_id).get_by_role("cell")).to_have_text(expected)
+        expect(
+            page.get_by_role("region", name="Batches").get_by_role("listitem")
+        ).to_have_text([f"{clip.name}: all 1 profile ingested."])
+        page.get_by_role("region", name="Ingests").get_by_role(
+            "button", name="Clear list"
+        ).click()
+        page.reload()
+        expect(
+            page.get_by_role("region", name="Ingests").get_by_role("table")
+        ).to_have_count(0)
+        expect(page.get_by_role("region", name="Batches")).to_have_count(0)
+
+
 class TestConcurrency:
     def test_two_uploads_at_once_each_follow_their_own_job(
         self, browser, web_url, runtime_url, tenant, tmp_path
@@ -446,22 +683,35 @@ class TestConcurrency:
 
 
 class TestFaultContract:
-    def test_a_down_runtime_refuses_the_upload_with_its_reason(
+    def test_a_down_runtime_is_reported_before_anything_is_uploaded(
         self, page, built_client, tmp_path
     ):
+        """The view asks the runtime what it accepts before it offers the
+        upload; a runtime that does not answer leaves nothing to submit."""
         dead_runtime = f"http://127.0.0.1:{free_port()}"
-        clip = tmp_path / "clip.mp4"
-        clip.write_text("frame\n")
+        uploads = []
+        page.on(
+            "request",
+            lambda request: (
+                uploads.append(request.url)
+                if "/ingestion/upload" in request.url
+                else None
+            ),
+        )
         with recording_telemetry_sink() as (sink_url, _):
             with serve_web(
                 built_client, dead_runtime, telemetry_url=sink_url, built=True
             ) as url:
                 _ingestion_view(page, url, "acme:production")
-                form = _upload(page, clip)
-                expect(form.get_by_role("alert")).to_have_text(
-                    f"The Cogniverse runtime at {dead_runtime} did not answer "
-                    "(TypeError)."
+                region = page.get_by_role("region", name="Upload to acme:production")
+                expect(region.get_by_role("alert")).to_have_text(
+                    "The runtime cannot take uploads now: The Cogniverse runtime "
+                    f"at {dead_runtime} did not answer (TypeError)."
                 )
+                expect(
+                    region.get_by_role("button", name="Upload and ingest")
+                ).to_be_disabled()
                 expect(
                     page.get_by_role("region", name="Ingests").get_by_role("table")
                 ).to_have_count(0)
+        assert uploads == []

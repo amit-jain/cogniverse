@@ -269,6 +269,7 @@ jobs:
           --ignore=tests/runtime/integration/test_web_ops_telemetry_metrics.py \
           --ignore=tests/runtime/integration/test_web_ops_tenants.py \
           --ignore=tests/runtime/integration/test_web_ops_workflows.py \
+          --ignore=tests/runtime/integration/test_web_search_session.py \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short
 
@@ -362,5 +363,6 @@ jobs:
           tests/runtime/integration/test_web_ops_telemetry_metrics.py \
           tests/runtime/integration/test_web_ops_tenants.py \
           tests/runtime/integration/test_web_ops_workflows.py \
+          tests/runtime/integration/test_web_search_session.py \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short

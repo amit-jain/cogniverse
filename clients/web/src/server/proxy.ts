@@ -21,10 +21,12 @@ const ALLOWED = [
   /^\/admin\/tenant\/[^/]+\/embeddings\/atlas$/,
   /^\/admin\/tenant\/[^/]+\/routing-decisions(\/[^/]+\/(approve|label))?$/,
   /^\/ag-ui\/results\/relevance$/,
+  /^\/ag-ui\/summarizer_agent$/,
+  /^\/ag-ui\/threads\/[^/]+\/evaluation$/,
   /^\/agents\/$/,
   /^\/agents\/annotations\/labels$/,
   /^\/agents\/annotations\/queue(\/[^/]+\/(assign|complete))?$/,
-  /^\/ingestion\/upload$/,
+  /^\/ingestion\/(upload|profiles)$/,
   /^\/ingestion\/[^/]+\/(events|status)$/,
 ];
 

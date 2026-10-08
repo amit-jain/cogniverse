@@ -86,6 +86,8 @@ class AgUiInput(AgentInput):
     tool_results: list = []
     continuation_state: dict = {}
     tool_exchange: list = []
+    top_k: int = 10
+    search_results: list = []
 
 
 class SearchStreamOutput(AgentOutput):
@@ -263,7 +265,46 @@ class SlowDispatchAgent(AgentBase[AgUiInput, SlowOutput, AgUiDeps]):
         return SlowOutput(summary="done")
 
 
+THEMES = ["night skyline", "tower lights"]
+DRAFT_SUMMARY = "The tower is lit in three clips."
+parameter_barrier: Dict[str, asyncio.Barrier] = {}
+
+
+class ParametersOutput(AgentOutput):
+    summary: str = ""
+
+
+class ParametersAgent(AgentBase[AgUiInput, ParametersOutput, AgUiDeps]):
+    """Reports the themes and a draft summary it found as partial results,
+    then answers with the run parameters its input received."""
+
+    async def _process_impl(self, input: AgUiInput) -> ParametersOutput:
+        self.emit_progress(
+            "thinking",
+            "Content analysis complete",
+            data={"themes": THEMES, "categories": ["city"], "reasoning": "lit"},
+        )
+        self.emit_progress(
+            "summarization", "Summary generated", data={"summary": DRAFT_SUMMARY}
+        )
+        barrier = parameter_barrier.get("barrier")
+        if barrier is not None:
+            async with asyncio.timeout(GATE_SECONDS):
+                await barrier.wait()
+        return ParametersOutput(
+            summary=json.dumps(
+                {
+                    "top_k": input.top_k,
+                    "search_results": [hit["id"] for hit in input.search_results],
+                },
+                sort_keys=True,
+            )
+        )
+
+
 _AGENT_CLASSES = {
+    "parameters_stream_agent": f"{__name__}:ParametersAgent",
+    "parameters_dispatch_agent": f"{__name__}:ParametersAgent",
     "search_stream_agent": f"{__name__}:SearchStreamAgent",
     "search_dispatch_agent": f"{__name__}:SearchStreamAgent",
     "context_agent": f"{__name__}:ContextAgent",
@@ -278,6 +319,8 @@ _AGENT_CLASSES = {
 }
 
 _TOKEN_STREAMING = {
+    "parameters_stream_agent": True,
+    "parameters_dispatch_agent": False,
     "search_stream_agent": True,
     "search_dispatch_agent": False,
     "context_agent": False,
@@ -339,6 +382,7 @@ def ag_ui_app(dispatcher, continuation_store, conversation_ledger):
     openai_compat.set_continuation_store(continuation_store)
     slow_agent_events.clear()
     gated_release.clear()
+    parameter_barrier.clear()
     app = FastAPI()
     app.include_router(ag_ui.router, prefix="/ag-ui")
     yield app
@@ -1336,4 +1380,166 @@ class TestDisconnect:
         deadline = time.perf_counter() + DISCONNECT_CANCEL_BUDGET_SECONDS
         while time.perf_counter() < deadline and openai_compat.in_flight_count() != 0:
             time.sleep(0.02)
+        assert openai_compat.in_flight_count() == 0
+
+
+PARAMETER_AGENTS = ["parameters_stream_agent", "parameters_dispatch_agent"]
+
+
+def _parameters(**cogniverse: Any) -> Dict[str, Any]:
+    # CopilotKit adds keys of its own beside the client's parameters.
+    return {"cogniverse": cogniverse, "a2uiCatalogAvailable": False}
+
+
+class TestRunParameters:
+    """``forwardedProps.cogniverse`` reaches the agent on either path."""
+
+    @pytest.mark.parametrize("agent_name", PARAMETER_AGENTS)
+    async def test_the_runs_parameters_reach_the_agents_input(self, client, agent_name):
+        response = await client.post(
+            f"/ag-ui/{agent_name}",
+            json=_run(
+                [_user(QUERY)],
+                forwardedProps=_parameters(
+                    top_k=3, search_results=[RESULTS[1], RESULTS[0]]
+                ),
+            ),
+            headers=_auth(KEY_A),
+        )
+
+        assert response.status_code == 200
+        events = _events(response.text)
+        assert _text(events) == (
+            '{"search_results": ["video-2", "video-7"], "top_k": 3}'
+        )
+        assert events[-1]["type"] == "RUN_FINISHED"
+
+    @pytest.mark.parametrize("agent_name", PARAMETER_AGENTS)
+    async def test_a_run_without_parameters_gets_the_agents_defaults(
+        self, client, agent_name
+    ):
+        response = await client.post(
+            f"/ag-ui/{agent_name}",
+            json=_run([_user(QUERY)], forwardedProps={"a2uiCatalogAvailable": True}),
+            headers=_auth(KEY_A),
+        )
+
+        assert _text(_events(response.text)) == '{"search_results": [], "top_k": 10}'
+
+    @pytest.mark.parametrize("agent_name", PARAMETER_AGENTS)
+    async def test_partial_results_show_their_themes_and_summary(
+        self, client, agent_name
+    ):
+        response = await client.post(
+            f"/ag-ui/{agent_name}", json=_run([_user(QUERY)]), headers=_auth(KEY_A)
+        )
+
+        assert [
+            event["value"]
+            for event in _events(response.text)
+            if event["type"] == "CUSTOM"
+        ] == [
+            {"phase": START_PHASE, "message": f"Running {agent_name}"},
+            {
+                "phase": "thinking",
+                "message": "Content analysis complete",
+                "themes": THEMES,
+            },
+            {
+                "phase": "summarization",
+                "message": "Summary generated",
+                "summary": DRAFT_SUMMARY,
+            },
+        ]
+
+    @pytest.mark.parametrize(
+        ("props", "problem"),
+        [
+            (
+                _parameters(top_k=0),
+                "top_k: Input should be greater than or equal to 1",
+            ),
+            (
+                _parameters(top_k=101),
+                "top_k: Input should be less than or equal to 100",
+            ),
+            (_parameters(top_k="5"), "top_k: Input should be a valid integer"),
+            (_parameters(top_k=True), "top_k: Input should be a valid integer"),
+            (
+                _parameters(search_results=[]),
+                "search_results: List should have at least 1 item after "
+                "validation, not 0",
+            ),
+            (
+                _parameters(search_results=["video-7"]),
+                "search_results.0: Input should be a valid dictionary",
+            ),
+            (_parameters(limit=5), "limit: Extra inputs are not permitted"),
+            (
+                {"cogniverse": 5},
+                "value: Input should be a valid dictionary or instance of "
+                "RunParameters",
+            ),
+        ],
+    )
+    async def test_invalid_parameters_are_refused_before_the_run(
+        self, client, props, problem
+    ):
+        response = await client.post(
+            "/ag-ui/parameters_dispatch_agent",
+            json=_run([_user(QUERY)], forwardedProps=props),
+            headers=_auth(KEY_A),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == {
+            "message": f"forwardedProps.cogniverse is invalid: {problem}",
+            "type": "invalid_request_error",
+            "code": "invalid_request",
+        }
+
+    async def test_forwarded_props_that_are_not_an_object_are_refused(self, client):
+        response = await client.post(
+            "/ag-ui/parameters_dispatch_agent",
+            json=_run([_user(QUERY)], forwardedProps=["top_k", 3]),
+            headers=_auth(KEY_A),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == {
+            "message": "forwardedProps must be an object",
+            "type": "invalid_request_error",
+            "code": "invalid_request",
+        }
+
+    @pytest.mark.parametrize("agent_name", PARAMETER_AGENTS)
+    async def test_runs_in_flight_together_each_keep_their_own_parameters(
+        self, client, agent_name
+    ):
+        """Every run waits at one barrier until all are in flight, so each
+        reads its parameters while the others hold theirs."""
+        parameter_barrier["barrier"] = asyncio.Barrier(INTERLEAVED_RUNS)
+        runs = await asyncio.gather(
+            *(
+                client.post(
+                    f"/ag-ui/{agent_name}",
+                    json=_run(
+                        [_user(QUERY)],
+                        runId=f"run-{top_k}",
+                        forwardedProps=_parameters(
+                            top_k=top_k, search_results=[{"id": f"hit-{top_k}"}]
+                        ),
+                    ),
+                    headers=_auth(KEY_A if top_k % 2 else KEY_B),
+                )
+                for top_k in range(1, INTERLEAVED_RUNS + 1)
+            )
+        )
+
+        assert [_text(_events(response.text)) for response in runs] == [
+            json.dumps(
+                {"search_results": [f"hit-{top_k}"], "top_k": top_k}, sort_keys=True
+            )
+            for top_k in range(1, INTERLEAVED_RUNS + 1)
+        ]
         assert openai_compat.in_flight_count() == 0

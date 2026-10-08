@@ -75,6 +75,8 @@ describe('resultsOf: each agent hit shape', () => {
         snippet: 'A man throws a ball on a grassy field while spectators watch.',
         start: 5.9,
         end: 6.9,
+        videoId: 'v1',
+        documentId: 'id:video:video::v1_seg_3',
       },
     ]);
   });
@@ -89,6 +91,8 @@ describe('resultsOf: each agent hit shape', () => {
         snippet: 'Revenue grew 12% on the back of video search.',
         start: undefined,
         end: undefined,
+        videoId: undefined,
+        documentId: 'doc_7',
       },
     ]);
   });
@@ -120,8 +124,26 @@ describe('resultsOf: each agent hit shape', () => {
 describe('resultGroupsOf', () => {
   it('gives a single agent run one group with its span', () => {
     expect(
-      resultGroupsOf({ agent: 'search_agent', result: { span_id: '00000000000000ab', results: [VIDEO_HIT] } }),
-    ).toEqual([{ agent: 'search_agent', spanId: '00000000000000ab', items: resultsOf({ result: { results: [VIDEO_HIT] } }) }]);
+      resultGroupsOf({
+        agent: 'search_agent',
+        result: {
+          span_id: '00000000000000ab',
+          results: [VIDEO_HIT],
+          profile: 'video_colpali_smol500_mv_frame',
+          profiles: [],
+          search_mode: 'single_profile',
+          degraded_profiles: [],
+        },
+      }),
+    ).toEqual([
+      {
+        agent: 'search_agent',
+        spanId: '00000000000000ab',
+        items: resultsOf({ result: { results: [VIDEO_HIT] } }),
+        facts: { profile: 'video_colpali_smol500_mv_frame', profiles: [], searchMode: 'single_profile', degraded: [] },
+        hits: [VIDEO_HIT],
+      },
+    ]);
   });
 
   it("reads an orchestration's hits per agent, in plan order, each with its own span", () => {
@@ -138,9 +160,22 @@ describe('resultGroupsOf', () => {
         },
       },
     };
+    const noFacts = { profile: undefined, profiles: [], searchMode: undefined, degraded: [] };
     expect(resultGroupsOf(state)).toEqual([
-      { agent: 'search_agent', spanId: '00000000000000cd', items: resultsOf({ result: { results: [VIDEO_HIT] } }) },
-      { agent: 'document_agent', spanId: undefined, items: resultsOf({ result: { results: [DOCUMENT_HIT] } }) },
+      {
+        agent: 'search_agent',
+        spanId: '00000000000000cd',
+        items: resultsOf({ result: { results: [VIDEO_HIT] } }),
+        facts: noFacts,
+        hits: [VIDEO_HIT],
+      },
+      {
+        agent: 'document_agent',
+        spanId: undefined,
+        items: resultsOf({ result: { results: [DOCUMENT_HIT] } }),
+        facts: noFacts,
+        hits: [DOCUMENT_HIT],
+      },
     ]);
   });
 
@@ -235,8 +270,10 @@ describe('ResultPanel', () => {
     ]);
   });
 
-  it('renders nothing for a payload with neither hits nor code', () => {
-    expect(renderToStaticMarkup(<ResultPanel state={{ result: { summary: 'x' } }} tenant="acme:prod" />)).toBe('');
+  it('says where results will appear for a payload with nothing to show', () => {
+    expect(renderToStaticMarkup(<ResultPanel state={{ result: { summary: 'x' } }} tenant="acme:prod" />)).toBe(
+      '<aside class="results" aria-label="Results"><p class="muted">Results of a run appear here.</p></aside>',
+    );
   });
 
   it("refuses to show another tenant's results, or results that name no tenant", () => {

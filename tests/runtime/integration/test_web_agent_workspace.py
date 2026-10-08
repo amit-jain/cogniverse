@@ -97,6 +97,15 @@ CODE_RESULT = {
     "files_modified": ["/workspace/solution.py"],
 }
 slow_started = threading.Event()
+key_points_release = threading.Event()
+EXECUTION_SUMMARY = "Ran search_agent and document_agent in parallel."
+ENSEMBLE_PROFILES = [
+    "video_colpali_smol500_mv_frame",
+    "video_videoprism_base_mv_chunk_30s",
+]
+THEMES = ["field sports", "ball games", "spectators", "grass"]
+DRAFT_SUMMARY = "A man throws a ball on a field."
+KEY_POINTS = ["One clip shows a throw", "Spectators watch from the side"]
 
 
 class WorkspaceDeps(AgentDeps):
@@ -147,6 +156,7 @@ class AnswerOutput(AgentOutput):
     answer: str = ""
     result: dict = {}
     orchestration_result: dict = {}
+    key_points: list = []
 
 
 class ChatAgent(AgentBase[WorkspaceInput, AnswerOutput, WorkspaceDeps]):
@@ -177,9 +187,51 @@ class OrchestratorAgent(AgentBase[WorkspaceInput, AnswerOutput, WorkspaceDeps]):
                     "query_enhancement_agent": {"enhanced_query": input.query},
                     "search_agent": {"span_id": SPAN_ID, "results": [VIDEO_HIT]},
                     "document_agent": {"results": [DOCUMENT_HIT]},
-                }
+                },
+                "execution_summary": EXECUTION_SUMMARY,
             },
         )
+
+
+class EnsembleOutput(AgentOutput):
+    answer: str = ""
+    results: list = []
+    profile: str | None = None
+    profiles: list = []
+    search_mode: str = ""
+    degraded_profiles: list = []
+
+
+class EnsembleAgent(AgentBase[WorkspaceInput, EnsembleOutput, WorkspaceDeps]):
+    """Answers with the search agent's envelope for an ensemble one of whose
+    profiles did not run; a query starting "nothing" finds no hits."""
+
+    async def _process_impl(self, input: WorkspaceInput) -> EnsembleOutput:
+        found = [] if input.query.startswith("nothing") else [VIDEO_HIT]
+        return EnsembleOutput(
+            answer=f"Found {len(found)} results",
+            results=found,
+            profiles=ENSEMBLE_PROFILES,
+            search_mode="ensemble",
+            degraded_profiles=[
+                {"profile": ENSEMBLE_PROFILES[1], "reason": "encoder unavailable"}
+            ],
+        )
+
+
+class KeyPointsAgent(AgentBase[WorkspaceInput, AnswerOutput, WorkspaceDeps]):
+    """Reports the themes it found and a draft, holds until released, then
+    answers with key points."""
+
+    async def _process_impl(self, input: WorkspaceInput) -> AnswerOutput:
+        self.emit_progress(
+            "thinking", "Content analysis complete", data={"themes": THEMES}
+        )
+        self.emit_progress(
+            "summarization", "Summary generated", data={"summary": DRAFT_SUMMARY}
+        )
+        await asyncio.to_thread(key_points_release.wait, 60)
+        return AnswerOutput(answer=DRAFT_SUMMARY, key_points=KEY_POINTS)
 
 
 class FailingAgent(AgentBase[WorkspaceInput, AnswerOutput, WorkspaceDeps]):
@@ -198,12 +250,16 @@ class SlowAgent(AgentBase[WorkspaceInput, AnswerOutput, WorkspaceDeps]):
 
 
 _AGENT_CLASSES = {
+    "ensemble_agent": f"{__name__}:EnsembleAgent",
+    "key_points_agent": f"{__name__}:KeyPointsAgent",
     "search_agent": f"{__name__}:SearchAgent",
     "chat_agent": f"{__name__}:ChatAgent",
     "coding_agent": f"{__name__}:CodingAgent",
     "orchestrator_agent": f"{__name__}:OrchestratorAgent",
     "failing_agent": f"{__name__}:FailingAgent",
     "slow_agent": f"{__name__}:SlowAgent",
+    # Registered last, so the default is not merely the first agent listed.
+    "gateway_agent": f"{__name__}:ChatAgent",
 }
 _TOKEN_STREAMING = {"search_agent": True, "slow_agent": True}
 
@@ -531,3 +587,94 @@ class TestResults:
         expect(
             results.get_by_role("group", name="Relevance of id:video:video::v1_seg_3")
         ).to_be_visible()
+        expect(
+            results.get_by_role("region", name="Orchestration summary").locator("p")
+        ).to_have_text(EXECUTION_SUMMARY)
+
+    def test_a_partial_ensemble_and_an_empty_search_say_so(self, page, web_url):
+        _open(page, web_url, "ensemble_agent", "Ensemble")
+        _send(page, "Ensemble", "fields at dusk")
+        search = page.get_by_role("complementary", name="Results").get_by_role(
+            "region", name="Search by Ensemble"
+        )
+        expect(search.locator(".result-found")).to_have_text(
+            "Found 1 result for 'fields at dusk'.", timeout=60_000
+        )
+        expect(search.locator(".result-metrics dt")).to_have_text(
+            ["Results", "Latency", "Profile", "Search mode"]
+        )
+        expect(search.locator(".result-metrics dd").nth(2)).to_have_text(
+            ", ".join(ENSEMBLE_PROFILES)
+        )
+        expect(search.locator(".result-metrics dd").nth(3)).to_have_text("ensemble")
+        expect(search.get_by_role("alert")).to_have_text(
+            f"Partial results: {ENSEMBLE_PROFILES[1]} did not run "
+            "(encoder unavailable)."
+        )
+
+        _send(page, "Ensemble", "nothing at all")
+        expect(search.locator(".result-found")).to_have_text(
+            "No results for 'nothing at all'.", timeout=60_000
+        )
+        expect(search.locator(".result-card")).to_have_count(0)
+
+
+class TestProgress:
+    def test_a_dispatched_run_shows_its_status_themes_and_draft_then_key_points(
+        self, page, web_url
+    ):
+        key_points_release.clear()
+        _open(page, web_url, "key_points_agent", "Key points")
+        _send(page, "Key points", "summarize the match")
+
+        header = page.locator(".workspace-header")
+        expect(header.get_by_role("status")).to_have_text(
+            "Summary generated", timeout=60_000
+        )
+        progress = page.locator(".progress-detail")
+        expect(progress.locator(".status")).to_have_text(
+            "Themes: field sports, ball games, spectators"
+        )
+        expect(progress.locator(".draft-summary")).to_have_text(DRAFT_SUMMARY)
+        key_points_release.set()
+
+        points = page.get_by_role("complementary", name="Results").get_by_role(
+            "region", name="Key points"
+        )
+        expect(points.get_by_role("listitem")).to_have_text(KEY_POINTS, timeout=60_000)
+        expect(header.get_by_role("status")).to_have_count(0)
+        expect(page.locator(".progress-detail")).to_have_count(0)
+
+
+class TestNavigation:
+    def test_the_gateway_opens_by_default(self, page, web_url):
+        page.goto(f"{web_url}/#/")
+        expect(page.get_by_role("heading", name="Gateway", level=1)).to_be_visible()
+        page.wait_for_function(
+            "window.location.hash.startsWith('#/agents/gateway_agent/')",
+            timeout=10_000,
+        )
+
+    def test_an_agent_the_runtime_does_not_serve_is_named(self, page, web_url):
+        page.goto(f"{web_url}/#/agents/retired_agent")
+        expect(page.get_by_role("heading", name="Gateway", level=1)).to_be_visible()
+        expect(page.locator(".main > .alert")).to_have_text(
+            "Agent 'retired_agent' is not registered with the runtime, so this is "
+            "gateway_agent instead."
+        )
+        page.get_by_role("navigation").get_by_role("link", name="Chat").click()
+        expect(page.get_by_role("heading", name="Chat", level=1)).to_be_visible()
+        expect(page.locator(".main > .alert")).to_have_count(0)
+
+    def test_an_empty_message_cannot_be_sent(self, page, web_url):
+        _open(page, web_url, "chat_agent", "Chat")
+        send = page.get_by_test_id("copilot-send-button")
+        expect(send).to_be_disabled()
+        box = page.get_by_placeholder("Ask Chat…")
+        box.fill("   ")
+        expect(send).to_be_disabled()
+        box.press("Enter")
+        page.wait_for_timeout(1000)
+        expect(_user_messages(page)).to_have_count(0)
+        box.fill("hello")
+        expect(send).to_be_enabled()

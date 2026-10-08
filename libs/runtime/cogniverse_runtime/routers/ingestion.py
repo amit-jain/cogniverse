@@ -328,6 +328,77 @@ def _upload_profile_unavailable(exc: Exception, tenant_id: str):
     )
 
 
+def _uploadable_profiles(tenant_id: str, config_manager: ConfigManager) -> dict:
+    """The tenant's profiles that ingest an uploaded file, each with the
+    kind of file it reads and the suffixes it accepts, and the profile an
+    upload naming none goes to."""
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    backend = config.get("backend", {})
+    profiles = backend.get("profiles", {}) if isinstance(backend, dict) else {}
+    if not isinstance(profiles, dict):
+        raise _UploadProfileConfigurationError(
+            f"tenant {tenant_id!r} has no usable backend profile catalog"
+        )
+    listed = []
+    for name in sorted(profiles):
+        profile_config = profiles[name]
+        if not (
+            isinstance(profile_config, dict)
+            and isinstance(profile_config.get("strategies"), dict)
+            and profile_config["strategies"]
+        ):
+            continue
+        try:
+            kind, suffixes = _files_read_by(name, profile_config)
+        except ValueError:
+            continue
+        listed.append(
+            {
+                "name": name,
+                "type": profile_config.get("type"),
+                "kind": kind,
+                "extensions": sorted(suffixes),
+            }
+        )
+    default = resolve_default_profile(config)
+    return {
+        "profiles": listed,
+        "default_profile": default
+        if any(entry["name"] == default for entry in listed)
+        else None,
+    }
+
+
+@router.get("/profiles")
+async def list_upload_profiles(
+    tenant_id: str = Query(..., description="Tenant whose profiles to list."),
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> Dict[str, Any]:
+    """What ``/ingestion/upload`` accepts for ``tenant_id``: the backend it
+    ingests to, the profiles that ingest an uploaded file (name, type, the
+    kind of file and its suffixes) and the default profile, which an upload
+    naming no profile goes to (null when the tenant has none usable)."""
+    try:
+        resolved = require_tenant_id(tenant_id, source="/ingestion/profiles")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    await assert_tenant_exists(resolved)
+    try:
+        sys_cfg = await asyncio.to_thread(config_manager.get_system_config)
+        listing = await asyncio.to_thread(
+            _uploadable_profiles, resolved, config_manager
+        )
+    except _UploadProfileConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise _upload_profile_unavailable(exc, resolved) from exc
+    return {
+        "tenant_id": resolved,
+        "backend": sys_cfg.search_backend or "vespa",
+        **listing,
+    }
+
+
 @router.post("/start")
 async def start_ingestion(
     request: IngestionRequest,
