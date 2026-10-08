@@ -375,9 +375,12 @@ a keyword/word-count heuristic fallback.
 
 - `ProfileSelectionModule`: `dspy.ChainOfThought(ProfileSelectionSignature)` producing `selected_profile`,
   `confidence`, `reasoning`, `query_intent`, `modality`, `complexity`
-- Default candidate profiles (`ProfileSelectionDeps.available_profiles`): `video_colpali_smol500_mv_frame`,
-  `video_colqwen_omni_mv_chunk_30s`, `video_xclip_sv_chunk_6s`
-- Overrides the LM's `modality` field with the modality encoded in the chosen profile name for consistency
+- Candidate profiles: the request's `available_profiles` when it names them, otherwise the tenant's servable
+  profiles (`tenant_usable_profile_names`, see [foundation](foundation.md)), which include the built-in profile
+  whose schema registration deployed
+- Overrides the LM's `modality` field with the type the chosen profile declares in the tenant's catalog
+  (`ConfigUtils.backend_profiles()`), the same catalog the candidates come from; the candidate pool is
+  resolved off the serving loop
 - Generates up to 3 alternative `ProfileCandidate` entries (`profile_name`, `score`, `reasoning`)
 - Applies per-tenant memory injection (`MemoryAwareMixin`) to the prompt while preserving the caller's original
   query in the response

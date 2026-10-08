@@ -429,3 +429,75 @@ def register_deployed_schema(config_manager, tenant_id: str, base_schema_name: s
         schema_definition='{"name": "%s"}' % full_schema_name,
         config={"profile": base_schema_name},
     )
+
+
+def serve_listed_profiles_as_backend_config(config_manager) -> None:
+    """Make a ConfigManager double's backend config carry the profiles its
+    ``list_backend_profiles`` returns at call time, as the real manager's
+    does: the tenant's profile catalog merges that config over the shipped
+    profiles. The system tenant stores none."""
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_foundation.config.unified_config import BackendConfig
+
+    def backend_config(tenant_id=None, service="backend"):
+        if tenant_id == SYSTEM_TENANT_ID:
+            return BackendConfig(tenant_id=tenant_id)
+        return BackendConfig(
+            tenant_id=tenant_id,
+            profiles=dict(config_manager.list_backend_profiles.return_value),
+        )
+
+    config_manager.get_backend_config.side_effect = backend_config
+
+
+def store_profile_types(config_manager, types: dict) -> None:
+    """Have a ConfigManager double store one profile per name with the given
+    declared type, served through its backend config as the real manager
+    serves a tenant's stored profiles."""
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
+
+    config_manager.list_backend_profiles.return_value = {
+        name: BackendProfileConfig(profile_name=name, type=profile_type)
+        for name, profile_type in types.items()
+    }
+    serve_listed_profiles_as_backend_config(config_manager)
+
+
+def serve_every_shipped_profile(config_manager, tenants, service_url: str) -> None:
+    """Have a ConfigManager double serve every shipped profile to each of
+    ``tenants``: stored, its schema deployed, and its embedding service
+    resolving to ``service_url`` in the double's system config."""
+    import json
+    from pathlib import Path
+
+    from cogniverse_foundation.config.unified_config import (
+        BackendProfileConfig,
+        profile_base_schema_name,
+        profile_embedding_service,
+    )
+
+    shipped = json.loads(
+        (Path(__file__).resolve().parents[2] / "configs" / "config.json").read_text()
+    )["backend"]["profiles"]
+    profiles = {
+        name: BackendProfileConfig.from_dict(name, data)
+        for name, data in shipped.items()
+    }
+    config_manager.get_system_config.return_value.inference_service_urls.update(
+        {
+            service: service_url
+            for data in shipped.values()
+            for service in [profile_embedding_service(data)]
+            if service
+        }
+    )
+    config_manager.list_backend_profiles.return_value = dict(profiles)
+    serve_listed_profiles_as_backend_config(config_manager)
+    store = InMemoryConfigStore()
+    store.initialize()
+    config_manager.store = store
+    for tenant_id in tenants:
+        for name, data in shipped.items():
+            register_deployed_schema(
+                config_manager, tenant_id, profile_base_schema_name(name, data)
+            )

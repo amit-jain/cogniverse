@@ -42,7 +42,13 @@ def profile_service(shared_vespa):
     profile_name = "video_colpali_smol500_mv_frame"
     title = "Marie Curie discovered radium"
     description = "Marie Curie isolated radium in a Paris laboratory."
-    config_manager = make_config_manager(shared_vespa)
+    # The stored profile overrides the shipped one of the same name, so the
+    # profile the tenant is served carries the shipped embedding service; it
+    # must resolve for the profile to be servable. Nothing here encodes.
+    config_manager = make_config_manager(
+        shared_vespa,
+        inference_service_urls={"vllm_colpali": "http://inference.invalid"},
+    )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     profiles = {
         profile_name: BackendProfileConfig(

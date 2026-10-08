@@ -11,6 +11,7 @@ answer from its own hits at the same time.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import socket
 import threading
@@ -34,7 +35,11 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher, _flatten_search_hit
 from cogniverse_runtime.routers import openai_compat
 from tests.utils.a2a_protocol import a2a_app
-from tests.utils.memory_store import InMemoryConfigStore, register_deployed_schema
+from tests.utils.memory_store import (
+    InMemoryConfigStore,
+    register_deployed_schema,
+    serve_listed_profiles_as_backend_config,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -119,6 +124,10 @@ def summarizer_builds(monkeypatch) -> List[str]:
         def __init__(self, deps=None, config_manager=None, **kwargs):
             built.append(getattr(deps, "tenant_id", None) or "")
 
+        def process_span(self, typed_input):
+            assert typed_input.tenant_id == HEALTHY_TENANT, typed_input.tenant_id
+            return contextlib.nullcontext()
+
         async def summarize(self, request):
             assert request.search_results == [_flatten_search_hit(HEALTHY_HIT)], (
                 request.search_results
@@ -158,6 +167,7 @@ def dispatcher(monkeypatch):
     for tenant_id in (FAILING_TENANT, HEALTHY_TENANT):
         for profile in _SHIPPED_PROFILES.values():
             register_deployed_schema(config_manager, tenant_id, profile.schema_name)
+    serve_listed_profiles_as_backend_config(config_manager)
 
     registry = AgentRegistry(tenant_id=FAILING_TENANT, config_manager=config_manager)
     registry.register_agent(
