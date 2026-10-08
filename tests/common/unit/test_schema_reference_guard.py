@@ -207,8 +207,16 @@ SCHEMA_REFERENCE_FIXTURES = {
         "pg_stat_activity",
     ),
     "tests/runtime/integration/test_approval_routes.py": (
+        "Pydantic training example type identities",
+        "RoutingExperienceSchema WorkflowExecutionSchema",
+    ),
+    "tests/runtime/integration/test_web_agent_workspace.py": (
+        "Profile a search result's ensemble names",
+        "video_videoprism_base_mv_chunk_30s",
+    ),
+    "tests/runtime/integration/test_web_ops_optimization_framework.py": (
         "Pydantic training example type identity",
-        "RoutingExperienceSchema",
+        "QueryEnhancementExampleSchema",
     ),
     "tests/runtime/integration/test_web_ops_approvals.py": (
         "Pydantic training example type identity",
@@ -288,7 +296,8 @@ SCHEMA_REFERENCE_FIXTURES = {
     ),
     "tests/runtime/unit/test_batch_optimization_modes.py": (
         "Missing profile and Pydantic example type fixtures",
-        "ProfileSelectionExampleSchema RoutingExperienceSchema video_orphan",
+        "ProfileSelectionExampleSchema QueryEnhancementExampleSchema "
+        "RoutingExperienceSchema video_orphan",
     ),
     "tests/runtime/unit/test_dispatcher_answer_search_wiring.py": (
         "Injected active video profile",
@@ -325,6 +334,10 @@ SCHEMA_REFERENCE_FIXTURES = {
     "tests/synthetic/unit/test_topic_saliency_golden.py": (
         "Recorded video document fixture metadata",
         "video_frames",
+    ),
+    "tests/synthetic/unit/test_uploaded_examples.py": (
+        "Pydantic training example type identity",
+        "QueryEnhancementExampleSchema",
     ),
     "tests/system/conftest.py": (
         "Documented tenant schema prefix",
