@@ -390,7 +390,9 @@ async def umap_atlas(
     layout with automatic clusters, and each of ``queries`` (encoded with the
     profile's query encoder) placed on it with its three most similar
     documents by cosine similarity of pooled vectors. The layout is cached
-    until ``DELETE /embeddings/atlas/umap`` invalidates it.
+    for every worker until ``DELETE /embeddings/atlas/umap`` invalidates it;
+    while the cache (Redis) cannot be read it is laid out without it, with
+    ``generation`` 0.
 
     Raises:
         HTTPException 404: No such profile, or its schema is not deployed
@@ -398,7 +400,6 @@ async def umap_atlas(
             than ``MIN_DOCUMENTS`` documents carry one, or the queries encode
             to vectors of another length than the documents'
         HTTPException 502: Vespa or the query encoder failed
-        HTTPException 503: The atlas cache (Redis) is unavailable
     """
     tenant = canonical_tenant_or_400(tenant_id)
     profile = request.profile
@@ -406,14 +407,14 @@ async def umap_atlas(
     try:
         generation = await cache.generation(tenant, profile)
     except Exception as exc:
-        raise failure_response(
-            503,
-            "atlas_cache_unavailable",
-            "The embedding atlas cache could not be reached.",
+        logger.warning(
+            "Embedding atlas cache unavailable; laying out %s/%s without it: %s: %s",
+            tenant,
+            profile,
+            type(exc).__name__,
             exc,
-            tenant_id=tenant,
-            profile=profile,
-        ) from exc
+        )
+        generation = None
 
     def _build() -> DocumentMap:
         documents = _read_documents(
