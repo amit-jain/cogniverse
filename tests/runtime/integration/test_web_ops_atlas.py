@@ -171,6 +171,17 @@ class TestAtlas:
             params={"profile": "notes", "limit": 500},
         ).json()
         panel = page.get_by_role("region", name=f"Profile notes of {tenant}")
+        labels = [
+            "Schema",
+            "Embedding",
+            "Documents mapped",
+            "Without an embedding",
+            "Variance shown",
+        ]
+        # The panel renders its facts as the map loads; read them once every
+        # label has its value.
+        expect(panel.locator("dt")).to_have_text(labels)
+        expect(panel.locator("dd")).to_have_count(len(labels))
         facts = dict(
             zip(
                 panel.locator("dt").all_inner_texts(),
