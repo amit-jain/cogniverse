@@ -206,7 +206,7 @@ def _stored_reviews(tenant: str, want: int, timeout=60.0):
 
 class TestWorkflowReviewsView:
     def test_a_reviewer_rates_a_workflow_and_the_review_lands_on_its_span(
-        self, page, web_url, tenant
+        self, page, web_url, tenant, phoenix_proxy
     ):
         _show(page, web_url, tenant)
         assert _refresh_until(
@@ -263,10 +263,27 @@ class TestWorkflowReviewsView:
         form.get_by_label("Missing agents").fill("report_agent")
         form.get_by_label("Unnecessary agents").fill("summarizer_agent")
         form.get_by_label("Improvement notes").fill("use the report agent for reports")
+        written = threading.Event()
+
+        def slow_reads_after_the_write(method, path, body):
+            # Phoenix serves a new annotation after an indexing delay; hold
+            # every read after the write so the page cannot lean on one.
+            if method == "POST" and "annotations" in path:
+                written.set()
+            elif written.is_set():
+                time.sleep(8)
+            return None
+
+        phoenix_proxy.intercept = slow_reads_after_the_write
         form.get_by_role("button", name="Save review").click()
         expect(page.get_by_role("status")).to_have_text(
             "Saved the review of wf-lecture-report: poor."
         )
+        # The saved review shows at once, from the save's own answer.
+        expect(_column(page, tenant, 7)).to_have_text(
+            ["—", "poor (0.30) by reviewer@example.com"], timeout=4000
+        )
+        phoenix_proxy.intercept = None
         assert _refresh_until(
             page, tenant, 7, ["—", "poor (0.30) by reviewer@example.com"]
         ) == ["—", "poor (0.30) by reviewer@example.com"]

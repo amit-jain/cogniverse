@@ -574,6 +574,7 @@ function RootCauses({ tenant, query }: { tenant: string; query: URLSearchParams 
                   <th>Category</th>
                   <th>Recommendation</th>
                   <th>Details</th>
+                  <th>Affected components</th>
                 </tr>
               </thead>
               <tbody>
@@ -583,6 +584,7 @@ function RootCauses({ tenant, query }: { tenant: string; query: URLSearchParams 
                     <td>{item.category}</td>
                     <td>{item.recommendation}</td>
                     <td>{item.details.join('; ')}</td>
+                    <td>{item.affected_components.join(', ') || '—'}</td>
                   </tr>
                 ))}
               </tbody>

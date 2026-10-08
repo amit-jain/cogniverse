@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import uuid
 
+import httpx
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
@@ -347,6 +348,31 @@ class TestHistoryAndTransfer:
         )
         copied = reader.get_routing_config(target)
         assert (copied.routing_mode, copied.min_unique_queries) == ("adaptive", 11)
+
+
+class TestStoreStats:
+    def test_the_store_panel_shows_the_backend_and_its_counts(
+        self, page, web_url, runtime_url
+    ):
+        stats = httpx.get(f"{runtime_url}/admin/config/stats", timeout=60).json()
+        assert stats["storage_backend"] == "vespa"
+        _config_view(page, web_url)
+        panel = page.get_by_role("region", name="Config store").locator(
+            'dl[aria-label="Config store facts"]'
+        )
+        expect(panel.locator("dd").first).to_have_text("vespa")
+        terms = panel.locator("dt").all_inner_texts()
+        values = panel.locator("dd").all_inner_texts()
+        assert dict(zip(terms, values, strict=True)) == {
+            "Backend": "vespa",
+            "Configs": str(stats["total_configs"]),
+            "Versions": str(stats["total_versions"]),
+            "Tenants": str(stats["total_tenants"]),
+            "By scope": ", ".join(
+                f"{scope}: {count}"
+                for scope, count in sorted(stats["configs_per_scope"].items())
+            ),
+        }
 
 
 class TestConcurrency:
