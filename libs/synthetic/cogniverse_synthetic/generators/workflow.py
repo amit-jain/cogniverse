@@ -72,12 +72,17 @@ class WorkflowGenerator(BaseGenerator):
         for content in sampled_content:
             query_type = self._infer_modality(content)
             topic = self._extract_topic(content, saliency=saliency)
+            if topic is None:
+                logger.warning("Skipping sampled workflow item without a topic")
+                continue
             for complexity, task_type in self.WORKFLOW_PLANS:
                 query = self._generate_workflow_query(topic, task_type)
                 if query in seen_queries:
                     continue
                 seen_queries.add(query)
                 grounded_plans.append((query, query_type, complexity, task_type))
+        if not grounded_plans:
+            raise ValueError("sampled workflow content requires a non-empty topic")
 
         examples = []
         for query, query_type, complexity, task_type in grounded_plans:
@@ -137,11 +142,10 @@ class WorkflowGenerator(BaseGenerator):
         return f"find {topic}"
 
     @staticmethod
-    def _extract_topic(content: Dict[str, Any], *, saliency: TopicSaliency) -> str:
-        topic = extract_topic(content, saliency=saliency)
-        if topic is not None:
-            return topic
-        raise ValueError("sampled workflow content requires a non-empty topic")
+    def _extract_topic(
+        content: Dict[str, Any], *, saliency: TopicSaliency
+    ) -> str | None:
+        return extract_topic(content, saliency=saliency)
 
     @staticmethod
     def _infer_modality(content: Dict[str, Any]) -> str:

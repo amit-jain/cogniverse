@@ -653,6 +653,71 @@ class TestProfileGeneratorIntegration:
         ]
 
     @pytest.mark.asyncio
+    async def test_cross_modal_skips_sample_without_topic(self, caplog):
+        generator = ProfileGenerator(profile_labeler=select_profile)
+
+        with caplog.at_level(
+            "WARNING", logger="cogniverse_synthetic.generators.profile"
+        ):
+            examples = await generator.generate(
+                sampled_content=[
+                    {"schema_name": "audio_content"},
+                    {"topic": "Curie lecture", "schema_name": "audio_content"},
+                    {"topic": "Radium notes", "schema_name": "document_text"},
+                ],
+                target_count=1,
+                profile_configs=self.PROFILE_CONFIGS,
+                tenant_id="acme:profiles",
+                cross_modal=True,
+                config_manager=_profile_generation_config_manager(
+                    self.PROFILE_CONFIGS,
+                    tenant_id="acme:profiles",
+                ),
+            )
+
+        assert [example.model_dump() for example in examples] == [
+            {
+                "query": (
+                    "find Curie lecture in audio content together with "
+                    "Radium notes in document content"
+                ),
+                "available_profiles": "document_text_semantic,audio_clap_semantic",
+                "selected_profile": "audio_clap_semantic",
+                "reasoning": "Production selector chose audio_clap_semantic.",
+                "query_intent": "audio_search",
+                "modality": "audio",
+                "complexity": "medium",
+            }
+        ]
+        assert [record.getMessage() for record in caplog.records] == [
+            "Skipping sampled audio item without a topic or title"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_cross_modal_rejects_batch_without_any_topic(self):
+        generator = ProfileGenerator(profile_labeler=select_profile)
+
+        with pytest.raises(ValueError) as error:
+            await generator.generate(
+                sampled_content=[
+                    {"topic": "lecture notes", "schema_name": "audio_content"},
+                    {"topic": "lecture notes", "schema_name": "document_text"},
+                ],
+                target_count=1,
+                profile_configs=self.PROFILE_CONFIGS,
+                tenant_id="acme:profiles",
+                cross_modal=True,
+                config_manager=_profile_generation_config_manager(
+                    self.PROFILE_CONFIGS,
+                    tenant_id="acme:profiles",
+                ),
+            )
+
+        assert str(error.value) == (
+            "cross_modal requires sampled content from at least two modalities"
+        )
+
+    @pytest.mark.asyncio
     async def test_cross_modal_rejects_one_configured_modality(self):
         generator = ProfileGenerator(profile_labeler=select_profile)
 
@@ -1103,6 +1168,56 @@ class TestWorkflowGeneratorIntegration:
         assert example.query_type == modality
         assert example.agent_sequence == [expected_agent]
         assert example.task_count == 1
+
+    @pytest.mark.asyncio
+    async def test_workflow_skips_sample_without_topic(self, caplog):
+        generator = WorkflowGenerator(agent_inferrer=configured_agent_inferrer())
+
+        with caplog.at_level(
+            "WARNING", logger="cogniverse_synthetic.generators.workflow"
+        ):
+            examples = await generator.generate(
+                sampled_content=[
+                    {
+                        "profile_type": "video",
+                        "modality": "VIDEO",
+                        "schema_name": "video_xclip_sv_chunk_6s",
+                    },
+                    workflow_content_sample(
+                        "Redis lease coordination", "video", "VIDEO"
+                    ),
+                    workflow_content_sample("Apollo lunar landing", "video", "VIDEO"),
+                ],
+                target_count=2,
+            )
+
+        assert [(example.query, example.agent_sequence) for example in examples] == [
+            ("find Redis lease coordination", ["search_agent"]),
+            (
+                "summarize Redis lease coordination",
+                ["search_agent", "summarizer_agent"],
+            ),
+        ]
+        assert [record.getMessage() for record in caplog.records] == [
+            "Skipping sampled workflow item without a topic"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_workflow_rejects_batch_without_any_topic(self):
+        generator = WorkflowGenerator(agent_inferrer=configured_agent_inferrer())
+
+        with pytest.raises(ValueError) as error:
+            await generator.generate(
+                sampled_content=[
+                    workflow_content_sample("lease coordination", "video", "VIDEO"),
+                    workflow_content_sample("lease coordination", "video", "VIDEO"),
+                ],
+                target_count=1,
+            )
+
+        assert str(error.value) == (
+            "sampled workflow content requires a non-empty topic"
+        )
 
     @pytest.mark.asyncio
     async def test_workflow_never_infers_modality_from_schema_name(self):
