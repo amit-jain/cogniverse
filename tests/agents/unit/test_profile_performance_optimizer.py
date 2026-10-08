@@ -82,6 +82,49 @@ def test_save_load_round_trip_reproduces_prediction(tmp_path):
     assert after[1] == pytest.approx(before[1])
 
 
+def test_blob_round_trip_reproduces_every_prediction(tmp_path):
+    opt = _trained_optimizer(tmp_path)
+    queries = [
+        "find the picture of the tower",
+        "explain the appendix",
+        "listen to the lecture",
+    ]
+    before = [opt.predict_best_profile(query) for query in queries]
+
+    restored = ProfilePerformanceOptimizer(model_dir=tmp_path / "other")
+    restored.load_blob(opt.to_blob())
+
+    assert restored.label_encoder.classes_.tolist() == [
+        "audio_profile",
+        "text_profile",
+        "visual_profile",
+    ]
+    assert [restored.predict_best_profile(query) for query in queries] == before
+
+
+def test_an_untrained_model_has_no_blob(tmp_path):
+    with pytest.raises(RuntimeError, match="Cannot serialize an untrained model"):
+        ProfilePerformanceOptimizer(model_dir=tmp_path).to_blob()
+
+
+@pytest.mark.parametrize(
+    ("blob", "message"),
+    [
+        ("not json", "Profile performance model blob is malformed"),
+        ('{"model": "{}"}', "Profile performance model blob is malformed"),
+        (
+            '{"model": "{}", "profiles": ["a"], "features": ["query_length"]}',
+            r"was trained on features \['query_length'\]",
+        ),
+    ],
+)
+def test_a_blob_that_is_not_this_model_is_refused(tmp_path, blob, message):
+    opt = ProfilePerformanceOptimizer(model_dir=tmp_path)
+    with pytest.raises(ValueError, match=message):
+        opt.load_blob(blob)
+    assert opt.is_trained is False
+
+
 def test_load_returns_false_when_no_model_saved(tmp_path):
     opt = ProfilePerformanceOptimizer(model_dir=tmp_path)
     assert opt.load() is False
