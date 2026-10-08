@@ -482,7 +482,8 @@ tenant's semantic-router tier.
 
 | Route | Effect |
 |---|---|
-| `POST /admin/tenants` | Create a tenant, auto-creating its organization and deploying its base schemas |
+| `POST /admin/tenants` | Create a tenant, auto-creating its organization and deploying its base schemas: the `base_schemas` named, else `TENANT_BASE_SCHEMAS` |
+| `GET /admin/base-schemas` | `{schemas, default}`: the shipped schemas a tenant can be given (every shipped schema but the deployment-wide metadata ones) and `TENANT_BASE_SCHEMAS`; 503 `base_schemas_unavailable` when the backend does not answer |
 | `GET /admin/tenants/{tenant_id}` | Tenant registry row |
 | `DELETE /admin/tenants/{tenant_id}` | Delete the tenant, its schemas and its data |
 | `GET /admin/tenants/{tenant_id}/tier` | The tenant's semantic-router tier |
@@ -1246,10 +1247,10 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 ### Admin Endpoints
 
 **GET /admin/system/stats** - Get system statistics
-**GET /admin/profile-templates** - The shipped profiles a tenant's new profile can start from, each with its whole configuration; a shipped name the tenant created its own profile under is left out
+**GET /admin/profile-templates** - The shipped profiles a tenant's new profile can start from, each with its whole configuration; a shipped name the tenant created its own profile under is left out. `profile_types`, `embedding_types`, `model_loaders` and `process_types` list the values a new profile's choice fields take
 **GET /admin/profiles** - List processing profiles
 **GET /admin/profiles/{profile_name}** - Get profile details
-**POST /admin/profiles** - Create profile; `model_loader`, `process_type` and `extra_config` carry the keys ingestion reads beside the named fields; `version` is the tenant's backend config version the create produced
+**POST /admin/profiles** - Create profile; `model_loader`, `process_type` and `extra_config` carry the keys ingestion reads beside the named fields; `version` is the tenant's backend config version the create produced. With `deploy_schema`, a deploy that fails after the profile is stored answers 201 with `schema_deployed: false` and `schema_deploy_error` naming the schema and the failure
 **PUT /admin/profiles/{profile_name}** - Update profile; `version` is the backend config version the update produced, even when other writes land right after it
 **DELETE /admin/profiles/{profile_name}** - Delete profile
 
@@ -1279,26 +1280,37 @@ The editable configs are the sections of `cogniverse_foundation.config.sections`
 (see [Foundation Module](./foundation.md)): `system`, and per tenant `routing`,
 `telemetry`, `agent` (one per agent, named by `service`) and
 `durable_execution`. A tenant id is canonicalized; system configs are stored
-under the tenant `_system` and take no `tenant_id`.
+under the tenant `_system` and take no `tenant_id`. A history read without a
+`tenant_id` reads the `_system` configs, never a tenant's system-scope rows
+such as its instructions.
 
-**GET /admin/config/sections** - Each section's `name`, `title`, `tenant_scoped`, fixed `service` (null for `agent`) and `schema`: its dataclass's JSON schema without the fields the location sets (`tenant_id`), secrets marked `writeOnly`
+**GET /admin/config/sections** - Each section's `name`, `title`, `tenant_scoped`, fixed `service` (null for `agent`) and `schema`: its dataclass's JSON schema without the fields the location sets (`tenant_id`), secrets marked `writeOnly`, the fields that take one of a fixed set given their `enum` and `backend_port` its `minimum` and `maximum`
 **GET /admin/config/sections/{section}?tenant_id=&service=** - The stored config as its form edits it: `value`, `version` (0 with the section's defaults when nothing is stored), `updated_at`, and `secrets` saying which secrets hold a value; a secret's value is always null. 400 when a tenant section has no `tenant_id`, a system one has one, or `agent` has no `service`; 404 for an unknown section
-**PUT /admin/config/sections/{section}** - `{tenant_id, service, value, version}`: applies `value`'s fields to the `version` the editor read and stores the result as the next version. A field left out keeps its stored value; a secret left null keeps its value and `""` clears it. 409 `config_version_conflict` with `current_version` when another write replaced that version (nothing written); 422 `config_value_invalid` with `errors` naming each unknown field and each value the dataclass refuses
+**PUT /admin/config/sections/{section}** - `{tenant_id, service, value, version}`: applies `value`'s fields to the `version` the editor read and stores the result as the next version. A field left out keeps its stored value; a secret left null keeps its value and `""` clears it. 409 `config_version_conflict` with `current_version` when another write replaced that version (nothing written); 422 `config_value_invalid` with `errors` naming each unknown field, each value the dataclass refuses, and each changed value outside its field's choices or range (a stored value outside them is kept when a save leaves it unchanged)
 **GET /admin/config/entries?tenant_id=** - The tenant's (absent: the system's) stored configs, latest versions, with the `section` that edits each (null for configs edited elsewhere, such as backend profiles); schema rows are left out
-**GET /admin/config/history?scope=&service=&config_key=&tenant_id=** - A config's versions, newest first, at most 100; values of a section are shown through its form, secrets withheld. 404 when the config has no versions
+**GET /admin/config/history?scope=&service=&config_key=&tenant_id=** - A config's versions, newest first, at most 100, each with `created_at` and `updated_at`; values of a section are shown through its form, secrets withheld. 404 when the config has no versions
 **POST /admin/config/rollback** - `{tenant_id, scope, service, config_key, version, expected_version}`: stores version `version`'s value as the next version when `expected_version` is still the latest. 409 when it is not; 404 when `version` is no longer kept
 **GET /admin/config/export?tenant_id=&include_history=** - The tenant's configs as the store exports them, secrets included: a backup that the import restores whole
 **POST /admin/config/import** - `{tenant_id, configs}`: writes an export into the tenant, whole or not at all, ignoring tenant ids inside it; 400 `config_import_refused` for schema-scope rows
 **GET /admin/config/stats** - The store's `total_configs`, `total_versions`, `total_tenants` and `configs_per_scope`
+**GET /admin/config/health** - `{store, healthy}`: the store's implementation and whether it answered a query now
 
 A store that does not answer gives 503 `config_store_unavailable` on every
-route, never defaults or an empty list. Writes go through
-`ConfigManager.compare_and_set_entry`, so the serving process reads the new
-version at once and other processes within the manager's staleness bound.
+route but the health check, never defaults or an empty list. A save, restore
+or import publishes a `configs_changed` event on the config events channel
+once the store holds it and answers only when every runtime worker process,
+every replica and every ingestion worker has dropped what its config managers
+held for the tenant (`release_held_configs`, which runs
+`forget_held_tenant_configs`; for `_system`, the system config), so the next
+read anywhere is the write. A worker that does not confirm within
+`CONFIG_CHANGE_ACK_TIMEOUT_S` (15 s), or a Redis that cannot carry the event,
+answers 503 `config_change_not_propagated`: the write is stored, and those
+workers read it within the config manager's staleness bound (60 s). A route
+with no channel wired refuses before storing anything.
 
 **Cluster events** (`libs/runtime/cogniverse_runtime/cluster_events.py`)
 
-Admin events every worker process and replica acts on. Each worker's lifespan subscribes a `ClusterEvents` to the Redis channel `cogniverse:runtime:events` with handlers by event kind (`tenant_deleted`, `tenant_tier_set`, `backend_profiles_changed`, `session_closed`). `publish(kind, payload, timeout_s=...)` publishes the event; every subscribed worker runs its handler on a thread and pushes an acknowledgement onto the event's reply list, and the publisher returns each worker's result only once every receiver acknowledged success. Redis unreachable, no subscribed worker, a handler that raised and a worker that did not answer within the timeout raise `ClusterEventUnavailable` or `ClusterEventIncomplete` (both `ClusterEventError`), naming what is missing. A worker whose subscription is down when an event is published is not one of its receivers; it logs the loss and resubscribes with backoff.
+Admin events every worker process and replica acts on. Each worker's lifespan subscribes a `ClusterEvents` to the Redis channel `cogniverse:runtime:events` with handlers by event kind (`tenant_deleted`, `tenant_tier_set`, `backend_profiles_changed`, `session_closed`), and a second one to `CONFIG_EVENT_CHANNEL` (`cogniverse:config:events`) handling `configs_changed`, which every ingestion worker subscribes to as well. `publish(kind, payload, timeout_s=...)` publishes the event; every subscribed worker runs its handler on a thread and pushes an acknowledgement onto the event's reply list, and the publisher returns each worker's result only once every receiver acknowledged success. Redis unreachable, no subscribed worker, a handler that raised and a worker that did not answer within the timeout raise `ClusterEventUnavailable` or `ClusterEventIncomplete` (both `ClusterEventError`), naming what is missing. A worker whose subscription is down when an event is published is not one of its receivers; it logs the loss and resubscribes with backoff.
 
 **Tenant lifecycle** (`libs/runtime/cogniverse_runtime/admin/tenant_manager.py`)
 
@@ -1388,9 +1400,11 @@ The tenant memory routes below change only writable namespaces: `_user_memories`
 
 **POST /admin/tenant/{tenant_id}/memories** — Save a memory. Body: `{text: str, category?: str, kind?: str, metadata?: dict, agent_name?: str}` (`metadata` merges on top of the derived `category`/`kind` fields; `agent_name` defaults to `_user_memories`). Response: `{status: "saved", id, type, agent_name, category, kind}`, `type` being `preference`, `strategy` or `interaction` by namespace.
 
-**GET /admin/tenant/{tenant_id}/memories** — List or search a tenant's memories. Query params: `q` (semantic search when set, else list all), `type` (`preference` → `_user_memories`, `strategy` → `_strategy_store`; 400 on unknown), `agent_name` (scope to one agent's mem0 store, i.e. `agent_id=agent_name` — agents store their learned memories under their own name, so this surfaces what a specific agent has remembered), `category` (post-filter on the memory's category tag), `limit` (1–200, default 20). Selection precedence: `agent_name` → `type` → both default namespaces. A read the store does not answer is 503 `memory_unavailable`, never an empty list.
+**GET /admin/tenant/{tenant_id}/memories** — List or search a tenant's memories. Query params: `q` (semantic search when set, else list all), `type` (`preference` → `_user_memories`, `strategy` → `_strategy_store`; 400 on unknown), `agent_name` (scope to one agent's mem0 store, i.e. `agent_id=agent_name` — agents store their learned memories under their own name, so this surfaces what a specific agent has remembered), `category` (post-filter on the memory's category tag), `limit` (1–200, default 20). Selection precedence: `agent_name` → `type` → both default namespaces. Each memory carries `id`, `memory`, `type`, `owned`, `category`, `metadata`, `created_at`, `updated_at` and `score`, the similarity to `q` (null when listing). A read the store does not answer is 503 `memory_unavailable`, never an empty list.
 
-**GET /admin/tenant/{tenant_id}/memories/stats?agent_name=...** — Count a namespace (default `_user_memories`) over its whole partition: `{agent_name, total, archived, writable}`, `total` counting live rows. A read the store does not answer is 503 `memory_unavailable`, never a zero count.
+**GET /admin/tenant/{tenant_id}/memories/stats?agent_name=...** — Count a namespace (default `_user_memories`) over its whole partition: `{agent_name, user_id, total, archived, writable}`, `user_id` being the tenant partition counted and `total` counting live rows. A read the store does not answer is 503 `memory_unavailable`, never a zero count.
+
+**GET /admin/tenant/{tenant_id}/memories/health?agent_name=...** — `{tenant_id, agent_name, healthy, problem}`: whether the tenant's memory manager starts and its store answers a one-row read of the namespace. An unhealthy answer is still 200; `problem` names the step that failed and the failure type.
 
 **DELETE /admin/tenant/{tenant_id}/memories/{memory_id}?agent_name=...** — Delete one memory of a writable namespace (default `_user_memories`). 404 unless the memory is this tenant's and in that namespace.
 

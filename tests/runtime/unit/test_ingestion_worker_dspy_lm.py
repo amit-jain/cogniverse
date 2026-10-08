@@ -18,6 +18,11 @@ import pytest
 from redis.asyncio import Redis
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_runtime.cluster_events import (
+    CONFIG_EVENT_CHANNEL,
+    CONFIGS_CHANGED,
+    release_held_configs,
+)
 from cogniverse_runtime.ingestion_worker.worker import _worker_dspy_lm
 
 PRIMARY = {
@@ -250,9 +255,22 @@ class TestRunEntrypointWiring:
         async def _fake_close_redis():
             recorded["closed"] += 1
 
+        class _ConfigEvents:
+            """The config events subscription, recorded instead of connected."""
+
+            def __init__(self, redis_url, worker_id, handlers, *, channel):
+                recorded["config_events"] = (redis_url, handlers, channel)
+
+            async def start(self):
+                recorded["config_events_started"] = True
+
+            async def close(self):
+                recorded["config_events_closed"] = True
+
         monkeypatch.setattr(worker, "get_redis", _fake_get_redis)
         monkeypatch.setattr(worker, "close_redis", _fake_close_redis)
         monkeypatch.setattr(worker, "_claim_loop", claim_loop)
+        monkeypatch.setattr(worker, "ClusterEvents", _ConfigEvents)
         return worker, recorded, fake_redis
 
     @pytest.mark.asyncio
@@ -319,6 +337,15 @@ class TestRunEntrypointWiring:
         assert stop_event.is_set()
 
         assert recorded["closed"] == 1
+        assert recorded["config_events"] == (
+            "redis://testhost:6379/3",
+            {CONFIGS_CHANGED: release_held_configs},
+            CONFIG_EVENT_CHANNEL,
+        )
+        assert (
+            recorded["config_events_started"],
+            recorded["config_events_closed"],
+        ) == (True, True)
 
     @pytest.mark.asyncio
     async def test_run_binds_one_startup_config_to_claim_and_reaper(self, monkeypatch):

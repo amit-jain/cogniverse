@@ -872,6 +872,109 @@ class TestProfileWritesReachEveryWorkersSearch:
         )
 
 
+_BACKEND_CONFIG = {
+    "scope": "backend",
+    "service": "backend",
+    "config_key": "backend_config",
+}
+
+
+class TestConfigWritesReachEveryWorkersSearch:
+    """A config restore or import is a write to the tenant's backend config
+    like a profile write; the other worker's search resolves it the moment
+    the write returns."""
+
+    def test_a_backend_config_restored_on_one_worker_is_searchable_on_the_other(
+        self, runtime
+    ):
+        tenant = _tenant("restore")
+        first, second = runtime.workers
+        path = f"/search/strategies?tenant_id={tenant}&profile=restored_profile"
+        pinned = _pinned(runtime, 1)
+        try:
+            created = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/profiles",
+                _profile_body(tenant, "restored_profile"),
+            )
+            deleted = _request(
+                pinned[first][0],
+                "DELETE",
+                f"/admin/profiles/restored_profile?tenant_id={tenant}",
+            )
+            held = _request(pinned[second][0], "GET", path)
+            restored = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/config/rollback",
+                {
+                    "tenant_id": tenant,
+                    **_BACKEND_CONFIG,
+                    "version": created[1]["version"],
+                    "expected_version": created[1]["version"] + 1,
+                },
+            )
+            after = _request(pinned[second][0], "GET", path)
+        finally:
+            _close(pinned)
+
+        strategies = _served_strategies()
+        assert (created[0], deleted[0], held[0]) == (201, 200, 404)
+        assert restored[0] == 200, restored
+        assert restored[1]["version"] == created[1]["version"] + 2
+        assert after == (
+            200,
+            {
+                "tenant_id": tenant,
+                "profile": "restored_profile",
+                "count": len(strategies),
+                "strategies": strategies,
+            },
+        )
+
+    def test_a_backend_config_imported_on_one_worker_is_searchable_on_the_other(
+        self, runtime
+    ):
+        source, target = _tenant("exported"), _tenant("imported")
+        first, second = runtime.workers
+        path = f"/search/strategies?tenant_id={target}&profile=imported_profile"
+        pinned = _pinned(runtime, 1)
+        try:
+            created = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/profiles",
+                _profile_body(source, "imported_profile"),
+            )
+            exported = _request(
+                pinned[first][0], "GET", f"/admin/config/export?tenant_id={source}"
+            )
+            held = _request(pinned[second][0], "GET", path)
+            imported = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/config/import",
+                {"tenant_id": target, "configs": exported[1]},
+            )
+            after = _request(pinned[second][0], "GET", path)
+        finally:
+            _close(pinned)
+
+        strategies = _served_strategies()
+        assert (created[0], exported[0], held[0]) == (201, 200, 404)
+        assert imported == (200, {"tenant_id": target, "imported": 1})
+        assert after == (
+            200,
+            {
+                "tenant_id": target,
+                "profile": "imported_profile",
+                "count": len(strategies),
+                "strategies": strategies,
+            },
+        )
+
+
 def _listed(answer: tuple[int, dict]) -> tuple[int, list[str]]:
     status, body = answer
     return status, sorted(summary["profile_name"] for summary in body["profiles"])

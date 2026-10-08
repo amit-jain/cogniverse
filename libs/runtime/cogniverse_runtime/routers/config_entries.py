@@ -9,6 +9,10 @@ null to keep them.
 
 Configs without a section (backend profiles, tenant instructions) can be
 listed, browsed through their history and rolled back, but not edited here.
+
+A save, restore or import answers once every runtime worker and ingestion
+worker has dropped what it held for the tenant (``configs_changed`` on the
+config events channel), so the next request anywhere reads the write.
 """
 
 import asyncio
@@ -42,6 +46,49 @@ router = APIRouter()
 
 # The most versions one history read returns.
 HISTORY_LIMIT = 100
+
+# How long a config write waits for every worker to drop what it held.
+CONFIG_CHANGE_ACK_TIMEOUT_S = 15.0
+
+# Delivers config changes to every runtime and ingestion worker; wired at
+# startup.
+_config_events = None
+
+
+def set_config_events(config_events) -> None:
+    """Wire the channel config changes reach every worker process through."""
+    global _config_events
+    _config_events = config_events
+
+
+def _require_config_change_channel() -> None:
+    """A config write refuses before storing anything when no channel can
+    carry the change to the other workers."""
+    if _config_events is None:
+        raise RuntimeError("Config writes need the config events channel wired")
+
+
+async def _publish_config_change(stored_tenant: str, what: str) -> None:
+    """Have every runtime and ingestion worker drop what it holds for the
+    tenant, so its next read on any of them is the write."""
+    from cogniverse_runtime.cluster_events import CONFIGS_CHANGED, ClusterEventError
+
+    try:
+        await _config_events.publish(
+            CONFIGS_CHANGED,
+            {"tenant_id": stored_tenant},
+            timeout_s=CONFIG_CHANGE_ACK_TIMEOUT_S,
+        )
+    except ClusterEventError as exc:
+        raise failure_response(
+            503,
+            "config_change_not_propagated",
+            f"{what} is stored for {stored_tenant}, but not every worker "
+            "dropped the configs it held; those workers read it within a "
+            "minute.",
+            exc,
+            tenant_id=stored_tenant,
+        ) from exc
 
 
 class SectionInfo(BaseModel):
@@ -318,6 +365,7 @@ async def write_section(
             dataclass refuses
         HTTPException 503: The config store did not answer
     """
+    _require_config_change_channel()
     section = _section(section_name)
     stored_tenant = _tenant(request.tenant_id, section.tenant_scoped)
     entry_service = _service(section, request.service)
@@ -376,6 +424,9 @@ async def write_section(
         written.version,
         stored_tenant,
         entry_service,
+    )
+    await _publish_config_change(
+        stored_tenant, f"The {section.name} config version {written.version}"
     )
     return SectionValue(
         section=section.name,
@@ -459,7 +510,10 @@ async def rollback(
     Raises:
         HTTPException 404: The version is not in the config's history
         HTTPException 409: The latest version is not the one the editor read
+        HTTPException 503: The restore is stored, but a worker did not confirm
+            dropping what it held
     """
+    _require_config_change_channel()
     stored_tenant = _entry_tenant(request.tenant_id)
     if request.version >= request.expected_version:
         raise HTTPException(
@@ -519,6 +573,11 @@ async def rollback(
         written.version,
         stored_tenant,
     )
+    await _publish_config_change(
+        stored_tenant,
+        f"Version {request.version} of {request.scope.value}/{request.service}/"
+        f"{request.config_key}, restored as version {written.version},",
+    )
     return Written(version=written.version, updated_at=_iso(written.updated_at))
 
 
@@ -549,7 +608,10 @@ async def import_configs(
 
     Raises:
         HTTPException 400: The export holds rows only the schema registry writes
+        HTTPException 503: The import is stored, but a worker did not confirm
+            dropping what it held
     """
+    _require_config_change_channel()
     stored_tenant = canonical_tenant_id(request.tenant_id)
 
     def _import() -> int:
@@ -577,6 +639,7 @@ async def import_configs(
             tenant_id=stored_tenant,
         )
     logger.info("Imported %s configs into %s", count, stored_tenant)
+    await _publish_config_change(stored_tenant, f"The import of {count} configs")
     return Imported(tenant_id=stored_tenant, imported=count)
 
 
@@ -589,3 +652,20 @@ async def store_stats(
         return await asyncio.to_thread(config_manager.store.get_stats)
     except Exception as exc:
         raise _read_failure(exc, "reading store statistics")
+
+
+class StoreHealth(BaseModel):
+    store: str = Field(..., description="The config store's implementation")
+    healthy: bool = Field(..., description="Whether the store answered a query")
+
+
+@router.get("/config/health", response_model=StoreHealth)
+async def store_health(
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> StoreHealth:
+    """Whether the config store answers a query now."""
+    store = config_manager.store
+    return StoreHealth(
+        store=type(store).__name__,
+        healthy=await asyncio.to_thread(store.health_check),
+    )

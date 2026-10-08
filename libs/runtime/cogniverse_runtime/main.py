@@ -1850,6 +1850,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     admin.set_cluster_events(cluster_events)
     app.state.cluster_events = cluster_events
     logger.info("Cluster events subscribed as %s", replica_id)
+    # Config saves, restores and imports reach every runtime worker and every
+    # ingestion worker on the config events channel.
+    from cogniverse_runtime.cluster_events import (
+        CONFIG_EVENT_CHANNEL,
+        CONFIGS_CHANGED,
+        release_held_configs,
+    )
+
+    config_events = ClusterEvents(
+        redis_url,
+        replica_id,
+        {CONFIGS_CHANGED: release_held_configs},
+        channel=CONFIG_EVENT_CHANNEL,
+    )
+    await config_events.start()
+    config_entries.set_config_events(config_events)
+    logger.info("Config events subscribed as %s", replica_id)
     a2a_protocol = await _build_shared_a2a_protocol(
         agent_registry=agent_registry,
         dispatcher=dispatcher,
@@ -1908,6 +1925,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tenant_manager.set_task_event_store(None)
     admin.set_cluster_events(None)
     await cluster_events.close()
+    config_entries.set_config_events(None)
+    await config_events.close()
     agents.set_conversation_ledger(None)
     openai_compat.set_continuation_store(None)
     events.set_task_event_store(None)

@@ -4,7 +4,8 @@ The tenant admin, tenant self-service, approvals, orchestration annotation,
 profile admin, agents, events and ingestion routers are mounted at the paths the
 runtime mounts them on, over the caller's real config store and schema loader,
 with a cluster-events channel of their own so tenant deletes and session
-closes reach this worker the way they reach a runtime replica, and a task
+closes reach this worker the way they reach a runtime replica, a config
+events channel of their own that config writes publish on, and a task
 event store on the same Redis that uploads open their tasks in and tenant
 deletes cancel them through.
 The annotation queue is a real Redis queue under ``annotation_queue_prefix``.
@@ -40,7 +41,11 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.admin import tenant_manager as tm
-from cogniverse_runtime.cluster_events import ClusterEvents
+from cogniverse_runtime.cluster_events import (
+    CONFIGS_CHANGED,
+    ClusterEvents,
+    release_held_configs,
+)
 from cogniverse_runtime.ingestion_worker import status_api
 from cogniverse_runtime.ingestion_worker import worker as ingest_worker
 from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
@@ -101,6 +106,14 @@ def serve_ops_runtime(
             channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
         )
         await events.start()
+        config_events = ClusterEvents(
+            redis_url,
+            f"web-ops-test-{uuid.uuid4().hex[:8]}",
+            {CONFIGS_CHANGED: release_held_configs},
+            channel=f"cogniverse:test-config-events:{uuid.uuid4().hex[:8]}",
+        )
+        await config_events.start()
+        config_entries.set_config_events(config_events)
         shared_state = await connect_shared_state_redis(redis_url)
         task_events = TaskEventStore(shared_state)
         task_events.start()
@@ -149,6 +162,8 @@ def serve_ops_runtime(
             await task_events.close()
             await shared_state.aclose()
             await events.close()
+            config_entries.set_config_events(None)
+            await config_events.close()
 
     app = FastAPI(lifespan=cluster_events)
     app.include_router(admin.router, prefix="/admin")

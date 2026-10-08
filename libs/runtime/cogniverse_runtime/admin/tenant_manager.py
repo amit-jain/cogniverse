@@ -1136,6 +1136,36 @@ async def list_router_tiers() -> Dict:
     return {"tiers": sorted(ROUTER_TIERS), "default": DEFAULT_ROUTER_TIER}
 
 
+@router.get("/base-schemas")
+async def list_base_schemas() -> Dict:
+    """The shipped schemas a new tenant can be given, and the ones it gets
+    when its create names none.
+
+    Raises:
+        HTTPException 503: The schema loader is not wired, or the backend
+            naming the deployment-wide schemas did not answer
+    """
+
+    def _tenant_schemas() -> List[str]:
+        shipped = set(_known_base_schemas())
+        with metadata_backend() as backend:
+            deployment_wide = backend.schema_manager._PROTECTED_SCHEMAS
+        return sorted(shipped - deployment_wide)
+
+    try:
+        schemas = await asyncio.to_thread(_tenant_schemas)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise failure_response(
+            503,
+            "base_schemas_unavailable",
+            "The backend did not answer while listing the base schemas; retry.",
+            exc,
+        ) from exc
+    return {"schemas": schemas, "default": list(TENANT_BASE_SCHEMAS)}
+
+
 @router.get("/tenants/{tenant_full_id}/tier", response_model=TenantTier)
 async def get_tenant_tier(tenant_full_id: str) -> TenantTier:
     """The tenant's semantic-router tier.

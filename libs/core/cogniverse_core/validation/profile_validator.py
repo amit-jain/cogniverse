@@ -57,6 +57,20 @@ class ProfileValidator:
         ) = self._load_valid_profile_types()
         self._valid_profile_type_set = frozenset(self._valid_profile_types)
 
+    @property
+    def profile_types(self) -> List[str]:
+        """The profile types a profile may declare, in shipped order."""
+        return list(self._valid_profile_types)
+
+    @staticmethod
+    def model_loaders() -> List[str]:
+        """The model loaders ingestion embeds with, sorted."""
+        from cogniverse_core.common.models.model_loaders import (
+            EMBEDDING_MODEL_LOADERS,
+        )
+
+        return sorted(EMBEDDING_MODEL_LOADERS)
+
     def _load_valid_profile_types(
         self,
     ) -> tuple[list[str], Optional[str], frozenset[str]]:

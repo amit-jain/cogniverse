@@ -379,7 +379,12 @@ dataclass's JSON schema without the `fixed_fields` the location sets, with
 with secrets null. `from_form(value, current)` applies the submitted fields to
 `current`: a field left out keeps its value, a null secret keeps it and `""`
 clears it, and a key the schema does not know or a value the dataclass refuses
-raises `ConfigValueError` naming each. Sections: `system` (`SystemConfig`),
+raises `ConfigValueError` naming each, as does a changed value outside a
+field's `choices` (`search_backend`, `environment`, `routing_mode`, the
+telemetry `provider` from the registered providers) or `ranges`
+(`backend_port`, 1 to 65535); `schema()` carries them as `enum`, `minimum` and
+`maximum`, and a stored value outside them is kept when a save leaves it
+unchanged. Sections: `system` (`SystemConfig`),
 `routing` (`RoutingConfigUnified`), `telemetry` (`TelemetryConfig`), `agent`
 (`AgentConfig`, one per agent) and `durable_execution`
 (`DurableExecutionConfig`); `section_for(scope, config_key)` finds the section
@@ -392,7 +397,10 @@ first; `forget_held_configs(tenant_id)` drops what the manager holds for a
 tenant (the system config for `_system`). The module function
 `forget_held_backend_configs(tenant_id)` drops the tenant's backend config
 from every ConfigManager in the process; the runtime runs it on every worker
-when a profile is written. `SystemConfig.to_dict()` shows
+when a profile is written. `forget_held_tenant_configs(tenant_id)` drops
+everything every ConfigManager in the process holds for a tenant (the system
+config for `_system`); the runtime runs it on every runtime and ingestion
+worker when a config is saved, restored or imported. `SystemConfig.to_dict()` shows
 `llm_api_key` as `"***"`; `to_dict(redact=False)` is the stored form.
 
 **Profile servability** - whether a tenant can be served a profile:

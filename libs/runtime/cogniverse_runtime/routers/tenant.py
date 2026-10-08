@@ -113,6 +113,10 @@ class MemoryItem(BaseModel):
     category: Optional[str] = None
     metadata: Dict[str, Any] = {}
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    score: Optional[float] = Field(
+        None, description="Similarity to the search query; null when listing"
+    )
 
 
 class MemoryListResponse(BaseModel):
@@ -310,9 +314,19 @@ class MemoryCreateRequest(BaseModel):
 
 class MemoryStats(BaseModel):
     agent_name: str
+    user_id: str = Field(..., description="The tenant partition the count reads")
     total: int
     archived: int
     writable: bool
+
+
+class MemoryHealth(BaseModel):
+    tenant_id: str
+    agent_name: str
+    healthy: bool
+    problem: Optional[str] = Field(
+        None, description="Why the memory store is not healthy"
+    )
 
 
 @router.post("/{tenant_id}/memories")
@@ -366,6 +380,8 @@ def _entry_to_item(entry: dict, agent_name: str) -> Optional[MemoryItem]:
         category=meta.get("category"),
         metadata=meta,
         created_at=str(entry.get("created_at", "")) or None,
+        updated_at=str(entry.get("updated_at") or "") or None,
+        score=entry.get("score"),
     )
 
 
@@ -462,9 +478,43 @@ async def memory_stats(
         raise _memory_read_failed(exc, tenant_id, [agent_name]) from exc
     return MemoryStats(
         agent_name=agent_name,
+        user_id=tenant_id,
         total=stats["total_memories"],
         archived=stats["archived_memories"],
         writable=_is_writable(agent_name),
+    )
+
+
+@router.get("/{tenant_id}/memories/health", response_model=MemoryHealth)
+async def memory_health(
+    tenant_id: str,
+    agent_name: str = Query(
+        default=_USER_MEMORY_AGENT, description="The namespace to read"
+    ),
+):
+    """Whether the tenant's memory manager is up and its store answers a read
+    of ``agent_name``; an unhealthy answer names the step that failed."""
+    tenant_id = canonical_tenant_id(tenant_id)
+
+    def _probe() -> Optional[str]:
+        try:
+            mgr = _get_memory_manager(tenant_id)
+        except Exception as exc:
+            return f"The memory manager could not start ({type(exc).__name__})."
+        if not mgr.health_check():
+            return "The memory manager is not initialized."
+        try:
+            mgr.get_all_memories(tenant_id=tenant_id, agent_name=agent_name, limit=1)
+        except Exception as exc:
+            return f"The memory store did not answer a read ({type(exc).__name__})."
+        return None
+
+    problem = await asyncio.to_thread(_probe)
+    return MemoryHealth(
+        tenant_id=tenant_id,
+        agent_name=agent_name,
+        healthy=problem is None,
+        problem=problem,
     )
 
 
