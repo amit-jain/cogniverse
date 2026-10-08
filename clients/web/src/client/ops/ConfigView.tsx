@@ -125,7 +125,13 @@ export function ConfigView() {
           {all
             .filter((s) => s.tenant_scoped && s.service === null)
             .map((s) => (
-              <AgentConfigs key={`${tenant}-${s.name}-${version}`} section={s} tenant={tenant} onSaved={changed} />
+              <AgentConfigs
+                key={`${tenant}-${s.name}`}
+                section={s}
+                tenant={tenant}
+                version={version}
+                onSaved={changed}
+              />
             ))}
           <StoredConfigs key={`${tenant}-${version}`} tenant={tenant} onChanged={changed} />
           <ExportImport key={`${tenant}-transfer`} tenant={tenant} onImported={changed} />
@@ -157,13 +163,28 @@ function SectionPanel({
       ),
     [section.name, tenant, service],
   );
+  // Each reload starts the form over, so it drops unsaved edits even when
+  // the stored version is the same.
+  const [reloads, setReloads] = useState(0);
   const heading = title ?? (tenant ? `${section.title} config of ${tenant}` : `${section.title} config`);
   return (
-    <Panel title={heading} actions={<button onClick={loaded.reload}>Reload</button>}>
+    <Panel
+      title={heading}
+      actions={
+        <button
+          onClick={() => {
+            setReloads((n) => n + 1);
+            loaded.reload();
+          }}
+        >
+          Reload
+        </button>
+      }
+    >
       {loaded.error && <Alert>{loaded.error}</Alert>}
       {loaded.data && (
         <SectionForm
-          key={loaded.data.version}
+          key={`${loaded.data.version}-${reloads}`}
           section={section}
           loaded={loaded.data}
           tenant={tenant}
@@ -363,10 +384,13 @@ function Fields({
 function AgentConfigs({
   section,
   tenant,
+  version,
   onSaved,
 }: {
   section: Section;
   tenant: string;
+  /** Bumped by every save; the agent being edited stays open across it. */
+  version: number;
   onSaved: (notice: string) => void;
 }) {
   const entries = useLoad(
@@ -374,7 +398,7 @@ function AgentConfigs({
       runtimeJson<{ entries: Entry[] }>(`/admin/config/entries?${query({ tenant_id: tenant })}`, { signal }).then(
         (body) => body.entries.filter((e) => e.section === section.name).map((e) => e.service),
       ),
-    [tenant, section.name],
+    [tenant, section.name, version],
   );
   const [agent, setAgent] = useState('');
   const [draft, setDraft] = useState('');
@@ -413,7 +437,7 @@ function AgentConfigs({
       )}
       {agent && (
         <SectionPanel
-          key={agent}
+          key={`${agent}-${version}`}
           section={section}
           tenant={tenant}
           service={agent}
