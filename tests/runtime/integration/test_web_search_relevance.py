@@ -62,7 +62,7 @@ from tests.utils.web_client import (
 )
 from tests.utils.web_ops import harness_key_admin
 
-pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast, pytest.mark.no_shared_vespa]
 
 KEY = "web-relevance-harness-key"
 OTHER_KEY = "web-relevance-other-harness-key"

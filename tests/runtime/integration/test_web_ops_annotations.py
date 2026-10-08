@@ -36,7 +36,7 @@ from tests.utils.web_client import (
 )
 from tests.utils.web_ops import serve_ops_runtime
 
-pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast, pytest.mark.no_shared_vespa]
 
 QUEUE_PREFIX = f"web-ops-test:annotation-view:{uuid4().hex[:8]}"
 
