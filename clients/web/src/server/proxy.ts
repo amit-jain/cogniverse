@@ -1,4 +1,5 @@
 import type { ServerConfig } from './config.js';
+import { jsonError, requestTenant, tenantFetch, type TenantKeys } from './tenants.js';
 
 /** Runtime routes the operations views call, relative to the runtime root. */
 const ALLOWED = [
@@ -14,7 +15,7 @@ const ALLOWED = [
   /^\/admin\/tenant\/[^/]+\/memories(\/[^/]+)?$/,
   /^\/admin\/tenant\/[^/]+\/approvals(\/[^/]+\/[^/]+)?$/,
   /^\/admin\/tenant\/[^/]+\/orchestration-workflows(\/[^/]+\/annotation)?$/,
-  /^\/admin\/tenant\/[^/]+\/telemetry\/(profile-selection|rlm-ab|traces|root-causes)$/,
+  /^\/admin\/tenant\/[^/]+\/telemetry\/(profile-selection|rlm-ab|traces|root-causes|phoenix)$/,
   /^\/admin\/tenant\/[^/]+\/evaluation\/golden$/,
   /^\/admin\/tenant\/[^/]+\/embeddings\/atlas$/,
   /^\/admin\/tenant\/[^/]+\/routing-decisions(\/[^/]+\/(approve|label))?$/,
@@ -34,22 +35,17 @@ export function isAllowedRuntimePath(path: string): boolean {
   return ALLOWED.some((pattern) => pattern.test(path));
 }
 
-function jsonError(status: number, error: string): Response {
-  return new Response(JSON.stringify({ error }), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
 /**
  * Forwards ``request`` (whose path starts with ``mount``) to the same path on
- * the runtime with the harness key, streaming both bodies, so server-sent
- * event routes stay live.
+ * the runtime, streaming both bodies, so server-sent event routes stay live.
+ * An ``/ag-ui`` route goes with the harness key of the tenant the request
+ * names; the runtime takes every other route's tenant from its path.
  */
 export async function forwardToRuntime(
   config: ServerConfig,
   request: Request,
   mount: string,
+  keys: TenantKeys,
   fetchFn: typeof fetch = fetch,
 ): Promise<Response> {
   const url = new URL(request.url);
@@ -57,7 +53,8 @@ export async function forwardToRuntime(
   if (!isAllowedRuntimePath(path))
     return jsonError(404, `The web server does not forward ${request.method} ${path}.`);
 
-  const headers = new Headers({ Authorization: `Bearer ${config.apiKey}` });
+  const send = path.startsWith('/ag-ui/') ? tenantFetch(keys, requestTenant(request.headers), fetchFn) : fetchFn;
+  const headers = new Headers();
   for (const name of FORWARDED_REQUEST_HEADERS) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
@@ -65,7 +62,7 @@ export async function forwardToRuntime(
   const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
   let upstream: Response;
   try {
-    upstream = await fetchFn(`${config.runtimeUrl}${url.pathname.slice(mount.length)}${url.search}`, {
+    upstream = await send(`${config.runtimeUrl}${url.pathname.slice(mount.length)}${url.search}`, {
       method: request.method,
       headers,
       body: hasBody ? request.body : undefined,

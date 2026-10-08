@@ -38,7 +38,6 @@ from tests.utils.web_ops import serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
 
-KEY = "web-ops-harness-key"
 LECTURE_REPORT = {
     "workflow_id": "wf-lecture-report",
     "query": "summarize the lecture and write a report",
@@ -104,7 +103,7 @@ def runtime_url(phoenix_container, schema_loader, workflow_state_redis_url, tele
 def web_url(built_client, runtime_url, phoenix_proxy):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []

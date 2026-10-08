@@ -26,11 +26,19 @@ export function noticeMessage(id: string, notice: Notice): ActivityMessage {
   return { id, role: 'activity', activityType: NOTICE_ACTIVITY, content: { ...notice } };
 }
 
+/** "1 message", "3 messages": the user and assistant turns of a conversation. */
+export function messageCount(messages: { role: string }[]): string {
+  const count = messages.filter((message) => message.role === 'user' || message.role === 'assistant').length;
+  return `${count} ${count === 1 ? 'message' : 'messages'}`;
+}
+
 export function AgentWorkspace({
+  tenant,
   agentName,
   threadId,
   onNewThread,
 }: {
+  tenant: string;
   agentName: string;
   threadId: string;
   onNewThread: () => void;
@@ -80,6 +88,9 @@ export function AgentWorkspace({
     <div className="workspace">
       <header className="workspace-header">
         <h1>{agentLabel(agentName)}</h1>
+        <p className="workspace-facts" aria-label="Conversation">
+          {tenant} · {messageCount(agent.messages)}
+        </p>
         {status && (
           <p className="status" role="status">
             {status}
@@ -98,7 +109,7 @@ export function AgentWorkspace({
             labels={{ chatInputPlaceholder: `Ask ${agentLabel(agentName)}…` }}
           />
         </section>
-        <ResultPanel state={agent.state} />
+        <ResultPanel state={agent.state} tenant={tenant} />
       </div>
     </div>
   );

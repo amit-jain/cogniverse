@@ -21,11 +21,10 @@ from tests.utils.web_client import (
     recording_telemetry_sink,
     serve_web,
 )
-from tests.utils.web_ops import serve_ops_runtime
+from tests.utils.web_ops import register_tenant, serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
-KEY = "web-ops-harness-key"
 TEXTS = {
     "rivers.txt": "Rivers carve canyons over thousands of years",
     "glaciers.txt": "Glaciers grind valleys into wide troughs",
@@ -67,7 +66,7 @@ def tenant(runtime_url, config_manager, schema_loader, tmp_path_factory):
 def web_url(built_client, runtime_url):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -90,6 +89,7 @@ def page(browser):
 
 
 def _atlas_view(page: Page, web_url: str, tenant: str) -> None:
+    register_tenant(tenant)
     page.goto(f"{web_url}/#/ops/atlas")
     expect(page.get_by_role("heading", name="Embedding atlas", level=1)).to_be_visible()
     chooser = page.get_by_role("form", name="Choose tenant")
@@ -197,7 +197,7 @@ class TestFaultContract:
         )
         with recording_telemetry_sink() as (sink_url, _):
             with serve_web(
-                built_client, dead_runtime, KEY, telemetry_url=sink_url, built=True
+                built_client, dead_runtime, telemetry_url=sink_url, built=True
             ) as url:
                 page.goto(f"{url}/#/ops/atlas")
                 chooser = page.get_by_role("form", name="Choose tenant")

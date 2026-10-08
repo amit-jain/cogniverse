@@ -172,11 +172,27 @@ export function clock(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-/** The hits and code of a run's final state, beside the chat. */
-export function ResultPanel({ state }: { state: unknown }) {
+/** The tenant a run's final state was produced for. */
+export function resultTenantOf(state: unknown): string | undefined {
+  return text(record(state)?.tenant_id);
+}
+
+/** The hits and code of a run's final state, beside the chat, shown only
+ * while ``tenant`` is the tenant the run was produced for. */
+export function ResultPanel({ state, tenant }: { state: unknown; tenant: string }) {
   const groups = resultGroupsOf(state);
   const coding = codingOf(state);
   if (!groups.length && !coding.length) return null;
+  const owner = resultTenantOf(state);
+  if (owner !== tenant)
+    return (
+      <aside className="results" aria-label="Results">
+        <p className="alert error" role="alert">
+          These results belong to tenant {owner ?? 'unknown'}, not {tenant || 'the active tenant'}; they are not
+          shown.
+        </p>
+      </aside>
+    );
   const labelled = groups.length > 1;
   return (
     <aside className="results" aria-label="Results">
@@ -186,7 +202,7 @@ export function ResultPanel({ state }: { state: unknown }) {
       {groups.map((group) => (
         <Fragment key={`${group.agent}-${group.spanId ?? ''}`}>
           {labelled && <h2 className="result-group">{agentLabel(group.agent)}</h2>}
-          <ResultCards results={group.items} spanId={group.spanId} />
+          <ResultCards results={group.items} spanId={group.spanId} tenant={tenant} />
         </Fragment>
       ))}
     </aside>
@@ -224,7 +240,7 @@ function CodePanel({ code }: { code: CodingResult }) {
   );
 }
 
-export function ResultCards({ results, spanId }: { results: ResultItem[]; spanId?: string }) {
+export function ResultCards({ results, spanId, tenant }: { results: ResultItem[]; spanId?: string; tenant: string }) {
   return (
     <ol className="result-list">
       {results.map((item, index) => (
@@ -244,14 +260,14 @@ export function ResultCards({ results, spanId }: { results: ResultItem[]; spanId
             </div>
           )}
           {item.snippet && <p className="result-snippet">{item.snippet}</p>}
-          {spanId && item.ratingId && <Relevance spanId={spanId} resultId={item.ratingId} />}
+          {spanId && item.ratingId && <Relevance spanId={spanId} resultId={item.ratingId} tenant={tenant} />}
         </li>
       ))}
     </ol>
   );
 }
 
-function Relevance({ spanId, resultId }: { spanId: string; resultId: string }) {
+function Relevance({ spanId, resultId, tenant }: { spanId: string; resultId: string; tenant: string }) {
   const [rated, setRated] = useState<string>();
   const [pending, setPending] = useState<string>();
   const [error, setError] = useState('');
@@ -262,6 +278,7 @@ function Relevance({ spanId, resultId }: { spanId: string; resultId: string }) {
       const stored = await runtimeJson<{ relevance: string }>('/ag-ui/results/relevance', {
         method: 'POST',
         body: { span_id: spanId, result_id: resultId, relevance },
+        tenant,
       });
       setRated(stored.relevance);
     } catch (e) {

@@ -7,13 +7,25 @@ import { CopilotRuntime, createCopilotHonoHandler } from '@copilotkit/runtime/v2
 import { Hono } from 'hono';
 import type { ServerConfig } from './config.js';
 import { forwardToRuntime } from './proxy.js';
-import { RuntimeUnavailableError, cogniverseAgents, listAgents } from './runtime.js';
+import { RuntimeUnavailableError, agentsStatus, cogniverseAgents, listAgents } from './runtime.js';
+import { TenantKeys, requestTenant } from './tenants.js';
 import { CogniverseThreadRunner } from './threads.js';
 
-export function createApp(config: ServerConfig, fetchFn: typeof fetch = fetch) {
+/**
+ * The web server: the client, CopilotKit's runtime for the agent workspace
+ * and the runtime proxy for the operations views. Both act for the tenant a
+ * request names in ``x-cogniverse-tenant``, with that tenant's key from
+ * ``keys``.
+ */
+export function createApp(
+  config: ServerConfig,
+  fetchFn: typeof fetch = fetch,
+  keys: TenantKeys = new TenantKeys(config, fetchFn),
+) {
   const runtime = new CopilotRuntime({
-    agents: async () => cogniverseAgents(config, await listAgents(config, fetchFn)),
-    runner: new CogniverseThreadRunner(config, fetchFn),
+    agents: async ({ request }) =>
+      cogniverseAgents(config, await listAgents(config, fetchFn), keys, requestTenant(request.headers), fetchFn),
+    runner: new CogniverseThreadRunner(config, keys, fetchFn),
   });
   const copilotkit = createCopilotHonoHandler({
     runtime,
@@ -34,8 +46,17 @@ export function createApp(config: ServerConfig, fetchFn: typeof fetch = fetch) {
       throw error;
     }
   });
+  app.get('/ui-api/agents/status', async (c) => {
+    try {
+      return c.json(await agentsStatus(config, await listAgents(config, fetchFn), fetchFn));
+    } catch (error) {
+      if (error instanceof RuntimeUnavailableError)
+        return c.json({ error: error.message }, 502);
+      throw error;
+    }
+  });
   app.all('/ui-api/copilotkit/*', (c) => copilotkit.fetch(c.req.raw));
-  app.all('/ui-api/runtime/*', (c) => forwardToRuntime(config, c.req.raw, '/ui-api/runtime', fetchFn));
+  app.all('/ui-api/runtime/*', (c) => forwardToRuntime(config, c.req.raw, '/ui-api/runtime', keys, fetchFn));
 
   if (existsSync(path.join(config.clientDir, 'index.html'))) {
     app.use('/*', serveStatic({ root: path.relative(process.cwd(), config.clientDir) }));

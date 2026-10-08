@@ -31,7 +31,6 @@ from tests.utils.web_ops import serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
-KEY = "web-ops-harness-key"
 # A tenant's base schemas deploy on creation; that is the slow step.
 DEPLOY_TIMEOUT_MS = 240_000
 
@@ -48,7 +47,7 @@ def runtime_url(config_manager, schema_loader, workflow_state_redis_url):
 def web_url(built_client, runtime_url):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -292,7 +291,7 @@ class TestFaultContract:
         dead_runtime = f"http://127.0.0.1:{free_port()}"
         with recording_telemetry_sink() as (sink_url, _):
             with serve_web(
-                built_client, dead_runtime, KEY, telemetry_url=sink_url, built=True
+                built_client, dead_runtime, telemetry_url=sink_url, built=True
             ) as url:
                 _tenants_view(page, url)
                 organizations = page.get_by_role("region", name="Organizations")
