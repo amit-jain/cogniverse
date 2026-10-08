@@ -11,22 +11,36 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import threading
+import time
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 import httpx
 import pytest
+import uvicorn
 from fastapi import FastAPI
 from redis.asyncio import Redis
 
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.agent_models import AgentEndpoint
-from cogniverse_core.conversation import ConversationStore
+from cogniverse_core.conversation import (
+    RUN_CANCELLED_ROLE,
+    RUN_CANCELLED_TEXT,
+    ConversationStore,
+)
 from cogniverse_core.registries.agent_registry import AgentRegistry
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_PERSIST_FAILURE_CAPACITY,
+    CONVERSATION_SAVE_LEASE_S,
+    AgentDispatcher,
+)
 from cogniverse_runtime.config_loader import ConfigLoader
 from cogniverse_runtime.routers import ag_ui, openai_compat
 from cogniverse_runtime.session_state import ConversationLedger
+from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.web_client import free_port
 from tests.utils.web_ops import memory_on_vespa
 
@@ -115,11 +129,35 @@ class GatedAgent(AgentBase[ThreadInput, AnswerOutput, ThreadDeps]):
         return AnswerOutput(answer=f"gated reply to: {input.query}")
 
 
+HELD_PHASE = "searching"
+# How long a held run waits for a client that never hangs up.
+HOLD_SECONDS = 20.0
+# A hung-up run's turn reads back within this; measured well under a second.
+CANCELLED_SAVE_BUDGET_SECONDS = 15.0
+CANCELLED_RUNS = 4
+held: Dict[str, Any] = {"barrier": None, "cancelled": []}
+
+
+class HeldAgent(AgentBase[ThreadInput, AnswerOutput, ThreadDeps]):
+    """Reports a phase, waits for every run held with it when a barrier is
+    set, then holds its turn until the client hangs up."""
+
+    async def _process_impl(self, input: ThreadInput) -> AnswerOutput:
+        self.emit_progress(HELD_PHASE, f"holding {input.query}")
+        try:
+            await asyncio.sleep(HOLD_SECONDS)
+        except asyncio.CancelledError:
+            held["cancelled"].append(input.query)
+            raise
+        return AnswerOutput(answer=f"held reply to: {input.query}")
+
+
 _AGENT_CLASSES = {
     "streaming_agent": f"{__name__}:StreamingAgent",
     "dispatch_agent": f"{__name__}:DispatchAgent",
     "failing_agent": f"{__name__}:FailingAgent",
     "gated_agent": f"{__name__}:GatedAgent",
+    "held_agent": f"{__name__}:HeldAgent",
 }
 _TOKEN_STREAMING = {"streaming_agent": True}
 
@@ -465,3 +503,202 @@ class TestFaults:
                 }
             },
         )
+
+
+@pytest.fixture()
+def live_server(dispatcher, continuation_store, memory, workflow_state_redis_url):
+    """The AG-UI routes on a real socket, so a client hanging up is a real
+    disconnect, with the conversation ledger opened on the server's loop."""
+    _, proxy = memory
+
+    @asynccontextmanager
+    async def ledger_on_server_loop(_app):
+        redis = await connect_shared_state_redis(workflow_state_redis_url)
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                redis,
+                save_lease_s=CONVERSATION_SAVE_LEASE_S,
+                failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
+                key_prefix=f"test:conversation:{uuid.uuid4().hex}",
+            )
+        )
+        try:
+            yield
+        finally:
+            await dispatcher.drain_conversation_saves()
+            dispatcher.set_conversation_ledger(None)
+            await redis.aclose()
+
+    openai_compat.set_dispatcher_provider(lambda: dispatcher)
+    openai_compat.set_api_keys({KEY_A: TENANT_A, KEY_B: TENANT_B})
+    openai_compat.set_key_resolver(None)
+    openai_compat.set_continuation_store(continuation_store)
+    held["cancelled"] = []
+    app = FastAPI(lifespan=ledger_on_server_loop)
+    app.include_router(ag_ui.router, prefix="/ag-ui")
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=free_port(), log_level="warning")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 20
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert server.started, "uvicorn did not start"
+    try:
+        yield f"http://127.0.0.1:{server.config.port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=30)
+        proxy.intercept = None
+        openai_compat.set_dispatcher_provider(None)
+        openai_compat.set_api_keys({})
+        openai_compat.set_continuation_store(None)
+    assert not thread.is_alive()
+
+
+def _hang_up_after_the_held_phase(
+    base: str, thread: str, query: str, before_hang_up=lambda: None
+) -> None:
+    """Run held_agent and hang up once it reports its phase (and
+    ``before_hang_up`` returns)."""
+    with httpx.stream(
+        "POST",
+        f"{base}/ag-ui/held_agent",
+        json={
+            "threadId": thread,
+            "runId": "run-1",
+            "state": {},
+            "messages": [_user(query, 1)],
+            "tools": [],
+            "context": [],
+            "forwardedProps": {},
+        },
+        headers=_auth(KEY_A),
+        timeout=30.0,
+    ) as response:
+        assert response.status_code == 200
+        for line in response.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            event = json.loads(line[len("data: ") :])
+            if event.get("type") == "CUSTOM" and event["value"]["phase"] == HELD_PHASE:
+                before_hang_up()
+                return
+    raise AssertionError(f"held_agent never reported {HELD_PHASE!r}")
+
+
+def _cancelled_thread(thread: str, query: str) -> Dict[str, Any]:
+    return {
+        "thread_id": thread,
+        "state": "loaded",
+        "reason": None,
+        "turns": [
+            {"role": "user", "content": query},
+            {"role": RUN_CANCELLED_ROLE, "content": RUN_CANCELLED_TEXT},
+        ],
+    }
+
+
+def _read_until(base: str, thread: str, expected: Dict[str, Any]):
+    """Read the thread until it is ``expected`` or the save budget is spent;
+    the last read is returned either way."""
+    deadline = time.monotonic() + CANCELLED_SAVE_BUDGET_SECONDS
+    while True:
+        response = httpx.get(
+            f"{base}/ag-ui/threads/{thread}", headers=_auth(KEY_A), timeout=30.0
+        )
+        read = (response.status_code, response.json())
+        if read == (200, expected) or time.monotonic() > deadline:
+            return read
+        time.sleep(0.1)
+
+
+class TestCancelledRun:
+    """A run the client hangs up on before its reply keeps its user message
+    and a cancelled marker, so a reloaded page shows both."""
+
+    def test_a_hung_up_run_saves_the_message_and_a_cancelled_marker(
+        self, live_server, request
+    ):
+        thread = _thread(request)
+        _hang_up_after_the_held_phase(live_server, thread, "stop me")
+
+        expected = _cancelled_thread(thread, "stop me")
+        assert _read_until(live_server, thread, expected) == (200, expected)
+        assert held["cancelled"] == ["stop me"]
+        assert openai_compat.in_flight_count() == 0
+
+    def test_runs_hung_up_together_each_keep_their_own_thread(
+        self, live_server, request
+    ):
+        threads = [f"{_thread(request)}-{index}" for index in range(CANCELLED_RUNS)]
+        barrier = threading.Barrier(CANCELLED_RUNS)
+
+        def hang_up(index: int) -> None:
+            # Every run is in flight before any of them hangs up.
+            _hang_up_after_the_held_phase(
+                live_server,
+                threads[index],
+                f"cancel {index}",
+                before_hang_up=lambda: barrier.wait(timeout=30),
+            )
+
+        workers = [
+            threading.Thread(target=hang_up, args=(index,))
+            for index in range(CANCELLED_RUNS)
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=60)
+
+        reads = [
+            _read_until(
+                live_server, thread, _cancelled_thread(thread, f"cancel {index}")
+            )
+            for index, thread in enumerate(threads)
+        ]
+        assert reads == [
+            (200, _cancelled_thread(thread, f"cancel {index}"))
+            for index, thread in enumerate(threads)
+        ]
+        assert sorted(held["cancelled"]) == [
+            f"cancel {index}" for index in range(CANCELLED_RUNS)
+        ]
+
+    def test_a_cancelled_save_the_ledger_refuses_is_logged_not_hung(
+        self, live_server, dispatcher, request, caplog
+    ):
+        thread = _thread(request)
+        dead = Redis.from_url(
+            f"redis://127.0.0.1:{free_port()}",
+            socket_connect_timeout=1.0,
+            socket_timeout=1.0,
+        )
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                dead, save_lease_s=5, failure_capacity=10, key_prefix="test:dead"
+            )
+        )
+        with caplog.at_level(logging.ERROR, logger=ag_ui.logger.name):
+            _hang_up_after_the_held_phase(live_server, thread, "lost")
+            deadline = time.monotonic() + CANCELLED_SAVE_BUDGET_SECONDS
+            while time.monotonic() < deadline and not [
+                record for record in caplog.records if thread in record.getMessage()
+            ]:
+                time.sleep(0.05)
+
+        assert [
+            (record.levelname, record.getMessage(), record.exc_info[0].__name__)
+            for record in caplog.records
+            if thread in record.getMessage()
+        ] == [
+            (
+                "ERROR",
+                f"ag-ui thread {thread}: the cancelled held_agent run's message "
+                "was not saved",
+                "SessionStateUnavailable",
+            )
+        ]
+        assert openai_compat.in_flight_count() == 0

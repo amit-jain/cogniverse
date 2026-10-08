@@ -17,6 +17,10 @@ Each row carries the ``seq`` its writer assigned, and reads order by it, so
 turns written by different processes read back in the writers' order rather
 than in the order the writes landed.
 
+A run cancelled before its reply keeps its user turn and carries a
+``run_cancelled`` marker row in the reply's place; a thread read for display
+shows it, a history loaded for an agent does not.
+
 A turn whose assistant reply could not be stored keeps its user turn and
 carries an ``assistant_missing`` marker row in the reply's place. The
 marker is durable, so a half-turn is findable after a restart, and
@@ -44,7 +48,16 @@ RENDERED_TURN_ROLES = ("user", "assistant")
 ASSISTANT_MISSING_ROLE = "assistant_missing"
 ASSISTANT_MISSING_PREFIX = "assistant turn not persisted: "
 
-KNOWN_TURN_ROLES = RENDERED_TURN_ROLES + (ASSISTANT_MISSING_ROLE,)
+# A run the client cancelled before its reply: the user turn stays and this
+# marker takes the reply's place. Shown in a thread read back for display,
+# never rendered as history to an agent.
+RUN_CANCELLED_ROLE = "run_cancelled"
+RUN_CANCELLED_TEXT = "Run cancelled before the turn completed."
+
+# Roles a thread read back for display shows.
+DISPLAYED_TURN_ROLES = RENDERED_TURN_ROLES + (RUN_CANCELLED_ROLE,)
+
+KNOWN_TURN_ROLES = RENDERED_TURN_ROLES + (ASSISTANT_MISSING_ROLE, RUN_CANCELLED_ROLE)
 
 # Backend statuses a turn write may be retried on: the request was refused for
 # load or a server-side fault, never because the document itself was rejected.
@@ -99,6 +112,15 @@ class ConversationStore:
             if turn["role"] in RENDERED_TURN_ROLES
         ]
         return turns if max_turns is None else turns[-max_turns:]
+
+    def get_thread(self, context_id: str) -> List[Dict[str, str]]:
+        """Every turn of ``context_id`` a person is shown, oldest first: the
+        rendered turns and each ``run_cancelled`` marker in its reply's place."""
+        return [
+            turn
+            for turn in self._stored_turns(context_id)
+            if turn["role"] in DISPLAYED_TURN_ROLES
+        ]
 
     def get_missing_assistant_markers(self, context_id: str) -> List[Dict[str, str]]:
         """Return this context's half-turn markers, oldest first."""

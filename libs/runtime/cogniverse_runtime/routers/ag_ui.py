@@ -8,9 +8,10 @@ for the same tenant.
 
 The client holds the conversation and sends the whole of it on every run, so
 a run is self-contained exactly as a ``/v1`` request is. Each finished run
-also saves its turn (the user message and the reply, or the user message alone
-when the run failed) to the tenant's conversation store under the run's
-thread, and ``GET /ag-ui/threads/{thread_id}`` reads a thread's saved turns
+also saves its turn (the user message and the reply, the user message alone
+when the run failed, or the user message and a ``run_cancelled`` marker when
+the client hung up or cancelled it first) to the tenant's conversation store
+under the run's thread, and ``GET /ag-ui/threads/{thread_id}`` reads a thread's saved turns
 back, so a client restores a conversation from the runtime. A run streams:
 
 - ``RUN_STARTED`` with the client's thread and run ids;
@@ -533,8 +534,14 @@ async def _run_frames(
     external_tools: Optional[List[Dict[str, Any]]],
     parameters: RunParameters,
 ) -> AsyncIterator[str]:
-    """The run's frames; a failure ends the run on ``RUN_ERROR``."""
+    """The run's frames; a failure ends the run on ``RUN_ERROR``.
+
+    A run that ends before its turn was saved or suspended — the client hung
+    up, or the run was cancelled — saves its user message with a cancelled
+    marker on the way out.
+    """
     query = dispatch_args["query"]
+    settled = False
     try:
         yield writer.started()
         for frame in writer.status(START_PHASE, f"Running {agent_name}"):
@@ -564,8 +571,10 @@ async def _run_frames(
                         await _save_unanswered(
                             dispatcher, writer, tenant_id, query, agent_name
                         )
+                        settled = True
                         frames = writer.failed(event["message"], "internal_error")
                     elif kind == "tool_calls":
+                        settled = True
                         calls = event["tool_calls"]
                         frames = writer.tool_calls(calls) + writer.finished(
                             pending_tool_call_ids=[call["id"] for call in calls]
@@ -579,6 +588,7 @@ async def _run_frames(
                             event["text"],
                             event["payload"],
                         )
+                        settled = True
                     for frame in frames:
                         yield frame
             return
@@ -603,6 +613,7 @@ async def _run_frames(
                 else:
                     outcome = event["outcome"]
         if outcome["kind"] == "tool_calls":
+            settled = True
             calls = outcome["tool_calls"]
             frames = writer.tool_calls(calls) + writer.finished(
                 pending_tool_call_ids=[call["id"] for call in calls]
@@ -621,6 +632,7 @@ async def _run_frames(
                     outcome["payload"],
                 )
             )
+            settled = True
         for frame in frames:
             yield frame
     except asyncio.CancelledError:
@@ -633,9 +645,52 @@ async def _run_frames(
     except Exception as exc:
         logger.exception("ag-ui run for %s failed", agent_name)
         message, code = _failure_message(exc, agent_name)
+        settled = True
         await _save_unanswered(dispatcher, writer, tenant_id, query, agent_name)
         for frame in writer.failed(message, code):
             yield frame
+    finally:
+        if not settled:
+            await _save_cancelled(dispatcher, writer, tenant_id, query, agent_name)
+
+
+# Saves of cancelled runs still landing; held so none is collected mid-save.
+_cancelled_saves: "set[asyncio.Task[None]]" = set()
+
+
+async def _save_cancelled(
+    dispatcher: Any,
+    writer: "_RunWriter",
+    tenant_id: str,
+    query: str,
+    agent_name: str,
+) -> None:
+    """Save a cancelled run's user message and its cancelled marker.
+
+    The run's own task is being cancelled, so the save runs in a task of its
+    own that the cancellation cannot interrupt; a save that fails is logged.
+    """
+
+    async def save() -> None:
+        try:
+            await dispatcher.record_cancelled_turn(
+                tenant_id, thread_context_id(writer.thread_id), query
+            )
+        except Exception:
+            logger.exception(
+                "ag-ui thread %s: the cancelled %s run's message was not saved",
+                writer.thread_id,
+                agent_name,
+            )
+
+    task = asyncio.ensure_future(save())
+    _cancelled_saves.add(task)
+    task.add_done_callback(_cancelled_saves.discard)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # The run is still being cancelled; its save carries on regardless.
+        pass
 
 
 async def _answered(

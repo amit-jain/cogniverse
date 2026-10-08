@@ -11,8 +11,11 @@ import { requestTenant, tenantFetch, type TenantKeys } from './tenants.js';
 /** The activity type of the notes the client shows in a conversation. */
 export const NOTICE_ACTIVITY = 'cogniverse.notice';
 
+/** The runtime's marker for a run cancelled before its reply, in the reply's place. */
+export const RUN_CANCELLED_ROLE = 'run_cancelled';
+
 interface Turn {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | typeof RUN_CANCELLED_ROLE;
   content: string;
 }
 
@@ -23,13 +26,19 @@ interface ThreadRead {
   turns: Turn[];
 }
 
-/** A thread's saved turns as the chat's messages, ids stable per position. */
+/** A thread's saved turns as the chat's messages, ids stable per position; a
+ * cancelled run's marker is the notice the run showed when it was cancelled. */
 export function threadMessages(threadId: string, thread: ThreadRead): Message[] {
-  const messages: Message[] = thread.turns.map((turn, index) => ({
-    id: `${threadId}:${index}`,
-    role: turn.role,
-    content: turn.content,
-  }));
+  const messages: Message[] = thread.turns.map((turn, index): Message =>
+    turn.role === RUN_CANCELLED_ROLE
+      ? {
+          id: `${threadId}:${index}`,
+          role: 'activity',
+          activityType: NOTICE_ACTIVITY,
+          content: { tone: 'cancelled', text: 'The run was cancelled.' },
+        }
+      : { id: `${threadId}:${index}`, role: turn.role, content: turn.content },
+  );
   if (thread.state === 'incomplete')
     messages.push({
       id: `${threadId}:incomplete`,

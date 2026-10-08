@@ -19,8 +19,10 @@ from cogniverse_core.conversation import (
     ASSISTANT_MISSING_PREFIX,
     ASSISTANT_MISSING_ROLE,
     CONVERSATION_AGENT_NAME,
+    DISPLAYED_TURN_ROLES,
     KNOWN_TURN_ROLES,
     RENDERED_TURN_ROLES,
+    RUN_CANCELLED_ROLE,
     ConversationStore,
     is_transient_turn_write_error,
 )
@@ -77,7 +79,14 @@ def _turn(role, context_id, seq):
 def test_roles_split_into_rendered_and_marker():
     assert RENDERED_TURN_ROLES == ("user", "assistant")
     assert ASSISTANT_MISSING_ROLE == "assistant_missing"
-    assert KNOWN_TURN_ROLES == ("user", "assistant", "assistant_missing")
+    assert RUN_CANCELLED_ROLE == "run_cancelled"
+    assert DISPLAYED_TURN_ROLES == ("user", "assistant", "run_cancelled")
+    assert KNOWN_TURN_ROLES == (
+        "user",
+        "assistant",
+        "assistant_missing",
+        "run_cancelled",
+    )
 
 
 def test_marker_write_names_the_failure_type_and_carries_no_user_text():
@@ -197,7 +206,7 @@ def test_store_turn_refuses_a_role_no_reader_renders():
 
     assert str(excinfo.value) == (
         "unknown conversation turn role 'system'; expected one of "
-        "('user', 'assistant', 'assistant_missing')"
+        "('user', 'assistant', 'assistant_missing', 'run_cancelled')"
     )
     assert manager.adds == []
 

@@ -21,7 +21,9 @@ produced for is active. Runs stream over the runtime's AG-UI
 surface (`POST /ag-ui/{agent}`): the reply streams token by token and status
 phases show above the chat, with the themes and draft summary an agent reports
 while it works. A run that fails says why in the conversation, and one that is
-stopped says it was cancelled. An empty message cannot be sent. A search reply names
+stopped says it was cancelled; the runtime saves a cancelled run's message with
+a cancelled marker, so after a reload the conversation shows the message and
+"The run was cancelled.". An empty message cannot be sent. A search reply names
 each hit by its title (and a video segment's time range), never by its backend
 document ID; an entity extraction, query enhancement or profile selection reply
 is one sentence, with its full result in a panel beside the chat.
@@ -164,8 +166,8 @@ and profile selection panels, the conversation records,
 export and settings, the summarize stream, the default agent, the run notices,
 error, route, JSON-field and event-stream parsing, the active tenant and its
 registration check, the Analytics view's figures and exports, the server's
-configuration, agent listing and status, per-tenant keys, thread restore and
-ownership, and the runtime proxy against local HTTP sockets.
+configuration, agent listing and status, per-tenant keys, thread restore
+(a cancelled run's marker as its notice) and ownership, and the runtime proxy against local HTTP sockets.
 `tests/runtime/integration/test_web_client_ag_ui.py` installs this lockfile,
 runs the server from source against the runtime's routers and drives it with
 the published `@ag-ui/client`. `tests/runtime/integration/test_web_agent_workspace.py`

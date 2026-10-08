@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -30,7 +31,11 @@ from cogniverse_agents.profile_selection_agent import ProfileSelectionOutput
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementOutput
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.agent_models import AgentEndpoint
-from cogniverse_core.conversation import ConversationStore
+from cogniverse_core.conversation import (
+    RUN_CANCELLED_ROLE,
+    RUN_CANCELLED_TEXT,
+    ConversationStore,
+)
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.agent_dispatcher import (
@@ -522,6 +527,42 @@ class TestRunNotices:
         expect(notice).to_have_text("You cancelled this run.", timeout=30_000)
         expect(notice).to_have_attribute("role", "status")
         expect(page.locator(".workspace-header .status")).to_have_count(0)
+
+    def test_a_cancelled_run_is_still_there_after_a_reload(
+        self, page, web_url, runtime_url
+    ):
+        slow_started.clear()
+        thread = _open(page, web_url, "slow_agent", "Slow")
+        _send(page, "Slow", "think again")
+        assert slow_started.wait(60)
+        page.get_by_test_id("copilot-send-button").click()
+        expect(page.locator(".run-notice")).to_have_text(
+            "You cancelled this run.", timeout=30_000
+        )
+        expected = {
+            "thread_id": thread,
+            "state": "loaded",
+            "reason": None,
+            "turns": [
+                {"role": "user", "content": "think again"},
+                {"role": RUN_CANCELLED_ROLE, "content": RUN_CANCELLED_TEXT},
+            ],
+        }
+        deadline = time.monotonic() + 30
+        while (
+            _saved_turns(runtime_url, thread) != expected
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.2)
+        assert _saved_turns(runtime_url, thread) == expected
+
+        page.reload()
+        expect(_user_messages(page)).to_have_text(["think again"], timeout=30_000)
+        expect(page.locator(".run-notice")).to_have_text("The run was cancelled.")
+        expect(_assistant_messages(page)).to_have_count(0)
+        expect(page.get_by_label("Conversation", exact=True)).to_have_text(
+            f"{TENANT} · 1 message"
+        )
 
 
 class TestConversations:

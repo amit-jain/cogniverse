@@ -1760,14 +1760,20 @@ Each finished run saves its turn to the tenant's conversation store under the
 context `ag-ui:{threadId}`, through the dispatcher's conversation ledger
 (`AgentDispatcher.record_conversation_turn`): the user message and the reply
 as delivered, or the user message alone when the run failed. A suspended run
-saves nothing until the run that resumes it answers, and a cancelled run saves
-nothing. The turn takes its place in the thread before `RUN_FINISHED`; the
-write lands in the background. A ledger that cannot place the turn ends an
+saves nothing until the run that resumes it answers. A run that ends before
+its turn was saved or suspended — cancelled, or its client hung up — saves the
+user message and a `run_cancelled` turn (`Run cancelled before the turn
+completed.`) in the reply's place (`AgentDispatcher.record_cancelled_turn`);
+that save runs in a task of its own the cancellation does not interrupt, and a
+save the ledger refuses is logged naming the thread. A `run_cancelled` turn is
+shown in a thread read back, never in the history an agent is given. The turn
+takes its place in the thread before `RUN_FINISHED`; the write lands in the
+background. A ledger that cannot place the turn ends an
 answered run on `RUN_ERROR` `conversation_not_saved` after its text.
 
 **GET /ag-ui/threads/{thread_id}** — the saved turns of one of the key's
 tenant's threads, oldest first: `{thread_id, state, reason, turns: [{role,
-content}]}`. It waits for the thread's saves still landing, as a dispatch
+content}]}`, `role` being `user`, `assistant` or `run_cancelled`. It waits for the thread's saves still landing, as a dispatch
 does (`AgentDispatcher.read_conversation`). `state` is `loaded`, or
 `incomplete` with a `reason` when a save is still pending after the save
 budget or a turn of the thread was lost; a thread with no saved turns answers
