@@ -47,6 +47,7 @@ def wired_app(
     schema_loader,
     real_telemetry,
     clean_backend_registry,
+    profile_change_events,
 ):
     """FastAPI app with the admin and search routers wired as runtime startup
     wires them."""

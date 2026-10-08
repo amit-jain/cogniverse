@@ -39,6 +39,7 @@ from cogniverse_foundation.config.manager import (
     BackendProfileExistsError,
     BackendProfileNotFoundError,
     ConfigManager,
+    forget_held_backend_configs,
 )
 from cogniverse_foundation.config.unified_config import (
     BackendConfig,
@@ -262,7 +263,10 @@ async def create_profile(
         HTTPException 409: Concurrent writes to the tenant's backend config
             outlasted every compare-and-set attempt
         HTTPException 500: Creation or deployment failed
+        HTTPException 503: The profile is stored, but a runtime worker did
+            not confirm dropping the profiles it held
     """
+    _require_profile_change_channel()
     try:
         profile = BackendProfileConfig(
             profile_name=request.profile_name,
@@ -315,6 +319,7 @@ async def create_profile(
                 ) from exc
 
         version = await asyncio.to_thread(_validate_and_add)
+        await _publish_profile_change(request.tenant_id, request.profile_name, "stored")
 
         schema_deployed = False
         tenant_schema_name = None
@@ -617,7 +622,10 @@ async def update_profile(
         HTTPException 409: Concurrent writes to the tenant's backend config
             outlasted every compare-and-set attempt
         HTTPException 500: Update operation failed
+        HTTPException 503: The update is stored, but a runtime worker did not
+            confirm dropping the profiles it held
     """
+    _require_profile_change_channel()
 
     def _update() -> tuple[List[str], int]:
         """The updated fields and the backend config version the update
@@ -679,6 +687,7 @@ async def update_profile(
 
     try:
         updated_fields, version = await asyncio.to_thread(_update)
+        await _publish_profile_change(request.tenant_id, profile_name, "updated")
 
         return ProfileUpdateResponse(
             profile_name=profile_name,
@@ -732,7 +741,10 @@ async def delete_profile(
             concurrent writes to the tenant's backend config outlasted every
             compare-and-set attempt
         HTTPException 500: Deletion failed
+        HTTPException 503: The profile is deleted, but a runtime worker did
+            not confirm dropping the profiles it held
     """
+    _require_profile_change_channel()
 
     def _delete() -> bool:
         """The profile delete's blocking work, run off the serving loop.
@@ -793,6 +805,7 @@ async def delete_profile(
 
     try:
         schema_deleted = await asyncio.to_thread(_delete)
+        await _publish_profile_change(tenant_id, profile_name, "deleted")
 
         return ProfileDeleteResponse(
             profile_name=profile_name,
@@ -815,6 +828,56 @@ async def delete_profile(
             profile_name=profile_name,
             tenant_id=tenant_id,
         )
+
+
+# How long a profile write waits for every worker to drop the profiles it held.
+PROFILE_CHANGE_ACK_TIMEOUT_S = 15.0
+
+
+def release_backend_profiles(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop the backend config this process holds for the tenant.
+
+    The ``backend_profiles_changed`` cluster-event handler, run on every
+    worker: its next read of the tenant's profiles comes from the store.
+    """
+    tenant_id = canonical_tenant_id(payload["tenant_id"])
+    return {
+        "tenant_id": tenant_id,
+        "config_managers": forget_held_backend_configs(tenant_id),
+    }
+
+
+def _require_profile_change_channel() -> None:
+    """A profile write refuses before storing anything when no channel can
+    carry the change to the other workers."""
+    if _cluster_events is None:
+        raise RuntimeError("Profile writes need the cluster events channel wired")
+
+
+async def _publish_profile_change(
+    tenant_id: str, profile_name: str, change: str
+) -> None:
+    """Have every runtime worker process drop the tenant's held profiles,
+    so its next request on any of them reads the change."""
+    from cogniverse_runtime.cluster_events import ClusterEventError
+
+    try:
+        await _cluster_events.publish(
+            "backend_profiles_changed",
+            {"tenant_id": canonical_tenant_id(tenant_id)},
+            timeout_s=PROFILE_CHANGE_ACK_TIMEOUT_S,
+        )
+    except ClusterEventError as exc:
+        raise failure_response(
+            503,
+            "profile_change_not_propagated",
+            f"Profile '{profile_name}' is {change} for tenant '{tenant_id}', but "
+            "not every runtime worker dropped the profiles it held; those "
+            "workers read the change within a minute.",
+            exc,
+            profile_name=profile_name,
+            tenant_id=tenant_id,
+        ) from exc
 
 
 def _profile_not_found(profile_name: str, tenant_id: str) -> HTTPException:
@@ -1452,7 +1515,8 @@ async def admin_drop_session(tenant_id: str, session_id: str):
     }
 
 
-# Delivers a session close to every runtime worker process; wired at startup.
+# Delivers a session close or a profile change to every runtime worker
+# process; wired at startup.
 _cluster_events = None
 
 # How long a session close waits for every worker to sweep its warm tenants.
@@ -1460,7 +1524,8 @@ SESSION_CLOSE_ACK_TIMEOUT_S = 60.0
 
 
 def set_cluster_events(cluster_events) -> None:
-    """Wire the channel a session close reaches every worker process through."""
+    """Wire the channel session closes and profile changes reach every worker
+    process through."""
     global _cluster_events
     _cluster_events = cluster_events
 

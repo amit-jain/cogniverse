@@ -24,7 +24,10 @@ from tests.utils.http_fault_proxy import HTTPFaultProxy
 from tests.utils.profile_payload import profile_create_payload
 from tests.utils.pylate_stub import serve_pylate_stub, token_vector
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("profile_change_events"),
+]
 
 TEMPLATE = "document_text_semantic"
 TEXTS = {

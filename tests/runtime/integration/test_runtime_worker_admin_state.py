@@ -788,6 +788,90 @@ class TestProfileWritesAcrossWorkers:
         assert stored.version == last["version"]
 
 
+def _served_strategies() -> list[str]:
+    """The ranking strategies ``GET /search/strategies`` serves for a profile
+    on the built-in video schema, from the schemas the runtime ships."""
+    from pathlib import Path
+
+    from cogniverse_vespa.ranking_strategy_extractor import (
+        extract_all_ranking_strategies,
+    )
+
+    schemas = Path(__file__).resolve().parents[3] / "configs" / "schemas"
+    return sorted(
+        extract_all_ranking_strategies(schemas)["video_colpali_smol500_mv_frame"]
+    )
+
+
+class TestProfileWritesReachEveryWorkersSearch:
+    """Search resolves a tenant's profiles from the backend config its worker
+    holds; a profile written on one worker is what the other worker's search
+    resolves the moment the write returns."""
+
+    def test_a_profile_created_on_one_worker_is_searchable_on_the_other_at_once(
+        self, runtime
+    ):
+        tenant = _tenant("searchnew")
+        first, second = runtime.workers
+        path = f"/search/strategies?tenant_id={tenant}&profile=served_profile"
+        pinned = _pinned(runtime, 1)
+        try:
+            before = _request(pinned[second][0], "GET", path)
+            created = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/profiles",
+                _profile_body(tenant, "served_profile"),
+            )
+            after = _request(pinned[second][0], "GET", path)
+        finally:
+            _close(pinned)
+
+        strategies = _served_strategies()
+        assert before[0] == 404, before
+        assert created[0] == 201, created
+        assert after == (
+            200,
+            {
+                "tenant_id": tenant,
+                "profile": "served_profile",
+                "count": len(strategies),
+                "strategies": strategies,
+            },
+        )
+
+    def test_a_profile_deleted_on_one_worker_is_not_searchable_on_the_other(
+        self, runtime
+    ):
+        tenant = _tenant("searchgone")
+        first, second = runtime.workers
+        path = f"/search/strategies?tenant_id={tenant}&profile=dropped_profile"
+        pinned = _pinned(runtime, 1)
+        try:
+            created = _request(
+                pinned[first][0],
+                "POST",
+                "/admin/profiles",
+                _profile_body(tenant, "dropped_profile"),
+            )
+            held = _request(pinned[second][0], "GET", path)
+            deleted = _request(
+                pinned[first][0],
+                "DELETE",
+                f"/admin/profiles/dropped_profile?tenant_id={tenant}",
+            )
+            after = _request(pinned[second][0], "GET", path)
+        finally:
+            _close(pinned)
+
+        assert (created[0], held[0], deleted[0]) == (201, 200, 200)
+        assert held[1]["profile"] == "dropped_profile"
+        assert after[0] == 404, after
+        assert after[1]["detail"].startswith(
+            "Profile 'dropped_profile' not found in backend.profiles. "
+        )
+
+
 def _listed(answer: tuple[int, dict]) -> tuple[int, list[str]]:
     status, body = answer
     return status, sorted(summary["profile_name"] for summary in body["profiles"])

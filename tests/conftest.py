@@ -1017,6 +1017,78 @@ def own_redis():
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
+class ClusterEventsOnOwnLoop:
+    """A real cluster-events worker on the test Redis, running on an event
+    loop of its own, so a route served by any loop (a sync ``TestClient``'s
+    portal, the test's own) publishes through it."""
+
+    def __init__(self, redis_url: str, handlers: dict):
+        import asyncio
+        import uuid
+
+        from cogniverse_runtime.cluster_events import ClusterEvents
+
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._loop.run_forever, name="test-cluster-events", daemon=True
+        )
+        self._thread.start()
+        self.events = ClusterEvents(
+            redis_url,
+            f"test-worker-{uuid.uuid4().hex[:8]}",
+            handlers,
+            channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
+        )
+        self._run(self.events.start())
+
+    def _run(self, coroutine):
+        import asyncio
+
+        return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result(60)
+
+    async def publish(self, kind, payload, *, timeout_s):
+        import asyncio
+
+        return await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                self.events.publish(kind, payload, timeout_s=timeout_s), self._loop
+            )
+        )
+
+    def close(self) -> None:
+        try:
+            self._run(self.events.close())
+        finally:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=10)
+            self._loop.close()
+
+
+@pytest.fixture(scope="module")
+def profile_change_events(request):
+    """Wire the admin routes' cluster-events channel, as the runtime's
+    lifespan does, with this process as its one worker: a profile write
+    publishes ``backend_profiles_changed`` and this process drops the
+    tenant's held profiles before the write answers. Module-scoped, so a
+    module's own setup can write profiles through the routes."""
+    from cogniverse_runtime.routers import admin
+
+    redis_url = os.environ.get("COGNIVERSE_TEST_REDIS_URL") or request.getfixturevalue(
+        "workflow_state_redis_url"
+    )
+    channel = ClusterEventsOnOwnLoop(
+        redis_url,
+        {"backend_profiles_changed": admin.release_backend_profiles},
+    )
+    previous = admin._cluster_events
+    admin.set_cluster_events(channel)
+    try:
+        yield channel
+    finally:
+        admin.set_cluster_events(previous)
+        channel.close()
+
+
 @pytest.fixture
 def dead_redis_url():
     """A Redis URL on a port nothing listens on."""

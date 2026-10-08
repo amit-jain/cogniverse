@@ -235,10 +235,11 @@ class _Env:
     backend: _FakeBackend
     registry: _FakeRegistry
     validator: _StubValidator
+    events: object
 
 
 @pytest.fixture
-def env(monkeypatch):
+def env(monkeypatch, in_process_cluster_events):
     cm = _StubConfigManager()
     backend = _FakeBackend()
     registry = _FakeRegistry(backend)
@@ -256,7 +257,14 @@ def env(monkeypatch):
     )
     app.dependency_overrides[admin.get_profile_validator_dependency] = lambda: validator
 
-    return _Env(app=app, cm=cm, backend=backend, registry=registry, validator=validator)
+    return _Env(
+        app=app,
+        cm=cm,
+        backend=backend,
+        registry=registry,
+        validator=validator,
+        events=in_process_cluster_events,
+    )
 
 
 async def _get(app, path, **params):
@@ -368,6 +376,8 @@ async def test_get_profile_missing_returns_404(env):
     resp = await _get(env.app, "/admin/profiles/nope", tenant_id="acme")
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Profile 'nope' not found for tenant 'acme'"
+    # Nothing was written, so no worker is told to drop anything.
+    assert env.events.published == []
 
 
 @pytest.mark.asyncio
@@ -670,6 +680,10 @@ async def test_update_profile_persists_overrides_and_echoes_updated_fields(env):
     }
     # The version is the one the update produced, not read back afterwards.
     assert env.cm.store.get_config_calls == []
+    # Every worker dropped the tenant's held profiles before the answer.
+    assert env.events.published == [
+        ("backend_profiles_changed", {"tenant_id": "acme:acme"})
+    ]
 
 
 @pytest.mark.asyncio
@@ -942,6 +956,9 @@ async def test_delete_profile_without_schema_removes_config_only(env):
     }
     # delete_schema defaulted false, so the Vespa schema was never touched.
     assert env.backend.deleted == []
+    assert env.events.published == [
+        ("backend_profiles_changed", {"tenant_id": "acme:acme"})
+    ]
 
 
 @pytest.mark.asyncio
@@ -1143,6 +1160,9 @@ async def test_create_profile_adds_profile_without_deploy(env):
     # deploy_schema false -> the Vespa deploy primitive was never invoked.
     assert env.backend.deploy_calls == []
     assert env.validator.calls["validate_profile"]["is_update"] is False
+    assert env.events.published == [
+        ("backend_profiles_changed", {"tenant_id": "acme:acme"})
+    ]
 
 
 class _BackendReadRecordingStore(InMemoryConfigStore):

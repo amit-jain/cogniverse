@@ -204,6 +204,8 @@ flowchart TB
   nested fields merge and the `vlm_endpoint` field remains system-owned. This
   merge also applies when no JSON backend section exists. Store read failures
   propagate, and callers receive isolated profile values.
+  `ConfigUtils(tenant_id, config_manager).backend_profiles()` returns that
+  merged catalog, reading only the backend configs.
 - Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore)
 
 ```python
@@ -387,7 +389,10 @@ of a stored entry.
 value, expected_version=...)` stores a value as the next version when the stored
 one is `expected_version` (0: none) and returns None when another write landed
 first; `forget_held_configs(tenant_id)` drops what the manager holds for a
-tenant (the system config for `_system`). `SystemConfig.to_dict()` shows
+tenant (the system config for `_system`). The module function
+`forget_held_backend_configs(tenant_id)` drops the tenant's backend config
+from every ConfigManager in the process; the runtime runs it on every worker
+when a profile is written. `SystemConfig.to_dict()` shows
 `llm_api_key` as `"***"`; `to_dict(redact=False)` is the stored form.
 
 **Profile servability** - whether a tenant can be served a profile:
@@ -420,6 +425,19 @@ be in `deployed_schemas` (`PROFILE_SCHEMA_NOT_DEPLOYED` otherwise).
 comes from `cogniverse_core.registries.schema_registry.tenant_deployed_schema_names`;
 callers in `cogniverse_agents.profile_selection_agent` compose the two, so this
 module keeps no dependency on core.
+
+`tenant_profile_servability(config_manager, tenant_id)` there lists the
+tenant's profiles with their state: the profiles it stored and, for each schema
+it has deployed that none of those reads, the catalog's search profiles
+(`video`, `document`, `image`, `audio`, `code`, `wiki`) declaring that schema.
+A registered tenant stores no profile but has the built-in
+`video_colpali_smol500_mv_frame` schema deployed, so that profile is servable
+for it, alongside any profile it adds. Each row carries the catalog definition
+from `ConfigUtils.backend_profiles()`. `servable_tenant_profiles` and
+`tenant_usable_profile_names` (which raises when none is servable) filter it to
+the servable rows; `GET /search/profiles`, answer grounding, profile selection,
+synthetic profile data and the optimizer read the tenant's profiles through
+them.
 
 **FieldMappingConfig** - Canonical content fields used by synthetic generation:
 
