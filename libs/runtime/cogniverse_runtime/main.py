@@ -1456,6 +1456,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         system_config.telemetry_url,
         system_config.telemetry_collector_endpoint,
     )
+    # The Phoenix UI address a browser reaches; unset leaves the operations
+    # views without Phoenix links.
+    telemetry_metrics.set_phoenix_public_url(os.environ.get("PHOENIX_PUBLIC_URL"))
 
     # 7c. Probe Phoenix reachability so a silent NoOpSpan fallback surfaces
     # at startup. If TELEMETRY_REQUIRED is set, missing telemetry fails

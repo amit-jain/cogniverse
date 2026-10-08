@@ -544,6 +544,55 @@ async def test_root_causes_name_the_failed_and_slow_traces(telemetry, app):
     assert failed not in {
         trace for cause in body["root_causes"] for trace in cause["affected_traces"]
     }
+    # The one failure ("backend down") matches no known error kind; all six
+    # traces fall in the hours their start times name, and one failure in
+    # six is above the analyzer's 10% hourly bar wherever it falls.
+    hours = {}
+    for row in expected:
+        hour = pd.Timestamp(row["start_time"]).hour
+        requests, failures = hours.get(hour, (0, 0))
+        hours[hour] = (requests + 1, failures + (row["error"] is not None))
+    assert body["failure_analysis"] == {
+        "error_types": [{"value": "unknown", "count": 1}],
+        "operations": [{"value": SEARCH, "count": 1}],
+        "profiles": [{"value": "video_colpali", "count": 1}],
+        "strategies": [{"value": "bm25", "count": 1}],
+        "hours": [
+            {
+                "hour": hour,
+                "requests": requests,
+                "failed": failures,
+                "failure_rate": pytest.approx(failures / requests),
+            }
+            for hour, (requests, failures) in sorted(hours.items())
+            if failures / requests > 0.1
+        ],
+        "bursts": [],
+    }
+    # The slow search against the other successful traces (50-300 ms).
+    assert body["performance_analysis"] == {
+        "percentile": 75,
+        "threshold_ms": pytest.approx(300.0),
+        "operations": [
+            {
+                "operation": SEARCH,
+                "count": 1,
+                "mean_ms": pytest.approx(400.0),
+                "min_ms": pytest.approx(400.0),
+                "max_ms": pytest.approx(400.0),
+                "sample_ms": [pytest.approx(400.0)],
+            }
+        ],
+        "profiles": [{"value": "video_colpali", "count": 1}],
+        "strategies": [{"value": "hybrid", "count": 1}],
+        "latency": {
+            "slow_mean_ms": pytest.approx(400.0),
+            "slow_std_ms": pytest.approx(0.0),
+            "normal_mean_ms": pytest.approx(162.5),
+            "normal_std_ms": pytest.approx(math.sqrt(36875 / 4)),
+            "slowdown_factor": pytest.approx(400 / 162.5),
+        },
+    }
 
     assert searches == {
         "traces": 1,
@@ -553,6 +602,178 @@ async def test_root_causes_name_the_failed_and_slow_traces(telemetry, app):
         "slow_threshold_ms": None,
         "root_causes": [],
         "recommendations": [],
+        "failure_analysis": None,
+        "performance_analysis": None,
+    }
+
+
+async def test_root_causes_find_a_burst_of_failures_and_their_kinds(telemetry, app):
+    tenant = _tenant("bursts")
+    errors = ["request timed out after 30s", "connection refused", "timeout"]
+    recorded = [
+        record_trace(telemetry, tenant, SEARCH, 100, minutes_ago=age, error=error)
+        for age, error in zip((3, 2, 1), errors, strict=True)
+    ]
+    record_trace(telemetry, tenant, "agent.dispatch", 20, minutes_ago=4)
+    telemetry.force_flush(timeout_millis=10000)
+
+    async with _client(app) as client:
+        await _until(client, _traces_path(tenant), _requests(4))
+        body = (
+            await client.get(_root_causes_path(tenant, include_slow="false"))
+        ).json()
+
+    starts = [
+        pd.Timestamp(start, unit="ns", tz="UTC").to_pydatetime()
+        for _, _, start in recorded
+    ]
+    analysis = body["failure_analysis"]
+    assert analysis["error_types"] == [
+        {"value": "timeout", "count": 2},
+        {"value": "connection", "count": 1},
+    ]
+    assert analysis["operations"] == [{"value": SEARCH, "count": 3}]
+    assert (analysis["profiles"], analysis["strategies"]) == ([], [])
+    # Three failures within five minutes of the first are one burst.
+    assert analysis["bursts"] == [
+        {
+            "start_time": starts[0].isoformat(),
+            "end_time": starts[2].isoformat(),
+            "failures": 3,
+            "duration_minutes": pytest.approx(2.0, abs=1e-3),
+            "trace_ids": [trace_id for trace_id, _, _ in recorded],
+        }
+    ]
+    assert body["performance_analysis"] is None
+
+
+async def test_traces_and_root_causes_read_an_explicit_window(telemetry, app):
+    tenant = _tenant("window")
+    expected = record_sample_traces(telemetry, tenant)
+    telemetry.force_flush(timeout_millis=10000)
+    # The traces started 3 and 4 minutes ago: rows 2 and 3, newest first.
+    newest = pd.Timestamp(expected[2]["start_time"])
+    oldest = pd.Timestamp(expected[3]["start_time"])
+    window = {
+        "start": (oldest - pd.Timedelta(seconds=30)).isoformat(),
+        "end": (newest + pd.Timedelta(seconds=30)).isoformat(),
+    }
+
+    async with _client(app) as client:
+        await _until(client, _traces_path(tenant), _requests(6))
+        windowed = await client.get(
+            f"/admin/tenant/{tenant}/telemetry/traces", params=window
+        )
+        causes = await client.get(
+            f"/admin/tenant/{tenant}/telemetry/root-causes", params=window
+        )
+
+    assert windowed.status_code == 200, windowed.text
+    assert [t["span_id"] for t in windowed.json()["traces"]] == [
+        expected[2]["span_id"],
+        expected[3]["span_id"],
+    ]
+    assert (causes.json()["traces"], causes.json()["failed"]) == (2, 0)
+
+
+async def test_a_malformed_window_or_operation_is_refused(app):
+    tenant = _tenant("badwindow")
+    path = f"/admin/tenant/{tenant}/telemetry/traces"
+    async with _client(app) as client:
+        answers = [
+            await client.get(path, params=params)
+            for params in (
+                {"start": "2026-10-01T00:00:00+00:00"},
+                {"start": "2026-10-01T00:00:00", "end": "2026-10-01T01:00:00"},
+                {
+                    "start": "2026-10-01T01:00:00+00:00",
+                    "end": "2026-10-01T01:00:00+00:00",
+                },
+                {
+                    "start": "2026-09-01T00:00:00+00:00",
+                    "end": "2026-10-02T00:00:00+00:00",
+                },
+                {"operation": "search("},
+            )
+        ]
+    assert [(r.status_code, r.json()["detail"]) for r in answers] == [
+        (422, "Give both start and end, or neither."),
+        (422, "start and end must carry a timezone."),
+        (422, "start must be before end."),
+        (422, "The window may span at most 30 days."),
+        (
+            422,
+            "operation is not a valid regular expression: missing ), "
+            "unterminated subpattern at position 6",
+        ),
+    ]
+
+
+async def test_the_operation_filter_is_a_regular_expression(telemetry, app):
+    tenant = _tenant("traceregex")
+    expected = record_sample_traces(telemetry, tenant)
+    telemetry.force_flush(timeout_millis=10000)
+
+    async with _client(app) as client:
+        await _until(client, _traces_path(tenant), _requests(6))
+        anchored = (
+            await client.get(
+                f"/admin/tenant/{tenant}/telemetry/traces",
+                params={"lookback_hours": 1, "operation": r"^AGENT\.|nothing$"},
+            )
+        ).json()
+        dotted = (
+            await client.get(
+                f"/admin/tenant/{tenant}/telemetry/traces",
+                params={"lookback_hours": 1, "operation": r"service\.search$"},
+            )
+        ).json()
+
+    assert [t["span_id"] for t in anchored["traces"]] == [expected[5]["span_id"]]
+    assert [t["span_id"] for t in dotted["traces"]] == [
+        row["span_id"] for row in expected[:5]
+    ]
+
+
+async def test_phoenix_links_name_the_tenants_project(
+    telemetry, app, phoenix_container, phoenix_proxy, monkeypatch
+):
+    tenant = _tenant("phoenixlinks")
+    unseen = _tenant("phoenixunseen")
+    record_trace(telemetry, tenant, SEARCH, 10, minutes_ago=1)
+    telemetry.force_flush(timeout_millis=10000)
+    project = telemetry.config.get_project_name(tenant)
+    public = "http://phoenix.example:26006"
+
+    async with _client(app) as client:
+        # Phoenix has the project once it serves the trace.
+        await _until(client, _traces_path(tenant), _requests(1))
+        phoenix_id = httpx.get(
+            f"{phoenix_container['http_endpoint']}/v1/projects/{project}"
+        ).json()["data"]["id"]
+        monkeypatch.setattr(telemetry_metrics, "_phoenix_public_url", None)
+        off = (await client.get(f"/admin/tenant/{tenant}/telemetry/phoenix")).json()
+        telemetry_metrics.set_phoenix_public_url(public + "/")
+        on = (await client.get(f"/admin/tenant/{tenant}/telemetry/phoenix")).json()
+        missing = (await client.get(f"/admin/tenant/{unseen}/telemetry/phoenix")).json()
+        phoenix_proxy.intercept = lambda method, path, body: (503, {"detail": "down"})
+        down = await client.get(f"/admin/tenant/{tenant}/telemetry/phoenix")
+
+    assert off == {"phoenix_url": None, "project": project, "project_url": None}
+    assert on == {
+        "phoenix_url": public,
+        "project": project,
+        "project_url": f"{public}/projects/{phoenix_id}",
+    }
+    assert missing == {
+        "phoenix_url": public,
+        "project": telemetry.config.get_project_name(unseen),
+        "project_url": None,
+    }
+    assert down.status_code == 502
+    assert {k: down.json()["detail"][k] for k in ("error", "message")} == {
+        "error": "telemetry_unavailable",
+        "message": f"Could not read the Phoenix project of tenant {tenant}.",
     }
 
 

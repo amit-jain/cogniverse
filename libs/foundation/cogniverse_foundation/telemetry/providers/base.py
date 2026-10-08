@@ -518,6 +518,15 @@ class TelemetryProvider(ABC):
         """
 
     @abstractmethod
+    async def project_id(self, name: str) -> Optional[str]:
+        """The backend's id for the project ``name`` (the one its UI
+        addresses the project by), or None when no such project exists.
+
+        Raises:
+            Exception: the backend did not answer.
+        """
+
+    @abstractmethod
     async def delete_project(self, name: str) -> bool:
         """Delete the project ``name`` and its spans. Returns False when no
         such project exists.

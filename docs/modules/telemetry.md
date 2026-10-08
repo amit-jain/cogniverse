@@ -638,6 +638,12 @@ class TelemetryProvider(ABC):
         Raises when the backend does not answer, never an empty list."""
 
     @abstractmethod
+    async def project_id(self, name: str) -> Optional[str]:
+        """The backend's id for the project (the one its UI addresses it
+        by), or None when it does not exist. Raises when the backend does not
+        answer. GET /admin/tenant/{tenant}/telemetry/phoenix links to it."""
+
+    @abstractmethod
     async def delete_project(self, name: str) -> bool:
         """Delete a project and its spans; False when it does not exist.
         Raises when the backend does not answer or refuses. A tenant delete
