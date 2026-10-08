@@ -84,3 +84,15 @@ removed_symbols = [
     "tests/agents/integration/conftest.py:pytest_collection_modifyitems",
 ]
 reason = "The test of the agents collection hook that swapped the local LLM fixture for Modal Gemma, removed with the hook."
+
+[[waiver]]
+file = "tests/charts/test_web_chart.py"
+max_net_loss = 4
+removed_symbols = [
+    "tests/charts/test_web_chart.py:_secret_env",
+    "tests/charts/test_web_chart.py:test_the_server_and_the_runtime_share_one_harness_key",
+    "tests/charts/test_web_chart.py:test_an_existing_secret_replaces_the_rendered_one",
+    "tests/charts/test_web_chart.py:test_a_runtime_env_harness_key_is_refused_while_the_web_client_runs",
+    "tests/charts/test_web_chart.py:test_prod_requires_a_harness_key",
+]
+reason = "Tests of the web server's chart-rendered harness key Secret, its existingSecret override, the runtime's copy of the key and the prod refusal without it, removed with web.harnessKey and web.existingSecret: the server mints a key per tenant."

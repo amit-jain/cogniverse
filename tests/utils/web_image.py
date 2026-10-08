@@ -47,7 +47,7 @@ def build_web_image(tag: str = TEST_TAG) -> str:
 
 @contextmanager
 def run_web_container(
-    runtime_url: str, key: str, port: int, *, tag: str = TEST_TAG
+    runtime_url: str, port: int, *, tag: str = TEST_TAG
 ) -> Iterator[tuple[str, str]]:
     """Run the image; yields its base URL and container name. On exit the
     container is stopped with SIGTERM and must exit 0."""
@@ -73,8 +73,6 @@ def run_web_container(
             "no-new-privileges",
             "-e",
             f"COGNIVERSE_RUNTIME_URL={runtime_url}",
-            "-e",
-            f"COGNIVERSE_API_KEY={key}",
             "-e",
             f"PORT={port}",
             tag,

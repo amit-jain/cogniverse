@@ -1,23 +1,10 @@
 {{- if .Values.web.enabled }}
 {{- $fullName := include "cogniverse.fullname" . -}}
 {{- $runtimeUrl := .Values.web.runtimeUrl | default (printf "http://%s-runtime:%v" $fullName .Values.runtime.service.port) -}}
-{{- range $name := list "COGNIVERSE_RUNTIME_URL" "COGNIVERSE_API_KEY" "HOST" "PORT" }}
+{{- range $name := list "COGNIVERSE_RUNTIME_URL" "HOST" "PORT" }}
 {{- if hasKey $.Values.web.env $name }}
-{{- fail (printf "web.env.%s is set by the chart; use web.runtimeUrl, web.harnessKey or web.service.port" $name) }}
+{{- fail (printf "web.env.%s is set by the chart; use web.runtimeUrl or web.service.port" $name) }}
 {{- end }}
-{{- end }}
-{{- if not .Values.web.existingSecret }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ $fullName }}-web
-  labels:
-    {{- include "cogniverse.labels" . | nindent 4 }}
-    app.kubernetes.io/component: web
-type: Opaque
-stringData:
-  harness-api-key: {{ required "web.harnessKey must be set when web.existingSecret is empty (override the dev default in values.prod.yaml)" .Values.web.harnessKey | quote }}
 {{- end }}
 ---
 apiVersion: apps/v1
@@ -58,11 +45,6 @@ spec:
         env:
         - name: COGNIVERSE_RUNTIME_URL
           value: {{ $runtimeUrl | quote }}
-        - name: COGNIVERSE_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: {{ include "cogniverse.webSecretName" . }}
-              key: harness-api-key
         - name: HOST
           value: "0.0.0.0"
         - name: PORT

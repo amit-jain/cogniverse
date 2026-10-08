@@ -590,17 +590,10 @@ web:
 
   replicaCount: 1
 
-  # Runtime base URL the web server calls. Empty uses this release's runtime
-  # Service.
+  # Runtime base URL the web server calls, reaching its /admin routes directly:
+  # it mints each tenant's harness key through /admin/harness/keys. Empty uses
+  # this release's runtime Service.
   runtimeUrl: ""
-
-  # Harness key the web server sends the runtime on every call; the key decides
-  # the tenant. The chart stores it in the <release>-web Secret and gives the
-  # runtime the same key as COGNIVERSE_HARNESS_API_KEY, which files/config.json
-  # maps to the "default" tenant. Set existingSecret instead to use a Secret
-  # holding the key under harness-api-key.
-  harnessKey: "cogniverse-web-dev"
-  existingSecret: ""
 
   # Extra environment for the web server (name: value), and envFrom sources
   # (Secrets or ConfigMaps) for configuration such as its user authentication.

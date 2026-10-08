@@ -234,8 +234,6 @@ PROD_SECRETS = (
     "--set",
     "openshell.server.sshHandshakeSecret=overlay-secret",
     "--set",
-    "web.harnessKey=overlay-secret",
-    "--set",
     "phoenix.postgres.auth.password=overlay-secret",
     "--set",
     "redis.auth.password=overlay-secret",

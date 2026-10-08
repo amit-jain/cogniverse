@@ -196,12 +196,6 @@ runtime:
     maxReplicas: 20
     targetCPUUtilizationPercentage: 70
 
-# Web client: the harness key it sends the runtime, from your own Secret
-# (key harness-api-key). values.prod.yaml leaves web.harnessKey empty, so an
-# install fails until one of the two is set.
-web:
-  existingSecret: cogniverse-web-key
-
 # Ingress with SSL
 ingress:
   enabled: true

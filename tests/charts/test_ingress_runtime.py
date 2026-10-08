@@ -33,7 +33,6 @@ def _documents(profile, *settings):
         "phoenix.postgres.auth.password=ingress-test-password",
         "redis.auth.password=ingress-test-password",
         "openshell.server.sshHandshakeSecret=ingress-test-secret",
-        "web.harnessKey=ingress-test-secret",
         *settings,
     ):
         command.extend(["--set", setting])
@@ -404,7 +403,6 @@ def ingress_stack(request, tmp_path, a2a_redis_url, web_image):
         stack.enter_context(
             run_web_container(
                 f"http://127.0.0.1:{runtime_port}",
-                "ingress-test-key",
                 web_port,
                 tag=web_image,
             )

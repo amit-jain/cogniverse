@@ -42,14 +42,13 @@ runtime's `/api` ingress prefix.
 
 | Variable | Meaning |
 |---|---|
-| `COGNIVERSE_RUNTIME_URL` | Runtime base URL, including any ingress prefix |
-| `COGNIVERSE_API_KEY` | Harness key the server sends the runtime on every call; it decides the tenant |
+| `COGNIVERSE_RUNTIME_URL` | Runtime base URL, including any ingress prefix; the server needs its `/admin` routes, `/admin/harness/keys` among them |
 | `PORT` | Port the server listens on (default `4000`) |
 | `HOST` | Interface the server binds (default `127.0.0.1`; the image sets `0.0.0.0`) |
 
-The runtime accepts the key when it is a minted harness key or one of the
-static keys in `config.json` `harness.api_keys`; the shipped config maps
-`$COGNIVERSE_HARNESS_API_KEY` to the `default` tenant.
+The server holds no key of its own. For a tenant's first run it mints a harness
+key for that tenant through the runtime's `POST /admin/harness/keys` and sends
+that tenant's runs with it; it revokes the keys it minted when it stops.
 
 ## Deployment
 
@@ -71,26 +70,17 @@ The chart's `web` block (`charts/cogniverse/values.yaml`):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `web.enabled` | `true` | Render the web Deployment, Service and Secret |
+| `web.enabled` | `true` | Render the web Deployment and Service |
 | `web.image` | `cogniverse/web:<appVersion>` | `values.k3s.yaml` uses `<appVersion>-dev`, `pullPolicy: Never` |
-| `web.runtimeUrl` | `""` | Runtime base URL; empty uses the release's runtime Service |
-| `web.harnessKey` | `cogniverse-web-dev` | Key stored in the `<release>-web` Secret; `values.prod.yaml` empties it, so a prod install fails until it or `existingSecret` is set |
-| `web.existingSecret` | `""` | Secret holding the key under `harness-api-key`, used instead of `harnessKey` |
+| `web.runtimeUrl` | `""` | Runtime base URL, serving its `/admin` routes; empty uses the release's runtime Service |
 | `web.env` | `{}` | Extra environment (`name: value`) |
 | `web.envFrom` | `[]` | Secret or ConfigMap sources, e.g. for user authentication |
 | `web.service` | `ClusterIP`, port `4000`, nodePort `28400` | `values.k3s.yaml` sets `type: NodePort` |
 | `web.livenessProbe`, `web.readinessProbe` | `GET /healthz` | |
 | `web.resources`, `nodeSelector`, `tolerations`, `affinity` | | |
 
-The chart gives the runtime the same key as `COGNIVERSE_HARNESS_API_KEY`, so
-the runtime accepts the web server's calls for the `default` tenant.
-
-```bash
-kubectl create secret generic cogniverse-web-key -n cogniverse \
-  --from-literal=harness-api-key="$(openssl rand -hex 32)"
-helm upgrade --install cogniverse ./charts/cogniverse -f charts/cogniverse/values.prod.yaml \
-  --set web.existingSecret=cogniverse-web-key
-```
+The web server calls the runtime's Service directly, not through the
+ingress, for its agent runs and the `/admin` routes it mints keys through.
 
 ### Ingress
 
@@ -118,7 +108,7 @@ Node.js 22 is required.
 
 ```bash
 cd clients/web
-cp .env.example .env   # set COGNIVERSE_RUNTIME_URL and COGNIVERSE_API_KEY
+cp .env.example .env   # set COGNIVERSE_RUNTIME_URL
 npm ci
 npm run dev                  # server on PORT, Vite on :5173 proxying /ui-api to it
 npm run build && npm start   # one server serving the built client

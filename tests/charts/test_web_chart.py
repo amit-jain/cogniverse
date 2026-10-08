@@ -1,4 +1,4 @@
-"""The web client is the release's UI: its Deployment, Service, Secret and probes,
+"""The web client is the release's UI: its Deployment, Service and probes,
 the ingress rule that serves it, and the host port the local cluster publishes."""
 
 from __future__ import annotations
@@ -66,11 +66,6 @@ def _names(docs: list[dict], kind: str) -> set[str]:
     return {d["metadata"]["name"] for d in docs if d["kind"] == kind}
 
 
-def _secret_env(container: dict, name: str) -> dict:
-    entry = next(e for e in container["env"] if e["name"] == name)
-    return entry["valueFrom"]["secretKeyRef"]
-
-
 def test_the_web_deployment_serves_its_port_with_health_probes():
     docs = _render()
     web = _container(docs, "cogniverse-web", "web")
@@ -103,40 +98,36 @@ def test_the_web_deployment_serves_its_port_with_health_probes():
     }
 
 
-def test_the_server_and_the_runtime_share_one_harness_key():
-    docs = _render("web.harnessKey=sk-web-test")
+def test_the_server_holds_no_key_and_calls_the_runtime_service_directly():
+    """The server mints each tenant's harness key through the runtime's
+    /admin/harness/keys, so the chart gives it no key: only the runtime's
+    Service address, which serves /admin without the ingress."""
+    docs = _render()
     web = _container(docs, "cogniverse-web", "web")
     runtime = _container(docs, "cogniverse-runtime", "runtime")
-    plain = {e["name"]: e.get("value") for e in web["env"] if "value" in e}
 
-    assert plain == {
-        "COGNIVERSE_RUNTIME_URL": "http://cogniverse-runtime:8000",
-        "HOST": "0.0.0.0",
-        "PORT": "4000",
-    }
-    reference = {"name": "cogniverse-web", "key": "harness-api-key"}
-    assert _secret_env(web, "COGNIVERSE_API_KEY") == reference
-    assert _secret_env(runtime, "COGNIVERSE_HARNESS_API_KEY") == reference
-    secret = _named(docs, "Secret", "cogniverse-web")
-    assert secret["stringData"] == {"harness-api-key": "sk-web-test"}
-
-
-def test_an_existing_secret_replaces_the_rendered_one():
-    docs = _render("web.existingSecret=operator-web-key")
-    reference = {"name": "operator-web-key", "key": "harness-api-key"}
-
+    assert web["env"] == [
+        {"name": "COGNIVERSE_RUNTIME_URL", "value": "http://cogniverse-runtime:8000"},
+        {"name": "HOST", "value": "0.0.0.0"},
+        {"name": "PORT", "value": "4000"},
+    ]
     assert "cogniverse-web" not in _names(docs, "Secret")
-    assert (
-        _secret_env(_container(docs, "cogniverse-web", "web"), "COGNIVERSE_API_KEY")
-        == reference
-    )
-    assert (
-        _secret_env(
-            _container(docs, "cogniverse-runtime", "runtime"),
-            "COGNIVERSE_HARNESS_API_KEY",
-        )
-        == reference
-    )
+    assert "COGNIVERSE_HARNESS_API_KEY" not in {e["name"] for e in runtime["env"]}
+    runtime_service = _named(docs, "Service", "cogniverse-runtime")["spec"]
+    assert 8000 in [port["port"] for port in runtime_service["ports"]]
+
+
+def test_an_operator_harness_key_reaches_the_runtime_beside_the_web_client():
+    """COGNIVERSE_HARNESS_API_KEY is the key files/config.json maps to the
+    default tenant for harness clients such as the pi extension; the web
+    client does not claim it."""
+    docs = _render("runtime.env.COGNIVERSE_HARNESS_API_KEY=sk-pi")
+    runtime = _container(docs, "cogniverse-runtime", "runtime")
+
+    assert [e for e in runtime["env"] if e["name"] == "COGNIVERSE_HARNESS_API_KEY"] == [
+        {"name": "COGNIVERSE_HARNESS_API_KEY", "value": "sk-pi"}
+    ]
+    assert "cogniverse-web" in _names(docs, "Deployment")
 
 
 def test_extra_env_and_env_sources_reach_the_server():
@@ -160,7 +151,6 @@ def test_extra_env_and_env_sources_reach_the_server():
     "setting",
     [
         "web.env.COGNIVERSE_RUNTIME_URL=http://x",
-        "web.env.COGNIVERSE_API_KEY=k",
         "web.env.HOST=127.0.0.1",
         "web.env.PORT=1",
     ],
@@ -171,39 +161,23 @@ def test_chart_owned_variables_are_refused_in_extra_env(setting):
 
     assert result.returncode != 0
     assert (
-        f"web.env.{name} is set by the chart; use web.runtimeUrl, web.harnessKey "
-        "or web.service.port"
+        f"web.env.{name} is set by the chart; use web.runtimeUrl or web.service.port"
     ) in result.stderr
 
 
-def test_a_runtime_env_harness_key_is_refused_while_the_web_client_runs():
-    result = _helm("runtime.env.COGNIVERSE_HARNESS_API_KEY=other")
+def test_prod_renders_the_web_client_without_a_key():
+    docs = _render(*PROD_SECRETS, values="values.prod.yaml")
 
-    assert result.returncode != 0
-    assert (
-        "COGNIVERSE_HARNESS_API_KEY is the web client's harness key; set "
-        "web.harnessKey or web.existingSecret instead"
-    ) in result.stderr
-
-
-def test_prod_requires_a_harness_key():
-    missing = _helm(*PROD_SECRETS, values="values.prod.yaml")
-    assert missing.returncode != 0
-    assert (
-        "web.harnessKey must be set when web.existingSecret is empty"
-    ) in missing.stderr
-
-    docs = _render(*PROD_SECRETS, "web.harnessKey=prod-key", values="values.prod.yaml")
-    assert _named(docs, "Secret", "cogniverse-web")["stringData"] == {
-        "harness-api-key": "prod-key"
-    }
-    with_secret = _render(
-        *PROD_SECRETS, "web.existingSecret=prod-web", values="values.prod.yaml"
-    )
-    assert "cogniverse-web" not in _names(with_secret, "Secret")
+    assert "cogniverse-web" in _names(docs, "Deployment")
+    assert "cogniverse-web" not in _names(docs, "Secret")
+    assert [e["name"] for e in _container(docs, "cogniverse-web", "web")["env"]] == [
+        "COGNIVERSE_RUNTIME_URL",
+        "HOST",
+        "PORT",
+    ]
 
 
-def test_disabling_the_web_client_removes_it_and_the_runtime_key():
+def test_disabling_the_web_client_removes_it():
     docs = _render("web.enabled=false")
     runtime = _container(docs, "cogniverse-runtime", "runtime")
 
@@ -231,7 +205,7 @@ def test_the_dashboard_is_off_by_default_and_still_deployable(values):
     ],
 )
 def test_every_ingress_serves_the_web_client_at_the_root(values, host):
-    extra = (*PROD_SECRETS, "web.harnessKey=x") if values == "values.prod.yaml" else ()
+    extra = PROD_SECRETS if values == "values.prod.yaml" else ()
     docs = _render(*extra, values=values)
     ingress = _named(docs, "Ingress", "cogniverse")
     services = {

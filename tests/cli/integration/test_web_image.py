@@ -23,7 +23,6 @@ from tests.utils.web_image import build_web_image, run_web_container
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
-KEY = "sk-web-image-test"
 AGENTS = ["search_agent", "coding_agent"]
 TIERS = {"tiers": ["basic", "pro"]}
 
@@ -64,7 +63,7 @@ def web_image() -> str:
 
 def test_the_image_serves_the_client_health_and_runtime_routes(web_image):
     with recording_runtime() as (runtime_url, seen):
-        with run_web_container(runtime_url, KEY, free_port(), tag=web_image) as (
+        with run_web_container(runtime_url, free_port(), tag=web_image) as (
             url,
             _,
         ):
@@ -99,15 +98,16 @@ def test_the_image_serves_the_client_health_and_runtime_routes(web_image):
 
     assert seen == [
         ("GET", "/agents/", None),
-        ("GET", "/admin/router-tiers", f"Bearer {KEY}"),
+        ("GET", "/admin/router-tiers", None),
     ]
 
 
 def test_concurrent_clients_each_get_their_own_relayed_answer(web_image):
     """Sixteen browsers loading at once: every agent list and every proxied
-    call is answered from the runtime, each proxied call carries the key."""
+    call is answered from the runtime; an admin route carries no key, the
+    runtime takes its tenant from its path."""
     with recording_runtime() as (runtime_url, seen):
-        with run_web_container(runtime_url, KEY, free_port(), tag=web_image) as (
+        with run_web_container(runtime_url, free_port(), tag=web_image) as (
             url,
             _,
         ):
@@ -130,15 +130,14 @@ def test_concurrent_clients_each_get_their_own_relayed_answer(web_image):
         (200, {"agents": AGENTS} if index % 2 else TIERS) for index in range(16)
     ]
     assert sorted(seen) == sorted(
-        [("GET", "/agents/", None)] * 8
-        + [("GET", "/admin/router-tiers", f"Bearer {KEY}")] * 8
+        [("GET", "/agents/", None)] * 8 + [("GET", "/admin/router-tiers", None)] * 8
     )
 
 
 def test_a_dead_runtime_leaves_health_up_and_names_itself_on_api_calls(web_image):
     dead_port = free_port()
     runtime_url = f"http://127.0.0.1:{dead_port}"
-    with run_web_container(runtime_url, KEY, free_port(), tag=web_image) as (url, _):
+    with run_web_container(runtime_url, free_port(), tag=web_image) as (url, _):
         health = httpx.get(f"{url}/healthz", timeout=10)
         assert health.status_code == 200
         assert health.json() == {"status": "ok"}

@@ -206,7 +206,6 @@ class TestRuntimeWorkerProcesses:
         prod_secrets = (
             "minio.rootPassword=overlay-secret",
             "openshell.server.sshHandshakeSecret=overlay-secret",
-            "web.harnessKey=overlay-secret",
             "phoenix.postgres.auth.password=overlay-secret",
             "redis.auth.password=overlay-secret",
         )

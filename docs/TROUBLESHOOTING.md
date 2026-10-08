@@ -772,10 +772,13 @@ curl http://localhost:28400/healthz   # {"status":"ok"}
 # Its logs name the runtime URL it calls
 cogniverse logs web
 
-# The runtime must be healthy and accept the web client's harness key
+# The runtime must be healthy and know the active tenant
 curl http://localhost:28000/health
-kubectl get secret -n cogniverse cogniverse-web -o jsonpath='{.data.harness-api-key}' | base64 -d
+curl http://localhost:28000/admin/tenants/acme:production
 ```
+
+A run that fails with "The runtime did not issue a harness key for tenant …"
+names the runtime's answer from `/admin/harness/keys`.
 
 A k3d cluster created before port 28400 was published needs the mapping added:
 `k3d cluster edit cogniverse --port-add 28400:28400@loadbalancer`.
