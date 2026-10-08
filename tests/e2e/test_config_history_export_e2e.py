@@ -11,6 +11,7 @@ so no committed fixture can stand in for it.
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 
@@ -20,16 +21,8 @@ from playwright.sync_api import expect
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import (
-    DASHBOARD,
-    active_tab_panel,
-    click_sub_tab,
-    click_top_tab,
-    set_tenant,
-    wait_for_script_idle,
-    wait_for_streamlit,
-)
 from tests.e2e.tenants import register_tenant_and_wait, unique_id
+from tests.e2e.web_client import VIEW_TIMEOUT_MS, choose_tenant, open_view
 
 pytestmark = pytest.mark.e2e
 
@@ -153,48 +146,44 @@ def test_the_export_carries_every_record_past_the_old_bound(history_corpus):
 
 
 @pytest.mark.browser
-def test_the_dashboard_export_reports_every_record(page, history_corpus):
-    """The Import/Export tab's success alert counts the whole history.
-
-    The alert is the operator's only signal that the downloaded artifact is
-    the backup they asked for.
+def test_the_web_export_downloads_every_record(page, history_corpus, tmp_path):
+    """The Configuration view's export, with every version included, is the
+    whole history: the downloaded file is the backup the operator asked for.
     """
     tenant_id = history_corpus["tenant_id"]
+    written = history_corpus["written"]
     expected = history_corpus["baseline_history"] + HISTORY_RECORDS
 
-    page.goto(DASHBOARD, timeout=30_000)
-    wait_for_streamlit(page)
-    set_tenant(page, tenant_id)
-    click_top_tab(page, "Configuration")
-    wait_for_script_idle(page)
-    click_sub_tab(page, "Import/Export")
-    wait_for_script_idle(page)
+    open_view(page, "config")
+    choose_tenant(page, tenant_id, "Show configs")
+    transfer = page.get_by_role("region", name=f"Export and import for {tenant_id}")
+    controls = transfer.get_by_role("group", name="Export configs")
+    every_version = controls.get_by_role("checkbox", name="Include every version")
+    expect(every_version).to_have_count(1, timeout=VIEW_TIMEOUT_MS)
+    expect(every_version).not_to_be_checked()
+    every_version.check()
+    expect(every_version).to_be_checked()
 
-    panel = active_tab_panel(page)
-    history_checkbox = panel.get_by_role("checkbox", name="Include Version History")
-    expect(history_checkbox).to_have_count(1, timeout=30_000)
-    expect(history_checkbox).not_to_be_checked(timeout=30_000)
-    # Streamlit renders the input visually hidden; its label takes the click.
-    panel.locator('[data-testid="stCheckbox"]').filter(
-        has=page.get_by_role("checkbox", name="Include Version History")
-    ).locator("label").first.click()
-    wait_for_script_idle(page)
-    expect(history_checkbox).to_be_checked(timeout=30_000)
-
-    export_button = active_tab_panel(page).get_by_role(
-        "button", name="📥 Export Configurations", exact=True
+    export_button = controls.get_by_role("button", name="Export configs")
+    expect(export_button).to_have_count(1)
+    with page.expect_download(timeout=120_000) as download:
+        export_button.click()
+    expect(controls.get_by_role("alert")).to_have_count(0)
+    assert download.value.suggested_filename == (
+        f"config_export_{tenant_id.replace(':', '_')}.json"
     )
-    expect(export_button).to_have_count(1, timeout=30_000)
-    export_button.first.click()
-    wait_for_script_idle(page)
+    saved = tmp_path / "export.json"
+    download.value.save_as(saved)
+    export = json.loads(saved.read_text())
 
-    panel = active_tab_panel(page)
-    failure = panel.locator('[data-testid="stAlert"]:has-text("Export failed")')
-    assert failure.count() == 0, failure.first.inner_text()
-    alert = panel.locator('[data-testid="stAlert"]:has-text("Exported")')
-    expect(alert).to_have_count(1, timeout=60_000)
-    assert f"Exported {expected} configurations" in alert.first.inner_text()
-    assert panel.locator('[data-testid="stDownloadButton"]').count() == 1
+    assert export["tenant_id"] == tenant_id
+    assert export["include_history"] is True
+    assert len(export["configs"]) == expected
+    mine = [
+        record for record in export["configs"] if record["service"] == CONFIG_SERVICE
+    ]
+    assert [record["config_key"] for record in mine] == sorted(written)
+    assert {record["config_key"]: record["config_value"] for record in mine} == written
 
 
 def test_a_second_export_of_the_same_corpus_is_identical(history_corpus):

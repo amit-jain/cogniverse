@@ -20,8 +20,7 @@ on:
       - '.github/workflows/core-tests.yml'
       # test_profile_validator.py reads the shipped config;
       # test_e2e_deploy_stack_wait.py and test_e2e_inference_health_gate.py the
-      # chart; test_e2e_dashboard_panel_scoping.py the e2e dashboard module;
-      # test_face_embed_server.py the face-embed Dockerfile.
+      # chart; test_face_embed_server.py the face-embed Dockerfile.
       - 'configs/config.json'
       - 'charts/**'
       - 'charts/cogniverse/templates/all-resources.yaml'
@@ -44,8 +43,7 @@ on:
       - 'pyproject.toml'
       # test_profile_validator.py reads the shipped config;
       # test_e2e_deploy_stack_wait.py and test_e2e_inference_health_gate.py the
-      # chart; test_e2e_dashboard_panel_scoping.py the e2e dashboard module;
-      # test_face_embed_server.py the face-embed Dockerfile.
+      # chart; test_face_embed_server.py the face-embed Dockerfile.
       - 'configs/config.json'
       - 'charts/**'
       - 'charts/cogniverse/templates/all-resources.yaml'

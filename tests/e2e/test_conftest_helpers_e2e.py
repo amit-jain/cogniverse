@@ -1123,6 +1123,8 @@ class TestSharedClusterOwnership:
             "configs/app.yaml": "backend: rocm\n",
             "charts/cogniverse/values.yaml": "replicaCount: 1\n",
             "deploy/app/Dockerfile": "FROM python:3.12-slim\n",
+            "clients/web/Dockerfile": "FROM node:22-slim\n",
+            "clients/web/.dockerignore": "/node_modules\n",
             "scripts/deploy.sh": "#!/bin/sh\necho base\n",
             "pyproject.toml": (
                 '[tool.uv.workspace]\nmembers = ["libs/*"]\n\n'
@@ -1655,8 +1657,6 @@ class TestSharedClusterOwnership:
         assert images_mod.build_images(repo_root, torch_backend="cpu") == baseline_tags
         assert baseline_tags == [
             f"cogniverse/runtime-cpu:{baseline_versions['runtime'].replace('+', '-')}",
-            "cogniverse/dashboard-cpu:"
-            f"{baseline_versions['dashboard'].replace('+', '-')}",
             f"cogniverse/gliner:{baseline_versions['gliner'].replace('+', '-')}",
         ]
         base_version = f"0.1.dev1-g{base_sha[:9]}"
@@ -1678,7 +1678,6 @@ class TestSharedClusterOwnership:
         assert [call[:4] for call in build_calls] == [
             ["docker", "image", "ls", "--format"],
             ["docker", "build", "-f", "libs/runtime/Dockerfile"],
-            ["docker", "build", "-f", "libs/dashboard/Dockerfile"],
             ["docker", "build", "-f", "deploy/gliner/Dockerfile"],
             *[_HELM_GET_VALUES[:4]] * helm_reads_per_identity,
         ] * 2
@@ -1708,12 +1707,15 @@ class TestSharedClusterOwnership:
                 {"pylate"},
                 False,
             ),
+            # The seeded chart enables neither UI, so a dashboard input moves
+            # the dashboard's tag and nothing the deploy renders.
             (
                 "scripts/dashboard_tab.py",
                 "VALUE = 'changed'\n",
                 {"dashboard"},
-                True,
+                False,
             ),
+            ("clients/web/src/app.ts", "export {};\n", {"web"}, False),
             (
                 "pyproject.toml",
                 "[project]\nname = 'demo'\nversion = '0.2.0'\n",
@@ -1724,7 +1726,7 @@ class TestSharedClusterOwnership:
             (
                 ".dockerignore",
                 "__pycache__\n*.tmp\n",
-                set(images_mod.IMAGE_INPUT_PATHS),
+                set(images_mod.IMAGE_INPUT_PATHS) - {"web"},
                 True,
             ),
         ],
@@ -1774,11 +1776,9 @@ class TestSharedClusterOwnership:
         assert changed_images == expected_changed_images
         assert baseline_tags == [
             f"cogniverse/runtime-cpu:{baseline_versions['runtime'].replace('+', '-')}",
-            "cogniverse/dashboard-cpu:"
-            f"{baseline_versions['dashboard'].replace('+', '-')}",
             f"cogniverse/gliner:{baseline_versions['gliner'].replace('+', '-')}",
         ]
-        enabled_images = {"dashboard", "gliner", "runtime"}
+        enabled_images = {"gliner", "runtime"}
         expected_deploy_change = bool(expected_changed_images & enabled_images)
         assert (changed_tags != baseline_tags) is expected_deploy_change
         assert (changed_identity != baseline_identity) is expected_identity_change
@@ -2606,14 +2606,12 @@ class TestSharedClusterOwnership:
             "set_overrides": {
                 **_expected_e2e_deployment_set_overrides(),
                 "runtime.imagesByBackend.rocm.tag": versions["runtime"],
-                "dashboard.imagesByBackend.rocm.tag": versions["dashboard"],
                 "inference.gliner.image.tag": versions["gliner"],
                 # Enabled by the e2e overrides alone, so pinned from them.
                 "inference.face_embed.image.tag": versions["face_embed"],
             },
             "image_tags": (
                 f"cogniverse/runtime-rocm:{versions['runtime']}",
-                f"cogniverse/dashboard-rocm:{versions['dashboard']}",
                 f"cogniverse/gliner:{versions['gliner']}",
             ),
             "chart_digest": _expected_e2e_chart_digest(),

@@ -22,6 +22,7 @@ import collections
 import functools
 import json
 import os
+import re
 import subprocess
 import textwrap
 import time
@@ -6781,9 +6782,7 @@ class TestReflectiveOptimizerAcceptsCandidates:
         )
 
 
-# The dashboard's Optimization Overview reads this page size, and its history
-# table renders these columns in this order.
-OPTIMIZATION_RUNS_DASHBOARD_LIMIT = 10
+# The keys of one run in the listing, in the order the route answers them.
 OPTIMIZATION_RUN_KEYS = (
     "workflow_name",
     "mode",
@@ -6909,117 +6908,59 @@ class TestOptimizationRunListing:
         assert _list_optimization_runs(other) == []
 
     @pytest.mark.browser
-    def test_the_optimization_overview_renders_the_tenants_runs(
+    def test_the_optimization_runs_view_lists_the_tenants_runs(
         self, page, optimization_run_listing_tenants
     ):
-        from datetime import datetime, timezone
-
         from playwright.sync_api import expect
 
-        from cogniverse_dashboard.tabs.optimization import _format_run_age
-        from tests.e2e.conftest import (
-            DASHBOARD,
-            active_sub_tab_panel,
-            click_sub_tab,
-            click_top_tab,
-            set_tenant,
-            wait_for_script_idle,
-            wait_for_streamlit,
+        from tests.e2e.web_client import (
+            VIEW_TIMEOUT_MS,
+            choose_tenant,
+            facts,
+            open_view,
         )
 
         owner, _, submitted = optimization_run_listing_tenants
         runs = _runs_agreeing_with_status(owner, submitted)
-        rendered_from = datetime.now(timezone.utc)
 
-        page.goto(DASHBOARD, timeout=30_000)
-        wait_for_streamlit(page)
-        set_tenant(page, owner)
-        click_top_tab(page, "Synthetic Data")
-        wait_for_script_idle(page)
-        click_sub_tab(page, "Overview")
-        wait_for_script_idle(page)
-
-        panel = active_sub_tab_panel(page)
-        metrics = panel.locator('[data-testid="stMetric"]')
-        expect(metrics).to_have_count(4, timeout=30_000)
-        tiles = {
-            (metric.locator('[data-testid="stMetricLabel"]').inner_text()).strip(): (
-                metric.locator('[data-testid="stMetricValue"]').inner_text()
-            ).strip()
-            for metric in metrics.all()
-        }
-        rendered_by = datetime.now(timezone.utc)
-        runs_after = _runs_agreeing_with_status(owner, submitted)
-
-        # The newest run can move through Argo's phases, and its age can cross
-        # a minute, while the page renders; the tile shows the newest run in
-        # one of the phases from the listing before the render through the
-        # listing after it, aged at either end of the render.
-        newest, newest_after = runs[0], runs_after[0]
-        assert newest["workflow_name"] == newest_after["workflow_name"], (
-            runs,
-            runs_after,
+        open_view(page, "optimization")
+        choose_tenant(page, owner, "Show runs")
+        region = page.get_by_role("region", name=f"Optimization runs of {owner}")
+        expect(region).to_be_visible(timeout=VIEW_TIMEOUT_MS)
+        table = region.get_by_role("table")
+        expect(table.locator("tbody tr")).to_have_count(
+            len(runs), timeout=VIEW_TIMEOUT_MS
         )
-        phases = argo_phases_between(newest["phase"], newest_after["phase"])
-        # The first phase starts as listed before the render; every later
-        # phase, Running included, has the start Argo listed after it.
-        started_ats = {phase: {newest_after["started_at"]} for phase in phases}
-        if len(phases) > 1:
-            started_ats[phases[0]] = {newest["started_at"]}
-        else:
-            started_ats[phases[0]].add(newest["started_at"])
-        last_optimization = {
-            f"{_format_run_age(started_at, at)} ({phase})"
-            for phase in phases
-            for started_at in started_ats[phase]
-            for at in (rendered_from, rendered_by)
-        }
-        assert set(tiles) == {
-            "Total Annotations",
-            "Golden Dataset Size",
-            "Optimization Runs",
-            "Last Optimization",
-        }, tiles
-        assert tiles["Last Optimization"] in last_optimization, (
-            tiles,
-            last_optimization,
+        expect(table.get_by_role("columnheader")).to_have_text(
+            ["Run", "Mode", "Trigger", "Phase", "Started", "Finished"]
         )
-        assert {
-            label: value
-            for label, value in tiles.items()
-            if label != "Last Optimization"
-        } == {
-            "Total Annotations": "0",
-            "Golden Dataset Size": "0",
-            "Optimization Runs": str(len(runs)),
-        }, tiles
-
-        table = panel.locator('[data-testid="stDataFrame"]')
-        expect(table).to_have_count(1, timeout=30_000)
-        # st.dataframe paints its cells on a canvas, so the page's text is
-        # empty; the grid's accessible table carries every rendered cell.
-        grid = table.locator('table[role="grid"]')
-        expect(grid).to_have_count(1, timeout=30_000)
-        assert grid.get_attribute("aria-rowcount") == str(len(runs) + 1), (
-            grid.get_attribute("aria-rowcount"),
-            runs,
+        expect(region.get_by_role("alert")).to_have_count(0)
+        expect(region.get_by_text(f"No optimization runs for {owner}.")).to_have_count(
+            0
         )
-        header = grid.locator('thead [role="columnheader"]').all_text_contents()
-        assert header == [
-            "Workflow",
-            "Mode",
-            "Trigger",
-            "Phase",
-            "Started",
-            "Finished",
-        ], header
         rows = [
-            row.locator('[role="gridcell"]').all_text_contents()
-            for row in grid.locator('tbody [role="row"]').all()
+            row.get_by_role("cell").all_inner_texts()
+            for row in table.locator("tbody tr").all()
         ]
+        runs_after = _runs_agreeing_with_status(owner, submitted)
+        assert [run["workflow_name"] for run in runs_after] == [
+            run["workflow_name"] for run in runs
+        ], (runs, runs_after)
+
+        # Newest first, as the listing orders them.
+        assert [row[0] for row in rows] == list(reversed(submitted)), rows
         assert [row[:3] for row in rows] == [
-            [run["workflow_name"], run["mode"] or "—", run["trigger"]] for run in runs
+            [run["workflow_name"], run["mode"] or "pipeline", run["trigger"]]
+            for run in runs
         ], rows
+
+        def shown_time(value):
+            """An Argo time as the view formats it (``formatArgoTime``)."""
+            if not value:
+                return "—"
+            match = re.match(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})", value)
+            return f"{match.group(1)} {match.group(2)} UTC" if match else value
+
         # A run can move on while the page renders: its phase, start and
         # finish are the listing's on either side of the render, or a phase
         # Argo passes through between them, which has the later listing's
@@ -7028,17 +6969,31 @@ class TestOptimizationRunListing:
             listed_states = {
                 (
                     listed["phase"] or "Pending",
-                    listed["started_at"] or "—",
-                    listed["finished_at"] or "—",
+                    shown_time(listed["started_at"]),
+                    shown_time(listed["finished_at"]),
                 )
                 for listed in (before, after)
             }
             passed_through = argo_phases_between(before["phase"], after["phase"])[1:-1]
             listed_states |= {
-                (phase, after["started_at"] or "—", "—") for phase in passed_through
+                (phase, shown_time(after["started_at"]), "—")
+                for phase in passed_through
             }
             assert (row[3], row[4], row[5]) in listed_states, (
                 row,
                 before,
                 after,
             )
+
+        # Opening the newest run shows its own detail, in a phase Argo lists.
+        newest = runs_after[0]["workflow_name"]
+        region.get_by_role("button", name=newest, exact=True).click()
+        detail = page.get_by_role("region", name=f"Run {newest}")
+        expect(detail.locator("dt:text-is('Phase') + dd")).to_have_text(
+            re.compile(r"^(Pending|Running|Succeeded|Failed|Error)$"),
+            timeout=VIEW_TIMEOUT_MS,
+        )
+        assert facts(detail)["Phase"] in argo_phases_between(
+            runs[0]["phase"],
+            _optimization_run_status(owner, newest)["phase"],
+        )
