@@ -1713,6 +1713,45 @@ class ApprovalStorageImpl(ApprovalStorage):
                 return True
         return False
 
+    async def get_batches(self) -> List[ApprovalBatch]:
+        """Every approval batch of the tenant, newest first, each with its
+        items in their current state (decided, replaced or pending).
+
+        One project span query serves every batch. A telemetry failure
+        raises; an empty list means the tenant has no batches.
+        """
+        spans_df = await self.provider.traces.get_all_spans(
+            project=self.full_project_name,
+            filters={
+                "name": [
+                    "approval_batch",
+                    "approval_item",
+                    "approval_item_replacement",
+                ]
+            },
+        )
+        if spans_df.empty:
+            return []
+        if "attributes.batch_id" not in spans_df.columns:
+            raise RuntimeError(
+                "Approval span query omitted the batch_id attribute for "
+                f"project {self.full_project_name}"
+            )
+        batch_ids = dict.fromkeys(
+            batch_id
+            for batch_id in spans_df.loc[
+                spans_df["name"] == "approval_batch", "attributes.batch_id"
+            ]
+            if isinstance(batch_id, str) and batch_id
+        )
+        batches = []
+        for batch_id in batch_ids:
+            batch = await self.get_batch(batch_id, spans_df=spans_df)
+            if batch is not None:
+                batches.append(batch)
+        batches.sort(key=lambda batch: batch.created_at, reverse=True)
+        return batches
+
     async def get_pending_batches(
         self, context_filter: Optional[Dict[str, Any]] = None
     ) -> List[ApprovalBatch]:
@@ -1870,7 +1909,17 @@ class ApprovalStorageImpl(ApprovalStorage):
                     filters={"name": span_names},
                 )
 
-                if not project_spans.empty:
+                # A batch's root span ends after its item spans, so the items
+                # can be indexed before it: their frame has no batch_id column
+                # yet, which reads as not visible yet, not as a malformed reply.
+                batch_root_pending = (
+                    batch_id is not None
+                    and not project_spans.empty
+                    and "attributes.batch_id" not in project_spans.columns
+                    and "name" in project_spans.columns
+                    and not (project_spans["name"] == "approval_batch").any()
+                )
+                if not project_spans.empty and not batch_root_pending:
                     required_columns = {
                         "attributes.item_id",
                         "context.span_id",

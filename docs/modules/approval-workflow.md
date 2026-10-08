@@ -285,6 +285,7 @@ All public `ApprovalStorageImpl` methods are asynchronous:
 | `update_item(item, batch_id=None)` | Write the `item_status_update` annotation for the resolved item span |
 | `replace_item(batch_id, original, replacement)` | Select and export one canonical regenerated replacement |
 | `get_pending_batches(context_filter=None)` | Return batches whose current reconstructed view still contains pending items |
+| `get_batches()` | Return every batch of the tenant, newest first, reconstructed from one project span query; raises on a telemetry failure |
 | `record_decision(decision, item)` | Emit an optional standalone decision span without changing item status |
 | `get_item_span_id(item_id, batch_id=None)` | Resolve an original or replacement span ID, scoped to the batch when supplied |
 | `log_approval_decision(span_id, item_id, approved, feedback=None, reviewer=None, decision_timestamp=None)` | Persist reviewer history as a `human_approval` annotation |
@@ -671,6 +672,29 @@ corrections against that schema and canonicalizes entities and relationships.
 Both raise `ValueError` for data no synthetic schema describes, and
 `parse_corrections` raises for an empty object or a field the schema does not
 let a reviewer change.
+
+`cogniverse_synthetic.approval.uploads` validates training examples an
+operator wrote for one optimizer:
+
+```python
+from cogniverse_synthetic.approval.uploads import (
+    parse_uploaded_examples,
+    upload_templates,
+)
+
+templates = upload_templates()  # {optimizer: {schema, fields, required, example}}
+records = parse_uploaded_examples("query_enhancement", examples)
+```
+
+`parse_uploaded_examples` checks each example against the optimizer's schema
+and the approved-training contract and returns the records, or raises
+`UploadedExamplesError` whose `errors` name every invalid example; nothing is
+returned for a partly invalid upload. An upload holds at most
+`MAX_UPLOADED_EXAMPLES` (100). `HumanApprovalAgent.submit_reviewed_batch(batch,
+reviewer=..., feedback=...)` saves such a batch awaiting review, waits until
+the store serves it, then approves each item by that reviewer into the
+tenant's approved training dataset in order; a failure after the save raises `ReviewedBatchIncompleteError` naming
+the items already approved, and the rest stay in the review queue.
 
 `HumanApprovalAgent` persists a successful regeneration through
 `ApprovalStorage.replace_item()`. The replacement event contains the exact

@@ -470,6 +470,8 @@ The server uses modular routers for different functionality:
 | `graph` | `/graph` | Knowledge graph upsert, search, neighbors, and path queries |
 | `tenant` | `/admin/tenant` | Per-tenant self-service: instructions, memories, scheduled jobs, optimization |
 | `approvals` | `/admin/tenant` | Human review of a tenant's synthetic examples |
+| `training_examples` | `/admin/tenant` | Operator-written training examples approved into a tenant's training dataset |
+| `optimization_report` | `/admin/tenant` | A tenant's optimization report streamed from `detailed_report_agent` |
 | `orchestration_annotations` | `/admin/tenant` | Human review of a tenant's orchestration workflows |
 | `telemetry_metrics` | `/admin/tenant` | Trace analytics, profile-selection and RLM A/B metrics over a tenant's spans, and its searches scored against its golden set |
 | `routing_decisions` | `/admin/tenant` | A tenant's routing decisions with their outcomes, labels and per-agent quality; approving and correcting their labels |
@@ -1442,6 +1444,14 @@ Two label selectors feed it, because Argo does not copy a CronWorkflow's labels 
 
 The dashboard's Optimization Overview reads this route for its run-count tile, its last-run tile and its Recent Optimization History table.
 
+**POST /admin/tenant/{tenant_id}/optimize/report** — Asks `detailed_report_agent` for the tenant's optimization performance report and streams the agent's events (`status`, `partial`, `final`, `error`) as server-sent events, one JSON event per `data` frame. A failure inside the stream ends it on an `error` event naming the exception type. **404** when `detailed_report_agent` is not registered; **503** `agent_registry_unavailable` when the registry cannot be read.
+
+### Tenant Training Examples
+
+**GET /admin/tenant/training-example-templates** — Per optimizer type, its example schema: `{templates: {optimizer: {schema, fields, required, example}}, max_examples}`.
+
+**POST /admin/tenant/{tenant_id}/training-examples** — Body `{optimizer, reviewer, source?, examples}`. Every example is validated against the optimizer's schema first; any invalid one answers **400** with `{message, errors}` naming each, and nothing is stored. The examples are saved as an approval batch (`context.source` `upload`, `context.source_file` the `source` file name) and approved by `reviewer` into the tenant's approved training dataset, which the optimizer's runs (`simba`, `profile`, `entity-extraction`) read; `routing` examples feed fine-tuning. Response: `{batch_id, optimizer, dataset, item_ids}`. A failure after the batch is saved answers **502** `training_examples_incomplete` with how many examples were approved; the rest await review in the approval queue. A store that fails before that answers **502** `training_examples_not_stored`; a store the system config cannot build answers **503** `approval_store_unavailable`.
+
 ### Tenant Approvals
 
 Generated examples the confidence extractor did not auto-approve wait in the tenant's approval store (`ApprovalStorageImpl.from_system_config`: Phoenix spans and annotations, Redis electing each decision).
@@ -1451,10 +1461,16 @@ Generated examples the confidence extractor did not auto-approve wait in the ten
 **POST /admin/tenant/{tenant_id}/approvals/{batch_id}/{item_id}** — Body `{approved, reviewer, feedback?, corrections?}`. Response: `{status, item}`.
 
 - An approval appends the item to the tenant's approved training dataset and answers `approved`.
-- A rejection needs `feedback` (**400** otherwise). For an item of a synthetic example schema it regenerates with the tenant's primary LM and answers `regenerated` with the replacement awaiting review; any other item answers `rejected`. No LM for the tenant answers **503** `regeneration_unavailable`.
+- A rejection of an item of a synthetic example schema regenerates it with the tenant's primary LM, which needs `feedback` (**400** otherwise), and answers `regenerated` with the replacement awaiting review; any other item answers `rejected`, with or without feedback. No LM for the tenant answers **503** `regeneration_unavailable`.
 - `corrections` must name fields the item's schema lets a reviewer change (**400** with the field names otherwise). An item with `corrections_required` (a `WorkflowExecutionSchema` record) is not regenerated: its rejection merges the corrections into a replacement, so a rejection without one answers **400**.
 - An item that is not awaiting review answers **404**. A reviewer who loses the election to another reviewer's decision on the same item answers **409** `approval_decision_conflict`; nothing is written for the losing decision.
 - A store or LM failure answers **502** `approval_decision_failed`; a decision still running after 900 seconds answers **504** `approval_decision_timed_out`.
+
+**GET /admin/tenant/{tenant_id}/approvals/history** — Every approved and rejected item, most recently reviewed first. Response: `{approved: [...], rejected: [...]}`, each entry `{item_id, batch_id, status, confidence, query, data, created_at, reviewed_at, schema_name, reviewer, feedback, corrections, replacement_id, replacement_status}`. `approved` holds `approved` (by a reviewer) and `auto_approved` (by the confidence threshold) items. A rejected item that was regenerated carries the decision its replacement records and the replacement's ID and status. A store read failure answers **502** `approval_store_unavailable`.
+
+**GET /admin/tenant/{tenant_id}/approvals/stats** — `{total, pending, auto_approved, approved, rejected, approval_rate, average_confidence}` over every item of the tenant: `pending` counts `pending_review` and `regenerated` items, `approval_rate` is `(approved + auto_approved) / total`, and `average_confidence` maps each of the four groups that holds items to its mean confidence. A store read failure answers **502** `approval_store_unavailable`.
+
+**POST /admin/tenant/{tenant_id}/approvals/{batch_id}/{item_id}/regenerate** — Regenerates a rejected item that nothing replaced, from its recorded rejection (its feedback, corrections and reviewer), and answers `{status: "regenerated", item}` with the replacement awaiting review. Redis elects one replacement when two requests run at once. **404** for an unknown item; **409** for an item that is not rejected, was already regenerated, or has no recorded rejection; **400** for an item no schema describes, or whose rejection lacks the feedback (or, for a `WorkflowExecutionSchema` record, the corrections) regeneration needs.
 
 ### Tenant Orchestration Reviews
 

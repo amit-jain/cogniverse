@@ -65,10 +65,12 @@ from cogniverse_runtime.routers import (
     embedding_atlas,
     ingestion,
     openai_compat,
+    optimization_report,
     orchestration_annotations,
     routing_decisions,
     telemetry_metrics,
     tenant,
+    training_examples,
 )
 from cogniverse_runtime.routers import events as events_router
 from cogniverse_runtime.shared_state import connect_shared_state_redis
@@ -95,6 +97,7 @@ def serve_ops_runtime(
     admin.set_schema_loader(schema_loader)
     tenant.set_config_manager(config_manager)
     approvals.set_config_manager(config_manager)
+    training_examples.set_config_manager(config_manager)
     agents.set_agent_registry(
         AgentRegistry(tenant_id="default", config_manager=config_manager)
     )
@@ -181,6 +184,8 @@ def serve_ops_runtime(
     app.include_router(tm.router, prefix="/admin")
     app.include_router(tenant.router, prefix="/admin/tenant")
     app.include_router(approvals.router, prefix="/admin/tenant")
+    app.include_router(training_examples.router, prefix="/admin/tenant")
+    app.include_router(optimization_report.router, prefix="/admin/tenant")
     app.include_router(orchestration_annotations.router, prefix="/admin/tenant")
     app.include_router(telemetry_metrics.router, prefix="/admin/tenant")
     app.include_router(routing_decisions.router, prefix="/admin/tenant")
@@ -204,6 +209,7 @@ def serve_ops_runtime(
         admin.reset_dependencies()
         tenant.set_config_manager(None)
         approvals.set_config_manager(None)
+        training_examples.set_config_manager(None)
         BackendRegistry.get_instance().clear_instances()
 
 

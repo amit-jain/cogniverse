@@ -2905,6 +2905,82 @@ class TestApprovalStorageEventLoop:
         )
 
     @pytest.mark.asyncio
+    async def test_item_spans_indexed_before_their_batch_root_are_retried(self):
+        """A batch's root span ends after its items, so Phoenix can serve the
+        items alone; that frame has no batch_id column and means the batch is
+        not visible yet."""
+        from unittest.mock import AsyncMock
+
+        import pandas as pd
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+
+        item = {
+            "name": "approval_item",
+            "attributes.item_id": "upload-item",
+            "context.span_id": "item-span",
+            "parent_id": "batch-span",
+            "start_time": "2026-10-08T00:00:01Z",
+        }
+        items_only = pd.DataFrame([item])
+        both = pd.DataFrame(
+            [
+                {
+                    "name": "approval_batch",
+                    "attributes.batch_id": "upload-batch",
+                    "attributes.item_id": None,
+                    "context.span_id": "batch-span",
+                    "parent_id": None,
+                    "start_time": "2026-10-08T00:00:00Z",
+                },
+                dict(item, **{"attributes.batch_id": None}),
+            ]
+        )
+        get_all_spans = AsyncMock(
+            side_effect=[items_only, pd.DataFrame(), both, pd.DataFrame()]
+        )
+        storage = object.__new__(ApprovalStorageImpl)
+        storage.full_project_name = "cogniverse-acme:acme-synthetic_data"
+        storage.provider = SimpleNamespace(
+            traces=SimpleNamespace(get_all_spans=get_all_spans)
+        )
+
+        span_id = await storage.get_item_span_id("upload-item", batch_id="upload-batch")
+
+        assert (span_id, get_all_spans.await_count) == ("item-span", 3)
+
+    @pytest.mark.asyncio
+    async def test_a_batch_frame_without_batch_ids_is_still_malformed(self):
+        from unittest.mock import AsyncMock
+
+        import pandas as pd
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+
+        malformed = pd.DataFrame(
+            [
+                {
+                    "name": "approval_batch",
+                    "attributes.item_id": None,
+                    "context.span_id": "batch-span",
+                    "parent_id": None,
+                    "start_time": "2026-10-08T00:00:00Z",
+                }
+            ]
+        )
+        storage = object.__new__(ApprovalStorageImpl)
+        storage.full_project_name = "cogniverse-acme:acme-synthetic_data"
+        storage.provider = SimpleNamespace(
+            traces=SimpleNamespace(get_all_spans=AsyncMock(return_value=malformed))
+        )
+
+        with pytest.raises(RuntimeError) as raised:
+            await storage.get_item_span_id("upload-item", batch_id="upload-batch")
+        assert str(raised.value) == (
+            "Approval span response is missing required columns ['attributes.batch_id']"
+        )
+
+    @pytest.mark.asyncio
     async def test_item_span_lookup_scopes_duplicate_item_id_to_batch(self):
         from unittest.mock import AsyncMock
 
@@ -3313,3 +3389,105 @@ class TestPendingBatchesBackendFailurePropagates:
         )
         with pytest.raises(TimeoutError, match="phoenix query timed out"):
             await storage.get_pending_batches()
+
+
+class TestGetBatches:
+    """Every batch of the tenant, newest first, from one span query."""
+
+    @staticmethod
+    def _storage(get_all_spans):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        import pandas as pd
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+
+        storage = object.__new__(ApprovalStorageImpl)
+        storage.full_project_name = "cogniverse-acme:acme-synthetic_data"
+        storage.tenant_id = "acme:acme"
+        storage.project_name = "synthetic_data"
+        storage.provider = SimpleNamespace(
+            traces=SimpleNamespace(get_all_spans=get_all_spans),
+            annotations=SimpleNamespace(
+                get_annotations=AsyncMock(return_value=pd.DataFrame())
+            ),
+        )
+        return storage
+
+    @pytest.mark.asyncio
+    async def test_every_batch_comes_back_once_newest_first(self):
+        from unittest.mock import AsyncMock
+
+        import pandas as pd
+
+        def root(batch_id, span_id, created_at, pending):
+            return {
+                "name": "approval_batch",
+                "attributes.batch_id": batch_id,
+                "attributes.total_items": 1,
+                "attributes.auto_approved": 1 - pending,
+                "attributes.pending_review": pending,
+                "attributes.context": "{}",
+                "attributes.created_at": created_at,
+                "context.span_id": span_id,
+                "parent_id": None,
+            }
+
+        def item(item_id, parent, status):
+            return {
+                "name": "approval_item",
+                "attributes.batch_id": None,
+                "attributes.item_id": item_id,
+                "attributes.status": status,
+                "attributes.created_at": "2026-08-05T00:00:02+00:00",
+                "attributes.reviewed_at": None,
+                "attributes.data": '{"query":"q"}',
+                "attributes.metadata": "{}",
+                "attributes.confidence": 0.9,
+                "context.span_id": f"{item_id}-span",
+                "parent_id": parent,
+            }
+
+        spans = pd.DataFrame(
+            [
+                root("older", "s1", "2026-08-05T00:00:00+00:00", 0),
+                # A retried export of the same root span.
+                root("older", "s1-retry", "2026-08-05T00:00:00+00:00", 0),
+                root("newer", "s2", "2026-08-06T00:00:00+00:00", 1),
+                item("older-item", "s1", "auto_approved"),
+                item("newer-item", "s2", "pending_review"),
+            ]
+        )
+        get_all_spans = AsyncMock(return_value=spans)
+        storage = self._storage(get_all_spans)
+
+        batches = await storage.get_batches()
+
+        assert [
+            (batch.batch_id, [(i.item_id, i.status.value) for i in batch.items])
+            for batch in batches
+        ] == [
+            ("newer", [("newer-item", "pending_review")]),
+            ("older", [("older-item", "auto_approved")]),
+        ]
+        assert get_all_spans.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_tenant_without_spans_has_no_batches(self):
+        from unittest.mock import AsyncMock
+
+        import pandas as pd
+
+        storage = self._storage(AsyncMock(return_value=pd.DataFrame()))
+        assert await storage.get_batches() == []
+
+    @pytest.mark.asyncio
+    async def test_a_backend_failure_raises_not_reads_as_no_batches(self):
+        from unittest.mock import AsyncMock
+
+        storage = self._storage(
+            AsyncMock(side_effect=TimeoutError("phoenix query timed out"))
+        )
+        with pytest.raises(TimeoutError, match="phoenix query timed out"):
+            await storage.get_batches()
