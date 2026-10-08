@@ -131,3 +131,7 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .code-file figcaption, .code-run figcaption { font-size: 12px; color: var(--muted); margin-bottom: 6px; overflow-wrap: anywhere; }
 .code-result pre { margin: 0; font-size: 12px; overflow-x: auto; white-space: pre; }
 .code-stderr { color: #c0392b; }
+.examples-file { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 6px; }
+.examples-file h3 { font-size: 13px; margin: 0 0 4px; }
+.examples-file pre { font-size: 12px; white-space: pre-wrap; max-height: 320px; overflow: auto; }
+.report-text { white-space: pre-wrap; font-size: 13px; }
