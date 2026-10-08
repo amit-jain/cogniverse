@@ -65,14 +65,14 @@ WindowStart = Query(
 )
 WindowEnd = Query(None, description="End of the window (ISO 8601 with a timezone).")
 
-_phoenix_public_url: Optional[str] = None
+# The Phoenix UI address a browser reaches. The trace links and the dataset
+# links point at it; unset, the routes answer no links.
+PHOENIX_UI_URL_ENV = "PHOENIX_UI_URL"
 
 
-def set_phoenix_public_url(url: Optional[str]) -> None:
-    """The Phoenix UI address a browser reaches, for the links the
-    ``/telemetry/phoenix`` route answers; ``None`` turns the links off."""
-    global _phoenix_public_url
-    _phoenix_public_url = url.rstrip("/") if url else None
+def phoenix_ui_url() -> Optional[str]:
+    """``PHOENIX_UI_URL`` without a trailing slash, or ``None`` when unset."""
+    return os.environ.get(PHOENIX_UI_URL_ENV, "").rstrip("/") or None
 
 
 # The longest a route waits for the spans of its window before it answers
@@ -324,11 +324,6 @@ class EvaluationDatasets(BaseModel):
 
 class DatasetEvaluation(GoldenEvaluation):
     dataset: EvaluationDataset
-
-
-# The address a browser opens the telemetry store's UI at; datasets link
-# to it when it is set.
-PHOENIX_UI_URL_ENV = "PHOENIX_UI_URL"
 
 
 def _project(tenant_id: str) -> str:
@@ -731,13 +726,14 @@ async def root_causes(
 @router.get("/{tenant_id}/telemetry/phoenix", response_model=PhoenixLinks)
 async def phoenix_links(tenant_id: str):
     """Where a browser opens the tenant's traces in Phoenix: the Phoenix UI
-    address set with ``set_phoenix_public_url`` and the tenant's project
+    address (``PHOENIX_UI_URL``) and the tenant's project
     page there. Either is ``null`` when the address is not set or Phoenix
     has no project for the tenant yet."""
     tenant_id = canonical_tenant_id(tenant_id)
     manager = get_telemetry_manager()
     project = manager.config.get_project_name(tenant_id)
-    if _phoenix_public_url is None:
+    ui_url = phoenix_ui_url()
+    if ui_url is None:
         return PhoenixLinks(phoenix_url=None, project=project, project_url=None)
     try:
         provider = manager.get_provider(tenant_id=tenant_id, project_name=project)
@@ -751,11 +747,9 @@ async def phoenix_links(tenant_id: str):
             tenant_id=tenant_id,
         ) from exc
     return PhoenixLinks(
-        phoenix_url=_phoenix_public_url,
+        phoenix_url=ui_url,
         project=project,
-        project_url=(
-            f"{_phoenix_public_url}/projects/{project_id}" if project_id else None
-        ),
+        project_url=f"{ui_url}/projects/{project_id}" if project_id else None,
     )
 
 
@@ -860,7 +854,7 @@ async def evaluation_datasets(tenant_id: str):
     tenant_id = canonical_tenant_id(tenant_id)
     _, owned = await _tenant_datasets(tenant_id)
     return EvaluationDatasets(
-        phoenix_url=os.environ.get(PHOENIX_UI_URL_ENV, "").rstrip("/") or None,
+        phoenix_url=phoenix_ui_url(),
         datasets=[_dataset(summary) for summary in owned],
     )
 

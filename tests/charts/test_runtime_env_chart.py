@@ -655,3 +655,10 @@ def test_phoenix_ui_url_reaches_the_runtime_only_when_set():
     assert "PHOENIX_UI_URL" not in _runtime_container_env(_render_chart())
     env = _runtime_container_env(_render_chart("phoenix.uiUrl=http://localhost:33006"))
     assert env["PHOENIX_UI_URL"] == "http://localhost:33006"
+
+
+def test_the_dev_cluster_links_phoenix_at_its_host_nodeport():
+    """`cogniverse up` publishes Phoenix's NodePort 26006 on the host, so a
+    browser there opens the trace and dataset links at that port."""
+    env = _runtime_container_env(_render_chart(values="values.k3s.yaml"))
+    assert env["PHOENIX_UI_URL"] == "http://localhost:26006"

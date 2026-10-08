@@ -114,8 +114,9 @@ Use Node.js 22. Copy `.env.example` to `.env` and set:
 | `PORT` | Port the server listens on (default `4000`) |
 | `HOST` | Interface the server binds (default `127.0.0.1`) |
 
-The Analytics view's Phoenix links point at the runtime's `PHOENIX_PUBLIC_URL`
-(the Phoenix UI address browsers reach); without it they are left out.
+The Analytics view's trace links and the Evaluation view's dataset links point
+at the runtime's `PHOENIX_UI_URL` (chart value `phoenix.uiUrl`, the Phoenix UI
+address browsers reach); without it they are left out.
 
 ```bash
 cd clients/web

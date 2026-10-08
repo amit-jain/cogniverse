@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 import statistics
 import time
@@ -28,7 +29,6 @@ from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.registry import get_telemetry_registry
-from cogniverse_runtime.routers import telemetry_metrics
 from tests.utils.approval_review import review_config_manager
 from tests.utils.http_fault_proxy import InterceptFaultProxy
 from tests.utils.telemetry_metric_spans import (
@@ -87,14 +87,16 @@ def telemetry(phoenix_container, phoenix_proxy):
 def runtime_url(phoenix_container, schema_loader, workflow_state_redis_url, telemetry):
     """The operations routes, with Phoenix links pointing at the Phoenix the
     spans are in."""
-    telemetry_metrics.set_phoenix_public_url(phoenix_container["http_endpoint"])
-    with serve_ops_runtime(
-        review_config_manager(phoenix_container, workflow_state_redis_url),
-        schema_loader,
-        workflow_state_redis_url,
-    ) as url:
-        yield url
-    telemetry_metrics.set_phoenix_public_url(None)
+    os.environ["PHOENIX_UI_URL"] = phoenix_container["http_endpoint"]
+    try:
+        with serve_ops_runtime(
+            review_config_manager(phoenix_container, workflow_state_redis_url),
+            schema_loader,
+            workflow_state_redis_url,
+        ) as url:
+            yield url
+    finally:
+        del os.environ["PHOENIX_UI_URL"]
 
 
 @pytest.fixture()

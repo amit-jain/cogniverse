@@ -463,6 +463,9 @@ web:
 
 phoenix:
   replicaCount: 1
+  # The Phoenix UI address a browser reaches (the runtime's PHOENIX_UI_URL);
+  # the web client's trace and dataset links point at it.
+  uiUrl: "http://localhost:26006"
   persistence:
     enabled: true
     storageClass: "local-path"

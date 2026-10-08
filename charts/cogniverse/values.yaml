@@ -778,8 +778,9 @@ phoenix:
     nodePort: 26006
     annotations: {}
 
-  # The address a browser opens the Phoenix UI at; the web client links
-  # evaluation datasets to it. Unset, datasets are not linked.
+  # The address a browser opens the Phoenix UI at (the runtime's
+  # PHOENIX_UI_URL); the web client's trace and dataset links point at it.
+  # Unset, they are not linked.
   uiUrl: ""
 
   env:

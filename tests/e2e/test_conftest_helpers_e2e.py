@@ -111,6 +111,7 @@ def _expected_e2e_sandbox_overrides(llm_serving: str = "local") -> dict[str, str
             "runtime.sandbox.inCluster.enabled": "false",
             "runtime.sandbox.gatewayEndpoint": _E2E_SANDBOX_GATEWAY_ENDPOINT,
             "runtime.sandbox.hostGatewayIP": _E2E_SANDBOX_HOST_GATEWAY_IP,
+            "phoenix.uiUrl": "http://localhost:33006",
         }
     )
     for service in ("vllm_llm_teacher", "vllm_colpali", "vllm_llm_student", "vllm_asr"):

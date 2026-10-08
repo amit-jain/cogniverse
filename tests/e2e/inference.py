@@ -6,7 +6,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from tests.e2e.cluster import E2E_CLUSTER_NAME
+from tests.e2e.cluster import E2E_CLUSTER_NAME, E2E_PHOENIX_UI_URL
 
 _E2E_TOMORO_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 
@@ -147,6 +147,7 @@ def _e2e_deployment_overrides() -> dict[str, str]:
         "runtime.sandbox.inCluster.enabled": "false",
         "runtime.sandbox.gatewayEndpoint": pod_gateway_endpoint(e2e_gateway_metadata()),
         "runtime.sandbox.hostGatewayIP": _e2e_docker_network_gateway_ip(),
+        "phoenix.uiUrl": E2E_PHOENIX_UI_URL,
     }
     for service in (
         "vllm_colpali",

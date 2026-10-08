@@ -761,9 +761,9 @@ async def test_phoenix_links_name_the_tenants_project(
         phoenix_id = httpx.get(
             f"{phoenix_container['http_endpoint']}/v1/projects/{project}"
         ).json()["data"]["id"]
-        monkeypatch.setattr(telemetry_metrics, "_phoenix_public_url", None)
+        monkeypatch.delenv("PHOENIX_UI_URL", raising=False)
         off = (await client.get(f"/admin/tenant/{tenant}/telemetry/phoenix")).json()
-        telemetry_metrics.set_phoenix_public_url(public + "/")
+        monkeypatch.setenv("PHOENIX_UI_URL", public + "/")
         on = (await client.get(f"/admin/tenant/{tenant}/telemetry/phoenix")).json()
         missing = (await client.get(f"/admin/tenant/{unseen}/telemetry/phoenix")).json()
         phoenix_proxy.intercept = lambda method, path, body: (503, {"detail": "down"})

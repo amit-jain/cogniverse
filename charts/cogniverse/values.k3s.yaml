@@ -288,6 +288,8 @@ phoenix:
   replicaCount: 1
   service:
     type: NodePort
+  # The NodePort `cogniverse up` publishes on the host.
+  uiUrl: "http://localhost:26006"
   persistence:
     storageClass: "local-path"
     size: "10Gi"

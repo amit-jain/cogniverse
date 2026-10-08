@@ -44,6 +44,9 @@ E2E_HOST_PORTS = {
     33912: 29012,  # video_embed (X-CLIP)
 }
 
+# The Phoenix UI a browser on the host opens; the chart's phoenix.uiUrl.
+E2E_PHOENIX_UI_URL = "http://localhost:33006"
+
 # k3d NodePort URLs — defined in charts/cogniverse/values.yaml
 RUNTIME = "http://localhost:33000"  # runtime.service.nodePort
 GLINER_URL = "http://localhost:33907"  # gliner NodePort 29007 via E2E_HOST_PORTS
