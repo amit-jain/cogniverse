@@ -265,6 +265,7 @@ jobs:
           --ignore=tests/runtime/integration/test_web_ops_ingestion.py \
           --ignore=tests/runtime/integration/test_web_ops_memory.py \
           --ignore=tests/runtime/integration/test_web_ops_optimization.py \
+          --ignore=tests/runtime/integration/test_web_ops_optimization_framework.py \
           --ignore=tests/runtime/integration/test_web_ops_profiles.py \
           --ignore=tests/runtime/integration/test_web_ops_shell.py \
           --ignore=tests/runtime/integration/test_web_ops_telemetry_metrics.py \
@@ -366,5 +367,56 @@ jobs:
           tests/runtime/integration/test_web_ops_tenants.py \
           tests/runtime/integration/test_web_ops_workflows.py \
           tests/runtime/integration/test_web_search_session.py \
+          -m "integration and ci_fast and not requires_lm" \
+          -v --tb=short
+
+  # The Optimization framework view in Chromium, against the runtime's routers
+  # on real Phoenix, Redis and an Argo API server.
+  web-ops-optimization-framework-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.12.19"
+
+    - name: Set up Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: clients/web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Install Playwright Chromium
+      run: uv run --no-sync playwright install --with-deps chromium
+
+    - name: Free up disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Run optimization framework web tests
+      timeout-minutes: 15
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_web_ops_optimization_framework.py \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short

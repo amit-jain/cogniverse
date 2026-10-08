@@ -3173,6 +3173,7 @@ def _create_teleprompter(
     teacher_settings: dict | None = None,
     metric=_approved_example_exact_metric,
     metric_threshold: float | None = None,
+    max_rounds: int | None = None,
 ):
     """Select DSPy optimizer config based on training set size.
 
@@ -3184,7 +3185,8 @@ def _create_teleprompter(
     bootstrap teacher on the configured teacher endpoint instead of the
     student model teaching itself. ``metric`` decides which teacher traces
     become bootstrapped demos; with ``metric_threshold`` a trace is kept when
-    the metric's score reaches it.
+    the metric's score reaches it. ``max_rounds`` replaces the size-scaled
+    bootstrap round count.
     """
     from dspy.teleprompt import BootstrapFewShot
 
@@ -3198,7 +3200,7 @@ def _create_teleprompter(
             metric_threshold=metric_threshold,
             max_bootstrapped_demos=8,
             max_labeled_demos=16,
-            max_rounds=2,
+            max_rounds=max_rounds or 2,
             max_errors=10,
             teacher_settings=teacher_settings,
         )
@@ -3209,7 +3211,7 @@ def _create_teleprompter(
         metric_threshold=metric_threshold,
         max_bootstrapped_demos=4,
         max_labeled_demos=8,
-        max_rounds=1,
+        max_rounds=max_rounds or 1,
         max_errors=5,
         teacher_settings=teacher_settings,
     )
@@ -4218,13 +4220,15 @@ async def run_workflow_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
     telemetry_otlp_endpoint: str | None = None,
+    max_batches: int | None = None,
 ) -> dict:
     """Workflow orchestration optimization.
 
     Reads cogniverse.orchestration spans, feeds them through
     OrchestrationEvaluator to extract WorkflowExecution records,
     then generates workflow templates and agent performance profiles
-    and saves them as artifacts.
+    and saves them as artifacts. ``max_batches`` caps how many 50-span
+    evaluation batches it reads; every span in the window otherwise.
     """
 
     logger.info(
@@ -4254,15 +4258,20 @@ async def run_workflow_optimization(
     evaluation_end_time = datetime.now(timezone.utc)
     spans_found = 0
     workflows_extracted = 0
+    batches = 0
     while True:
         eval_result = await evaluator.evaluate_orchestration_spans(
             lookback_hours=lookback_hours,
             batch_size=50,
             evaluation_end_time=evaluation_end_time,
         )
+        batches += 1
         spans_found += eval_result["spans_processed"]
         workflows_extracted += eval_result["workflows_extracted"]
         if not eval_result["has_more"]:
+            break
+        if max_batches is not None and batches >= max_batches:
+            logger.info("Workflow optimization stopped at %d batches", batches)
             break
 
     logger.info("Extracted %d workflow executions from spans", workflows_extracted)
@@ -4860,18 +4869,131 @@ async def check_profile_selection_ground_truth(
     return PROFILE_GROUND_TRUTH_PRESENT if rows else PROFILE_GROUND_TRUTH_ABSENT
 
 
+async def _dataset_profile_ground_truth_rows(
+    telemetry_provider, tenant_id: str, dataset_name: str
+) -> list[dict[str, Any]]:
+    """Profile-selection ground truth from the tenant's telemetry dataset
+    ``dataset_name``: one row per ``query`` with its ``expected_videos``.
+
+    Raises:
+        ProfileSelectionGroundTruthError: The dataset is not the tenant's,
+            does not exist, cannot be read, or holds no usable rows.
+    """
+    from cogniverse_agents.optimizer.profile_selection_ground_truth import (
+        ProfileSelectionGroundTruthInvalidError,
+        ProfileSelectionGroundTruthStoreUnavailableError,
+        canonicalize_profile_selection_ground_truth_rows,
+    )
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+    from cogniverse_foundation.telemetry.providers.base import DatasetNotFoundError
+
+    if not dataset_name.endswith(f"-{canonical_tenant_id(tenant_id)}"):
+        raise ProfileSelectionGroundTruthInvalidError(
+            f"dataset {dataset_name} is not a dataset of tenant {tenant_id}"
+        )
+    try:
+        frame = await telemetry_provider.datasets.get_dataset(name=dataset_name)
+    except DatasetNotFoundError as exc:
+        raise ProfileSelectionGroundTruthInvalidError(
+            f"dataset {dataset_name} does not exist"
+        ) from exc
+    except Exception as exc:
+        raise ProfileSelectionGroundTruthStoreUnavailableError(
+            f"dataset {dataset_name} could not be read"
+        ) from exc
+    rows = []
+    for record in frame.to_dict("records"):
+        row: dict[str, Any] = {}
+        for column in ("input", "output"):
+            if isinstance(record.get(column), dict):
+                row.update(record[column])
+        rows.append(row)
+    try:
+        return canonicalize_profile_selection_ground_truth_rows(rows)
+    except ValueError as exc:
+        raise ProfileSelectionGroundTruthInvalidError(
+            f"dataset {dataset_name} is not profile-selection ground truth: {exc}"
+        ) from exc
+
+
+async def run_module_optimization(
+    module: str,
+    tenant_id: str,
+    lookback_hours: float = 24.0,
+    options=None,
+    telemetry_otlp_endpoint: str | None = None,
+    embedder_url: Optional[str] = None,
+) -> dict:
+    """Optimize the routing module, the workflow module, or both (unified).
+
+    Runs the module's steps in order (``optimization_options.MODULE_STEPS``)
+    with ``options`` (a ``ModuleRunOptions``) and returns each step's result
+    under its mode name; the run failed when any step did.
+    """
+    from cogniverse_runtime.optimization_options import (
+        MODULE_STEPS,
+        ModuleRunOptions,
+    )
+
+    if module not in MODULE_STEPS:
+        raise ValueError(f"Unknown module {module!r}; known: {sorted(MODULE_STEPS)}")
+    options = options or ModuleRunOptions()
+    common = {
+        "tenant_id": tenant_id,
+        "lookback_hours": lookback_hours,
+        "telemetry_otlp_endpoint": telemetry_otlp_endpoint,
+    }
+    results: dict[str, Any] = {}
+    for step in MODULE_STEPS[module]:
+        if step == "gateway-thresholds":
+            results[step] = await run_gateway_thresholds_optimization(**common)
+        elif step == "entity-extraction":
+            results[step] = await run_entity_extraction_optimization(
+                **common,
+                embedder_url=embedder_url,
+                use_synthetic_data=options.use_synthetic_data,
+                max_rounds=options.max_iterations,
+            )
+        elif step == "profile":
+            results[step] = await run_profile_optimization(
+                **common,
+                embedder_url=embedder_url,
+                use_synthetic_data=options.use_synthetic_data,
+                max_rounds=options.max_iterations,
+                ground_truth_dataset=options.dataset_name,
+            )
+        else:
+            results[step] = await run_workflow_optimization(
+                **common, max_batches=options.max_iterations
+            )
+    failed = sorted(step for step, result in results.items() if _run_failed(result))
+    return {
+        "status": "failed" if failed else "success",
+        "module": module,
+        "failed_steps": failed,
+        "results": results,
+    }
+
+
 async def run_profile_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
     telemetry_otlp_endpoint: str | None = None,
     embedder_url: Optional[str] = None,
+    use_synthetic_data: bool = True,
+    max_rounds: int | None = None,
+    ground_truth_dataset: str | None = None,
 ) -> dict:
     """Profile selection optimization.
 
     Loads the tenant's ground-truth rows, derives one profile label per
     recoverable row by running the tenant's real search backend against each
     candidate profile, compiles the ProfileSelectionAgent's DSPy module, and
-    saves the optimized module as an artifact.
+    saves the optimized module as an artifact. ``ground_truth_dataset`` names
+    a telemetry dataset of the tenant whose query/expected_videos rows are
+    the ground truth in place of the uploaded one; approved synthetic
+    examples train it too unless ``use_synthetic_data`` is false;
+    ``max_rounds`` sets the compile's bootstrap rounds.
     """
     from cogniverse_agents.profile_selection_agent import tenant_usable_profile_names
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -4899,9 +5021,14 @@ async def run_profile_optimization(
 
     artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
     try:
-        ground_truth_rows = await load_profile_selection_ground_truth_rows(
-            artifact_manager
-        )
+        if ground_truth_dataset is None:
+            ground_truth_rows = await load_profile_selection_ground_truth_rows(
+                artifact_manager
+            )
+        else:
+            ground_truth_rows = await _dataset_profile_ground_truth_rows(
+                telemetry_provider, tenant_id, ground_truth_dataset
+            )
     except ProfileSelectionGroundTruthError as exc:
         return exc.to_result()
 
@@ -4935,8 +5062,10 @@ async def run_profile_optimization(
     )
 
     profile_pairs = list(label_source.records)
-    synthetic_demos = await _load_approved_synthetic_data(
-        telemetry_provider, tenant_id, "profile"
+    synthetic_demos = (
+        await _load_approved_synthetic_data(telemetry_provider, tenant_id, "profile")
+        if use_synthetic_data
+        else []
     )
     consumed_example_ids = [pair["example_id"] for pair in profile_pairs]
     records = list(profile_pairs)
@@ -5147,6 +5276,7 @@ async def run_profile_optimization(
                 len(trainset),
                 teacher_settings={"lm": teacher_lm_or_raise(llm_config)},
                 metric=_profile_selection_metric,
+                max_rounds=max_rounds,
             )
             compiled = teleprompter.compile(ProfileSelectionModule(), trainset=trainset)
 
@@ -5235,12 +5365,16 @@ async def run_entity_extraction_optimization(
     lookback_hours: float = 24.0,
     telemetry_otlp_endpoint: str | None = None,
     embedder_url: Optional[str] = None,
+    use_synthetic_data: bool = True,
+    max_rounds: int | None = None,
 ) -> dict:
     """Entity extraction optimization.
 
     Reads cogniverse.entity_extraction spans, builds training examples
     from (query) -> (entities) pairs, compiles the EntityExtractionModule's
-    DSPy module, and saves the optimized module as an artifact.
+    DSPy module, and saves the optimized module as an artifact. Approved
+    synthetic examples train it too unless ``use_synthetic_data`` is false;
+    ``max_rounds`` sets the compile's bootstrap rounds.
     """
     from cogniverse_foundation.telemetry.config import SPAN_NAME_ENTITY_EXTRACTION
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -5284,8 +5418,12 @@ async def run_entity_extraction_optimization(
     served_pairs = _entity_extraction_pairs(spans_df)
     served_examples = len(spans_df)
     served_scoreable_examples = len(served_pairs)
-    synthetic_demos = await _load_approved_synthetic_data(
-        telemetry_provider, tenant_id, "entity_extraction"
+    synthetic_demos = (
+        await _load_approved_synthetic_data(
+            telemetry_provider, tenant_id, "entity_extraction"
+        )
+        if use_synthetic_data
+        else []
     )
 
     truth_records = [
@@ -5460,6 +5598,7 @@ async def run_entity_extraction_optimization(
                 teacher_settings={"lm": teacher_lm_or_raise(llm_config)},
                 metric=recorder,
                 metric_threshold=recorder.threshold,
+                max_rounds=max_rounds,
             )
             with bootstrap_error_log() as error_log:
                 self_consistency = await _sample_entity_self_consistency(
@@ -5789,17 +5928,110 @@ async def _build_cli_profile_labeler(
     return label_profile
 
 
+async def submit_synthetic_outcome(
+    storage,
+    *,
+    tenant_id: str,
+    optimizer_type: str,
+    response,
+    human_review: bool,
+) -> dict:
+    """Submit one optimizer's generated examples for review and describe the
+    outcome as the synthetic run reports it.
+
+    Each example becomes a pending review item scored by the synthetic
+    confidence extractor; ``HumanApprovalAgent.submit_for_review`` persists
+    the batch to ``storage`` and approves every item at or above the
+    auto-approval threshold (every item without human review). The outcome
+    carries the batch, its approval counts and how the service chose the
+    profiles it sampled; ``no_data`` when ``response`` holds no examples.
+    """
+    from cogniverse_agents.approval import HumanApprovalAgent
+    from cogniverse_core.approval.interfaces import (
+        ApprovalBatch,
+        ApprovalStatus,
+        ReviewItem,
+    )
+    from cogniverse_foundation.config.unified_config import ApprovalConfig
+    from cogniverse_synthetic.approval.confidence_extractor import (
+        SyntheticDataConfidenceExtractor,
+    )
+    from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
+
+    generation = {
+        "schema_name": response.schema_name,
+        "selected_profiles": list(response.selected_profiles),
+        "profile_selection_reasoning": response.profile_selection_reasoning,
+        "generation_time_ms": response.metadata.get("generation_time_ms"),
+    }
+    if not response.data:
+        return {"status": "no_data", "examples_generated": 0, **generation}
+
+    batch_id = f"synthetic_{optimizer_type}_{uuid.uuid4().hex}"
+    agent_type = APPROVED_TRAINING_AGENT_BY_OPTIMIZER[optimizer_type]
+    confidence_extractor = SyntheticDataConfidenceExtractor()
+    review_items = [
+        ReviewItem(
+            item_id=f"{batch_id}_{index}",
+            data=dict(item),
+            confidence=confidence_extractor.extract(item),
+            status=ApprovalStatus.PENDING_REVIEW,
+            metadata={
+                "agent_type": agent_type,
+                "optimizer_type": optimizer_type,
+                "synthetic": True,
+            },
+        )
+        for index, item in enumerate(response.data)
+    ]
+    batch = ApprovalBatch(
+        batch_id=batch_id,
+        items=review_items,
+        context={
+            "tenant_id": tenant_id,
+            "agent_type": agent_type,
+            "optimizer": optimizer_type,
+            "purpose": "optimizer_training",
+        },
+    )
+    approval_agent = HumanApprovalAgent(
+        confidence_extractor=confidence_extractor,
+        confidence_threshold=(
+            ApprovalConfig().confidence_threshold if human_review else 0.0
+        ),
+        storage=storage,
+    )
+    batch = await approval_agent.submit_for_review(batch)
+    stats = approval_agent.get_approval_stats(batch)
+    return {
+        "status": "success",
+        "examples_generated": len(review_items),
+        "batch_id": batch.batch_id,
+        "auto_approved": stats["auto_approved"],
+        "pending_review": stats["pending_review"],
+        "avg_confidence": stats["avg_confidence"],
+        **generation,
+    }
+
+
 async def run_synthetic_generation(
     tenant_id: str,
     optimizer_types: list[str] | None = None,
-    count: int = 50,
+    options=None,
     telemetry_otlp_endpoint: str | None = None,
 ) -> dict:
     """Generate synthetic training data for optimizer types.
 
-    Uses SyntheticDataService to create training examples, then persists
-    them as pending review batches for later human approval.
+    Uses SyntheticDataService to create ``options.count`` examples per
+    optimizer type (a ``SyntheticRunOptions``) and submits each type's batch
+    for review: an example at or above the approval threshold is approved
+    for training at once, the rest wait for a reviewer. Without human review
+    every example is approved. Each type's result carries the batch, its
+    approval counts and how the service chose the profiles it sampled.
     """
+    from cogniverse_runtime.optimization_options import SyntheticRunOptions
+
+    options = options or SyntheticRunOptions()
     from cogniverse_core.common.tenant_utils import require_tenant_id
     from cogniverse_foundation.config.utils import (
         get_config,
@@ -5825,10 +6057,10 @@ async def run_synthetic_generation(
         )
 
     logger.info(
-        "Starting synthetic generation for tenant=%s types=%s count=%d",
+        "Starting synthetic generation for tenant=%s types=%s options=%s",
         tenant_id,
         optimizer_types,
-        count,
+        options.model_dump(),
     )
 
     config_manager = _cli_config_manager()
@@ -5976,61 +6208,27 @@ async def run_synthetic_generation(
 
             request = SyntheticDataRequest(
                 optimizer=opt_type,
-                count=count,
+                count=options.count,
+                vespa_sample_size=options.vespa_sample_size,
+                max_profiles=options.max_profiles,
                 tenant_id=tenant_id,
+                **({"strategy": options.strategy} if options.strategy else {}),
             )
             with dspy.context(lm=synthetic_lm):
                 response = await service.generate(request)
 
-            if response.data:
-                from cogniverse_core.approval.interfaces import (
-                    ApprovalBatch,
-                    ApprovalStatus,
-                    ReviewItem,
-                )
-                from cogniverse_synthetic.approval.confidence_extractor import (
-                    SyntheticDataConfidenceExtractor,
-                )
-
-                storage = _approval_storage(
-                    config_manager, telemetry_manager, tenant_id
-                )
-                batch_id = f"synthetic_{opt_type}_{uuid.uuid4().hex}"
-                agent_type = APPROVED_TRAINING_AGENT_BY_OPTIMIZER[opt_type]
-                confidence_extractor = SyntheticDataConfidenceExtractor()
-                review_items = [
-                    ReviewItem(
-                        item_id=f"{batch_id}_{index}",
-                        data=dict(item),
-                        confidence=confidence_extractor.extract(item),
-                        status=ApprovalStatus.PENDING_REVIEW,
-                        metadata={
-                            "agent_type": agent_type,
-                            "optimizer_type": opt_type,
-                            "synthetic": True,
-                        },
-                    )
-                    for index, item in enumerate(response.data)
-                ]
-                batch = ApprovalBatch(
-                    batch_id=batch_id,
-                    items=review_items,
-                    context={
-                        "tenant_id": tenant_id,
-                        "agent_type": agent_type,
-                        "optimizer": opt_type,
-                        "purpose": "optimizer_training",
-                    },
-                )
-                persisted_batch_id = await storage.save_batch(batch)
-                results[opt_type] = {
-                    "status": "success",
-                    "examples_generated": len(review_items),
-                    "batch_id": persisted_batch_id,
-                    "pending_review": len(review_items),
-                }
-            else:
-                results[opt_type] = {"status": "no_data", "examples_generated": 0}
+            storage = (
+                _approval_storage(config_manager, telemetry_manager, tenant_id)
+                if response.data
+                else None
+            )
+            results[opt_type] = await submit_synthetic_outcome(
+                storage,
+                tenant_id=tenant_id,
+                optimizer_type=opt_type,
+                response=response,
+                human_review=options.human_review,
+            )
 
             logger.info(
                 "Generated %d synthetic examples for %s",
@@ -6570,6 +6768,8 @@ def build_parser() -> argparse.ArgumentParser:
             "profile-ground-truth-check",
             "entity-extraction",
             "synthetic",
+            "routing",
+            "unified",
             "rollback",
             "ab-compare",
             "egress-netpol",
@@ -6604,6 +6804,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--trigger-dataset",
         help="Phoenix dataset name containing trigger payload",
+    )
+    parser.add_argument(
+        "--options",
+        help=(
+            "Run options of the synthetic, routing, workflow and unified modes "
+            "as JSON (cogniverse_runtime.optimization_options)"
+        ),
     )
     parser.add_argument("--log-retention-days", type=int)
     parser.add_argument("--memory-retention-days", type=int)
@@ -6787,6 +6994,13 @@ def main():
 
         args.tenant_id = canonical_tenant_id(args.tenant_id)
 
+    from cogniverse_runtime.optimization_options import parse_run_options
+
+    try:
+        run_options = parse_run_options(args.mode, args.options)
+    except ValueError as exc:
+        parser.error(f"--options: {exc}")
+
     presence = None
     # Keep stdout reserved for the final document.
     with _redirect_stdout_to_stderr():
@@ -6851,6 +7065,18 @@ def main():
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
                     telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+                    max_batches=run_options.max_iterations,
+                )
+            )
+        elif args.mode in ("routing", "unified"):
+            result = asyncio.run(
+                run_module_optimization(
+                    module=args.mode,
+                    tenant_id=args.tenant_id,
+                    lookback_hours=args.lookback_hours,
+                    options=run_options,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+                    embedder_url=embedder_url,
                 )
             )
         elif args.mode == "gateway-thresholds":
@@ -6996,6 +7222,7 @@ def main():
                 run_synthetic_generation(
                     tenant_id=args.tenant_id,
                     optimizer_types=optimizer_types,
+                    options=run_options,
                     telemetry_otlp_endpoint=telemetry_otlp_endpoint,
                 )
             )

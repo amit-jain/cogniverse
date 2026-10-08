@@ -335,6 +335,20 @@ class DatasetStore(ABC):
         """
         pass
 
+    @abstractmethod
+    async def list_datasets(self) -> List[Dict[str, Any]]:
+        """
+        List the store's datasets.
+
+        Returns:
+            One dict per dataset with ``name``, ``example_count``,
+            ``created_at`` and ``description``.
+
+        Raises:
+            DatasetStoreUnavailableError: If the store could not answer.
+        """
+        pass
+
     async def delete_dataset(self, name: str) -> bool:
         """
         Delete a dataset by name.

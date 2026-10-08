@@ -53,6 +53,17 @@ class InMemoryDatasetStore(DatasetStore):
         self.metadata.pop(name, None)
         return self._frames.pop(name, None) is not None
 
+    async def list_datasets(self):
+        return [
+            {
+                "name": name,
+                "example_count": len(frame),
+                "created_at": None,
+                "description": self.metadata.get(name, {}).get("description"),
+            }
+            for name, frame in self._frames.items()
+        ]
+
 
 class FailingDatasetStore(InMemoryDatasetStore):
     """Store whose every call fails like a dead backend."""
@@ -64,6 +75,9 @@ class FailingDatasetStore(InMemoryDatasetStore):
         raise ConnectionError("connection refused: telemetry backend down")
 
     async def append_to_dataset(self, name, data, metadata=None):
+        raise ConnectionError("connection refused: telemetry backend down")
+
+    async def list_datasets(self):
         raise ConnectionError("connection refused: telemetry backend down")
 
 

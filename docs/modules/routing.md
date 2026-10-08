@@ -686,7 +686,11 @@ async def extract_training_data_from_phoenix(
     """
 ```
 
-Used by `libs/dashboard/cogniverse_dashboard/tabs/optimization.py`.
+`to_blob()` serializes a trained model (XGBoost's JSON model format plus its
+profile names) and `load_blob(blob)` restores it, so a model is stored without
+pickling. The runtime's `/admin/tenant/{tenant_id}/profile-selection/*` routes
+train it on the tenant's spans, store it in the tenant's artifact store and serve
+predictions from it; the dashboard's optimization tab trains it in-process.
 
 ---
 

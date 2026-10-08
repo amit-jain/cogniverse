@@ -7,6 +7,7 @@ import { ApprovalsView } from './ApprovalsView';
 import { EvaluationView } from './EvaluationView';
 import { IngestionView } from './IngestionView';
 import { MemoryView } from './MemoryView';
+import { OptimizationFrameworkView } from './OptimizationFrameworkView';
 import { OptimizationView } from './OptimizationView';
 import { ProfileMetricsView } from './ProfileMetricsView';
 import { ProfilesView } from './ProfilesView';
@@ -27,6 +28,7 @@ export const OPS_VIEWS: OpsView[] = [
   { id: 'config', label: 'Configuration', component: ConfigView },
   { id: 'ingestion', label: 'Ingestion', component: IngestionView },
   { id: 'optimization', label: 'Optimization runs', component: OptimizationView },
+  { id: 'optimization-framework', label: 'Optimization framework', component: OptimizationFrameworkView },
   { id: 'memory', label: 'Memory', component: MemoryView },
   { id: 'approvals', label: 'Approvals', component: ApprovalsView },
   { id: 'annotations', label: 'Annotation queue', component: AnnotationsView },

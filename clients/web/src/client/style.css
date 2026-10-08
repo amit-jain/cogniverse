@@ -182,3 +182,6 @@ td.score.poor { background: #f8d7da; color: #721c24; }
 .examples-file h3 { font-size: 13px; margin: 0 0 4px; }
 .examples-file pre { font-size: 12px; white-space: pre-wrap; max-height: 320px; overflow: auto; }
 .report-text { white-space: pre-wrap; font-size: 13px; }
+.band.ok { color: #2e8b57; }
+.band.warn { color: #b9770e; }
+.band.error { color: #c0392b; }

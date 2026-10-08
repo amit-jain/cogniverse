@@ -497,6 +497,46 @@ describe('runtime proxy', () => {
     expect(seen).toHaveLength(2);
   });
 
+  it('forwards the optimization framework routes and no sibling of them', async () => {
+    const seen: string[] = [];
+    const url = await runtimeServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      res.end('{}');
+    });
+    const app = createApp(config(url));
+    const calls = [
+      ['GET', '/admin/tenant/acme:prod/search-annotations?lookback_hours=24'],
+      ['GET', '/admin/tenant/acme:prod/search-annotations/count?lookback_days=90'],
+      ['POST', '/admin/tenant/acme:prod/search-annotations/0123456789abcdef'],
+      ['POST', '/admin/tenant/acme:prod/golden-dataset'],
+      ['GET', '/admin/tenant/acme:prod/synthetic/settings'],
+      ['GET', '/admin/tenant/acme:prod/optimize/runs/manual-optimize-synthetic-x/synthetic'],
+      ['GET', '/admin/tenant/acme:prod/datasets'],
+      ['POST', '/admin/tenant/acme:prod/datasets'],
+      ['GET', '/admin/tenant/acme:prod/profile-selection/analysis?lookback_days=30'],
+      ['POST', '/admin/tenant/acme:prod/profile-selection/train'],
+      ['GET', '/admin/tenant/acme:prod/profile-selection/model'],
+      ['POST', '/admin/tenant/acme:prod/profile-selection/predict'],
+      ['GET', '/admin/tenant/acme:prod/optimization-metrics?lookback_days=7'],
+    ];
+    for (const [method, path] of calls) {
+      const response = await app.request(`/ui-api/runtime${path}`, { method });
+      expect(response.status).toBe(200);
+    }
+    expect(seen).toEqual(calls.map(([method, path]) => `${method} ${path}`));
+    for (const path of [
+      '/admin/tenant/acme:prod/search-annotations/a/b',
+      '/admin/tenant/acme:prod/synthetic/generate',
+      '/admin/tenant/acme:prod/optimize/runs/wf-1/synthetic/x',
+      '/admin/tenant/acme:prod/profile-selection/delete',
+      '/synthetic/generate',
+    ]) {
+      const response = await app.request(`/ui-api/runtime${path}`, { method: 'POST' });
+      expect(response.status).toBe(404);
+    }
+    expect(seen).toHaveLength(calls.length);
+  });
+
   it('streams server-sent events as the runtime sends them', async () => {
     let release: () => void = () => {};
     const url = await runtimeServer((_req, res) => {

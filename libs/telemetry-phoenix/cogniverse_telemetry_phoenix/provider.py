@@ -1314,6 +1314,37 @@ class PhoenixDatasetStore(DatasetStore):
 
         return await asyncio.to_thread(_delete)
 
+    async def list_datasets(self) -> List[Dict[str, Any]]:
+        """Every dataset Phoenix holds, with its example count.
+
+        Raises:
+            DatasetStoreUnavailableError: If Phoenix could not answer.
+        """
+        from phoenix.client import Client
+
+        def _list() -> List[Dict[str, Any]]:
+            return [
+                {
+                    "name": dataset["name"],
+                    "example_count": dataset.get("example_count"),
+                    "created_at": dataset.get("created_at"),
+                    "description": dataset.get("description"),
+                }
+                for dataset in Client(base_url=self.http_endpoint).datasets.list(
+                    timeout=_DATASET_OP_TIMEOUT_S
+                )
+            ]
+
+        try:
+            return await asyncio.to_thread(_list)
+        except Exception as e:
+            raise DatasetStoreUnavailableError(
+                f"dataset store at {self.http_endpoint} could not list its "
+                f"datasets: {type(e).__name__}: {e}",
+                endpoint=self.http_endpoint,
+                dataset="*",
+            ) from e
+
     async def get_dataset(self, name: str) -> pd.DataFrame:
         """
         Load dataset by name.

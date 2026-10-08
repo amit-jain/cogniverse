@@ -58,6 +58,64 @@ async def test_get_item_span_id_raises_on_outage():
 
 
 @pytest.mark.asyncio
+async def test_item_span_before_its_batch_root_is_indexed_is_found_on_retry(
+    monkeypatch,
+):
+    """Item spans export before their batch root, so Phoenix can answer with
+    the items alone; that is indexing lag, not a malformed response."""
+    import pandas as pd
+
+    items_only = pd.DataFrame(
+        [
+            {
+                "name": "approval_item",
+                "parent_id": "root-1",
+                "context.span_id": "item-span-1",
+                "attributes.item_id": "item-1",
+                "start_time": "2026-10-08T00:00:00+00:00",
+            }
+        ]
+    )
+    with_root = pd.concat(
+        [
+            items_only.assign(**{"attributes.batch_id": None}),
+            pd.DataFrame(
+                [
+                    {
+                        "name": "approval_batch",
+                        "parent_id": None,
+                        "context.span_id": "root-1",
+                        "attributes.item_id": None,
+                        "attributes.batch_id": "batch-1",
+                        "start_time": "2026-10-08T00:00:00+00:00",
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    reads = {
+        "approval_item_replacement": pd.DataFrame(),
+    }
+    frames = iter([items_only, with_root])
+
+    async def get_all_spans(*, project, filters):
+        if filters["name"] == "approval_item_replacement":
+            return reads["approval_item_replacement"]
+        return next(frames)
+
+    storage = _bare_storage()
+    storage.provider.traces.get_all_spans = get_all_spans
+    sleep = AsyncMock()
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+
+    span_id = await storage.get_item_span_id("item-1", batch_id="batch-1")
+
+    assert span_id == "item-span-1"
+    assert [call.args for call in sleep.await_args_list] == [(0.5,)]
+
+
+@pytest.mark.asyncio
 async def test_log_approval_decision_raises_on_annotation_outage():
     """The reviewer identity and feedback live only in the human_approval
     annotation — a swallowed write failure drops the reviewer and explanation

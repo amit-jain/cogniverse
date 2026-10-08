@@ -358,7 +358,7 @@ flowchart TB
         TelemetryProvider["<span style='color:#000'>TelemetryProvider<br/><br/>• initialize(config)<br/>• configure_span_export()<br/>• session_context()</span>"]
         TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• iter_spans()<br/>• get_all_spans()<br/>• get_span_by_id()</span>"]
         AnnotationStore["<span style='color:#000'>AnnotationStore<br/><br/>• add_annotation()<br/>• get_annotations()<br/>• log_evaluations()</span>"]
-        DatasetStore["<span style='color:#000'>DatasetStore<br/><br/>• create_dataset()<br/>• get_dataset()<br/>• append_to_dataset()<br/>• delete_dataset()</span>"]
+        DatasetStore["<span style='color:#000'>DatasetStore<br/><br/>• create_dataset()<br/>• get_dataset()<br/>• append_to_dataset()<br/>• list_datasets()<br/>• delete_dataset()</span>"]
     end
 
     TelemetryProvider --> TraceStore
@@ -540,6 +540,13 @@ class DatasetStore(ABC):
         shape as ``create_dataset``). Raises DatasetNotFoundError if the
         dataset does not exist.
         """
+        pass
+
+    @abstractmethod
+    async def list_datasets(self) -> List[Dict[str, Any]]:
+        """Every dataset, as ``{name, example_count, created_at,
+        description}``. Raises DatasetStoreUnavailableError when the store
+        cannot answer."""
         pass
 
     async def delete_dataset(self, name: str) -> bool:

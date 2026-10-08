@@ -17,6 +17,10 @@ import sys
 import pytest
 
 from cogniverse_runtime import optimization_cli as oc
+from cogniverse_runtime.optimization_options import (
+    ModuleRunOptions,
+    SyntheticRunOptions,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -112,6 +116,8 @@ def _expected_lookback_kwargs(worker_attr: str, embedder_url: str | None):
     }
     if worker_attr in _EMBEDDER_URL_WORKERS:
         expected["embedder_url"] = embedder_url
+    if worker_attr == "run_workflow_optimization":
+        expected["max_batches"] = None
     return expected
 
 
@@ -322,6 +328,7 @@ def test_synthetic_default_optimizers_dispatch(monkeypatch):
             "routing",
             "entity_extraction",
         ],
+        "options": SyntheticRunOptions(),
         "telemetry_otlp_endpoint": None,
     }
 
@@ -344,8 +351,142 @@ def test_synthetic_agents_override_optimizers(monkeypatch):
     assert rec.kwargs == {
         "tenant_id": "acme:acme",
         "optimizer_types": ["profile", "routing"],
+        "options": SyntheticRunOptions(),
         "telemetry_otlp_endpoint": None,
     }
+
+
+def test_synthetic_options_reach_the_generator(monkeypatch):
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(oc, "run_synthetic_generation", rec)
+    code = _run_main(
+        monkeypatch,
+        [
+            "--mode",
+            "synthetic",
+            "--tenant-id",
+            "acme",
+            "--agents",
+            "profile",
+            "--options",
+            json.dumps(
+                {
+                    "count": 7,
+                    "vespa_sample_size": 30,
+                    "strategy": "entity_rich",
+                    "max_profiles": 2,
+                    "human_review": False,
+                }
+            ),
+        ],
+    )
+    assert code == 0
+    assert rec.kwargs == {
+        "tenant_id": "acme:acme",
+        "optimizer_types": ["profile"],
+        "options": SyntheticRunOptions(
+            count=7,
+            vespa_sample_size=30,
+            strategy="entity_rich",
+            max_profiles=2,
+            human_review=False,
+        ),
+        "telemetry_otlp_endpoint": None,
+    }
+
+
+def test_workflow_iterations_cap_the_evaluation_batches(monkeypatch):
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(oc, "run_workflow_optimization", rec)
+    code = _run_main(
+        monkeypatch,
+        [
+            "--mode",
+            "workflow",
+            "--tenant-id",
+            "acme",
+            "--options",
+            '{"max_iterations": 7}',
+        ],
+    )
+    assert code == 0
+    assert rec.kwargs == {
+        "tenant_id": "acme:acme",
+        "lookback_hours": 24.0,
+        "telemetry_otlp_endpoint": None,
+        "max_batches": 7,
+    }
+
+
+@pytest.mark.parametrize("mode", ["routing", "unified"])
+def test_module_modes_dispatch_with_their_options(monkeypatch, mode):
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(oc, "run_module_optimization", rec)
+    code = _run_main(
+        monkeypatch,
+        [
+            "--mode",
+            mode,
+            "--tenant-id",
+            "acme",
+            "--lookback-hours",
+            "3",
+            "--embedder-url",
+            "http://denseon.test",
+            "--options",
+            json.dumps(
+                {
+                    "max_iterations": 12,
+                    "use_synthetic_data": False,
+                    "dataset_name": "golden-acme:acme",
+                }
+            ),
+        ],
+    )
+    assert code == 0
+    assert rec.kwargs == {
+        "module": mode,
+        "tenant_id": "acme:acme",
+        "lookback_hours": 3.0,
+        "options": ModuleRunOptions(
+            max_iterations=12,
+            use_synthetic_data=False,
+            dataset_name="golden-acme:acme",
+        ),
+        "telemetry_otlp_endpoint": None,
+        "embedder_url": "http://denseon.test",
+    }
+
+
+@pytest.mark.parametrize(
+    ("mode", "options", "message"),
+    [
+        ("synthetic", '{"count": 0}', "count"),
+        ("synthetic", '{"strategy": "random"}', "strategy"),
+        ("routing", '{"dataset_name": "golden-acme:acme"}', "use_synthetic_data"),
+        ("simba", '{"count": 3}', "Mode 'simba' takes no options"),
+        ("workflow", "not json", "Expecting value"),
+    ],
+)
+def test_invalid_options_exit_2_before_dispatch(
+    monkeypatch, capsys, mode, options, message
+):
+    rec = _Recorder(_OK)
+    for attr in (
+        "run_synthetic_generation",
+        "run_module_optimization",
+        "run_simba_optimization",
+        "run_workflow_optimization",
+    ):
+        monkeypatch.setattr(oc, attr, rec)
+    code = _run_main(
+        monkeypatch, ["--mode", mode, "--tenant-id", "acme", "--options", options]
+    )
+    assert code == 2
+    assert rec.calls == 0
+    error = capsys.readouterr().err
+    assert "error: --options: " in error
+    assert message in error
 
 
 @pytest.mark.parametrize(

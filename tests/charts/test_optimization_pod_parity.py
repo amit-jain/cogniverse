@@ -221,7 +221,8 @@ def test_shared_template_accepts_a_triggered_compile():
     """A quality-drop or annotation-feedback trigger compiles a named agent
     set against a stored dataset, so ``agents`` and ``trigger-dataset`` are
     part of the template's parameter set; every other mode leaves them empty
-    and optimization_cli ignores them."""
+    and optimization_cli ignores them. ``options`` carries the run options of
+    the modes that take them, empty for their defaults."""
     docs = _render()
     workflow_template = _workflow_template(docs, TEMPLATE_NAME)
     runner = _named_template(workflow_template, RUNNER_TEMPLATE)
@@ -232,6 +233,7 @@ def test_shared_template_accepts_a_triggered_compile():
         {"name": "lookback-hours", "value": "48"},
         {"name": "agents", "value": ""},
         {"name": "trigger-dataset", "value": ""},
+        {"name": "options", "value": ""},
     ]
     assert runner["inputs"]["parameters"] == [
         {"name": "mode"},
@@ -239,6 +241,7 @@ def test_shared_template_accepts_a_triggered_compile():
         {"name": "lookback-hours"},
         {"name": "agents", "value": ""},
         {"name": "trigger-dataset", "value": ""},
+        {"name": "options", "value": ""},
     ]
     assert runner["container"]["command"] == [
         "python",
@@ -256,6 +259,8 @@ def test_shared_template_accepts_a_triggered_compile():
         "{{inputs.parameters.agents}}",
         "--trigger-dataset",
         "{{inputs.parameters.trigger-dataset}}",
+        "--options",
+        "{{inputs.parameters.options}}",
     ]
 
 

@@ -51,6 +51,11 @@ spec:
       value: ""
     - name: trigger-dataset
       value: ""
+    # The run options of the synthetic, routing, workflow and unified modes
+    # as JSON (cogniverse_runtime.optimization_options); empty for the
+    # mode's defaults.
+    - name: options
+      value: ""
   volumes:
   - name: config
     configMap:
@@ -131,6 +136,8 @@ spec:
         value: ""
       - name: trigger-dataset
         value: ""
+      - name: options
+        value: ""
     container:
       image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
       imagePullPolicy: {{ $workflowImage.pullPolicy }}
@@ -146,6 +153,8 @@ spec:
         - "{{`{{inputs.parameters.agents}}`}}"
         - "--trigger-dataset"
         - "{{`{{inputs.parameters.trigger-dataset}}`}}"
+        - "--options"
+        - "{{`{{inputs.parameters.options}}`}}"
       env:
       - name: BACKEND_URL
         value: "http://{{ $fullName }}-vespa"

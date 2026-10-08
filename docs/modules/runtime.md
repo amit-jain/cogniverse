@@ -102,6 +102,7 @@ cogniverse_runtime/
 │   ├── openai_compat.py             # OpenAI-dialect /v1 surface for harness clients
 │   ├── routing_decisions.py         # A tenant's routing decisions, their quality and review
 │   ├── telemetry_metrics.py         # Per-tenant span metrics for the operations views
+│   ├── optimization_framework.py    # Search annotations, golden datasets, synthetic results, datasets, profile recommender
 │   ├── tenant.py                    # Per-tenant admin endpoints
 │   └── wiki.py                      # Wiki API endpoints
 ├── admin/                           # Admin domain models + tenant tooling
@@ -474,6 +475,7 @@ The server uses modular routers for different functionality:
 | `optimization_report` | `/admin/tenant` | A tenant's optimization report streamed from `detailed_report_agent` |
 | `orchestration_annotations` | `/admin/tenant` | Human review of a tenant's orchestration workflows |
 | `telemetry_metrics` | `/admin/tenant` | Trace analytics, profile-selection and RLM A/B metrics over a tenant's spans, and its searches scored against its golden set |
+| `optimization_framework` | `/admin/tenant` | Search-quality annotation, golden datasets, synthetic run results, training datasets, the XGBoost profile recommender and optimization metrics |
 | `routing_decisions` | `/admin/tenant` | A tenant's routing decisions with their outcomes, labels and per-agent quality; approving and correcting their labels |
 | `debug` | `/admin/debug` | Runtime diagnostics (gated behind `COGNIVERSE_DEBUG_MEM`) |
 
@@ -1434,7 +1436,7 @@ Response: `{tenant_id, agent_type, state: {active, canary, retired}}`. Backed by
 
 **GET /admin/tenant/optimize-modes** — The modes `POST /admin/tenant/{tenant_id}/optimize` accepts and the optimizer types its `synthetic` mode generates training data for, sorted: `{modes: [...], synthetic_optimizers: [...]}`.
 
-**POST /admin/tenant/{tenant_id}/optimize** — `{mode, lookback_hours, optimizers}` submits a one-off Workflow running `optimization_cli --mode <mode>` for the tenant. `lookback_hours` (above 0, at most 8760, default 48) is the run's `lookback-hours`. `optimizers` is required for `synthetic`, whose generated examples land as approval batches for review, and becomes its `agents` argument; it is refused for every other mode. 400 for an unknown mode or optimizer.
+**POST /admin/tenant/{tenant_id}/optimize** — `{mode, lookback_hours, optimizers, options}` submits a one-off Workflow running `optimization_cli --mode <mode>` for the tenant. `lookback_hours` (above 0, at most 8760, default 48) is the run's `lookback-hours`. `optimizers` is required for `synthetic`, whose generated examples are submitted for review (at or above the auto-approval threshold they are approved at once), and becomes its `agents` argument; it is refused for every other mode. `options` are the run options of the `synthetic` (`SyntheticRunOptions`: `count`, `vespa_sample_size`, `strategy`, `max_profiles`, `human_review`) and the `routing`, `workflow` and `unified` modes (`ModuleRunOptions`: `max_iterations`, `use_synthetic_data`, `dataset_name`, a dataset named `<name>-<tenant>`), both in `cogniverse_runtime.optimization_options`; validated there (422 naming the field), passed to the run as its `options` argument (the CLI's `--options`) and refused for every other mode (400). `routing` runs `gateway-thresholds`, `entity-extraction` and `profile` in one pod; `unified` runs those, then `workflow`. 400 for an unknown mode or optimizer.
 
 **GET /admin/tenant/{tenant_id}/optimize/runs** — List the tenant's optimization Workflows from Argo, newest first. Query param `limit` (1–100, default 20) caps the response. Response: `{runs: [{workflow_name, mode, trigger, phase, started_at, finished_at}, ...]}`.
 
@@ -1497,6 +1499,26 @@ The orchestrator records each workflow as a `cogniverse.orchestration` span in t
 **GET /admin/tenant/{tenant_id}/evaluation/datasets** — The evaluation datasets the tenant owns (`DatasetStore.describe_datasets` filtered by owner; other tenants' and unowned datasets are never listed), newest first: `{phoenix_url, datasets: [{id, name, example_count, created_at, description}, ...]}`. `phoenix_url` is the runtime's `PHOENIX_UI_URL` (chart value `phoenix.uiUrl`), the address a browser opens the Phoenix UI at, or `null` when unset. **502** `dataset_store_unavailable` when the store cannot list; **503** `telemetry_unconfigured` when no provider can be built.
 
 **GET /admin/tenant/{tenant_id}/evaluation/dataset?dataset_id=&lookback_hours=** — The tenant's `search_service.search` spans over the last `lookback_hours` (1–2160, default 168), scored against the expected sources of its dataset `dataset_id` (`recorded_searches.dataset_golden_rows`) as `/evaluation/golden` scores them, plus `dataset: {id, name, example_count, created_at, description}`. **404** when the tenant owns no such dataset; **502** `dataset_store_unavailable` or `telemetry_unavailable` when a read fails.
+
+**Optimization framework** (`libs/runtime/cogniverse_runtime/routers/optimization_framework.py`). Reads cover the tenant's telemetry project; a failed read answers **502** `telemetry_unavailable`, one not answered within 60 s **504** `telemetry_timeout` (the store is slow, not empty).
+
+**GET /admin/tenant/{tenant_id}/search-annotations?lookback_hours=** (1–168, default 24) — The tenant's `search_service.search` spans, newest first: `{searches: [{span_id, trace_id, start_time, query, results (top 5 source titles), profile, strategy, latency_ms, annotation: {label, score, annotation_type, notes} | null}]}`.
+
+**POST /admin/tenant/{tenant_id}/search-annotations/{span_id}** — `{kind: thumbs|stars|relevance, value, notes}` records the search's `search_quality_annotation` (thumbs 0/1, stars 1–5 scored `value/5`, relevance 0–1; label `positive` from 0.6, `negative` up to 0.4, else `neutral`). **400** for a value outside its scale, **404** for a span that is not one of the tenant's searches.
+
+**GET /admin/tenant/{tenant_id}/search-annotations/count?lookback_days=** (1–90, default 30) — `{lookback_days, annotated_searches}`.
+
+**POST /admin/tenant/{tenant_id}/golden-dataset** — `{min_rating (0–1, default 0.8), lookback_days (1–90, default 30)}`: every annotated search whose mean score reaches `min_rating` contributes its query and its top five results keyed by `result_source_title_key`, each scored by reciprocal rank: `{dataset: {query: {expected_videos, relevance_scores, avg_relevance, profile, timestamp}}, untitled_results}`.
+
+**GET /admin/tenant/{tenant_id}/synthetic/settings** — `{confidence_threshold, sampling_strategies, optimizers: [{name, description, schema_name, agent_type, backend_query_strategy}]}`.
+
+**GET /admin/tenant/{tenant_id}/optimize/runs/{workflow_name}/synthetic** — A synthetic run's results: `{workflow_name, phase, settled, status, parameters, outcomes: [{optimizer, status, error, batch_id, schema_name, selected_profiles, profile_selection_reasoning, generation_time_ms, examples_generated, auto_approved, pending_review, avg_confidence, items: [{item_id, status, confidence, query, reasoning, entities, schema_name, retry_count, generation_metadata, data}]}]}`. The outcome is the document the run's optimizer pod printed (Argo's `outputs.result`); its batches are read from the approval store. **400** for a run of another mode; **502** for a settled run without an outcome, a batch the store does not hold, or an unreachable store (`approval_store_unavailable`).
+
+**GET /admin/tenant/{tenant_id}/datasets** — The tenant's telemetry datasets (named `<name>-<tenant>`), newest first: `{datasets: [{name, examples, created_at, description}]}`. **POST** the same path with multipart `name` and a CSV `file` (`query`, comma-separated `expected_videos`, optional `category`) creates `<name>-<tenant>`: `{name, dataset_id, examples}`; **400** for a CSV that cannot become one.
+
+**GET /admin/tenant/{tenant_id}/profile-selection/analysis?lookback_days=** — Search spans (name contains `search`) of the window: `{lookback_days, search_spans, columns, profile_usage, quality, profile_quality}`. **POST .../profile-selection/train** `{lookback_days}` trains `ProfilePerformanceOptimizer` (XGBoost) on them and stores the model in the tenant's artifact store (`model/profile_performance_xgboost`, XGBoost JSON): `{train_accuracy, test_accuracy, samples, features, profiles, feature_importance}`; **422** when the spans cannot train it. **GET .../profile-selection/model** — `{trained, profiles}`. **POST .../profile-selection/predict** `{query}` — `{profile, confidence, features}`; **404** without a stored model.
+
+**GET /admin/tenant/{tenant_id}/optimization-metrics?lookback_days=** (1–90, default 7) — `{lookback_days, spans, routing: {accuracy, total_decisions, avg_latency_ms, confidence_calibration, per_agent: [{agent, precision, recall, f1}]} | null, evaluation: {spans, queries}, training: [{date, runs}]}`, from `RoutingEvaluator` and the spans whose names match `eval|ndcg` and `train|optim`.
 
 **GET /admin/tenant/{tenant_id}/embeddings/atlas?profile=&limit=** — A 2D map of up to `limit` (1–2000, default 500) of the tenant's documents under `profile`, in Vespa's visit order (`routers/embedding_atlas.py`): each document's stored embedding (the schema's first float tensor field; a multi-vector one pooled to the mean of its vectors) placed on the set's first two principal axes, each axis oriented so its largest loading is positive. `{tenant_id, profile, schema_name, embedding_field, dimensions, explained_variance: [across, up], without_embedding, points: [{id, x, y, title, text}]}`, with `text` cut to 280 characters. **404** for an unknown profile or a schema not deployed for the tenant; **422** for a schema with no float embedding field; **502** `embedding_export_failed` when Vespa cannot be read and `embedding_unreadable` for a tensor the route does not read.
 

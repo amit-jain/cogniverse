@@ -534,6 +534,9 @@ class FirstPromoteStore(DatasetStore):
     async def delete_dataset(self, name):
         return self.data.pop(name, None) is not None
 
+    async def list_datasets(self):
+        return [{"name": name} for name in self.data]
+
 
 @pytest.mark.asyncio
 class TestFirstPromotionClearsSlot:

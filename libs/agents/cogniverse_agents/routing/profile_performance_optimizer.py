@@ -5,6 +5,7 @@ Learns which backend profile works best for different query types using XGBoost.
 Analyzes Phoenix evaluation data to build (query_features, profile, ndcg) training dataset.
 """
 
+import json
 import logging
 import pickle
 from dataclasses import dataclass
@@ -26,6 +27,16 @@ logger = logging.getLogger(__name__)
 # generous limit and warn when it's hit so a truncated sample is visible rather
 # than silently shrinking the training set.
 SPAN_QUERY_LIMIT = 50000
+
+# Names of the six query features, in ``QueryFeatures.to_array`` order.
+FEATURE_NAMES = (
+    "query_length",
+    "word_count",
+    "has_temporal_keywords",
+    "has_spatial_keywords",
+    "has_object_keywords",
+    "avg_word_length",
+)
 
 
 @dataclass
@@ -384,6 +395,48 @@ class ProfilePerformanceOptimizer:
             pickle.dump(self.label_encoder, f)
 
         logger.info(f"Model saved to {self.model_dir}")
+
+    def to_blob(self) -> str:
+        """The trained model and its profile names as one JSON document.
+
+        The classifier travels in XGBoost's own JSON model format, so a stored
+        model loads without unpickling anything.
+        """
+        if not self.is_trained or self.model is None or self.label_encoder is None:
+            raise RuntimeError("Cannot serialize an untrained model")
+        return json.dumps(
+            {
+                "model": self.model.get_booster().save_raw("json").decode(),
+                "profiles": self.label_encoder.classes_.tolist(),
+                "features": list(FEATURE_NAMES),
+            }
+        )
+
+    def load_blob(self, blob: str) -> None:
+        """Restore a model ``to_blob`` serialized.
+
+        Raises:
+            ValueError: The blob is not a serialized model of these features.
+        """
+        try:
+            document = json.loads(blob)
+            raw_model = document["model"]
+            profiles = document["profiles"]
+            features = document["features"]
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ValueError("Profile performance model blob is malformed") from exc
+        if features != list(FEATURE_NAMES):
+            raise ValueError(
+                f"Profile performance model was trained on features {features}, "
+                f"not {list(FEATURE_NAMES)}"
+            )
+        model = xgb.XGBClassifier()
+        model.load_model(bytearray(raw_model.encode()))
+        encoder = LabelEncoder()
+        encoder.classes_ = np.array(profiles)
+        self.model = model
+        self.label_encoder = encoder
+        self.is_trained = True
 
     def load(self) -> bool:
         """
