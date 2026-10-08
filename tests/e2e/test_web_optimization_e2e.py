@@ -16,23 +16,22 @@ from pathlib import Path
 
 import httpx
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import expect
 
 from cogniverse_core.approval.interfaces import approved_synthetic_dataset_name
-from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_synthetic.approval.uploads import upload_templates
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 from tests.e2e.cluster import RUNTIME, TENANT_ID
-from tests.e2e.tenants import register_tenant_and_wait, unique_id
+from tests.e2e.web_client import (
+    RUN_TIMEOUT_MS,
+    VIEW_TIMEOUT_MS,
+    choose_tenant,
+    minted_tenant,
+    open_view,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
 
-# The web server's NodePort on the host (E2E_HOST_PORTS).
-WEB = "http://localhost:33400"
-# A view renders after one runtime round trip; the report pays the model's
-# cold start and the runtime's own agent call gives up at 120s.
-VIEW_TIMEOUT_MS = 30_000
-RUN_TIMEOUT_MS = 300_000
 # Phoenix serves spans and annotations shortly after they are written.
 HISTORY_SETTLE_S = 120.0
 KILN = [
@@ -53,25 +52,6 @@ KILN = [
         "reasoning": "crazing follows from cooling through quartz inversion",
     },
 ]
-
-
-def open_view(page: Page, view: str, label: str) -> None:
-    page.goto(f"{WEB}/#/ops/{view}", timeout=VIEW_TIMEOUT_MS)
-    expect(page.get_by_role("heading", name=label, level=1)).to_be_visible(
-        timeout=VIEW_TIMEOUT_MS
-    )
-
-
-def choose_tenant(page: Page, tenant: str, action: str) -> None:
-    chooser = page.get_by_role("form", name="Choose tenant")
-    chooser.get_by_label("Tenant ID").fill(tenant)
-    chooser.get_by_role("button", name=action).click()
-
-
-def _minted_tenant(prefix: str) -> str:
-    tenant_id = canonical_tenant_id(unique_id(prefix))
-    register_tenant_and_wait(tenant_id, created_by="e2e")
-    return tenant_id
 
 
 def _approved_history(tenant_id: str, batch: str) -> list[dict]:
@@ -95,8 +75,8 @@ class TestTrainingExamples:
     def test_uploaded_examples_are_approved_and_listed_as_reviewed(
         self, page, tmp_path
     ):
-        tenant_id = _minted_tenant("webupload")
-        open_view(page, "optimization", "Optimization runs")
+        tenant_id = minted_tenant("webupload")
+        open_view(page, "optimization")
         choose_tenant(page, tenant_id, "Show runs")
         panel = page.get_by_role("region", name="Upload training examples")
         expect(panel.get_by_label("Template optimizer").locator("option")).to_have_text(
@@ -146,7 +126,7 @@ class TestTrainingExamples:
             for index, example in enumerate(KILN)
         ]
 
-        open_view(page, "approvals", "Approvals")
+        open_view(page, "approvals")
         choose_tenant(page, tenant_id, "Show review queue")
         page.get_by_role("navigation", name="Approval sections").get_by_role(
             "button", name="Approved", exact=True
@@ -172,7 +152,7 @@ class TestTrainingExamples:
 
 class TestOptimizationReport:
     def test_the_downloaded_report_is_the_one_the_page_shows(self, page):
-        open_view(page, "optimization", "Optimization runs")
+        open_view(page, "optimization")
         choose_tenant(page, TENANT_ID, "Show runs")
         panel = page.get_by_role("region", name="Optimization report")
         expect(panel.locator("p.muted").first).to_have_text(

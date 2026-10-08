@@ -45,7 +45,7 @@ from tests.e2e.sample_corpus import (
     _expected_sample_documents_fed,
     _sample_video_media_type,
 )
-from tests.e2e.tenants import register_tenant_and_wait, unique_id
+from tests.e2e.tenants import unique_id
 from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
 from tests.e2e.web_client import (
     OPS_VIEWS,
@@ -57,6 +57,7 @@ from tests.e2e.web_client import (
     choose_tenant,
     ensure_web_tenant_corpus,
     facts,
+    minted_tenant,
     open_agent,
     open_view,
     registered_agents,
@@ -65,12 +66,17 @@ from tests.e2e.web_client import (
     saved_turns,
     send,
     sse_events,
+    tenant_key,
     thread_of,
+    use_tenant,
     user_messages,
-    web_harness_key,
 )
 
 pytestmark = [pytest.mark.e2e, pytest.mark.browser]
+
+# The agent a conversation opens with when the address names none
+# (DEFAULT_AGENT in clients/web/src/client/App.tsx).
+DEFAULT_AGENT = "gateway_agent"
 
 # The Ingestion view follows the job the worker runs to a terminal state; the
 # worker extracts keyframes, transcribes and embeds the whole video first.
@@ -91,16 +97,10 @@ def web_corpus() -> str:
     return ensure_web_tenant_corpus()
 
 
-def _minted_tenant(prefix: str) -> str:
-    tenant_id = canonical_tenant_id(unique_id(prefix))
-    register_tenant_and_wait(tenant_id, created_by="e2e")
-    return tenant_id
-
-
 @pytest.fixture(scope="class")
 def class_tenant() -> str:
     """A registered tenant this class owns and tears down."""
-    return _minted_tenant("webe2e")
+    return minted_tenant("webe2e")
 
 
 def _wait_for_span_count(
@@ -178,11 +178,20 @@ class TestServingAndNavigation:
         expect(lists.nth(1).get_by_role("link")).to_have_text(
             [label for _, label in OPS_VIEWS]
         )
-        # With no agent named in the address, the first registered one opens.
-        expect(page.get_by_role("heading", level=1)).to_have_text(
-            agent_label(agents[0]), timeout=VIEW_TIMEOUT_MS
+        # No agent runs before a tenant is active.
+        expect(page.locator("main .notice")).to_have_text(
+            "Choose the active tenant in the sidebar before talking to an agent. "
+            "Agents run for that tenant only.",
+            timeout=VIEW_TIMEOUT_MS,
         )
-        assert thread_of(page, agents[0]) != ""
+        # With no agent named in the address, the gateway opens (the first
+        # registered agent on a runtime without it).
+        opened = DEFAULT_AGENT if DEFAULT_AGENT in agents else agents[0]
+        use_tenant(page, WEB_TENANT)
+        expect(page.get_by_role("heading", level=1)).to_have_text(
+            agent_label(opened), timeout=VIEW_TIMEOUT_MS
+        )
+        assert thread_of(page, opened) != ""
 
     def test_each_operations_view_opens_under_its_own_heading(self, page):
         page.goto(f"{WEB}/", timeout=VIEW_TIMEOUT_MS)
@@ -397,20 +406,21 @@ class TestAgUiStreaming:
     @staticmethod
     def _run(agent: str, text: str) -> tuple[str, list[dict]]:
         thread, run = f"web-e2e-{uuid.uuid4().hex}", f"run-{uuid.uuid4().hex}"
-        response = httpx.post(
-            f"{RUNTIME}/ag-ui/{agent}",
-            json={
-                "threadId": thread,
-                "runId": run,
-                "state": {},
-                "messages": [{"id": "u1", "role": "user", "content": text}],
-                "tools": [],
-                "context": [],
-                "forwardedProps": {},
-            },
-            headers={"Authorization": f"Bearer {web_harness_key()}"},
-            timeout=900.0,
-        )
+        with tenant_key(WEB_TENANT) as key:
+            response = httpx.post(
+                f"{RUNTIME}/ag-ui/{agent}",
+                json={
+                    "threadId": thread,
+                    "runId": run,
+                    "state": {},
+                    "messages": [{"id": "u1", "role": "user", "content": text}],
+                    "tools": [],
+                    "context": [],
+                    "forwardedProps": {},
+                },
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=900.0,
+            )
         assert response.status_code == 200, response.text[:500]
         events = sse_events(response.text)
         assert events[0] == {"type": "RUN_STARTED", "threadId": thread, "runId": run}
@@ -637,8 +647,8 @@ class TestConfigurationView:
         ).to_have_value("direct")
 
     def test_an_export_imports_under_the_chosen_tenant_only(self, page, tmp_path):
-        source = _minted_tenant("webcfgsrc")
-        destination = _minted_tenant("webcfgdst")
+        source = minted_tenant("webcfgsrc")
+        destination = minted_tenant("webcfgdst")
         decoy = canonical_tenant_id(unique_id("webcfgdecoy"))
         store = VespaConfigStore(
             backend_url="http://localhost", backend_port=VESPA_HTTP_PORT
@@ -726,7 +736,7 @@ class TestConfigurationView:
     def test_choosing_another_tenant_replaces_every_tenant_form(
         self, page, class_tenant
     ):
-        other = _minted_tenant("webcfgother")
+        other = minted_tenant("webcfgother")
         open_view(page, "config")
         choose_tenant(page, class_tenant, "Show configs")
         expect(
@@ -827,7 +837,7 @@ class TestMemoryView:
         assert [m["id"] for m in listing.json()["memories"]] == []
 
     def test_a_memory_stored_through_the_runtime_is_listed(self, page):
-        tenant_id = _minted_tenant("webmem")
+        tenant_id = minted_tenant("webmem")
         text = f"web e2e listed memory {uuid.uuid4().hex[:8]}"
         seed = httpx.post(
             f"{RUNTIME}/admin/tenant/{tenant_id}/memories",
@@ -852,7 +862,7 @@ class TestMemoryView:
 
 class TestIngestionView:
     def test_an_upload_is_followed_to_the_jobs_own_outcome(self, page):
-        tenant_id = _minted_tenant("webingest")
+        tenant_id = minted_tenant("webingest")
         with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
             _deploy_profile_for_tenant(client, PROFILE, tenant_id)
         media_type = _sample_video_media_type(SAMPLE_VIDEO_PATH)
@@ -941,8 +951,8 @@ class TestIngestionView:
         ).to_have_count(2)
 
     def test_the_upload_form_is_the_chosen_tenants(self, page):
-        first = _minted_tenant("webingesta")
-        second = _minted_tenant("webingestb")
+        first = minted_tenant("webingesta")
+        second = minted_tenant("webingestb")
         open_view(page, "ingestion")
         expect(page.get_by_role("form", name="Upload content")).to_have_count(0)
         choose_tenant(page, first, "Use tenant")
@@ -959,7 +969,7 @@ class TestIngestionView:
 
 class TestOptimizationRunsView:
     def test_a_started_run_is_listed_with_argos_phase(self, page):
-        tenant_id = _minted_tenant("webopt")
+        tenant_id = minted_tenant("webopt")
         mode = "gateway-thresholds"
         open_view(page, "optimization")
         choose_tenant(page, tenant_id, "Show runs")
@@ -1032,7 +1042,7 @@ class TestTelemetryViews:
     def test_profile_metrics_count_the_tenants_selections(
         self, page, phoenix_client_session
     ):
-        tenant_id = _minted_tenant("webprofile")
+        tenant_id = minted_tenant("webprofile")
         with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
             _deploy_profile_for_tenant(client, PROFILE, tenant_id)
         since = datetime.now(timezone.utc)
@@ -1063,7 +1073,7 @@ class TestTelemetryViews:
     def test_routing_evaluation_counts_the_tenants_decisions(
         self, page, phoenix_client_session
     ):
-        tenant_id = _minted_tenant("webrouting")
+        tenant_id = minted_tenant("webrouting")
         with httpx.Client(base_url=RUNTIME, timeout=TENANT_DEPLOY_TIMEOUT_S) as client:
             _deploy_profile_for_tenant(client, PROFILE, tenant_id)
         since = datetime.now(timezone.utc)

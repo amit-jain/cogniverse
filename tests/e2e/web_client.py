@@ -1,17 +1,19 @@
 """Drive the deployed web client (``clients/web``) from e2e tests.
 
 The web client's Node server runs in the cluster behind the ``web`` Service,
-published on the host at ``WEB``. It talks to the runtime with the chart's
-harness key, and the runtime maps that key to one tenant: every agent run the
-page starts is that tenant's. The operations views name their tenant
-explicitly, in each view's own chooser.
+published on the host at ``WEB``. Every view and agent acts for the page's
+active tenant, chosen in the sidebar or in a view's own chooser and checked
+with the runtime's tenant registry; the server runs an agent for that tenant
+with a harness key it mints for it.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import httpx
 import yaml
@@ -26,10 +28,8 @@ from tests.e2e.conftest import (
     _ensure_sample_content_ingested,
 )
 from tests.e2e.sample_corpus import _sample_video_media_type
+from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import PROFILE, _deploy_profile_for_tenant
-from tests.e2e.test_pi_harness_e2e import rendered_config
-
-CHART_VALUES = Path(K3S_VALUES).with_name("values.yaml")
 
 # A view renders after one runtime round trip; a search or an agent turn pays
 # the model's cold start (measured 49.7s cold against 1.8s warm), and the
@@ -46,6 +46,7 @@ OPS_VIEWS = (
     ("config", "Configuration"),
     ("ingestion", "Ingestion"),
     ("optimization", "Optimization runs"),
+    ("optimization-framework", "Optimization framework"),
     ("memory", "Memory"),
     ("approvals", "Approvals"),
     ("annotations", "Annotation queue"),
@@ -59,22 +60,11 @@ OPS_VIEWS = (
 )
 
 
-def web_harness_key() -> str:
-    """The harness key the deployed web server sends: the chart's
-    ``web.harnessKey``, as the k3s overlay leaves it."""
-    base = yaml.safe_load(CHART_VALUES.read_text())["web"]
-    overlay = yaml.safe_load(Path(K3S_VALUES).read_text()).get("web") or {}
-    key = overlay.get("harnessKey", base["harnessKey"])
-    assert isinstance(key, str) and key.strip(), (
-        f"{K3S_VALUES} deploys the web client without a harness key"
-    )
-    return key
-
-
 def web_tenant() -> str:
-    """The tenant the shipped config maps the web server's key to."""
-    keys = rendered_config()["harness"]["api_keys"]
-    return canonical_tenant_id(keys["$COGNIVERSE_HARNESS_API_KEY"])
+    """The deployment's own tenant: the first of the k3s overlay's
+    ``config.tenants``, which the chart registers at install."""
+    tenants = yaml.safe_load(Path(K3S_VALUES).read_text())["config"]["tenants"]
+    return canonical_tenant_id(tenants[0]["id"])
 
 
 WEB_TENANT = web_tenant()
@@ -99,6 +89,47 @@ def ensure_web_tenant_corpus() -> str:
     return content_id
 
 
+def minted_tenant(prefix: str) -> str:
+    """A newly registered tenant, canonical, named from ``prefix``."""
+    tenant_id = canonical_tenant_id(unique_id(prefix))
+    register_tenant_and_wait(tenant_id, created_by="e2e")
+    return tenant_id
+
+
+@contextmanager
+def tenant_key(tenant: str) -> Iterator[str]:
+    """A harness key minted for ``tenant`` through the runtime, as the web
+    server mints its own; revoked on exit."""
+    with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        minted = client.post(
+            "/admin/harness/keys", json={"tenant_id": tenant, "name": "web-e2e"}
+        )
+        assert minted.status_code == 200, minted.text
+        record = minted.json()
+        assert record["tenant_id"] == tenant, record
+        try:
+            yield record["key"]
+        finally:
+            revoked = client.delete(f"/admin/harness/keys/{record['key_hash']}")
+            assert revoked.status_code == 200, revoked.text
+
+
+def active_tenant(page: Page):
+    """The sidebar's line naming the page's active tenant."""
+    return page.get_by_role("region", name="Active tenant").locator("p.current-tenant")
+
+
+def use_tenant(page: Page, tenant: str) -> None:
+    """Make ``tenant`` the page's active tenant in the sidebar, once the
+    runtime's registry has confirmed it."""
+    form = page.get_by_role("form", name="Active tenant")
+    form.get_by_label("Active tenant").fill(tenant)
+    form.get_by_role("button", name="Use").click()
+    expect(active_tenant(page)).to_have_text(
+        f"Current tenant: {canonical_tenant_id(tenant)}", timeout=VIEW_TIMEOUT_MS
+    )
+
+
 def agent_label(name: str) -> str:
     """The client's display name for an agent (``agentLabel`` in api.ts)."""
     words = [word for word in re.sub(r"_agent$", "", name).split("_") if word]
@@ -112,10 +143,12 @@ def registered_agents() -> list[str]:
     return response.json()["agents"]
 
 
-def open_agent(page: Page, agent: str) -> str:
-    """Open ``agent``'s workspace; returns the thread the page opened."""
+def open_agent(page: Page, agent: str, tenant: str = WEB_TENANT) -> str:
+    """Open ``agent``'s workspace for ``tenant``; returns the thread the page
+    opened."""
     label = agent_label(agent)
     page.goto(f"{WEB}/#/agents/{agent}", timeout=VIEW_TIMEOUT_MS)
+    use_tenant(page, tenant)
     expect(page.get_by_role("heading", name=label, level=1)).to_be_visible(
         timeout=VIEW_TIMEOUT_MS
     )
@@ -148,13 +181,14 @@ def assistant_messages(page: Page):
     return page.get_by_test_id("copilot-assistant-message")
 
 
-def saved_turns(thread: str) -> dict:
-    """The web tenant's saved turns of ``thread``, read back from the runtime."""
-    response = httpx.get(
-        f"{RUNTIME}/ag-ui/threads/{thread}",
-        headers={"Authorization": f"Bearer {web_harness_key()}"},
-        timeout=60.0,
-    )
+def saved_turns(thread: str, tenant: str = WEB_TENANT) -> dict:
+    """``tenant``'s saved turns of ``thread``, read back from the runtime."""
+    with tenant_key(tenant) as key:
+        response = httpx.get(
+            f"{RUNTIME}/ag-ui/threads/{thread}",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=60.0,
+        )
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -264,10 +298,14 @@ def open_view(page: Page, view: str) -> None:
 
 
 def choose_tenant(page: Page, tenant: str, action: str) -> None:
-    """Pick ``tenant`` in the open view's tenant chooser."""
+    """Pick ``tenant`` in the open view's tenant chooser; it becomes the
+    page's active tenant once the runtime's registry confirms it."""
     chooser = page.get_by_role("form", name="Choose tenant")
     chooser.get_by_label("Tenant ID").fill(tenant)
     chooser.get_by_role("button", name=action).click()
+    expect(active_tenant(page)).to_have_text(
+        f"Current tenant: {canonical_tenant_id(tenant)}", timeout=VIEW_TIMEOUT_MS
+    )
 
 
 def facts(region) -> dict[str, str]:

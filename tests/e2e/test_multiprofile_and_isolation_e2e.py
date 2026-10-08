@@ -41,6 +41,7 @@ from tests.e2e.web_client import (
     VIEW_TIMEOUT_MS,
     choose_tenant,
     ensure_web_tenant_corpus,
+    minted_tenant,
     open_agent,
     open_view,
     result_cards,
@@ -430,7 +431,8 @@ class TestMultiProfileWebUI:
         """Choosing another tenant replaces every panel of the previous one."""
         from playwright.sync_api import expect
 
-        other = canonical_tenant_id(unique_id("isoview"))
+        # The views act for a registered tenant only.
+        other = minted_tenant("isoview")
         open_view(page, "memory")
         choose_tenant(page, TENANT_ID, "Show memories")
         expect(
