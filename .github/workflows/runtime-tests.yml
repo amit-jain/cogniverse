@@ -253,6 +253,7 @@ jobs:
         # The browser suites run in web-ops-integration-tests.
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/runtime/integration/ \
+          --ignore=tests/runtime/integration/test_ag_ui_threads.py \
           --ignore=tests/runtime/integration/test_web_client_ag_ui.py \
           --ignore=tests/runtime/integration/test_web_ops_annotations.py \
           --ignore=tests/runtime/integration/test_web_ops_approvals.py \
@@ -342,6 +343,7 @@ jobs:
       timeout-minutes: 20
       run: |
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_ag_ui_threads.py \
           tests/runtime/integration/test_web_client_ag_ui.py \
           tests/runtime/integration/test_web_ops_annotations.py \
           tests/runtime/integration/test_web_ops_approvals.py \

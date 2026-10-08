@@ -13,6 +13,8 @@ server's loop against ``REDIS_URL``, as a worker pod runs it.
 
 ``serve_token_embedder`` answers the OpenAI ``/v1/embeddings`` contract the
 memory store's DenseOn client speaks, for hosts that cannot fetch DenseOn.
+``memory_on_vespa`` builds a Mem0 manager per tenant on real Vespa behind a
+fault proxy, embedding with it.
 """
 
 from __future__ import annotations
@@ -26,13 +28,16 @@ import threading
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Awaitable, Callable, Iterator, Optional
+from pathlib import Path
+from typing import Awaitable, Callable, Dict, Iterable, Iterator, Optional, Tuple
 
 from fastapi import FastAPI
 
 from cogniverse_agents.routing.annotation_queue import AnnotationQueue
+from cogniverse_core.memory.manager import Mem0MemoryManager, affirm_memory_profile
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.admin import tenant_manager as tm
 from cogniverse_runtime.cluster_events import ClusterEvents
 from cogniverse_runtime.ingestion_worker import status_api
@@ -52,6 +57,8 @@ from cogniverse_runtime.routers import (
 )
 from cogniverse_runtime.shared_state import connect_shared_state_redis
 from cogniverse_runtime.task_events import TaskEventStore
+from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.vespa_test_helpers import deploy_tenant_schema
 from tests.utils.web_client import serve_app
 
 
@@ -228,3 +235,48 @@ def serve_token_embedder() -> Iterator[str]:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@contextmanager
+def memory_on_vespa(
+    vespa_instance: dict, config_manager, tenants: Iterable[str]
+) -> Iterator[Tuple[Dict[str, Mem0MemoryManager], InterceptFaultProxy]]:
+    """A Mem0 manager per tenant on real Vespa, reached through a fault proxy
+    and embedding with ``serve_token_embedder``; yields the managers by tenant
+    and the proxy."""
+    tenants = list(tenants)
+    affirm_memory_profile(config_manager)
+    with (
+        InterceptFaultProxy(vespa_instance["base_url"]) as proxy,
+        serve_token_embedder() as embedder_url,
+    ):
+        endpoints = dict(vespa_instance, http_port=proxy.port)
+        managers = {}
+        for tenant_id in tenants:
+            Mem0MemoryManager._instances.pop(tenant_id, None)
+            deploy_tenant_schema(
+                endpoints,
+                tenant_id=tenant_id,
+                base_schema_name="agent_memories",
+                config_manager=config_manager,
+            )
+            manager = Mem0MemoryManager(tenant_id)
+            manager.initialize(
+                backend_host="http://127.0.0.1",
+                backend_port=proxy.port,
+                backend_config_port=vespa_instance["config_port"],
+                base_schema_name="agent_memories",
+                llm_model="memory-test-unused",
+                embedding_model="lightonai/DenseOn",
+                llm_base_url="http://127.0.0.1:9",
+                embedder_base_url=embedder_url,
+                auto_create_schema=False,
+                config_manager=config_manager,
+                schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            )
+            managers[tenant_id] = manager
+        try:
+            yield managers, proxy
+        finally:
+            for tenant_id in tenants:
+                Mem0MemoryManager._instances.pop(tenant_id, None)

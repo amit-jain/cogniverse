@@ -35,10 +35,14 @@ from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentO
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_PERSIST_FAILURE_CAPACITY,
+    CONVERSATION_SAVE_LEASE_S,
+    AgentDispatcher,
+)
 from cogniverse_runtime.config_loader import ConfigLoader
 from cogniverse_runtime.routers import ag_ui, agents, openai_compat
-from cogniverse_runtime.session_state import ContinuationStore
+from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
 from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.memory_store import InMemoryConfigStore
 from tests.utils.node_env import node_env
@@ -297,8 +301,12 @@ def live_runtime(session_state_lifespan):
     dispatcher = AgentDispatcher(
         agent_registry=registry, config_manager=config_manager, schema_loader=None
     )
+    # No conversation memory is configured: each run's turn takes its place in
+    # the ledger and is not stored.
+    dispatcher._conversation_store_factory = lambda tenant_id: None
 
     app = FastAPI(lifespan=session_state_lifespan)
+    app.state.dispatcher = dispatcher
     app.include_router(ag_ui.router, prefix="/ag-ui")
     app.include_router(agents.router, prefix="/agents")
     agents.set_agent_registry(registry)
@@ -317,17 +325,28 @@ def live_runtime(session_state_lifespan):
 
 @pytest.fixture(scope="module")
 def session_state_lifespan(workflow_state_redis_url):
-    """A lifespan opening the continuation store on the server's own loop."""
+    """A lifespan opening the continuation store and the app's dispatcher's
+    conversation ledger on the server's own loop."""
 
     @asynccontextmanager
-    async def lifespan(_app):
+    async def lifespan(app):
         redis = await connect_shared_state_redis(workflow_state_redis_url)
+        prefix = f"test:web:{uuid.uuid4().hex}"
         openai_compat.set_continuation_store(
-            ContinuationStore(redis, key_prefix=f"test:web:{uuid.uuid4().hex}")
+            ContinuationStore(redis, key_prefix=prefix)
+        )
+        app.state.dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                redis,
+                save_lease_s=CONVERSATION_SAVE_LEASE_S,
+                failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
+                key_prefix=f"{prefix}:conversation",
+            )
         )
         try:
             yield
         finally:
+            app.state.dispatcher.set_conversation_ledger(None)
             openai_compat.set_continuation_store(None)
             await redis.aclose()
 
