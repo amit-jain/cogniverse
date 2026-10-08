@@ -901,6 +901,17 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
         mock_cm = MagicMock()
         mock_cm.get_system_config.return_value = _stub_sys_cfg
         mock_cm.get_config.return_value = {}
+        # Planning reads the tenant's servable profiles before the (patched)
+        # plan is made: a tenant with none stored and none deployed.
+        from tests.utils.memory_store import (
+            InMemoryConfigStore,
+            serve_listed_profiles_as_backend_config,
+        )
+
+        mock_cm.list_backend_profiles.return_value = {}
+        serve_listed_profiles_as_backend_config(mock_cm)
+        mock_cm.store = InMemoryConfigStore()
+        mock_cm.store.initialize()
 
         agent = OrchestratorAgent(
             deps=OrchestratorDeps(),

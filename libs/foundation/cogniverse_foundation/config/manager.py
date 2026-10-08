@@ -5,10 +5,12 @@ Provides unified interface for all configuration operations with caching.
 
 import copy
 import logging
+import threading
+import weakref
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, ClassVar, Dict, List, Optional
 
 from cogniverse_foundation.caching.refreshing_cache import RefreshingCache
 from cogniverse_foundation.common.tenant_utils import (
@@ -71,6 +73,11 @@ class ConfigManager:
     - Persisted through a pluggable ConfigStore (default: VespaConfigStore)
     - Held in memory and refreshed off the reading thread
     """
+
+    # Every manager in this process, so a write another process made can be
+    # dropped from all of them (``forget_held_backend_configs``).
+    _live: ClassVar["weakref.WeakSet[ConfigManager]"] = weakref.WeakSet()
+    _live_lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(
         self,
@@ -138,6 +145,9 @@ class ConfigManager:
             max_staleness_s=scoped_config_max_staleness_s,
             max_entries=SCOPED_CONFIG_MAX_ENTRIES,
         )
+
+        with ConfigManager._live_lock:
+            ConfigManager._live.add(self)
 
         logger.info("ConfigManager initialized with %s", type(self.store).__name__)
 
@@ -1036,3 +1046,19 @@ class ConfigManager:
             Dictionary with statistics
         """
         return self.store.get_stats()
+
+
+def forget_held_backend_configs(tenant_id: str) -> int:
+    """Drop the tenant's backend config from every ConfigManager in this
+    process; the number of managers.
+
+    A manager's own profile writes drop what it holds at once; this is how a
+    write made in another process reaches this one before the staleness
+    bound (the runtime runs it on every worker through its cluster events).
+    """
+    tenant_id = require_tenant_id(tenant_id, source="forget_held_backend_configs")
+    with ConfigManager._live_lock:
+        managers = list(ConfigManager._live)
+    for manager in managers:
+        manager._invalidate_scoped_config(ConfigScope.BACKEND, tenant_id)
+    return len(managers)

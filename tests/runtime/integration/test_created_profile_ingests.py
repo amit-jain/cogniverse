@@ -23,7 +23,10 @@ from cogniverse_runtime.routers import admin
 from tests.utils.profile_payload import profile_create_payload
 from tests.utils.pylate_stub import serve_pylate_stub, token_vector
 
-pytestmark = [pytest.mark.integration]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("profile_change_events"),
+]
 
 TEMPLATE = "document_text_semantic"
 TEXT = "Glaciers carve valleys over thousands of years"

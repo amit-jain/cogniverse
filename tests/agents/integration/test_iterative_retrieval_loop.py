@@ -44,6 +44,7 @@ from cogniverse_agents.orchestrator_agent import (
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_runtime.harness_turn import extract_answer_text
 from tests.fixtures.llm import (
     resolve_api_key,
     resolve_base_url,
@@ -284,6 +285,19 @@ def captured_spans():
 # ---------------------------------------------------------------------------
 
 
+def _peer_envelope(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The envelope the runtime's process route answers for a search: its
+    message, its hits and the answer it stamps from them."""
+    envelope = {
+        "status": "success",
+        "agent": "search_agent",
+        "message": f"Found {len(results)} results",
+        "results": results,
+    }
+    envelope["answer"] = extract_answer_text(envelope)
+    return envelope
+
+
 class _IterRetrievalPeer:
     """Per-iteration scripted peer for the search_agent + kg_traversal_agent.
 
@@ -317,14 +331,7 @@ class _IterRetrievalPeer:
                     ]
                 else:
                     results = []
-                return httpx.Response(
-                    200,
-                    json={
-                        "status": "success",
-                        "agent": "search_agent",
-                        "results": results,
-                    },
-                )
+                return httpx.Response(200, json=_peer_envelope(results))
 
             if "kg_traversal" in url or "traverse" in url:
                 self.kg_calls += 1

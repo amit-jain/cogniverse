@@ -28,7 +28,11 @@ from cogniverse_runtime.routers import admin, wiki
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.http_fault_proxy import HTTPFaultProxy
 
-pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.no_shared_vespa,
+    pytest.mark.usefixtures("profile_change_events"),
+]
 
 
 @pytest.fixture

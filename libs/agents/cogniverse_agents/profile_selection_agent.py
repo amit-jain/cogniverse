@@ -91,7 +91,15 @@ class ProfileServability:
 def tenant_profile_servability(
     config_manager: Any, tenant_id: str
 ) -> List[ProfileServability]:
-    """Every configured profile with its servability state, in selection order.
+    """The tenant's profiles with their servability state, in selection order.
+
+    The tenant's profiles are the ones it stored and, for each schema it has
+    deployed that none of those reads, the search profiles of its catalog
+    (shipped and system profiles) declaring that schema: registration deploys
+    the built-in video profile's schema without storing that profile. A schema
+    a stored profile reads belongs to the tenant's own profiles, whose encoder
+    wrote its documents. Each profile carries its catalog definition (stored
+    overrides on top), as search and ingestion resolve it.
 
     A profile is servable only when its embedding service resolves to a URL AND
     the tenant's schema for it is deployed; the two failures are separate
@@ -102,28 +110,48 @@ def tenant_profile_servability(
     from cogniverse_core.registries.schema_registry import (
         tenant_deployed_schema_names,
     )
+    from cogniverse_foundation.config.utils import ConfigUtils
 
     tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
-    tenant_profiles = config_manager.list_backend_profiles(tenant_id)
+    stored = config_manager.list_backend_profiles(tenant_id)
     system_config = config_manager.get_system_config()
     service_urls = getattr(system_config, "inference_service_urls", None)
-    if not isinstance(tenant_profiles, dict) or not isinstance(service_urls, dict):
+    if not isinstance(stored, dict) or not isinstance(service_urls, dict):
         raise TypeError(
             "ConfigManager must expose dict backend profiles and dict "
             "inference_service_urls"
         )
+    catalog = {
+        name: (profile, profile.to_dict())
+        for name, profile in ConfigUtils(tenant_id, config_manager)
+        .backend_profiles()
+        .items()
+    }
     deployed = tenant_deployed_schema_names(config_manager, tenant_id)
+    claimed = {
+        profile_base_schema_name(name, data)
+        for name, (_, data) in catalog.items()
+        if name in stored
+    }
+
+    def _is_tenant_profile(name: str, data: Dict[str, Any]) -> bool:
+        if name in stored:
+            return True
+        schema = profile_base_schema_name(name, data)
+        return (
+            str(data.get("type") or "").lower() in _PROFILE_TYPE_ORDER
+            and schema in deployed
+            and schema not in claimed
+        )
 
     rows = [
         ProfileServability(
-            name=profile_name,
+            name=name,
             profile=profile,
-            state=profile_servability(
-                profile_name, profile.to_dict(), service_urls, deployed
-            ),
+            state=profile_servability(name, data, service_urls, deployed),
         )
-        for profile_name, profile in tenant_profiles.items()
-        if isinstance(profile, BackendProfileConfig)
+        for name, (profile, data) in catalog.items()
+        if _is_tenant_profile(name, data)
     ]
 
     def _sort_key(row: ProfileServability) -> tuple[int, str]:
@@ -445,7 +473,8 @@ class ProfileSelectionAgent(
         """
         query = input.query
         if not query:
-            profiles = self._resolve_candidate_profiles(input)
+            # Config-store and schema-registry reads: off the serving loop.
+            profiles = await asyncio.to_thread(self._resolve_candidate_profiles, input)
 
             return ProfileSelectionOutput(
                 query="",
@@ -458,7 +487,7 @@ class ProfileSelectionAgent(
                 alternatives=[],
             )
 
-        profiles = self._resolve_candidate_profiles(input)
+        profiles = await asyncio.to_thread(self._resolve_candidate_profiles, input)
 
         # Feed memory-enriched prompt to the LM but keep the caller's
         # original query for response/telemetry — otherwise tenant
@@ -554,7 +583,7 @@ class ProfileSelectionAgent(
     ) -> str:
         """Return the canonical type declared by the selected live profile."""
         tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
-        profile = self.config_manager.get_backend_profile(selected_profile, tenant_id)
+        profile = self._tenant_profile_catalog(tenant_id).get(selected_profile)
         if profile is None:
             raise ValueError(
                 f"Selected profile {selected_profile!r} is not configured for "
@@ -620,16 +649,25 @@ class ProfileSelectionAgent(
     ) -> Dict[str, str]:
         """Map each candidate to the type its tenant configuration declares.
 
-        Candidates the tenant has not configured are left out.
+        Candidates the tenant's catalog does not hold are left out.
         """
+        catalog = self._tenant_profile_catalog(tenant_id)
+        return {
+            name: catalog[name].type
+            for name in profiles
+            if name in catalog and catalog[name].type
+        }
+
+    def _tenant_profile_catalog(
+        self, tenant_id: str | None
+    ) -> Dict[str, BackendProfileConfig]:
+        """The tenant's profiles as search resolves them: the catalog with its
+        stored profiles merged on top, which holds every candidate
+        ``tenant_usable_profile_names`` offers."""
+        from cogniverse_foundation.config.utils import ConfigUtils
+
         tenant_id = require_tenant_id(tenant_id, source="ProfileSelectionInput")
-        config_manager = self.config_manager
-        types: Dict[str, str] = {}
-        for profile_name in profiles:
-            profile = config_manager.get_backend_profile(profile_name, tenant_id)
-            if profile is not None and profile.type:
-                types[profile_name] = profile.type
-        return types
+        return ConfigUtils(tenant_id, self.config_manager).backend_profiles()
 
     def _generate_alternatives(
         self,

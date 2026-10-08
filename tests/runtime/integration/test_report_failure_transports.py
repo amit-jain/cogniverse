@@ -884,7 +884,9 @@ async def test_report_failure_is_an_unsuccessful_orchestrator_child(
     scored_outcomes: list[dict[str, Any]] = []
 
     class PreparedOrchestrator(OrchestratorAgent):
-        async def _create_plan(self, query, conversation_context, gateway_context):
+        async def _create_plan(
+            self, query, conversation_context, gateway_context, *, available_agents
+        ):
             return OrchestrationPlan(
                 query=query,
                 reasoning="report required",

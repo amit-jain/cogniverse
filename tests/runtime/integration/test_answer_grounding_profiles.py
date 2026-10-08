@@ -49,6 +49,7 @@ from cogniverse_runtime.agent_dispatcher import (
     GroundingPlan,
     dispatched_query_rewrite_budget_s,
 )
+from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.memory_store import register_deployed_schema
 from tests.utils.vespa_docker import VespaDockerManager
@@ -281,6 +282,230 @@ class TestGroundingProfilesComeFromTheTenant:
         assert plan.modalities == ("document",)
         assert plan.profiles == tuple(DOCUMENT_PROFILES)
         assert plan.undeployed_profiles == ()
+
+
+BUILT_IN_VIDEO_PROFILE = "video_colpali_smol500_mv_frame"
+AUDIO_QUERY = "summarize the audio recordings about robotics"
+
+
+def _registered_tenant(config_manager: ConfigManager, label: str) -> str:
+    """A tenant as registration leaves it: no stored profile, the built-in
+    video schema and the memory and provenance schemas deployed."""
+    from cogniverse_runtime.admin.tenant_manager import TENANT_BASE_SCHEMAS
+
+    tenant_id = f"grounding_{label}_{uuid.uuid4().hex[:8]}"
+    for base_schema_name in TENANT_BASE_SCHEMAS:
+        register_deployed_schema(config_manager, tenant_id, base_schema_name)
+    return tenant_id
+
+
+@pytest.fixture(scope="module")
+def registered_config_manager(grounding_vespa):
+    """The system tenant carries the memory profile startup affirms, whose
+    schema every registered tenant has deployed."""
+    from cogniverse_core.memory.manager import affirm_memory_profile
+
+    config_manager = _build_config_manager(grounding_vespa["http_port"])
+    affirm_memory_profile(config_manager)
+    return config_manager
+
+
+@pytest.mark.asyncio
+class TestBuiltInProfilesTheTenantDeployedAreServed:
+    """A registered tenant serves the built-in video profile its registration
+    deployed, with or without profiles of its own."""
+
+    async def test_a_registered_tenant_grounds_a_video_query_on_the_built_in_profile(
+        self, registered_config_manager
+    ):
+        tenant_id = _registered_tenant(registered_config_manager, "fresh")
+
+        plan = await _dispatcher(registered_config_manager)._grounding_plan(
+            VIDEO_QUERY, tenant_id, {}, None
+        )
+
+        assert plan == GroundingPlan(
+            ("video",), (BUILT_IN_VIDEO_PROFILE,), GROUNDING_SEARCHED
+        )
+
+    async def test_adding_a_document_profile_keeps_the_built_in_video_profile(
+        self, registered_config_manager
+    ):
+        tenant_id = _registered_tenant(registered_config_manager, "withdoc")
+        document_profile = _profile(DOCUMENT_PROFILES[0])
+        registered_config_manager.add_backend_profile(
+            document_profile, tenant_id=tenant_id
+        )
+        register_deployed_schema(
+            registered_config_manager, tenant_id, document_profile.schema_name
+        )
+        dispatcher = _dispatcher(registered_config_manager)
+
+        video_plan = await dispatcher._grounding_plan(VIDEO_QUERY, tenant_id, {}, None)
+        document_plan = await dispatcher._grounding_plan(
+            DOCUMENT_QUERY, tenant_id, {}, None
+        )
+
+        assert video_plan == GroundingPlan(
+            ("video",), (BUILT_IN_VIDEO_PROFILE,), GROUNDING_SEARCHED
+        )
+        assert document_plan == GroundingPlan(
+            ("document",), (DOCUMENT_PROFILES[0],), GROUNDING_SEARCHED
+        )
+
+    async def test_a_modality_the_tenant_never_deployed_is_not_served(
+        self, registered_config_manager
+    ):
+        """Shipped audio profiles the tenant never deployed are not its
+        profiles: the answer is that it serves no audio, not a list of
+        deployments it supposedly owes."""
+        tenant_id = _registered_tenant(registered_config_manager, "noaudio")
+
+        plan = await _dispatcher(registered_config_manager)._grounding_plan(
+            AUDIO_QUERY, tenant_id, {}, None
+        )
+
+        assert plan == GroundingPlan(("audio",), (), GROUNDING_NO_PROFILE_FOR_MODALITY)
+
+    async def test_profile_selection_offers_exactly_the_deployed_built_in_profile(
+        self, registered_config_manager
+    ):
+        """The memory schema is deployed too, but the memory profile is not a
+        search profile."""
+        from cogniverse_agents.profile_selection_agent import (
+            tenant_usable_profile_names,
+        )
+
+        tenant_id = _registered_tenant(registered_config_manager, "selection")
+
+        assert await asyncio.to_thread(
+            tenant_usable_profile_names, registered_config_manager, tenant_id
+        ) == [BUILT_IN_VIDEO_PROFILE]
+
+    async def test_a_stored_profile_on_the_built_in_schema_owns_that_schema(
+        self, registered_config_manager
+    ):
+        """The tenant's own profile wrote the schema's documents with its own
+        encoder, so the built-in profile declaring the same schema is not
+        offered beside it."""
+        from cogniverse_agents.profile_selection_agent import (
+            tenant_usable_profile_names,
+        )
+
+        tenant_id = _registered_tenant(registered_config_manager, "claimed")
+        registered_config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(
+                "tenant_video", _SHIPPED_PROFILE_DATA[BUILT_IN_VIDEO_PROFILE]
+            ),
+            tenant_id=tenant_id,
+        )
+
+        assert await asyncio.to_thread(
+            tenant_usable_profile_names, registered_config_manager, tenant_id
+        ) == ["tenant_video"]
+
+    async def test_a_tenant_override_of_a_built_in_profile_is_served_merged(
+        self, registered_config_manager
+    ):
+        """A stored override names only what it changes; the served profile
+        is the shipped one with the override on top, as search resolves it."""
+        from cogniverse_agents.profile_selection_agent import (
+            servable_tenant_profiles,
+        )
+
+        tenant_id = _registered_tenant(registered_config_manager, "override")
+        registered_config_manager.add_backend_profile(
+            BackendProfileConfig(
+                profile_name=BUILT_IN_VIDEO_PROFILE,
+                description="tenant override",
+            ),
+            tenant_id=tenant_id,
+        )
+
+        served = await asyncio.to_thread(
+            servable_tenant_profiles, registered_config_manager, tenant_id
+        )
+
+        assert [name for name, _ in served] == [BUILT_IN_VIDEO_PROFILE]
+        profile = served[0][1]
+        shipped = _SHIPPED_PROFILE_DATA[BUILT_IN_VIDEO_PROFILE]
+        assert (
+            profile.description,
+            profile.schema_name,
+            profile.embedding_model,
+            profile.to_dict()["inference_services"],
+        ) == (
+            "tenant override",
+            shipped["schema_name"],
+            shipped["embedding_model"],
+            shipped["inference_services"],
+        )
+
+    async def test_concurrent_resolutions_across_tenants_never_bleed(
+        self, registered_config_manager
+    ):
+        """Twenty resolutions on worker threads, released together, for a
+        registered tenant and one that also stored a document profile: each
+        returns exactly its own tenant's profiles."""
+        from cogniverse_agents.profile_selection_agent import (
+            tenant_usable_profile_names,
+        )
+
+        fresh = _registered_tenant(registered_config_manager, "bleed_fresh")
+        with_document = _registered_tenant(registered_config_manager, "bleed_doc")
+        document_profile = _profile(DOCUMENT_PROFILES[0])
+        registered_config_manager.add_backend_profile(
+            document_profile, tenant_id=with_document
+        )
+        register_deployed_schema(
+            registered_config_manager, with_document, document_profile.schema_name
+        )
+        tenants = [fresh, with_document] * 10
+        barrier = threading.Barrier(len(tenants))
+
+        def resolve(tenant_id: str) -> list[str]:
+            barrier.wait()
+            return tenant_usable_profile_names(registered_config_manager, tenant_id)
+
+        answers = await asyncio.gather(
+            *(asyncio.to_thread(resolve, tenant_id) for tenant_id in tenants)
+        )
+
+        assert (
+            answers
+            == [
+                [BUILT_IN_VIDEO_PROFILE],
+                [BUILT_IN_VIDEO_PROFILE, DOCUMENT_PROFILES[0]],
+            ]
+            * 10
+        )
+
+    async def test_a_paused_config_store_raises_for_a_registered_tenant(
+        self, grounding_vespa, registered_config_manager
+    ):
+        """A tenant with no stored profile reads its catalog and its deployed
+        schemas from the store; an outage raises instead of reading as a
+        tenant with nothing to serve."""
+        from cogniverse_agents.profile_selection_agent import (
+            tenant_usable_profile_names,
+        )
+
+        tenant_id = _registered_tenant(registered_config_manager, "outage")
+        cold = _build_config_manager(grounding_vespa["http_port"])
+        subprocess.run(
+            ["docker", "pause", grounding_vespa["container_name"]], check=True
+        )
+        try:
+            with pytest.raises(ConfigStoreUnavailableError):
+                await asyncio.to_thread(tenant_usable_profile_names, cold, tenant_id)
+        finally:
+            subprocess.run(
+                ["docker", "unpause", grounding_vespa["container_name"]], check=True
+            )
+
+        assert await asyncio.to_thread(
+            tenant_usable_profile_names, cold, tenant_id
+        ) == [BUILT_IN_VIDEO_PROFILE]
 
 
 @pytest.mark.asyncio

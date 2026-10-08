@@ -13,7 +13,10 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from cogniverse_foundation.caching import refreshing_cache as refreshing_cache_module
-from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.manager import (
+    ConfigManager,
+    forget_held_backend_configs,
+)
 from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
     RoutingConfigUnified,
@@ -461,6 +464,70 @@ def test_profile_read_modify_write_never_drops_another_managers_write():
         "second_by_a",
         "written_by_a",
     ]
+
+
+def test_forgetting_a_tenants_backend_config_reaches_every_manager_of_the_process():
+    """Two managers hold a tenant's profiles from before a write another
+    process made; one call drops them from both, and only for that tenant."""
+    store = InMemoryConfigStore()
+    held_a = ConfigManager(store=store)
+    held_b = ConfigManager(store=store)
+    for manager in (held_a, held_b):
+        assert manager.list_backend_profiles("acme") == {}
+        assert manager.list_backend_profiles("globex") == {}
+    store.set_config(
+        tenant_id="acme:acme",
+        scope=ConfigScope.BACKEND,
+        service="backend",
+        config_key="backend_config",
+        config_value={"tenant_id": "acme:acme", "profiles": {"written": {}}},
+    )
+    store.set_config(
+        tenant_id="globex:globex",
+        scope=ConfigScope.BACKEND,
+        service="backend",
+        config_key="backend_config",
+        config_value={"tenant_id": "globex:globex", "profiles": {"other": {}}},
+    )
+
+    forget_held_backend_configs("acme")
+
+    assert [sorted(m.list_backend_profiles("acme")) for m in (held_a, held_b)] == [
+        ["written"],
+        ["written"],
+    ]
+    # globex was not forgotten: both managers still serve what they held.
+    assert [m.list_backend_profiles("globex") for m in (held_a, held_b)] == [{}, {}]
+
+
+def test_a_read_in_flight_across_the_forget_is_not_held():
+    """A store read that captured the tenant's profiles before another
+    process's write, and finishes after the tenant was forgotten, answers its
+    own caller only: the manager's next read serves the write."""
+    store = _CoordinatedConfigStore()
+    manager = ConfigManager(store=store)
+    store.block_next_get = True
+    answers = []
+    reader = threading.Thread(
+        target=lambda: answers.append(manager.list_backend_profiles("acme"))
+    )
+    reader.start()
+    assert store.read_captured.wait(timeout=5)
+    InMemoryConfigStore.set_config(
+        store,
+        tenant_id="acme:acme",
+        scope=ConfigScope.BACKEND,
+        service="backend",
+        config_key="backend_config",
+        config_value={"tenant_id": "acme:acme", "profiles": {"written": {}}},
+    )
+    forget_held_backend_configs("acme")
+    store.release_read.set()
+    reader.join(timeout=5)
+
+    assert reader.is_alive() is False
+    assert answers == [{}]
+    assert sorted(manager.list_backend_profiles("acme")) == ["written"]
 
 
 def test_a_profile_write_that_finds_it_stored_serves_the_stored_config():

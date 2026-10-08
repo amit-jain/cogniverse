@@ -735,8 +735,12 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
         """
         self.telemetry_manager = telemetry_manager
 
-    def _process_span(self, typed_input: Any) -> ContextManager[Any]:
+    def process_span(self, typed_input: Any) -> ContextManager[Any]:
         """Return a context manager that wraps ``_process_impl`` in a span.
+
+        A caller that runs an agent's work through another of its methods
+        (the summarizer's ``summarize``) wraps that call in it, so the run is
+        traced under the same span as ``process``.
 
         Span name is ``f"{ClassName}.process"`` so QualityMonitor and other
         consumers can look up an agent's processing span by class name. The
@@ -1048,7 +1052,7 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
         if stream:
             return self._stream_with_progress(typed_input)
 
-        with self._process_span(typed_input):
+        with self.process_span(typed_input):
             result = await self._process_impl(typed_input)
 
         if self._output_rails:
@@ -1097,7 +1101,7 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
 
         async def _run_impl():
             try:
-                with self._process_span(input):
+                with self.process_span(input):
                     result = await self._process_impl(input)
                 result_holder.append(result)
             except Exception as e:

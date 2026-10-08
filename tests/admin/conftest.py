@@ -94,3 +94,10 @@ def _admin_singleton_reset_between_tests():
         tenant_manager._schema_loader = None
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _profile_change_channel(profile_change_events):
+    """Profile writes publish to every runtime worker; these tests serve the
+    routes from this process, wired as the runtime's lifespan wires them."""
+    return profile_change_events

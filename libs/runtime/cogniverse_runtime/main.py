@@ -1829,8 +1829,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("SIGUSR1 hot-reload not available in this loop: %s", exc)
         app.state.sigusr1_registered = False
 
-    # Tenant deletes, tier sets and session closes reach every worker process
-    # and replica through Redis, and each waits for every worker to act on it.
+    # Tenant deletes, tier sets, profile changes and session closes reach every
+    # worker process and replica through Redis, and each waits for every worker
+    # to act on it.
     from cogniverse_runtime.cluster_events import ClusterEvents
 
     cluster_events = ClusterEvents(
@@ -1839,6 +1840,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         {
             "tenant_deleted": tenant_manager.release_deleted_tenant,
             "tenant_tier_set": tenant_manager.release_tenant_tier,
+            "backend_profiles_changed": admin.release_backend_profiles,
             "session_closed": admin.sweep_closed_session,
         },
     )

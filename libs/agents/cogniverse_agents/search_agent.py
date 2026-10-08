@@ -60,63 +60,11 @@ from cogniverse_foundation.telemetry.span_contract import (
     QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
     QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
     QUERY_ENHANCEMENT_PATH_LM,
+    current_span_id,
+    record_search_io_on_current_span,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _current_span_id() -> Optional[str]:
-    """16-hex id of the active telemetry span, or None when none is active
-    (telemetry disabled → invalid/NoOp span). Stamped onto SearchOutput so a
-    client can attach result_click / result_relevance annotations to this exact
-    search span for embedding-triplet mining. Must be read on the coroutine's
-    own thread — a worker thread spawned by ``to_thread`` does not carry the
-    span contextvar.
-    """
-    try:
-        from opentelemetry import trace as _otel_trace
-
-        ctx = _otel_trace.get_current_span().get_span_context()
-        if ctx and ctx.is_valid:
-            return f"{ctx.span_id:016x}"
-    except Exception:
-        pass
-    return None
-
-
-def _stamp_search_io_on_span(query: str, results: list, modality: str) -> None:
-    """Record the query, modality, and full result set (with content) on the
-    active ``SearchAgent.process`` span as ``input.value`` / ``modality`` /
-    ``output.value``.
-
-    This is the span whose id is on ``SearchOutput.span_id`` and that clients
-    annotate with relevance, so the embedding triplet miner reads the anchor
-    (query), the modality filter, the candidates (results), and the relevance
-    annotation from one span. Modality rides on a plain ``modality`` attribute,
-    not ``input.modality`` — Phoenix folds the OpenInference ``input.*`` object
-    into the ``input.value`` scalar and drops sibling ``input.*`` sub-keys.
-    """
-    try:
-        from opentelemetry import trace as _otel_trace
-
-        from cogniverse_foundation.telemetry.span_contract import (
-            OP_SEARCH,
-            record_span_io,
-            search_result_row,
-        )
-
-        span = _otel_trace.get_current_span()
-        if not (span and span.get_span_context().is_valid):
-            return
-        record_span_io(
-            span,
-            input_value=query,
-            output=[search_result_row(r) for r in results],
-            operation=OP_SEARCH,
-            modality=modality,
-        )
-    except Exception:
-        pass
 
 
 class EncoderCapabilityError(Exception):
@@ -2250,7 +2198,7 @@ class SearchAgent(
         # inside the to_thread search calls, which don't carry the span
         # contextvar. Surfaced on SearchOutput so a client can annotate this
         # exact search (result_click / result_relevance) for triplet mining.
-        search_span_id = _current_span_id()
+        search_span_id = current_span_id()
         _STAGE_TIMINGS.set({})
 
         search_mode = "single_profile"
@@ -2402,7 +2350,7 @@ class SearchAgent(
                     "rlm_error": str(e),
                 }
 
-        _stamp_search_io_on_span(query, results, modality)
+        record_search_io_on_current_span(query, results, modality)
         _stamp_stage_timings_on_span()
         return SearchOutput(
             query=query,

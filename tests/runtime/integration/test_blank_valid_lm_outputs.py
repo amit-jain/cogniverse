@@ -340,7 +340,8 @@ async def test_blank_parallel_steps_plan_runs_every_step_in_sequence(
     orchestrator = await dispatcher._get_or_build_orchestrator(TENANTS[0])
     plan = await orchestrator._create_plan(
         "Look for security incident briefings and summarize the remediation "
-        "steps case:plan"
+        "steps case:plan",
+        available_agents=orchestrator.registry.list_agents(),
     )
     assert provider.cases == ["plan"]
     assert [

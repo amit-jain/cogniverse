@@ -1,6 +1,5 @@
 """Profile selection query intent contract tests."""
 
-from types import SimpleNamespace
 from typing import Literal, get_args, get_origin
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -18,6 +17,7 @@ from cogniverse_agents.profile_selection_agent import (
 from cogniverse_core.approval.training_schema import PROFILE_TRAINING_MODALITIES
 from cogniverse_synthetic.schemas import ProfileSelectionExampleSchema
 from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
+from tests.utils.memory_store import store_profile_types
 from tests.utils.vespa_test_helpers import shipped_profile
 
 EXPECTED_PROFILE_QUERY_INTENTS = (
@@ -105,9 +105,7 @@ def _build_agent(
         )
     agent.telemetry_manager = RecordingTelemetryManager()
     agent._config_manager = Mock()
-    agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
-        type=modality
-    )
+    store_profile_types(agent._config_manager, {"video_profile": modality})
     agent.call_dspy = AsyncMock(
         return_value=dspy.Prediction(
             selected_profile="video_profile",

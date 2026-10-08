@@ -2785,6 +2785,9 @@ class AgentDispatcher:
         agent = agent_cls(deps=deps_cls(**deps_kwargs), **collaborators)
         if agent._config_manager is None:
             agent.bind_config_manager(self._config_manager)
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        agent.telemetry_manager = get_telemetry_manager()
         return agent, typed_input_from_context(
             input_cls, query=query, tenant_id=tenant_id, context=context
         )
@@ -2920,10 +2923,15 @@ class AgentDispatcher:
         the agent resolves its LM endpoint and builds its DSPy modules. Callers
         on the event loop run it in a worker thread.
         """
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
         deps = deps_cls(
             tenant_id=tenant_id, **self._agent_behavior_kwargs(tenant_id, agent_name)
         )
-        return agent_cls(deps=deps, config_manager=self._config_manager)
+        agent = agent_cls(deps=deps, config_manager=self._config_manager)
+        # Each run is traced in the agent's process span.
+        agent.telemetry_manager = get_telemetry_manager()
+        return agent
 
     def _agent_behavior_kwargs(self, tenant_id: str, agent_name: str) -> Dict[str, Any]:
         """Per-tenant thinking/visual toggles for an answer agent's Deps.
@@ -3748,6 +3756,7 @@ class AgentDispatcher:
         from cogniverse_agents.summarizer_agent import (
             SummarizerAgent,
             SummarizerDeps,
+            SummarizerInput,
             SummaryRequest,
         )
 
@@ -3784,7 +3793,8 @@ class AgentDispatcher:
             search_results=grounding.hits,
             **request_kwargs,
         )
-        result = await agent.summarize(request)
+        with agent.process_span(SummarizerInput(query=query, tenant_id=tenant_id)):
+            result = await agent.summarize(request)
 
         return {
             "status": "success",
@@ -4095,7 +4105,9 @@ class AgentDispatcher:
         from cogniverse_agents.document_agent import (
             DocumentAgent,
             DocumentAgentDeps,
+            DocumentSearchInput,
         )
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
         from cogniverse_runtime.admin.tenant_manager import get_backend
 
         # Tenant schemas deploy on first ingest, so a tenant that ingested
@@ -4116,19 +4128,25 @@ class AgentDispatcher:
             deployed_document_schemas=tuple(deployed_document_schemas),
         )
         agent = DocumentAgent(deps=deps)
+        # The search runs in the agent's process span, whose id the envelope
+        # carries so a client can rate the hits.
+        agent.telemetry_manager = get_telemetry_manager()
         await asyncio.to_thread(
             self._init_agent_memory, agent, "document_agent", tenant_id
         )
 
-        results = await agent.search_documents(query=query, limit=top_k)
+        output = await agent.process(
+            DocumentSearchInput(query=query, limit=top_k, tenant_id=tenant_id)
+        )
 
-        result_list = [r.model_dump() for r in results]
+        result_list = [r.model_dump() for r in output.results]
         return {
             "status": "success",
             "agent": "document_agent",
             "message": f"Found {len(result_list)} documents for '{query}'",
             "results_count": len(result_list),
             "results": result_list,
+            "span_id": output.span_id,
         }
 
     async def _execute_deep_research_task(
@@ -4165,6 +4183,11 @@ class AgentDispatcher:
                 agent = DeepResearchAgent(
                     deps=deps, search_fn=search_fn, config_manager=self._config_manager
                 )
+                from cogniverse_foundation.telemetry.manager import (
+                    get_telemetry_manager,
+                )
+
+                agent.telemetry_manager = get_telemetry_manager()
                 await asyncio.to_thread(
                     self._init_agent_memory, agent, "deep_research_agent", tenant_id
                 )

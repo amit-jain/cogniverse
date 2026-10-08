@@ -10,6 +10,7 @@ search.
 """
 
 import asyncio
+import contextlib
 import json
 import threading
 import time
@@ -49,6 +50,7 @@ from cogniverse_runtime.agent_dispatcher import (
 from tests.utils.memory_store import (
     InMemoryConfigStore,
     register_deployed_schema,
+    serve_listed_profiles_as_backend_config,
 )
 
 
@@ -147,6 +149,7 @@ def _config_manager(
         ]
     for base_schema_name in deployed:
         register_deployed_schema(config_manager, "acme:acme", base_schema_name)
+    serve_listed_profiles_as_backend_config(config_manager)
     return config_manager
 
 
@@ -201,7 +204,19 @@ class _CaptureAgent:
 
     async def summarize(self, request):
         _CaptureAgent.captured["request"] = request
+        _CaptureAgent.captured["span_open_during_summarize"] = (
+            _CaptureAgent.captured.get("span_open", False)
+        )
         return _FakeReport()
+
+    @contextlib.contextmanager
+    def process_span(self, typed_input):
+        _CaptureAgent.captured["span_input"] = typed_input
+        _CaptureAgent.captured["span_open"] = True
+        try:
+            yield
+        finally:
+            _CaptureAgent.captured["span_open"] = False
 
 
 class _SearchAgentStub(RealSearchAgent):
@@ -477,6 +492,12 @@ class TestAnswerTasksFeedSearchedResults:
         assert _CaptureAgent.captured["request"].search_results == [
             _flatten_search_hit(h) for h in hits
         ]
+        # The summary runs inside the agent's process span, for its tenant.
+        assert _CaptureAgent.captured["span_open_during_summarize"] is True
+        assert (
+            _CaptureAgent.captured["span_input"].query,
+            _CaptureAgent.captured["span_input"].tenant_id,
+        ) == ("q", "acme:acme")
 
     async def test_detailed_report_task_prefers_threaded_context_hits(
         self, dispatcher, monkeypatch

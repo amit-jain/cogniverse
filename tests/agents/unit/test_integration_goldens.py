@@ -40,6 +40,7 @@ from cogniverse_agents.graph.graph_schema import (
     ExtractionResult,
     normalize_name,
 )
+from cogniverse_agents.orchestrator_agent import _step_answer_text
 from cogniverse_foundation.config.unified_config import SystemConfig
 
 pytestmark = [pytest.mark.unit]
@@ -458,10 +459,6 @@ def check_cross_modal(root: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _peer_response(results: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"status": "success", "agent": "search_agent", "results": results}
-
-
 def check_iter_loop(root: Path) -> None:
     seg3 = iter_loop._marie_curie_30s_seg3()
     seg4 = iter_loop._marie_curie_30s_seg4()
@@ -478,11 +475,16 @@ def check_iter_loop(root: Path) -> None:
         "iter_loop_trajectory_iter2.json",
         sorted([seg3, seg4, sorbonne], key=_order),
     )
+    # The orchestrator's answer for a lone search step is that step's answer.
     _assert_text_golden_equals(
-        root, "iter_loop_answer.txt", str(_peer_response([seg3, seg4, sorbonne]))
+        root,
+        "iter_loop_answer.txt",
+        _step_answer_text(iter_loop._peer_envelope([seg3, seg4, sorbonne])),
     )
     _assert_text_golden_equals(
-        root, "iter_loop_answer_budget_breach.txt", str(_peer_response([seg3]))
+        root,
+        "iter_loop_answer_budget_breach.txt",
+        _step_answer_text(iter_loop._peer_envelope([seg3])),
     )
 
 
@@ -878,8 +880,8 @@ MUTATIONS: list[tuple[str, str, Callable[[Path], None], str]] = [
         "iter_loop",
         _rewrite_text(
             "iter_loop_answer_budget_breach.txt",
-            "'status': 'success'",
-            "'status': 'partial'",
+            "Found 1 results",
+            "Found 2 results",
         ),
         r"iter_loop_answer_budget_breach.txt: recording differs",
     ),
