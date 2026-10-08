@@ -4,14 +4,18 @@
 {{- end -}}
 {{- if .Values.initJobs.schemaDeployment.enabled -}}
 {{- $attemptSeconds := 580 -}}
+{{- /* Each tenant costs two runtime calls, each bounded by one deploy attempt: the tenant create (it activates the tenant's base schemas in one deploy) and the profile deploy. */ -}}
+{{- $callsPerTenant := 2 -}}
 {{- $retries := int .Values.initJobs.schemaDeployment.backoffLimit -}}
 {{- $probe := .Values.runtime.startupProbe | default dict -}}
 {{- $runtimeStart := add ($probe.initialDelaySeconds | default 0) (mul ($probe.periodSeconds | default 10) ($probe.failureThreshold | default 3)) -}}
 {{- /* restartPolicy OnFailure retries in place: each retry waits out the kubelet's crash-loop backoff, capped at 300 s. */ -}}
-{{- $deadline := add $runtimeStart (mul (add $retries 1) (len .Values.config.tenants) $attemptSeconds) (mul $retries 300) -}}
+{{- $deadline := add $runtimeStart (mul (add $retries 1) (len .Values.config.tenants) $callsPerTenant $attemptSeconds) (mul $retries 300) -}}
 ---
 # Schema Deployment Job
-# Waits for runtime to be healthy, then deploys data schemas via runtime API.
+# Waits for runtime to be healthy, then registers each config.tenants entry
+# (POST /admin/tenants, which deploys the tenant's base schemas) and deploys
+# config.defaultProfiles.video for it via the runtime API.
 # Runtime deploys metadata schemas at startup — this job handles data schemas.
 apiVersion: batch/v1
 kind: Job
@@ -56,8 +60,19 @@ spec:
             done
             echo "Runtime is healthy!"
 
-            {{- with $profile := .Values.config.defaultProfiles.video }}
-            {{- range $tenant := $.Values.config.tenants }}
+            {{- range $tenant := .Values.config.tenants }}
+            echo "=== Registering tenant: {{ $tenant.id }} ==="
+            RESPONSE=$(curl -sS --max-time {{ $attemptSeconds }} -w ' HTTP_STATUS=%{http_code}' -X POST "$RUNTIME_URL/admin/tenants" \
+              -H "Content-Type: application/json" \
+              -d '{"tenant_id": "{{ $tenant.id }}", "created_by": "helm:{{ $.Chart.Name }}"}')
+            STATUS="${RESPONSE##* HTTP_STATUS=}"
+            echo "  Response ($STATUS): ${RESPONSE% HTTP_STATUS=*}"
+            case "$STATUS" in
+              200|201) echo "  Registered tenant {{ $tenant.id }}" ;;
+              409) echo "  Tenant {{ $tenant.id }} is already registered" ;;
+              *) echo "Tenant registration failed for tenant {{ $tenant.id }}"; exit 1 ;;
+            esac
+            {{- with $profile := $.Values.config.defaultProfiles.video }}
             echo "=== Deploying schemas for tenant: {{ $tenant.id }} ==="
             echo "  Deploying profile: {{ $profile }}"
             RESPONSE=$(curl -sSf --max-time {{ $attemptSeconds }} -X POST "$RUNTIME_URL/admin/profiles/{{ $profile }}/deploy" \

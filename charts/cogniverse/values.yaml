@@ -1831,8 +1831,10 @@ config:
 # Init Jobs
 # ===========================================
 initJobs:
-  # Schema deployment job — deploys config.defaultProfiles.video for each
-  # config.tenants entry through the runtime API; no selection deploys none.
+  # Schema deployment job — registers each config.tenants entry
+  # (POST /admin/tenants; 409 already registered proceeds) and deploys
+  # config.defaultProfiles.video for it through the runtime API; no selection
+  # deploys no profile.
   schemaDeployment:
     enabled: true
     resources:

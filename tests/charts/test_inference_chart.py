@@ -1179,6 +1179,40 @@ def _schema_deployment_calls(docs: list[dict]) -> list[tuple[str, str]]:
     )
 
 
+_CHART_TENANT_CREATOR = "helm:cogniverse"
+
+
+def _tenant_registration_calls(docs: list[dict]) -> list[tuple[str, str]]:
+    """(tenant, created_by) for each tenant the schema-deployment job registers."""
+    job = _schema_deployment_job(docs)
+    script = job["spec"]["template"]["spec"]["containers"][0]["command"][-1]
+    return re.findall(
+        r'/admin/tenants" \\\n.*\n\s*-d \'\{"tenant_id": "([^"]+)", '
+        r'"created_by": "([^"]+)"\}\'',
+        script,
+    )
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        _cli_values_stack("cpu", use_k3d=True),
+        _cli_values_stack("rocm", use_k3d=True, serving=LLM_SERVING_MODAL),
+    ],
+    ids=["cli-k3d-cpu", "cli-k3d-rocm-modal"],
+)
+def test_schema_deployment_job_registers_every_chart_tenant(values: tuple[str, ...]):
+    """The chart's own tenants are registered whether or not a video profile
+    is selected: the web client and uploads refuse an unregistered tenant."""
+    assert _tenant_registration_calls(_render(values=values)) == [
+        ("default", _CHART_TENANT_CREATOR)
+    ]
+    assert _tenant_registration_calls(_schema_deployment_docs()) == [
+        ("acme", _CHART_TENANT_CREATOR),
+        ("beta", _CHART_TENANT_CREATOR),
+    ]
+
+
 @pytest.mark.parametrize(
     ("values", "set_args", "expected"),
     [
@@ -1270,7 +1304,8 @@ def _schema_deployment_script() -> str:
 # convergence wait after the lease, and a margin for the reads around them.
 # A longer deploy is not lost: the Job retries, a retry meeting the live
 # holder answers "failed" within the lease wait, and ingestion deploys a
-# missing schema on first use.
+# missing schema on first use. A tenant create activates the tenant's base
+# schemas in one such deploy, so it gets the same bound.
 _ATTEMPT_MARGIN_SECONDS = 30
 _ATTEMPT_SECONDS = (
     DEFAULT_WAIT_SECONDS
@@ -1283,6 +1318,9 @@ _ATTEMPT_SECONDS = (
 # delay before each retry is the kubelet's crash-loop backoff, capped at five
 # minutes.
 _MAX_RETRY_DELAY_SECONDS = 300
+
+# Each tenant costs a create (POST /admin/tenants) and a profile deploy.
+_CALLS_PER_TENANT = 2
 
 
 def _runtime_startup_budget(docs: list[dict]) -> int:
@@ -1299,14 +1337,31 @@ def _runtime_startup_budget(docs: list[dict]) -> int:
     )
 
 
-def test_each_deploy_call_is_bounded_by_one_deploy_attempt():
+def test_each_runtime_call_is_bounded_by_one_deploy_attempt():
     script = _schema_deployment_script()
-    timeouts = re.findall(r"--max-time (\d+) -X POST \"\$RUNTIME_URL/admin/", script)
+    calls = [
+        (
+            int(max_time.group(1))
+            if (max_time := re.search(r"--max-time (\d+) ", line))
+            else None,
+            path,
+        )
+        for line, path in re.findall(
+            r"^(.*-X POST \"\$RUNTIME_URL(/admin/[^\"]+)\".*)$",
+            script,
+            re.MULTILINE,
+        )
+    ]
 
     assert _ATTEMPT_SECONDS == 580
-    assert [int(value) for value in timeouts] == [_ATTEMPT_SECONDS] * len(
-        _SCHEMA_JOB_TENANTS
-    ), script
+    assert calls == [
+        (_ATTEMPT_SECONDS, path)
+        for tenant in _SCHEMA_JOB_TENANTS
+        for path in (
+            "/admin/tenants",
+            f"/admin/profiles/{_SELECTED_VIDEO_PROFILE}/deploy",
+        )
+    ], script
 
 
 @pytest.mark.parametrize(
@@ -1322,14 +1377,15 @@ def test_the_job_deadline_covers_runtime_start_every_attempt_and_retry_delays(
     set_args: tuple[str, ...], tenants: tuple[str, ...]
 ):
     """The Job's absolute ceiling: the runtime's startup budget, every
-    attempt's deploy calls, and the retry delays between attempts."""
+    attempt's tenant creates and deploy calls, and the retry delays between
+    attempts."""
     docs = _schema_deployment_docs(*set_args, tenants=tenants)
     spec = _schema_deployment_job(docs)["spec"]
     retries = spec["backoffLimit"]
 
     assert spec["activeDeadlineSeconds"] == (
         _runtime_startup_budget(docs)
-        + (retries + 1) * len(tenants) * _ATTEMPT_SECONDS
+        + (retries + 1) * len(tenants) * _CALLS_PER_TENANT * _ATTEMPT_SECONDS
         + retries * _MAX_RETRY_DELAY_SECONDS
     )
 
@@ -1373,22 +1429,35 @@ def test_chart_validation_fires_on_the_sources_the_schema_job_tests_import():
 
 
 @contextlib.contextmanager
-def _deploy_endpoint(outcomes: dict[str, str | int]):
-    """The runtime's deploy route answering each tenant with a fixed outcome:
-    a ``deployment_status`` string, or an HTTP error status."""
+def _deploy_endpoint(
+    outcomes: dict[str, str | int], registrations: dict[str, int] | None = None
+):
+    """The runtime's tenant-create and deploy routes. A create answers each
+    tenant with a fixed HTTP status (200 when unnamed); a deploy with a fixed
+    outcome: a ``deployment_status`` string, or an HTTP error status. Both
+    record each request, in arrival order."""
     app = FastAPI()
     requests: list[tuple[str, dict]] = []
+    registrations = registrations or {}
 
     @app.get("/health")
     def health() -> dict:
         return {"status": "healthy"}
+
+    @app.post("/admin/tenants")
+    def create_tenant(body: dict = Body(...)) -> dict:
+        requests.append(("/admin/tenants", body))
+        status = registrations.get(body["tenant_id"], 200)
+        if status != 200:
+            raise HTTPException(status_code=status, detail=f"create error {status}")
+        return {"tenant_full_id": f"{body['tenant_id']}:{body['tenant_id']}"}
 
     @app.post(
         "/admin/profiles/{profile_name}/deploy",
         response_model=SchemaDeploymentResponse,
     )
     def deploy(profile_name: str, body: dict = Body(...)) -> SchemaDeploymentResponse:
-        requests.append((profile_name, body))
+        requests.append((f"/admin/profiles/{profile_name}/deploy", body))
         outcome = outcomes[body["tenant_id"]]
         if isinstance(outcome, int):
             raise HTTPException(status_code=outcome, detail="deploy error")
@@ -1460,12 +1529,145 @@ def test_schema_deployment_job_fails_unless_every_tenant_is_deployed(
 
     assert result.returncode == exit_code, result.stdout + result.stderr
     assert requests == [
-        (_SELECTED_VIDEO_PROFILE, {"tenant_id": tenant, "force": False})
-        for tenant in attempted
+        call for tenant in attempted for call in (_register(tenant), _deploy(tenant))
     ]
     assert ("Schema deployment completed!" in result.stdout) is (exit_code == 0), (
         result.stdout
     )
+
+
+def _register(tenant: str) -> tuple[str, dict]:
+    return (
+        "/admin/tenants",
+        {"tenant_id": tenant, "created_by": _CHART_TENANT_CREATOR},
+    )
+
+
+def _deploy(tenant: str) -> tuple[str, dict]:
+    return (
+        f"/admin/profiles/{_SELECTED_VIDEO_PROFILE}/deploy",
+        {"tenant_id": tenant, "force": False},
+    )
+
+
+def _run_hook(script: str, url: str) -> subprocess.CompletedProcess:
+    assert script.count(_RUNTIME_URL_LINE) == 1, script
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name.lower() not in {"http_proxy", "https_proxy", "all_proxy"}
+    }
+    return subprocess.run(
+        ["/bin/sh", "-c", script.replace(_RUNTIME_URL_LINE, f'RUNTIME_URL="{url}"')],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("registrations", "exit_code", "requests_made", "lines"),
+    [
+        (
+            {"acme": 200, "beta": 200},
+            0,
+            [_register("acme"), _deploy("acme"), _register("beta"), _deploy("beta")],
+            [
+                "=== Registering tenant: acme ===",
+                '  Response (200): {"tenant_full_id":"acme:acme"}',
+                "  Registered tenant acme",
+                "=== Registering tenant: beta ===",
+                '  Response (200): {"tenant_full_id":"beta:beta"}',
+                "  Registered tenant beta",
+            ],
+        ),
+        (
+            {"acme": 409, "beta": 200},
+            0,
+            [_register("acme"), _deploy("acme"), _register("beta"), _deploy("beta")],
+            [
+                '  Response (409): {"detail":"create error 409"}',
+                "  Tenant acme is already registered",
+                "  Registered tenant beta",
+            ],
+        ),
+        (
+            {"acme": 500, "beta": 200},
+            1,
+            [_register("acme")],
+            [
+                '  Response (500): {"detail":"create error 500"}',
+                "Tenant registration failed for tenant acme",
+            ],
+        ),
+        (
+            {"acme": 200, "beta": 503},
+            1,
+            [_register("acme"), _deploy("acme"), _register("beta")],
+            [
+                "  Registered tenant acme",
+                '  Response (503): {"detail":"create error 503"}',
+                "Tenant registration failed for tenant beta",
+            ],
+        ),
+        (
+            {"acme": 400, "beta": 200},
+            1,
+            [_register("acme")],
+            [
+                '  Response (400): {"detail":"create error 400"}',
+                "Tenant registration failed for tenant acme",
+            ],
+        ),
+    ],
+    ids=[
+        "created",
+        "already-registered",
+        "server-error",
+        "second-unavailable",
+        "rejected",
+    ],
+)
+def test_schema_deployment_job_registers_each_tenant_before_deploying_it(
+    registrations: dict, exit_code: int, requests_made: list, lines: list[str]
+):
+    """A create answering 200 or 409 (already registered) proceeds to the
+    tenant's profile deploy; any other status prints the answer and fails the
+    attempt so the Job's backoffLimit retries it."""
+    with _deploy_endpoint(
+        {"acme": "success", "beta": "already_deployed"}, registrations
+    ) as (url, requests):
+        result = _run_hook(_schema_deployment_script(), url)
+
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert requests == requests_made
+    stdout_lines = result.stdout.splitlines()
+    assert [line for line in lines if line not in stdout_lines] == [], result.stdout
+    assert ("Schema deployment completed!" in result.stdout) is (exit_code == 0), (
+        result.stdout
+    )
+
+
+def test_schema_deployment_job_registers_tenants_when_no_video_profile_is_selected():
+    """With no video profile the Job still registers every chart tenant and
+    deploys nothing."""
+    docs = _render(
+        "config.tenants[0].id=acme",
+        "config.tenants[1].id=beta",
+        values=_cli_values_stack("cpu", use_k3d=True),
+    )
+    script = _schema_deployment_job(docs)["spec"]["template"]["spec"]["containers"][0][
+        "command"
+    ][-1]
+
+    with _deploy_endpoint({}, {"beta": 409}) as (url, requests):
+        result = _run_hook(script, url)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert requests == [_register("acme"), _register("beta")]
+    assert result.stdout.rstrip().endswith("Schema deployment completed!")
 
 
 def _is_rocm(dep: dict) -> bool:
