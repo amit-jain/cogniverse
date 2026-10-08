@@ -56,7 +56,10 @@ from cogniverse_core.registries.backend_registry import (
     leased_backend,
 )
 from cogniverse_foundation.config.utils import get_config
-from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.manager import (
+    configure_telemetry_endpoints,
+    get_telemetry_manager,
+)
 
 # Import routers
 from cogniverse_runtime.admin import tenant_manager
@@ -823,7 +826,10 @@ def _configure_library_module_defaults(
     configure_memory_manager_tenant_cache_capacity(tenant_cache_capacity)
     configure_backend_registry_tenant_cache_capacity(tenant_cache_capacity)
     configure_entry_point_registry_tenant_cache_capacity(tenant_cache_capacity)
-    get_telemetry_manager(config_manager, otlp_endpoint=telemetry_otlp_endpoint)
+    configure_telemetry_endpoints(
+        otlp_endpoint=telemetry_otlp_endpoint, http_endpoint=telemetry_http_endpoint
+    )
+    get_telemetry_manager(config_manager)
 
 
 WIKI_MANAGER_CACHE_CAPACITY = 64

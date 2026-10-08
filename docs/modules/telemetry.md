@@ -969,7 +969,7 @@ Get the global telemetry manager instance. On first call, loads config from Conf
 On first call this also applies a `TELEMETRY_OTLP_ENDPOINT` env var override (set by the Helm chart in k3d deployments) if present and different from the loaded config's `otlp_endpoint`, clearing cached tenant providers/tracers so the new endpoint takes effect.
 
 #### `configure_telemetry_endpoints(*, otlp_endpoint, http_endpoint) -> None` (module function)
-Records the Phoenix endpoints a deployment names for the process, for entrypoints that must not build the manager eagerly (`cogniverse-eval` passes `TELEMETRY_OTLP_ENDPOINT` / `TELEMETRY_HTTP_ENDPOINT`). They are applied to the singleton when it is built, or at once to one already built; `None` leaves the stored config's value. `otlp_endpoint` sets `config.otlp_endpoint`, `http_endpoint` sets `provider_config["http_endpoint"]`.
+Records the Phoenix endpoints a deployment names for the process, for entrypoints that must not build the manager eagerly (the runtime, the ingestion worker and `cogniverse-eval` pass `TELEMETRY_OTLP_ENDPOINT` / `TELEMETRY_HTTP_ENDPOINT`). They are applied to the singleton when it is built, or at once to one already built; `None` leaves the stored config's value. `otlp_endpoint` sets `config.otlp_endpoint`, `http_endpoint` sets `provider_config["http_endpoint"]`.
 
 **Example:**
 ```python

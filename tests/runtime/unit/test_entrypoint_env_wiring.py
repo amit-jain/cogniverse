@@ -534,6 +534,85 @@ def test_main_bootstrap_sets_exact_s3_defaults(monkeypatch):
     assert prewarm_calls == ["http://minio.internal:9000"]
 
 
+class _StoredTelemetryConfig:
+    """A config store holding a telemetry config with no endpoints of its own
+    beyond the stored OTLP default."""
+
+    def get_telemetry_config(self, tenant_id):
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
+
+        return TelemetryConfig(
+            enabled=True, otlp_enabled=False, otlp_endpoint="stored-phoenix:4317"
+        )
+
+
+@pytest.mark.parametrize(
+    ("otlp_endpoint", "http_endpoint", "expected"),
+    [
+        (
+            "phoenix-otlp:14317",
+            "http://phoenix-http:16006",
+            {
+                "grpc_endpoint": "http://phoenix-otlp:14317",
+                "http_endpoint": "http://phoenix-http:16006",
+            },
+        ),
+        (
+            "phoenix-otlp:4317",
+            None,
+            {
+                "grpc_endpoint": "http://phoenix-otlp:4317",
+                "http_endpoint": "http://phoenix-otlp:6006",
+            },
+        ),
+    ],
+)
+def test_main_bootstrap_reads_telemetry_from_the_deployment_http_endpoint(
+    monkeypatch, otlp_endpoint, http_endpoint, expected
+):
+    """The runtime's telemetry provider reads (projects, spans) from
+    ``TELEMETRY_HTTP_ENDPOINT``; without it, from the OTLP endpoint's host on
+    Phoenix's HTTP port."""
+    from cogniverse_foundation.telemetry import manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+    for target in (
+        "cogniverse_agents.text_analysis_agent.configure_tenant_cache_capacity",
+        "cogniverse_core.memory.manager.configure_tenant_cache_capacity",
+        "cogniverse_core.registries.backend_registry.configure_tenant_cache_capacity",
+        "cogniverse_foundation.registry.entry_point_registry.configure_tenant_cache_capacity",
+    ):
+        monkeypatch.setattr(target, lambda *_: None)
+    monkeypatch.setattr(
+        "cogniverse_runtime.entrypoint_env.configure_semantic_embedder_defaults",
+        lambda **k: None,
+    )
+    TelemetryManager.reset()
+    telemetry_manager_module._telemetry_manager = None
+    try:
+        runtime_main._configure_library_module_defaults(
+            config_manager=_StoredTelemetryConfig(),
+            minio_endpoint=None,
+            minio_access_key=None,
+            minio_secret_key=None,
+            telemetry_otlp_endpoint=otlp_endpoint,
+            telemetry_http_endpoint=http_endpoint,
+            semantic_embed_url=None,
+            semantic_embed_model=None,
+            tenant_cache_capacity=23,
+            rlm_promotion_enabled=True,
+            rlm_promotion_fraction=0.75,
+            rlm_skip_deno_check=True,
+        )
+
+        manager = runtime_main.get_telemetry_manager()
+        assert manager.provider_endpoints() == expected
+        assert manager.config.otlp_endpoint == otlp_endpoint
+    finally:
+        TelemetryManager.reset()
+        telemetry_manager_module._telemetry_manager = None
+
+
 @pytest.mark.asyncio
 async def test_worker_bootstrap_fails_without_minio_when_s3_cache_enabled(monkeypatch):
     monkeypatch.setattr(

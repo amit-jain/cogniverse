@@ -1,7 +1,8 @@
 """Admin and config writes stay correct across the runtime's worker processes.
 
-Boots the image's own command with two uvicorn workers against the test Vespa
-and a test-owned Redis, exactly as ``test_runtime_worker_processes`` does, and
+Boots the image's own command with two uvicorn workers against the test Vespa,
+a test-owned Redis and a test-owned Phoenix, as ``test_runtime_worker_processes``
+does, and
 drives the admin routes over connections pinned to each worker — which worker
 serves a connection is read from ``/proc``, never from the runtime's answer.
 The stored records are read from the config store directly.
@@ -11,7 +12,9 @@ from __future__ import annotations
 
 import http.client
 import json
+import subprocess
 import threading
+import time
 import uuid
 from types import SimpleNamespace
 
@@ -37,14 +40,25 @@ MAX_CONNECTIONS = 200
 
 @pytest.fixture(scope="module")
 def runtime(
-    tmp_path_factory, workflow_state_redis_url, vespa_instance, semantic_embedder_env
+    tmp_path_factory,
+    workflow_state_redis_url,
+    vespa_instance,
+    phoenix_container,
+    semantic_embedder_env,
 ):
     with _runtime(
         tmp_path_factory.mktemp("admin_state"),
         workflow_state_redis_url,
-        # No inference service is configured: the invite test asserts the
-        # Mem0 refusal that names exactly this empty set.
-        extra_env={"INFERENCE_SERVICE_URLS": json.dumps({})},
+        extra_env={
+            # No inference service is configured: the invite test asserts the
+            # Mem0 refusal that names exactly this empty set.
+            "INFERENCE_SERVICE_URLS": json.dumps({}),
+            # Neither on Phoenix's default ports, as the chart's are: the
+            # telemetry reads go to the HTTP endpoint named, not one derived
+            # from the OTLP one.
+            "TELEMETRY_OTLP_ENDPOINT": phoenix_container["otlp_endpoint"],
+            "TELEMETRY_HTTP_ENDPOINT": phoenix_container["http_endpoint"],
+        },
         embedder_env=semantic_embedder_env,
     ) as (
         process,
@@ -422,38 +436,105 @@ def _tenant_schemas_in_vespa(config_port: int, tenant_id: str) -> list[str]:
     )
 
 
+TENANT_MANAGER_LOGGER = "cogniverse_runtime.admin.tenant_manager"
+
+
+def _phoenix_names(http_endpoint: str) -> set[str]:
+    from phoenix.client import Client
+
+    return {
+        project["name"] for project in Client(base_url=http_endpoint).projects.list()
+    }
+
+
+def _create_projects(http_endpoint: str, names) -> None:
+    from phoenix.client import Client
+
+    projects = Client(base_url=http_endpoint).projects
+    for name in names:
+        projects.create(name=name)
+
+
+def _telemetry_projects(tenant_id: str) -> list[str]:
+    """The projects a tenant's spans land in: its own and two service ones."""
+    return [
+        f"cogniverse-{tenant_id}",
+        f"cogniverse-{tenant_id}-routing",
+        f"cogniverse-{tenant_id}-synthetic_data",
+    ]
+
+
+def _deleted_projects_record(tenant_id: str) -> str:
+    return (
+        f"Deleted the telemetry projects {sorted(_telemetry_projects(tenant_id))} "
+        f"of deleted tenant {tenant_id}"
+    )
+
+
+def _create_tenant(runtime, worker: int, tenant: str) -> tuple[int, dict]:
+    pinned = _pinned(runtime, 1)
+    try:
+        return _request(
+            pinned[worker][0],
+            "POST",
+            "/admin/tenants",
+            {
+                "tenant_id": tenant,
+                "created_by": "worker-test",
+                "base_schemas": ["provenance"],
+            },
+        )
+    finally:
+        _close(pinned)
+
+
+def _delete_tenant(runtime, worker: int, tenant: str) -> tuple[int, dict]:
+    pinned = _pinned(runtime, 1)
+    try:
+        return _request(pinned[worker][0], "DELETE", f"/admin/tenants/{tenant}")
+    finally:
+        _close(pinned)
+
+
+def _pending(store: VespaConfigStore, tenant: str):
+    return store.get_immutable_config(
+        "__system__", ConfigScope.SYSTEM, "tenant_deletions_pending", tenant
+    )
+
+
+def _wait_for_phoenix(http_endpoint: str, timeout: float = 60) -> None:
+    import requests
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if requests.get(http_endpoint, timeout=2).status_code == 200:
+                return
+        except requests.RequestException:
+            pass
+        time.sleep(1)
+    pytest.fail(f"Phoenix at {http_endpoint} did not answer within {timeout}s")
+
+
 class TestTenantDeleteAcrossWorkers:
     def test_a_tenant_deleted_on_one_worker_is_refused_on_the_other(
-        self, runtime, vespa_instance, store
+        self, runtime, vespa_instance, store, phoenix_container
     ):
         name = f"workersdel{uuid.uuid4().hex[:8]}"
         tenant = f"{name}:{name}"
+        # Listed by the tenant's name filter, but another tenant's project.
+        survivor = f"cogniverse-{tenant}x-routing"
+        phoenix = phoenix_container["http_endpoint"]
         first, second = runtime.workers
-        pinned = _pinned(runtime, 1)
-        try:
-            created = _request(
-                pinned[first][0],
-                "POST",
-                "/admin/tenants",
-                {
-                    "tenant_id": tenant,
-                    "created_by": "worker-test",
-                    "base_schemas": ["provenance"],
-                },
-            )
-        finally:
-            _close(pinned)
+        created = _create_tenant(runtime, first, tenant)
         assert created[0] == 200, created
         assert created[1]["schemas_deployed"] == ["provenance"]
         assert _tenant_schemas_in_vespa(vespa_instance["config_port"], tenant) == [
             f"provenance_{name}_{name}"
         ]
+        _create_projects(phoenix, [*_telemetry_projects(tenant), survivor])
 
-        pinned = _pinned(runtime, 1)
-        try:
-            deleted = _request(pinned[first][0], "DELETE", f"/admin/tenants/{tenant}")
-        finally:
-            _close(pinned)
+        deleted = _delete_tenant(runtime, first, tenant)
         pinned = _pinned(runtime, 1)
         try:
             refused = _request(
@@ -485,16 +566,127 @@ class TestTenantDeleteAcrossWorkers:
             },
         )
         assert _tenant_schemas_in_vespa(vespa_instance["config_port"], tenant) == []
+        # Its telemetry projects are gone from Phoenix; the other tenant's stays.
+        assert _phoenix_names(phoenix) & {*_telemetry_projects(tenant), survivor} == {
+            survivor
+        }
+        assert [
+            record
+            for record in _records(runtime.log, TENANT_MANAGER_LOGGER, "INFO")
+            if record.startswith("Deleted the telemetry projects")
+            and record.endswith(f" {tenant}")
+        ] == [_deleted_projects_record(tenant)]
         assert store.get_immutable_config(
             "__system__", ConfigScope.SYSTEM, "tenant_deletions", tenant
         ).config_value == {"deleted": True}
         # Every step completed: the delete is no longer pending.
-        assert (
-            store.get_immutable_config(
-                "__system__", ConfigScope.SYSTEM, "tenant_deletions_pending", tenant
-            )
-            is None
+        assert _pending(store, tenant) is None
+
+    def test_concurrent_deletes_on_both_workers_remove_only_each_tenants_projects(
+        self, runtime, store, phoenix_container
+    ):
+        """One tenant's id begins the other's; each worker deletes one of them
+        at the same moment, and each delete removes its own projects only."""
+        name = f"workersconc{uuid.uuid4().hex[:8]}"
+        tenants = [f"{name}:{name}", f"{name}:{name}x"]
+        bystander = f"cogniverse-{name}:{name}xy-routing"
+        phoenix = phoenix_container["http_endpoint"]
+        first, second = runtime.workers
+        assert [_create_tenant(runtime, first, tenant)[0] for tenant in tenants] == [
+            200,
+            200,
+        ]
+        _create_projects(
+            phoenix,
+            [*_telemetry_projects(tenants[0]), *_telemetry_projects(tenants[1])]
+            + [bystander],
         )
+
+        pinned = _pinned(runtime, 1)
+        try:
+            answers = _concurrently(
+                [
+                    lambda: _request(
+                        pinned[first][0], "DELETE", f"/admin/tenants/{tenants[0]}"
+                    ),
+                    lambda: _request(
+                        pinned[second][0], "DELETE", f"/admin/tenants/{tenants[1]}"
+                    ),
+                ]
+            )
+        finally:
+            _close(pinned)
+
+        assert [(status, body["status"]) for status, body in answers] == [
+            (200, "deleted"),
+            (200, "deleted"),
+        ]
+        assert [body["tenant_full_id"] for _, body in answers] == tenants
+        assert _phoenix_names(phoenix) & {
+            *_telemetry_projects(tenants[0]),
+            *_telemetry_projects(tenants[1]),
+            bystander,
+        } == {bystander}
+        records = _records(runtime.log, TENANT_MANAGER_LOGGER, "INFO")
+        for tenant in tenants:
+            assert [
+                record
+                for record in records
+                if record.startswith("Deleted the telemetry projects")
+                and record.endswith(f" {tenant}")
+            ] == [_deleted_projects_record(tenant)]
+            assert _pending(store, tenant) is None
+
+    def test_a_delete_while_phoenix_hangs_stays_pending_until_its_retry(
+        self, runtime, store, phoenix_container
+    ):
+        """Phoenix accepts the connection and never answers: the delete drops
+        the tenant, names it in an ERROR and stays pending. Its retry, once
+        Phoenix answers, deletes the projects and completes it."""
+        name = f"workersdown{uuid.uuid4().hex[:8]}"
+        tenant = f"{name}:{name}"
+        phoenix = phoenix_container["http_endpoint"]
+        container = phoenix_container["container_name"]
+        first, second = runtime.workers
+        created = _create_tenant(runtime, first, tenant)
+        assert created[0] == 200, created
+        _create_projects(phoenix, _telemetry_projects(tenant))
+
+        subprocess.run(["docker", "pause", container], check=True, timeout=60)
+        try:
+            deleted = _delete_tenant(runtime, first, tenant)
+        finally:
+            subprocess.run(["docker", "unpause", container], check=True, timeout=60)
+            _wait_for_phoenix(phoenix)
+
+        assert deleted[0] == 200, deleted
+        assert (deleted[1]["status"], deleted[1]["deleted_schemas"]) == (
+            "deleted",
+            [f"provenance_{name}_{name}"],
+        )
+        assert [
+            record
+            for record in _records(runtime.log, TENANT_MANAGER_LOGGER, "ERROR")
+            if f" {tenant} " in record
+        ] == [
+            f"Cannot list the telemetry projects of deleted tenant {tenant} "
+            "(ReadTimeout: timed out); the delete stays "
+            "pending and its retry, or the next create of the tenant, deletes them"
+        ]
+        assert _pending(store, tenant).config_value == {"pending": True}
+        assert _phoenix_names(phoenix) & set(_telemetry_projects(tenant)) == set(
+            _telemetry_projects(tenant)
+        )
+
+        retried = _delete_tenant(runtime, second, tenant)
+
+        assert retried[0] == 200, retried
+        assert (retried[1]["status"], retried[1]["deleted_schemas"]) == (
+            "deleted",
+            [],
+        )
+        assert _phoenix_names(phoenix) & set(_telemetry_projects(tenant)) == set()
+        assert _pending(store, tenant) is None
 
 
 class TestSessionCloseAcrossWorkers:

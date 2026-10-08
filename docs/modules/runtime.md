@@ -2725,9 +2725,11 @@ URL falls back to the `denseon` entry of `INFERENCE_SERVICE_URLS`, and
 `configure_runtime_library_defaults` sets it as the embedder default in every
 entrypoint that calls it: the runtime, the ingestion worker, the quality
 monitor, the optimization CLI, tenant provisioning and ACP.
-The ingestion worker also hands both telemetry endpoints to the telemetry
-manager at startup (`configure_telemetry_endpoints`), so every job it runs
-exports there, the reaper's re-drive of a job orphaned by a killed pod
+The runtime and the ingestion worker hand both telemetry endpoints to the
+telemetry manager at startup (`configure_telemetry_endpoints`): spans export to
+`TELEMETRY_OTLP_ENDPOINT`, and the provider's reads (projects, spans, a tenant
+delete's project listing) go to `TELEMETRY_HTTP_ENDPOINT`. Every job the worker
+runs exports there, the reaper's re-drive of a job orphaned by a killed pod
 included: after a restart that re-drive is the first job the process runs.
 
 `initialize` advertises text, image and embedded text-resource prompts.
