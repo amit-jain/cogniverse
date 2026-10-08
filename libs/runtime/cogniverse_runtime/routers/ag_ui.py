@@ -21,8 +21,9 @@ back, so a client restores a conversation from the runtime. A run streams:
 - the reply as one ``TEXT_MESSAGE_START`` / ``_CONTENT`` / ``_END`` sequence,
   streamed token by token for an agent that declares
   ``streams_answer_tokens`` and sent when the turn completes otherwise;
-- ``STATE_SNAPSHOT`` with the agent's final payload under ``result``, which
-  a client renders as results cards;
+- ``STATE_SNAPSHOT`` with the agent's final payload under ``result`` and the
+  tenant it ran for under ``tenant_id``, which a client renders as results
+  cards for that tenant only;
 - ``RUN_FINISHED``, or ``RUN_ERROR`` when the turn failed or its reply could
   not be saved to the thread.
 
@@ -213,11 +214,14 @@ def to_external_tools(run_input: RunAgentInput) -> Optional[List[Dict[str, Any]]
 class _RunWriter:
     """Encodes one run's events and keeps the open step and message paired."""
 
-    def __init__(self, run_input: RunAgentInput, agent_name: str) -> None:
+    def __init__(
+        self, run_input: RunAgentInput, agent_name: str, tenant_id: str
+    ) -> None:
         self._encoder = EventEncoder()
         self._thread_id = run_input.thread_id
         self._run_id = run_input.run_id
         self._agent_name = agent_name
+        self._tenant_id = tenant_id
         self._message_id = f"msg-{uuid.uuid4().hex}"
         self._message_open = False
         self._message_sent = False
@@ -319,6 +323,7 @@ class _RunWriter:
                     StateSnapshotEvent(
                         snapshot={
                             "agent": self._agent_name,
+                            "tenant_id": self._tenant_id,
                             "result": jsonable_encoder(payload),
                         }
                     )
@@ -420,7 +425,7 @@ async def _stream_run(
     external_tools: Optional[List[Dict[str, Any]]],
 ) -> AsyncIterator[str]:
     """One run as encoded AG-UI events."""
-    writer = _RunWriter(run_input, agent_name)
+    writer = _RunWriter(run_input, agent_name, tenant_id)
     with in_flight_turn():
         async with aclosing(
             _run_frames(
