@@ -48,7 +48,10 @@ from cogniverse_agents.graph.graph_schema import (
     node_id_from_doc_id,
     normalize_name,
 )
-from cogniverse_agents.search.vespa_query import vespa_search_children
+from cogniverse_agents.search.vespa_query import (
+    vespa_hit_fields,
+    vespa_search_children,
+)
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.backend_registry import leased_backend
 from cogniverse_vespa._yql import yql_quote
@@ -645,7 +648,8 @@ class _TenantMigration:
             f"where tenant_id contains {yql_quote(self._tenant)} "
             f"and doc_type contains {yql_quote(doc_type)} order by doc_id"
         )
-        return {hit["fields"]["doc_id"]: hit["fields"] for hit in hits}
+        rows = [vespa_hit_fields(hit, ("doc_id",)) for hit in hits]
+        return {fields["doc_id"]: fields for fields in rows}
 
     def _query_all(self, yql: str) -> List[Dict[str, Any]]:
         """Every hit of ``yql``, paged; raises unless the pages add up to

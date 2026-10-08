@@ -11,6 +11,7 @@ must still return ``None``/``[]``.
 
 import pytest
 
+from cogniverse_vespa._vespa_factory import VespaQueryDegraded
 from cogniverse_vespa.registry.adapter_store import VespaAdapterStore
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
@@ -57,7 +58,34 @@ def _soft_timeout_response():
 
 
 def _empty_response():
-    return _FakeQueryResponse({"root": {"children": []}})
+    return _FakeQueryResponse(
+        {"root": {"id": "toplevel", "fields": {"totalCount": 0}, "children": []}}
+    )
+
+
+_UNFILLED_HIT_ID = "index:cogniverse_content/0/f77e1bada43e40c6eb59adf5"
+
+
+def _unfilled_hit_response():
+    """HTTP 200 whose one hit has no fields and no ``root.errors``: the answer
+    Vespa gives for a document removed between match and summary fill."""
+    return _FakeQueryResponse(
+        {
+            "root": {
+                "id": "toplevel",
+                "relevance": 1.0,
+                "fields": {"totalCount": 1},
+                "coverage": {"coverage": 100, "documents": 1, "full": True},
+                "children": [
+                    {
+                        "id": _UNFILLED_HIT_ID,
+                        "relevance": 0.0,
+                        "source": "cogniverse_content",
+                    }
+                ],
+            }
+        }
+    )
 
 
 def _store(response) -> VespaAdapterStore:
@@ -80,6 +108,56 @@ class TestDegradedReadsRaise:
     def test_get_stats_raises_on_degraded(self):
         with pytest.raises(RuntimeError, match="degraded"):
             _store(_soft_timeout_response()).get_stats()
+
+
+class TestUnfilledHitsRaise:
+    def test_get_adapter_raises_on_a_hit_without_fields(self):
+        with pytest.raises(VespaQueryDegraded) as raised:
+            _store(_unfilled_hit_response()).get_adapter("adapter-1")
+        assert str(raised.value) == (
+            f"Vespa returned hit {_UNFILLED_HIT_ID} for adapter adapter-1 "
+            "without summary fields ['adapter_id']"
+        )
+
+    def test_list_adapters_raises_on_a_hit_without_fields(self):
+        with pytest.raises(VespaQueryDegraded) as raised:
+            _store(_unfilled_hit_response()).list_adapters("acme:acme")
+        assert str(raised.value) == (
+            f"Vespa returned hit {_UNFILLED_HIT_ID} for adapters for tenant "
+            "acme:acme without summary fields ['adapter_id']"
+        )
+
+    def test_get_active_adapter_raises_on_a_hit_without_fields(self):
+        with pytest.raises(VespaQueryDegraded) as raised:
+            _store(_unfilled_hit_response()).get_active_adapter("acme:acme", "routing")
+        assert str(raised.value) == (
+            f"Vespa returned hit {_UNFILLED_HIT_ID} for active adapter for "
+            "acme:acme/routing without summary fields ['adapter_id']"
+        )
+
+    def test_get_stats_raises_on_a_hit_without_fields(self):
+        with pytest.raises(VespaQueryDegraded) as raised:
+            _store(_unfilled_hit_response()).get_stats()
+        assert str(raised.value) == (
+            f"Vespa returned hit {_UNFILLED_HIT_ID} for adapter stats "
+            "without summary fields ['tenant_id']"
+        )
+
+
+def test_get_stats_raises_when_it_reads_fewer_adapters_than_matched():
+    rows = [
+        {
+            "id": f"id:adapter_registry:adapter_registry::a{n}",
+            "fields": {"tenant_id": "t"},
+        }
+        for n in range(2)
+    ]
+    response = _FakeQueryResponse(
+        {"root": {"id": "toplevel", "fields": {"totalCount": 3}, "children": rows}}
+    )
+    with pytest.raises(RuntimeError) as raised:
+        _store(response).get_stats()
+    assert str(raised.value) == "Adapter stats read 2 of 3 adapters"
 
 
 class TestGenuineAbsenceStillNone:

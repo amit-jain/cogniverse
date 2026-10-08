@@ -155,6 +155,26 @@ class VespaQueryDegraded(RuntimeError):
     ideal state), so its hits may be empty or partial."""
 
 
+def hit_fields(hit: dict, required: tuple, context: str) -> dict:
+    """The summary fields of one query hit, carrying every ``required`` name.
+
+    Vespa fills summaries after matching. A document removed in between can
+    come back as a hit without ``fields`` and with no ``root.errors``, the
+    same shape as a hit whose requested fields are all empty; a hit missing a
+    field every matched document carries is therefore a degraded answer.
+    """
+    fields = hit.get("fields")
+    missing = [
+        name for name in required if not isinstance(fields, dict) or name not in fields
+    ]
+    if missing:
+        raise VespaQueryDegraded(
+            f"Vespa returned hit {hit.get('id')} for {context} without "
+            f"summary fields {missing}"
+        )
+    return fields
+
+
 def raise_if_degraded(response, context: str) -> None:
     """Raise on a Vespa soft-timeout (degraded) query response.
 

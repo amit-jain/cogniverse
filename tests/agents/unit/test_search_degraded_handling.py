@@ -13,6 +13,7 @@ from vespa.exceptions import VespaError
 
 from cogniverse_agents.search.vespa_query import (
     VespaSearchDegraded,
+    vespa_hit_fields,
     vespa_search_children,
 )
 
@@ -189,3 +190,26 @@ async def test_audio_transcript_search_raises_on_degraded_body(monkeypatch):
         await agent.search_audio(
             query="keynote speech", search_mode="transcript", limit=3
         )
+
+
+def test_a_hit_without_fields_raises_degraded_naming_the_hit():
+    hit = {"id": "index:content/0/f77e1bad", "relevance": 0.0, "source": "content"}
+    with pytest.raises(VespaSearchDegraded) as raised:
+        vespa_hit_fields(hit, ("doc_id",))
+    assert str(raised.value) == (
+        "Vespa returned hit index:content/0/f77e1bad without summary fields ['doc_id']"
+    )
+
+
+def test_a_hit_missing_one_required_field_raises_naming_only_that_field():
+    hit = {"id": "id:g:kg::n1", "fields": {"doc_id": "n1"}}
+    with pytest.raises(VespaSearchDegraded) as raised:
+        vespa_hit_fields(hit, ("doc_id", "tenant_id"))
+    assert str(raised.value) == (
+        "Vespa returned hit id:g:kg::n1 without summary fields ['tenant_id']"
+    )
+
+
+def test_a_filled_hit_returns_its_fields():
+    hit = {"id": "id:g:kg::n1", "fields": {"doc_id": "n1", "name": "Sorbonne"}}
+    assert vespa_hit_fields(hit, ("doc_id",)) == {"doc_id": "n1", "name": "Sorbonne"}
