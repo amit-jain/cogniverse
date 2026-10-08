@@ -122,6 +122,21 @@ def _tenant_row(page: Page, org_id: str, tenant_id: str):
     )
 
 
+def _tenant_reads(page: Page, org_id: str) -> list:
+    """Every read of ``org_id``'s tenants the page makes from now on, with
+    its status."""
+    reads = []
+    page.on(
+        "response",
+        lambda response: (
+            reads.append(response.status)
+            if response.url.endswith(f"/admin/organizations/{org_id}/tenants")
+            else None
+        ),
+    )
+    return reads
+
+
 class TestTenantLifecycle:
     def test_an_operator_creates_tiers_and_deletes_a_tenant(
         self, page, web_url, runtime_url, config_manager
@@ -201,6 +216,7 @@ class TestTenantLifecycle:
         tenant_row.get_by_label(f"Type {tenant_id} to delete this tenant").fill(
             tenant_id
         )
+        reads = _tenant_reads(page, org_id)
         confirm.click()
         # Deleting an organization's last tenant removes the organization too.
         expect(page.get_by_role("status").first).to_have_text(
@@ -209,7 +225,12 @@ class TestTenantLifecycle:
             timeout=DEPLOY_TIMEOUT_MS,
         )
         expect(_org_row(page, org_id)).to_have_count(0)
-        expect(page.get_by_role("region", name=f"Tenants of {org_id}")).to_have_count(0)
+        # No organization is shown in its place, and the deleted one's tenants
+        # are not read again.
+        expect(
+            page.get_by_role("region", name=re.compile("^Tenants of "))
+        ).to_have_count(0)
+        assert reads == []
         assert httpx.get(f"{runtime_url}/admin/tenants/{tenant_id}").status_code == 404
         assert (
             httpx.get(f"{runtime_url}/admin/organizations/{org_id}").status_code == 404
@@ -253,6 +274,39 @@ class TestTenantLifecycle:
         assert (
             httpx.get(f"{runtime_url}/admin/organizations/{org_id}").status_code == 404
         )
+
+    def test_deleting_the_shown_organization_shows_none_in_its_place(
+        self, page, web_url, runtime_url
+    ):
+        org_id = f"webops{uuid.uuid4().hex[:8]}"
+        _tenants_view(page, web_url)
+        _create_org(page, org_id, "Shown then deleted")
+        _org_row(page, org_id).get_by_role("button", name=org_id).click()
+        expect(
+            page.get_by_role("region", name=f"Tenants of {org_id}").get_by_text(
+                f"No tenants in {org_id}."
+            )
+        ).to_be_visible()
+        expect(
+            page.get_by_role("form", name="Create tenant").get_by_label("Organization")
+        ).to_have_value(org_id)
+
+        reads = _tenant_reads(page, org_id)
+        org_row = _org_row(page, org_id)
+        org_row.get_by_role("button", name="Delete").click()
+        org_row.get_by_label(f"Type {org_id} to delete this organization").fill(org_id)
+        org_row.get_by_role("button", name="Delete organization").click()
+        expect(page.get_by_role("status").first).to_have_text(
+            f"Deleted organization {org_id} and its 0 tenant(s)."
+        )
+        expect(_org_row(page, org_id)).to_have_count(0)
+        expect(
+            page.get_by_role("region", name=re.compile("^Tenants of "))
+        ).to_have_count(0)
+        expect(
+            page.get_by_role("form", name="Create tenant").get_by_label("Organization")
+        ).to_have_value("")
+        assert reads == []
 
 
 class TestBaseSchemasAndRefresh:
