@@ -1898,7 +1898,9 @@ def _render_metrics_dashboard_tab():
             with col3:
                 st.metric(
                     "Avg Routing Latency",
-                    f"{routing_metrics.avg_routing_latency:.0f}ms",
+                    "—"
+                    if routing_metrics.avg_routing_latency is None
+                    else f"{routing_metrics.avg_routing_latency:.0f}ms",
                 )
 
             with col4:

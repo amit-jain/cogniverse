@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Alert, Panel, useLoad } from '../common';
 import { percent } from '../metrics';
 import { Plot } from '../Plot';
+import { millis } from '../framework';
 import { optimizationMetrics } from './api';
 
 const TIMEFRAMES = [7, 30, 90];
@@ -61,7 +62,7 @@ export function MetricsTab({ tenant }: { tenant: string }) {
                   <dt>Total decisions</dt>
                   <dd>{data.routing.total_decisions}</dd>
                   <dt>Average routing latency</dt>
-                  <dd>{Math.round(data.routing.avg_latency_ms)}ms</dd>
+                  <dd>{millis(data.routing.avg_latency_ms)}</dd>
                   <dt>Confidence calibration</dt>
                   <dd>{data.routing.confidence_calibration.toFixed(3)}</dd>
                 </dl>

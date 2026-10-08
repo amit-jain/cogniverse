@@ -544,17 +544,21 @@ async def test_too_few_labelled_searches_cannot_train(telemetry, app):
 
 async def test_optimization_metrics_score_routing_per_agent(telemetry, app):
     tenant = _tenant("metrics")
-    for minutes in (1, 2, 3):
-        record_routing(telemetry, tenant, "search_agent", 0.9, 20, minutes_ago=minutes)
+    # The gateway records no processing_time: each decision is timed by its
+    # span, 200, 300, 400, 500 and 100 ms.
+    for minutes, duration_ms in ((1, 200), (2, 300), (3, 400)):
+        record_routing(
+            telemetry, tenant, "search_agent", 0.9, duration_ms, minutes_ago=minutes
+        )
     record_routing(
-        telemetry, tenant, "search_agent", 0.3, 20, minutes_ago=4, failed=True
+        telemetry, tenant, "search_agent", 0.3, 500, minutes_ago=4, failed=True
     )
     record_routing(
         telemetry,
         tenant,
         "summarizer_agent",
         0.3,
-        20,
+        100,
         minutes_ago=5,
         within_request=False,
     )
@@ -576,7 +580,7 @@ async def test_optimization_metrics_score_routing_per_agent(telemetry, app):
     assert body["routing"] == {
         "accuracy": 3 / 5,
         "total_decisions": 5,
-        "avg_latency_ms": 0.0,
+        "avg_latency_ms": 300.0,
         "confidence_calibration": 1.0,
         "per_agent": [
             {

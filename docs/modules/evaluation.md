@@ -340,7 +340,7 @@ sequenceDiagram
 
     Calculator->>Calculator: Routing Accuracy<br/>= successful / total_decisions
     Calculator->>Calculator: Confidence Calibration<br/>= correlation(confidence, success)<br/>(Pearson coefficient)
-    Calculator->>Calculator: Average Routing Latency<br/>= mean(latency_ms)
+    Calculator->>Calculator: Average Routing Latency<br/>= mean(latency_ms) over timed decisions
     Calculator->>Calculator: Per-Agent Metrics<br/>Precision = TP / (TP + FP)<br/>Recall = TP / (TP + FN)<br/>F1 = 2 * (P * R) / (P + R)
 
     Calculator-->>Evaluator: RoutingMetrics{<br/>routing_accuracy: 0.85,<br/>confidence_calibration: 0.72,<br/>avg_routing_latency: 150.5,<br/>per_agent_precision: {...},<br/>per_agent_recall: {...},<br/>per_agent_f1: {...},<br/>total_decisions: 100,<br/>ambiguous_count: 5<br/>}
@@ -860,7 +860,7 @@ AMBIGUOUS = "ambiguous"   # Needs human annotation
 ```python
 routing_accuracy: float                    # % successful decisions
 confidence_calibration: float              # Correlation(confidence, success)
-avg_routing_latency: float                # Mean routing time (ms)
+avg_routing_latency: Optional[float]      # Mean decision time (ms) of the timed decisions; None when none is timed
 per_agent_precision: Dict[str, float]     # Precision per agent
 per_agent_recall: Dict[str, float]        # Recall per agent
 per_agent_f1: Dict[str, float]            # F1 per agent
@@ -891,7 +891,7 @@ A span with no chosen agent or confidence raises `ValueError`.
 {
     "chosen_agent": str,        # Agent selected by routing
     "confidence": float,        # Routing confidence score, in [0, 1]
-    "latency_ms": float,        # Routing processing time
+    "latency_ms": Optional[float],  # processing_time when recorded, else the span's duration; None without either
     "success": bool,            # Whether routing succeeded
     "downstream_status": str    # Status description
 }
