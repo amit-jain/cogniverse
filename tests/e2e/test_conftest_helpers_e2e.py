@@ -1472,7 +1472,6 @@ class TestSharedClusterOwnership:
             },
             "image_tags": (
                 "cogniverse/runtime-rocm:build-abc",
-                "cogniverse/dashboard-rocm:build-abc",
                 "cogniverse/gliner:build-abc",
             ),
             "chart_digest": _expected_e2e_chart_digest(),
