@@ -112,6 +112,7 @@ def test_the_server_holds_no_key_and_calls_the_runtime_service_directly():
         {"name": "PORT", "value": "4000"},
     ]
     assert "cogniverse-web" not in _names(docs, "Secret")
+    assert "envFrom" not in web
     assert "COGNIVERSE_HARNESS_API_KEY" not in {e["name"] for e in runtime["env"]}
     runtime_service = _named(docs, "Service", "cogniverse-runtime")["spec"]
     assert 8000 in [port["port"] for port in runtime_service["ports"]]
@@ -128,6 +129,8 @@ def test_an_operator_harness_key_reaches_the_runtime_beside_the_web_client():
         {"name": "COGNIVERSE_HARNESS_API_KEY", "value": "sk-pi"}
     ]
     assert "cogniverse-web" in _names(docs, "Deployment")
+    web = _container(docs, "cogniverse-web", "web")
+    assert [e["name"] for e in web["env"]] == ["COGNIVERSE_RUNTIME_URL", "HOST", "PORT"]
 
 
 def test_extra_env_and_env_sources_reach_the_server():
@@ -170,6 +173,9 @@ def test_prod_renders_the_web_client_without_a_key():
 
     assert "cogniverse-web" in _names(docs, "Deployment")
     assert "cogniverse-web" not in _names(docs, "Secret")
+    assert _named(docs, "Service", "cogniverse-web")["spec"]["ports"] == [
+        {"port": 4000, "targetPort": "http", "protocol": "TCP", "name": "http"}
+    ]
     assert [e["name"] for e in _container(docs, "cogniverse-web", "web")["env"]] == [
         "COGNIVERSE_RUNTIME_URL",
         "HOST",
@@ -183,6 +189,12 @@ def test_disabling_the_web_client_removes_it():
 
     assert not any(d["metadata"]["name"] == "cogniverse-web" for d in docs)
     assert "COGNIVERSE_HARNESS_API_KEY" not in {e["name"] for e in runtime["env"]}
+    ingress = _named(docs, "Ingress", "cogniverse")
+    assert [
+        (path["path"], path["backend"]["service"]["name"])
+        for rule in ingress["spec"]["rules"]
+        for path in rule["http"]["paths"]
+    ] == [("/api", "cogniverse-runtime")]
 
 
 @pytest.mark.parametrize("values", [None, "values.k3s.yaml"])

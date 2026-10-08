@@ -85,7 +85,9 @@ ingress, for its agent runs and the `/admin` routes it mints keys through.
 ### Ingress
 
 Every values file routes `/api` to the runtime and `/` to the web client on
-port 4000. The nginx ingress turns off proxy buffering so server-sent events
+port 4000. A path whose component the release disables (`web.enabled: false`,
+say) is left out of the Ingress rather than naming a Service that does not
+exist. The nginx ingress turns off proxy buffering so server-sent events
 (chat replies, ingest progress) reach the browser as they are written.
 
 ### Local k3d

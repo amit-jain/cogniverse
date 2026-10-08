@@ -30,6 +30,10 @@ spec:
       http:
         paths:
           {{- range .paths }}
+          {{- /* A path to a component this release disables would name a
+          Service that does not exist. */}}
+          {{- $component := index $.Values .service | default dict }}
+          {{- if not (eq (toString (index $component "enabled")) "false") }}
           - path: {{ .path }}
             pathType: {{ .pathType }}
             backend:
@@ -37,6 +41,7 @@ spec:
                 name: {{ $fullName }}-{{ .service }}
                 port:
                   number: {{ .port }}
+          {{- end }}
           {{- end }}
     {{- end }}
 {{- end }}

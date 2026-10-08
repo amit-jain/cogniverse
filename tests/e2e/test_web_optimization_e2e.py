@@ -128,9 +128,9 @@ class TestTrainingExamples:
 
         open_view(page, "approvals")
         choose_tenant(page, tenant_id, "Show review queue")
-        page.get_by_role("navigation", name="Approval sections").get_by_role(
-            "button", name="Approved", exact=True
-        ).click()
+        sections = page.get_by_role("navigation", name="Approval sections")
+        sections.get_by_role("button", name="Approved", exact=True).click()
+        expect(sections.locator('button[aria-pressed="true"]')).to_have_text("Approved")
         approved = page.get_by_role("region", name=f"Approved items of {tenant_id}")
         table = approved.get_by_role("table", name="Approved items")
         expect(table.locator("tbody tr")).to_have_count(2, timeout=VIEW_TIMEOUT_MS)
