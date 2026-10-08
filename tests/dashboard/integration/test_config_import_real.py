@@ -108,7 +108,12 @@ def _vespa_proxy(upstream, *, barrier=None, fail_key=None):
 
         def _forward(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            if self.command in {"POST", "PUT"} and "/document/v1/" in self.path:
+            # Version documents only: version counters live in their own
+            # namespace and carry no tenant or key.
+            if (
+                self.command in {"POST", "PUT"}
+                and "/document/v1/config_metadata/" in self.path
+            ):
                 fields = json.loads(body)["fields"]
                 with state.lock:
                     state.writes.append((fields["tenant_id"], fields["config_key"]))
