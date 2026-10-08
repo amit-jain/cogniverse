@@ -769,7 +769,7 @@ async def export_atlas(tenant_id: str, file: UploadFile = File(...)) -> ExportAt
             neither x/y places for every row nor an embedding column, holds
             fewer than ``MIN_DOCUMENTS`` documents, or an unreadable embedding
     """
-    tenant = canonical_tenant_id(tenant_id)
+    tenant = canonical_tenant_or_400(tenant_id)
     name = file.filename or "upload"
     content = await _read_upload(file)
 

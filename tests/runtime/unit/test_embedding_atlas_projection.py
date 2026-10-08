@@ -6,8 +6,8 @@ import pytest
 from cogniverse_runtime.atlas_projection import (
     TooFewDocumentsError,
     automatic_clusters,
-    label_text,
     build_map,
+    label_text,
     most_similar,
     unit_rows,
 )
