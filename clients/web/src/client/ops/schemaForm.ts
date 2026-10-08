@@ -14,11 +14,25 @@ export interface JsonSchema {
   writeOnly?: boolean;
   description?: string;
   default?: unknown;
+  minimum?: number;
+  maximum?: number;
 }
 
-export type FieldKind = 'text' | 'integer' | 'number' | 'boolean' | 'choice' | 'object' | 'json' | 'secret';
+export type FieldKind =
+  | 'text'
+  | 'integer'
+  | 'number'
+  | 'boolean'
+  | 'choice'
+  | 'object'
+  | 'optional'
+  | 'json'
+  | 'secret';
 
-/** One input of a generated form; ``fields`` for a nested object. */
+/**
+ * One input of a generated form; ``fields`` for a nested object, or for an
+ * ``optional`` one: a nullable object, set or left null with a checkbox.
+ */
 export interface FormField {
   name: string;
   kind: FieldKind;
@@ -28,6 +42,11 @@ export interface FormField {
   /** For ``json`` fields: what a blank input stands for when not nullable. */
   empty?: unknown;
   description?: string;
+  /** The schema's default, which a newly set optional object starts from. */
+  default?: unknown;
+  /** Inclusive bounds of a number. */
+  min?: number;
+  max?: number;
 }
 
 /** What a form holds: input text, checkbox state, or a nested object's state. */
@@ -35,7 +54,12 @@ export interface SecretInput {
   text: string;
   clear: boolean;
 }
-export type FormState = { [name: string]: string | boolean | SecretInput | FormState };
+/** An optional object's state: whether it is set, and its fields. */
+export interface OptionalInput {
+  set: boolean;
+  fields: FormState;
+}
+export type FormState = { [name: string]: string | boolean | SecretInput | OptionalInput | FormState };
 
 /** The fields of an object schema, ``$ref``s and nullable branches resolved. */
 export function formFields(schema: JsonSchema, defs: Record<string, JsonSchema> = schema.$defs ?? {}): FormField[] {
@@ -57,19 +81,23 @@ function field(name: string, property: JsonSchema, defs: Record<string, JsonSche
     const others = branches.filter((branch) => branch.type !== 'null');
     node = others.length === 1 ? others[0] : { type: 'json' };
   }
-  const base = { name, nullable, description: property.description ?? node.description };
+  const base = {
+    name,
+    nullable,
+    description: property.description ?? node.description,
+    default: property.default,
+  };
   if (property.writeOnly) return { ...base, kind: 'secret' };
   if (node.enum) return { ...base, kind: 'choice', options: node.enum.map(String) };
-  // A nullable object is edited as JSON, where null is expressible.
-  if (node.properties && !nullable) return { ...base, kind: 'object', fields: formFields(node, defs) };
-  if (node.properties) return { ...base, kind: 'json', empty: {} };
+  if (node.properties) return { ...base, kind: nullable ? 'optional' : 'object', fields: formFields(node, defs) };
+  const bounds = { min: node.minimum, max: node.maximum };
   switch (node.type) {
     case 'string':
       return { ...base, kind: 'text' };
     case 'integer':
-      return { ...base, kind: 'integer' };
+      return { ...base, kind: 'integer', ...bounds };
     case 'number':
-      return { ...base, kind: 'number' };
+      return { ...base, kind: 'number', ...bounds };
     case 'boolean':
       return { ...base, kind: 'boolean' };
     case 'array':
@@ -89,6 +117,14 @@ export function toFormState(fields: FormField[], value: JsonObject): FormState {
           return [f.name, Boolean(item)];
         case 'object':
           return [f.name, toFormState(f.fields ?? [], (item ?? {}) as JsonObject)];
+        case 'optional':
+          return [
+            f.name,
+            {
+              set: item !== null && item !== undefined,
+              fields: toFormState(f.fields ?? [], (item ?? defaults(f.fields ?? [])) as JsonObject),
+            },
+          ];
         case 'json':
           return [f.name, item === null || item === undefined ? '' : jsonText(item)];
         case 'secret':
@@ -116,6 +152,10 @@ export function fromFormState(fields: FormField[], state: FormState, path = ''):
           return [f.name, Boolean(input)];
         case 'object':
           return [f.name, fromFormState(f.fields ?? [], input as FormState, at)];
+        case 'optional': {
+          const optional = input as OptionalInput;
+          return [f.name, optional.set ? fromFormState(f.fields ?? [], optional.fields, at) : null];
+        }
         case 'secret': {
           const secret = input as SecretInput;
           return [f.name, secret.clear ? '' : secret.text || null];
@@ -127,6 +167,34 @@ export function fromFormState(fields: FormField[], state: FormState, path = ''):
   );
 }
 
+/** The value a newly set object starts from: each field's schema default,
+ * else the first choice, false, or empty. */
+export function defaults(fields: FormField[]): JsonObject {
+  return Object.fromEntries(
+    fields.map((f) => {
+      if (f.default !== undefined) return [f.name, f.default];
+      switch (f.kind) {
+        case 'choice':
+          return [f.name, f.nullable ? null : (f.options ?? [])[0]];
+        case 'boolean':
+          return [f.name, false];
+        case 'object':
+          return [f.name, defaults(f.fields ?? [])];
+        case 'json':
+          return [f.name, f.nullable ? null : f.empty];
+        default:
+          return [f.name, null];
+      }
+    }),
+  );
+}
+
+function inRange(f: FormField, value: number, at: string): number {
+  if ((f.min !== undefined && value < f.min) || (f.max !== undefined && value > f.max))
+    throw new Error(`${at} must be between ${f.min} and ${f.max}.`);
+  return value;
+}
+
 function scalar(f: FormField, text: string, at: string): unknown {
   const blank = !text.trim();
   if (blank && f.nullable) return null;
@@ -134,12 +202,12 @@ function scalar(f: FormField, text: string, at: string): unknown {
     case 'integer': {
       const value = Number(text);
       if (blank || !Number.isInteger(value)) throw new Error(`${at} must be a whole number.`);
-      return value;
+      return inRange(f, value, at);
     }
     case 'number': {
       const value = Number(text);
       if (blank || Number.isNaN(value)) throw new Error(`${at} must be a number.`);
-      return value;
+      return inRange(f, value, at);
     }
     case 'json':
       if (blank) return f.empty;

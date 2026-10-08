@@ -16,9 +16,16 @@ import httpx
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
+from cogniverse_core.common.models.model_loaders import EMBEDDING_MODEL_LOADERS
+from cogniverse_core.common.tenant_utils import (
+    clear_tenant_deleted,
+    mark_tenant_deleted,
+)
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_foundation.config.unified_config import PROCESS_TYPES
+from cogniverse_sdk.interfaces.config_store import ConfigScope
 from tests.utils.web_client import (
     free_port,
     recording_telemetry_sink,
@@ -122,11 +129,11 @@ def _fill_create(
 ):
     form = page.get_by_role("form", name="Create profile")
     form.get_by_label("Profile name").fill(name)
-    form.get_by_label("Type", exact=True).fill(type_)
+    form.get_by_label("Type", exact=True).select_option(type_)
     form.get_by_label("Schema name").fill(schema)
     form.get_by_label("Embedding model").fill(model)
     form.get_by_label("Embedding type").select_option("multi_vector")
-    form.get_by_label("Model loader").fill(loader)
+    form.get_by_label("Model loader").select_option(loader)
     form.get_by_label("Description").fill(description)
     form.get_by_label("Pipeline config", exact=True).fill(pipeline)
     form.get_by_label("Strategies", exact=True).fill(strategies)
@@ -236,6 +243,7 @@ class TestProfileLifecycle:
         expect(row.get_by_role("cell")).to_have_text(
             [name, "video", BASE_SCHEMA, MODEL, "yes", "Web ops profile"]
         )
+        expect(profiles.get_by_text(f"1 profile created for {tenant}.")).to_be_visible()
 
         detail = page.get_by_role("region", name=f"Profile {name}")
         expect(detail.locator("dt:text-is('Deployed as') + dd")).to_have_text(
@@ -346,6 +354,190 @@ class TestProfileLifecycle:
         assert not _schema_deployed(config_manager, schema_loader, tenant, schema)
 
 
+class TestCreateFormChoicesAndDefaults:
+    def test_choice_fields_offer_the_runtime_values_and_a_blank_starts_filled(
+        self, page, web_url, runtime_url, tenant, config_manager
+    ):
+        name = f"web_{uuid.uuid4().hex[:8]}"
+        _profiles_view(page, web_url, tenant)
+        form = page.get_by_role("form", name="Create profile")
+        expect(form.get_by_label("Type", exact=True).locator("option")).to_have_text(
+            ProfileValidator(config_manager).profile_types
+        )
+        expect(form.get_by_label("Embedding type").locator("option")).to_have_text(
+            ProfileValidator.VALID_EMBEDDING_TYPES
+        )
+        loader = form.get_by_label("Model loader")
+        expect(loader.locator("option")).to_have_text(
+            ["none", *sorted(EMBEDDING_MODEL_LOADERS)]
+        )
+        expect(loader).to_have_value("colpali")
+        expect(form.get_by_label("Process type").locator("option")).to_have_text(
+            ["inferred", *sorted(PROCESS_TYPES)]
+        )
+
+        form.get_by_label("Profile name").fill(name)
+        form.get_by_label("Schema name").fill(BASE_SCHEMA)
+        form.get_by_label("Embedding model").fill(MODEL)
+        form.get_by_label("Model-specific parameters", exact=True).fill(
+            json.dumps({"patch_pooling": "mean"})
+        )
+        form.get_by_role("button", name="Create profile").click()
+        expect(page.get_by_role("status")).to_contain_text(f"Created profile {name} ")
+
+        created = _detail(runtime_url, tenant, name).json()
+        assert {
+            key: created[key]
+            for key in (
+                "type",
+                "embedding_type",
+                "model_loader",
+                "process_type",
+                "pipeline_config",
+                "strategies",
+                "schema_config",
+                "model_specific",
+            )
+        } == {
+            "type": "video",
+            "embedding_type": "multi_vector",
+            "model_loader": "colpali",
+            "process_type": None,
+            "pipeline_config": {
+                "extract_keyframes": True,
+                "transcribe_audio": False,
+                "generate_descriptions": False,
+                "keyframe_fps": 0.5,
+            },
+            "strategies": {
+                "segmentation": {
+                    "class": "FrameSegmentationStrategy",
+                    "params": {"fps": 0.5, "max_frames": 100},
+                },
+                "embedding": {"class": "MultiVectorEmbeddingStrategy", "params": {}},
+            },
+            "schema_config": {
+                "schema_name": "video_colpali_smol500_mv_frame",
+                "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
+                "embedding_dim": 320,
+                "binary_dim": 40,
+            },
+            "model_specific": {"patch_pooling": "mean"},
+        }
+
+        edit = page.get_by_role("form", name=f"Edit profile {name}")
+        edit.get_by_label("Model-specific parameters", exact=True).fill(
+            json.dumps({"patch_pooling": "max"})
+        )
+        edit.get_by_role("button", name="Save changes").click()
+        expect(page.get_by_role("status")).to_contain_text(
+            f"Saved model_specific of {name} (config version "
+        )
+        assert _detail(runtime_url, tenant, name).json()["model_specific"] == {
+            "patch_pooling": "max"
+        }
+        _delete_through_api(runtime_url, tenant, name)
+
+
+class TestDeployOutcomes:
+    def test_a_forced_redeploy_deploys_an_already_deployed_schema(
+        self, page, web_url, runtime_url, tenant
+    ):
+        name = f"web_{uuid.uuid4().hex[:8]}"
+        _create_through_api(runtime_url, tenant, name)
+        _profiles_view(page, web_url, tenant)
+        page.get_by_role("region", name=f"Profiles of {tenant}").get_by_role(
+            "button", name=name, exact=True
+        ).click()
+        deploy = page.get_by_role("group", name="Deploy schema")
+        deploy.get_by_label("Redeploy even if already deployed").check()
+        deploy.get_by_role("button", name="Deploy schema").click()
+        tenant_schema = _detail(runtime_url, tenant, name).json()["tenant_schema_name"]
+        expect(page.get_by_role("status")).to_have_text(
+            f"Deployed schema {BASE_SCHEMA} as {tenant_schema}.",
+            timeout=DEPLOY_TIMEOUT_MS,
+        )
+        _delete_through_api(runtime_url, tenant, name)
+
+    def test_a_requested_deploy_that_did_not_happen_is_named_on_create(
+        self, page, web_url, runtime_url, config_manager
+    ):
+        """The profile is stored; the operator is told its schema is not."""
+        tenant = f"webprofgone{uuid.uuid4().hex[:8]}:main"
+        name = f"web_{uuid.uuid4().hex[:8]}"
+        mark_tenant_deleted(config_manager.store, tenant)
+        try:
+            _profiles_view(page, web_url, tenant)
+            _fill_create(page, name, strategies=json.dumps(STRATEGIES), deploy=True)
+            notice = page.get_by_role("status")
+            expect(notice).to_contain_text(
+                f"Created profile {name} ", timeout=DEPLOY_TIMEOUT_MS
+            )
+            stored = config_manager.store.get_config(
+                tenant, ConfigScope.BACKEND, "backend", "backend_config"
+            )
+            assert list(stored.config_value["profiles"]) == [name]
+            expect(notice).to_have_text(
+                f"Created profile {name} (config version {stored.version}), but "
+                f"its schema was not deployed: Deploying schema '{BASE_SCHEMA}' "
+                "failed (TenantDeletedError); the runtime log names the cause. "
+                "Deploy it from the profile."
+            )
+        finally:
+            clear_tenant_deleted(config_manager.store, tenant)
+            _delete_through_api(runtime_url, tenant, name)
+
+    def test_a_failed_deploy_and_delete_show_what_was_asked(
+        self, page, web_url, runtime_url, tenant
+    ):
+        name = f"web_{uuid.uuid4().hex[:8]}"
+        _create_through_api(runtime_url, tenant, name)
+        _profiles_view(page, web_url, tenant)
+        page.get_by_role("region", name=f"Profiles of {tenant}").get_by_role(
+            "button", name=name, exact=True
+        ).click()
+        detail = page.get_by_role("region", name=f"Profile {name}")
+        expect(detail.locator("dt:text-is('Deployed as') + dd")).to_be_visible()
+        # Another operator removes the profile while this page shows it.
+        _delete_through_api(runtime_url, tenant, name)
+        missing = _detail(runtime_url, tenant, name).json()["detail"]
+
+        deploy = detail.get_by_role("group", name="Deploy schema")
+        deploy.get_by_role("button", name="Deploy schema").click()
+        expect(deploy.get_by_role("alert")).to_have_text(missing)
+        deploy.get_by_text("Request details").click()
+        expect(deploy.locator('dl[aria-label="Request details"] dd')).to_have_text(
+            [
+                f"POST /admin/profiles/{name}/deploy",
+                name,
+                tenant,
+                BASE_SCHEMA,
+                "no",
+                f"HTTP 404: {missing}",
+            ]
+        )
+
+        delete = detail.get_by_role("group", name="Delete profile")
+        delete.get_by_label(f"Also delete schema {BASE_SCHEMA}").check()
+        delete.get_by_role("button", name="Delete").click()
+        delete.get_by_label(f"Type {name} to delete this profile").fill(name)
+        delete.get_by_role("button", name="Delete profile").click()
+        expect(delete.get_by_role("alert")).to_have_text(missing)
+        delete.get_by_text("Request details").click()
+        expect(delete.locator('dl[aria-label="Request details"] dt')).to_have_text(
+            ["Runtime route", "Profile", "Tenant", "Delete schema", "Answer"]
+        )
+        expect(delete.locator('dl[aria-label="Request details"] dd')).to_have_text(
+            [
+                f"DELETE /admin/profiles/{name}",
+                name,
+                tenant,
+                "yes",
+                f"HTTP 404: {missing}",
+            ]
+        )
+
+
 class TestStartFromShippedProfile:
     def test_a_profile_started_from_a_shipped_one_carries_all_its_keys(
         self, page, web_url, runtime_url, tenant, config_manager
@@ -431,17 +623,18 @@ class TestRefusedCreate:
             "Schema config must be a JSON object."
         )
 
+        valid_types = ProfileValidator(config_manager).profile_types
+        expect(form.get_by_label("Type", exact=True).locator("option")).to_have_text(
+            valid_types
+        )
         form = _fill_create(
             page,
             name,
-            type_="film",
             strategies=json.dumps({"embedding": {"class": "NoSuchStrategy"}}),
         )
-        valid_types = ProfileValidator(config_manager)._valid_profile_types
         expect(form.get_by_role("alert")).to_have_text(
-            f"Profile validation failed: Invalid profile type 'film'. Must be one "
-            f"of: {valid_types}; Strategy class 'NoSuchStrategy' not found. Ensure "
-            "the class is importable from the configured module path."
+            "Profile validation failed: Strategy class 'NoSuchStrategy' not found. "
+            "Ensure the class is importable from the configured module path."
         )
         assert _detail(runtime_url, tenant, name).status_code == 404
 

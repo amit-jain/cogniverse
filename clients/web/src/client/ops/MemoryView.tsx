@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Alert, Panel, useAction, useLoad } from './common';
-import { parseJsonObject } from './forms';
+import { jsonText, parseJsonObject } from './forms';
 import { runtimeJson, seg } from './http';
 import { TenantChooser } from './tenants';
 
@@ -8,20 +8,30 @@ interface Memory {
   id: string;
   memory: string;
   category: string | null;
+  metadata: Record<string, unknown>;
   created_at: string | null;
+  updated_at: string | null;
+  score: number | null;
 }
 
 interface MemoryStats {
   agent_name: string;
+  user_id: string;
   total: number;
   archived: number;
   writable: boolean;
+}
+
+interface MemoryHealth {
+  healthy: boolean;
+  problem: string | null;
 }
 
 const USER_MEMORIES = '_user_memories';
 const SYSTEM_SUGGESTIONS = [USER_MEMORIES, '_strategy_store'];
 /** The most memories the list route returns in one read. */
 const LIST_LIMIT = 200;
+const DEFAULT_LIMIT = 20;
 
 function memoriesPath(tenant: string): string {
   return `/admin/tenant/${seg(tenant)}/memories`;
@@ -32,8 +42,10 @@ export function MemoryView() {
   const [namespace, setNamespace] = useState(USER_MEMORIES);
   const [version, setVersion] = useState(0);
   const [notice, setNotice] = useState('');
-  const changed = (message: string) => {
+  const [saved, setSaved] = useState('');
+  const changed = (message: string, savedJson = '') => {
     setNotice(message);
+    setSaved(savedJson);
     setVersion((n) => n + 1);
   };
   return (
@@ -43,6 +55,7 @@ export function MemoryView() {
         onChoose={(chosen) => {
           setTenant(chosen);
           setNotice('');
+          setSaved('');
         }}
       />
       {tenant && (
@@ -51,10 +64,12 @@ export function MemoryView() {
           onChoose={(chosen) => {
             setNamespace(chosen);
             setNotice('');
+            setSaved('');
           }}
         />
       )}
       {notice && <Alert tone="ok">{notice}</Alert>}
+      {saved && <pre aria-label="Saved memory">{saved}</pre>}
       {tenant && (
         <Memories key={`${tenant}-${namespace}-${version}`} tenant={tenant} namespace={namespace} onChanged={changed} />
       )}
@@ -104,20 +119,26 @@ function Memories({
   onChanged: (notice: string) => void;
 }) {
   const [query, setQuery] = useState('');
+  const [limit, setLimit] = useState(DEFAULT_LIMIT);
   const stats = useLoad(
     (signal) =>
       runtimeJson<MemoryStats>(`${memoriesPath(tenant)}/stats?agent_name=${seg(namespace)}`, { signal }),
     [tenant, namespace],
   );
+  const health = useLoad(
+    (signal) =>
+      runtimeJson<MemoryHealth>(`${memoriesPath(tenant)}/health?agent_name=${seg(namespace)}`, { signal }),
+    [tenant, namespace],
+  );
   const memories = useLoad(
     (signal) => {
-      const params = new URLSearchParams({ agent_name: namespace, limit: String(LIST_LIMIT) });
+      const params = new URLSearchParams({ agent_name: namespace, limit: String(limit) });
       if (query) params.set('q', query);
       return runtimeJson<{ memories: Memory[] }>(`${memoriesPath(tenant)}?${params}`, { signal }).then(
         (body) => body.memories,
       );
     },
-    [tenant, namespace, query],
+    [tenant, namespace, query, limit],
   );
   const writable = stats.data?.writable ?? false;
   return (
@@ -125,16 +146,20 @@ function Memories({
       <Panel
         title={`Memories of ${namespace} in ${tenant}`}
         actions={
-          <button
-            onClick={() => {
-              stats.reload();
-              memories.reload();
-            }}
-          >
-            Refresh
-          </button>
+          <>
+            <button onClick={health.reload}>Check health</button>
+            <button
+              onClick={() => {
+                stats.reload();
+                memories.reload();
+              }}
+            >
+              Refresh
+            </button>
+          </>
         }
       >
+        {health.error && <Alert>{health.error}</Alert>}
         {stats.error && <Alert>{stats.error}</Alert>}
         {stats.data && (
           <p className="muted">
@@ -142,7 +167,23 @@ function Memories({
             {!writable && ' A system namespace: the runtime manages these memories, so they are read-only here.'}
           </p>
         )}
-        <SearchForm query={query} onSearch={setQuery} />
+        <dl className="facts" aria-label="Memory store facts">
+          <dt>User ID</dt>
+          <dd>{stats.data?.user_id ?? '…'}</dd>
+          <dt>Agent ID</dt>
+          <dd>{namespace}</dd>
+          <dt>Health</dt>
+          <dd className={health.data && !health.data.healthy ? 'alert error' : undefined}>
+            {health.loading
+              ? 'checking…'
+              : health.data
+                ? health.data.healthy
+                  ? 'healthy: the store answers reads'
+                  : `unhealthy: ${health.data.problem}`
+                : '—'}
+          </dd>
+        </dl>
+        <SearchForm query={query} limit={limit} onSearch={(q, n) => (setQuery(q), setLimit(n))} />
         {memories.error && <Alert>{memories.error}</Alert>}
         {memories.data && memories.data.length === 0 && (
           <p className="muted">{query ? `No memories match “${query}”.` : `No memories in ${namespace}.`}</p>
@@ -152,9 +193,12 @@ function Memories({
             <thead>
               <tr>
                 <th>Memory</th>
+                {query && <th>Score</th>}
                 <th>Category</th>
                 <th>Created</th>
+                <th>Updated</th>
                 <th>ID</th>
+                <th>Details</th>
                 {writable && <th />}
               </tr>
             </thead>
@@ -162,9 +206,14 @@ function Memories({
               {memories.data.map((memory) => (
                 <tr key={memory.id}>
                   <td>{memory.memory}</td>
+                  {query && <td>{memory.score === null ? '—' : memory.score.toFixed(3)}</td>}
                   <td>{memory.category ?? '—'}</td>
                   <td>{memory.created_at ?? '—'}</td>
+                  <td>{memory.updated_at ?? '—'}</td>
                   <td>{memory.id}</td>
+                  <td>
+                    <MemoryDetails memory={memory} />
+                  </td>
                   {writable && (
                     <td>
                       <DeleteMemory tenant={tenant} namespace={namespace} id={memory.id} onDeleted={onChanged} />
@@ -182,27 +231,65 @@ function Memories({
   );
 }
 
-function SearchForm({ query, onSearch }: { query: string; onSearch: (query: string) => void }) {
+/** A memory's every field, metadata included, shown once opened. */
+function MemoryDetails({ memory }: { memory: Memory }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details aria-label={`Details of memory ${memory.id}`} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>Details</summary>
+      {open && <pre>{jsonText(memory)}</pre>}
+    </details>
+  );
+}
+
+function SearchForm({
+  query,
+  limit,
+  onSearch,
+}: {
+  query: string;
+  limit: number;
+  onSearch: (query: string, limit: number) => void;
+}) {
   const [draft, setDraft] = useState(query);
+  const [count, setCount] = useState(String(limit));
+  const action = useAction();
+  const run = (text: string) =>
+    action.run(async () => {
+      const n = Number(count);
+      if (!Number.isInteger(n) || n < 1 || n > LIST_LIMIT)
+        throw new Error(`Results must be a whole number from 1 to ${LIST_LIMIT}.`);
+      onSearch(text, n);
+    });
   return (
     <form
       className="inline-form"
       aria-label="Search memories"
       onSubmit={(e) => {
         e.preventDefault();
-        onSearch(draft.trim());
+        run(draft.trim());
       }}
     >
       <label>
         Query
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="semantic search" />
       </label>
+      <label>
+        Results
+        <input
+          inputMode="numeric"
+          value={count}
+          onChange={(e) => setCount(e.target.value)}
+          placeholder={`1–${LIST_LIMIT}`}
+        />
+      </label>
       <button type="submit">Search</button>
       {query && (
-        <button type="button" onClick={() => (setDraft(''), onSearch(''))}>
+        <button type="button" onClick={() => (setDraft(''), run(''))}>
           Show all
         </button>
       )}
+      {action.error && <Alert>{action.error}</Alert>}
     </form>
   );
 }
@@ -301,7 +388,7 @@ function AddMemory({
 }: {
   tenant: string;
   namespace: string;
-  onAdded: (notice: string) => void;
+  onAdded: (notice: string, savedJson: string) => void;
 }) {
   const [text, setText] = useState('');
   const [category, setCategory] = useState('');
@@ -319,7 +406,7 @@ function AddMemory({
             if (category.trim()) body.category = category.trim();
             if (metadata.trim()) body.metadata = parseJsonObject('Metadata', metadata);
             const saved = await runtimeJson<{ id: string }>(memoriesPath(tenant), { method: 'POST', body });
-            onAdded(`Saved memory ${saved.id} to ${namespace}.`);
+            onAdded(`Saved memory ${saved.id} to ${namespace}.`, jsonText(saved));
           });
         }}
       >

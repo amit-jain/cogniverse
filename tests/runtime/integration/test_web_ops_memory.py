@@ -10,8 +10,11 @@ through the page and its outcome read back from the store.
 
 from __future__ import annotations
 
+import json
+import math
 import threading
 
+import httpx
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
@@ -149,15 +152,32 @@ def _cells(manager, namespace, ids):
             rows[mid]["memory"],
             (rows[mid].get("metadata") or {}).get("category") or "—",
             str(rows[mid]["created_at"]),
+            rows[mid].get("updated_at") or "—",
             mid,
+            "Details",
             "Delete",
         )
     ]
 
 
+def _score(query: str, text: str) -> str:
+    """Vespa's closeness of the two texts' embeddings, as the table shows it."""
+    distance = math.dist(token_embedding(query), token_embedding(text))
+    return f"{1 / (1 + distance):.3f}"
+
+
+def _facts(panel):
+    return panel.locator('dl[aria-label="Memory store facts"] dd')
+
+
+# The listing's ID column; a search adds the score after the memory.
+ID_COLUMN = "td:nth-child(5)"
+SEARCH_ID_COLUMN = "td:nth-child(6)"
+
+
 class TestMemoryView:
     def test_an_operator_searches_adds_deletes_and_clears_memories(
-        self, page, web_url, store
+        self, page, web_url, runtime_url, store
     ):
         managers, _ = store
         tenant = TENANTS[0]
@@ -212,20 +232,59 @@ class TestMemoryView:
         _show(page, web_url, tenant)
         panel = _panel(page, tenant, "_user_memories")
         expect(panel.get_by_text("2 live, 1 archived.")).to_be_visible()
+        expect(_facts(panel)).to_have_text(
+            [tenant, "_user_memories", "healthy: the store answers reads"]
+        )
         expect(_table_rows(panel).locator("td")).to_have_text(
             _cells(manager, "_user_memories", ["m-dark", "m-zone"])
         )
+        details = panel.get_by_label("Details of memory m-dark")
+        details.locator("summary").click()
+        shown = json.loads(details.locator("pre").inner_text())
+        stored = _rows(manager, "_user_memories")["m-dark"]
+        assert shown == {
+            "id": "m-dark",
+            "memory": "prefers dark mode in every editor",
+            "type": "preference",
+            "owned": True,
+            "category": "ui",
+            "metadata": stored["metadata"],
+            "created_at": str(stored["created_at"]),
+            "updated_at": None,
+            "score": None,
+        }
+        assert stored["metadata"]["category"] == "ui"
 
         search = panel.get_by_role("form", name="Search memories")
         search.get_by_label("Query").fill("utc timezone")
         search.get_by_role("button", name="Search").click()
-        expect(_table_rows(panel).locator("td:nth-child(4)")).to_have_text(
+        expect(_table_rows(panel).locator(SEARCH_ID_COLUMN)).to_have_text(
             ["m-zone", "m-dark"]
         )
-        search.get_by_role("button", name="Show all").click()
-        expect(_table_rows(panel).locator("td:nth-child(4)")).to_have_text(
-            ["m-dark", "m-zone"]
+        expect(_table_rows(panel).locator("td:nth-child(2)")).to_have_text(
+            [
+                _score("utc timezone", "timezone is utc plus five"),
+                _score("utc timezone", "prefers dark mode in every editor"),
+            ]
         )
+        searched = httpx.get(
+            f"{runtime_url}/admin/tenant/{tenant}/memories",
+            params={"agent_name": "_user_memories", "q": "utc timezone", "limit": 1},
+        ).json()["memories"]
+        assert [(m["id"], f"{m['score']:.3f}") for m in searched] == [
+            ("m-zone", _score("utc timezone", "timezone is utc plus five"))
+        ]
+        search.get_by_label("Results").fill("1")
+        search.get_by_role("button", name="Search").click()
+        expect(_table_rows(panel).locator(SEARCH_ID_COLUMN)).to_have_text(["m-zone"])
+        search.get_by_label("Results").fill("0")
+        search.get_by_role("button", name="Search").click()
+        expect(search.get_by_role("alert")).to_have_text(
+            "Results must be a whole number from 1 to 200."
+        )
+        search.get_by_label("Results").fill("20")
+        search.get_by_role("button", name="Show all").click()
+        expect(_table_rows(panel).locator(ID_COLUMN)).to_have_text(["m-dark", "m-zone"])
 
         add = page.get_by_role("form", name="Add memory")
         add.get_by_label("Memory").fill("always cite the source video")
@@ -244,6 +303,14 @@ class TestMemoryView:
             .removeprefix("Saved memory ")
             .removesuffix(" to _user_memories.")
         )
+        assert json.loads(page.get_by_label("Saved memory").inner_text()) == {
+            "status": "saved",
+            "id": saved_id,
+            "type": "preference",
+            "agent_name": "_user_memories",
+            "category": "style",
+            "kind": None,
+        }
         saved = _rows(manager, "_user_memories")[saved_id]
         assert (
             saved["memory"],
@@ -256,8 +323,11 @@ class TestMemoryView:
         )
         panel = _panel(page, tenant, "_user_memories")
         expect(panel.get_by_text("3 live, 1 archived.")).to_be_visible()
-        expect(_table_rows(panel).locator("td:nth-child(4)")).to_have_text(
+        expect(_table_rows(panel).locator(ID_COLUMN)).to_have_text(
             [saved_id, "m-dark", "m-zone"]
+        )
+        expect(_table_rows(panel).nth(0).locator("td:nth-child(4)")).to_have_text(
+            _rows(manager, "_user_memories")[saved_id].get("updated_at") or "—"
         )
 
         panel.get_by_role("button", name="Delete memory m-zone").click()
@@ -268,9 +338,7 @@ class TestMemoryView:
         _namespace(page, "_strategy_store")
         system = _panel(page, tenant, "_strategy_store")
         expect(system.get_by_text(f"1 live, 0 archived. {SYSTEM_NOTE}")).to_be_visible()
-        expect(_table_rows(system).locator("td:nth-child(4)")).to_have_text(
-            ["m-strategy"]
-        )
+        expect(_table_rows(system).locator(ID_COLUMN)).to_have_text(["m-strategy"])
         expect(
             system.get_by_role("button", name="Delete memory m-strategy")
         ).to_have_count(0)
@@ -279,7 +347,7 @@ class TestMemoryView:
 
         _namespace(page, "search_agent")
         agent = _panel(page, tenant, "search_agent")
-        expect(_table_rows(agent).locator("td:nth-child(4)")).to_have_text(
+        expect(_table_rows(agent).locator(ID_COLUMN)).to_have_text(
             ["m-agent-2", "m-agent-1"]
         )
         clear = agent.get_by_role("group", name="Clear namespace")
@@ -301,6 +369,11 @@ class TestMemoryView:
         assert _rows(manager, "search_agent") == {}
         assert set(_rows(manager, "_user_memories")) == {saved_id, "m-dark"}
         assert set(_rows(manager, "_strategy_store")) == {"m-strategy"}
+        search = agent.get_by_role("form", name="Search memories")
+        search.get_by_label("Query").fill("lecture clips")
+        search.get_by_role("button", name="Search").click()
+        expect(agent.get_by_text("No memories match “lecture clips”.")).to_be_visible()
+        expect(agent.get_by_role("table")).to_have_count(0)
 
 
 class TestConcurrency:
@@ -390,8 +463,13 @@ class TestFaultContract:
         expect(panel.get_by_role("table")).to_have_count(0)
         expect(panel.get_by_text("No memories in _user_memories.")).to_have_count(0)
         expect(panel.get_by_text("0 live, 0 archived.")).to_have_count(0)
+        expect(_facts(panel).nth(2)).to_have_text(
+            "unhealthy: The memory store did not answer a read (VespaError)."
+        )
 
         proxy.intercept = None
+        panel.get_by_role("button", name="Check health").click()
+        expect(_facts(panel).nth(2)).to_have_text("healthy: the store answers reads")
         panel.get_by_role("button", name="Refresh").click()
         expect(panel.get_by_text("1 live, 0 archived.")).to_be_visible()
-        expect(_table_rows(panel).locator("td:nth-child(4)")).to_have_text(["m-kept"])
+        expect(_table_rows(panel).locator(ID_COLUMN)).to_have_text(["m-kept"])

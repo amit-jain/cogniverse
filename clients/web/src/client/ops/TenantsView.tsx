@@ -21,6 +21,11 @@ interface Tenant {
   schemas_deployed: string[];
 }
 
+/** ``n`` with ``noun``, plural unless one. */
+function counted(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+}
+
 interface RouterTiers {
   tiers: string[];
   default: string;
@@ -51,6 +56,16 @@ export function TenantsView() {
       <Panel title="Organizations" actions={<button onClick={orgs.reload}>Refresh</button>}>
         {orgs.error && <Alert>{orgs.error}</Alert>}
         {orgs.data && orgs.data.length === 0 && <p className="muted">No organizations yet.</p>}
+        {orgs.data && orgs.data.length > 0 && (
+          <p className="muted" aria-label="Organization count">
+            {counted(orgs.data.length, 'organization')},{' '}
+            {counted(
+              orgs.data.reduce((sum, org) => sum + org.tenant_count, 0),
+              'tenant',
+            )}{' '}
+            in all.
+          </p>
+        )}
         {orgs.data && orgs.data.length > 0 && (
           <table>
             <thead>
@@ -121,6 +136,11 @@ function TenantsPanel({ orgId, onChanged }: { orgId: string; onChanged: (notice:
       {tenants.error && <Alert>{tenants.error}</Alert>}
       {tiers.error && <Alert>{tiers.error}</Alert>}
       {tenants.data && tenants.data.length === 0 && <p className="muted">No tenants in {orgId}.</p>}
+      {tenants.data && tenants.data.length > 0 && (
+        <p className="muted" aria-label="Tenant count">
+          {counted(tenants.data.length, 'tenant')} in {orgId}.
+        </p>
+      )}
       {tenants.data && tenants.data.length > 0 && (
         <table>
           <thead>
@@ -264,24 +284,37 @@ function CreateTenant({
   defaultOrg?: string;
   onCreated: () => void;
 }) {
+  const bases = useLoad(
+    (signal) => runtimeJson<{ schemas: string[]; default: string[] }>('/admin/base-schemas', { signal }),
+    [],
+  );
   const [orgId, setOrgId] = useState('');
   const [tenantName, setTenantName] = useState('');
   const [createdBy, setCreatedBy] = useState('admin');
+  const [chosen, setChosen] = useState<string[]>();
   const [done, setDone] = useState('');
   const action = useAction();
   const org = orgId || defaultOrg || '';
+  const selected = chosen ?? bases.data?.default ?? [];
+  const toggle = (schema: string, on: boolean) =>
+    setChosen(on ? [...selected, schema] : selected.filter((name) => name !== schema));
   return (
     <Panel title="New tenant">
       <form
-        className="inline-form"
+        className="stacked-form"
         aria-label="Create tenant"
         onSubmit={(e) => {
           e.preventDefault();
           setDone('');
           action.run(async () => {
+            if (!selected.length) throw new Error('Choose at least one base schema.');
             const tenant = await runtimeJson<Tenant>('/admin/tenants', {
               method: 'POST',
-              body: { tenant_id: `${org.trim()}:${tenantName.trim()}`, created_by: createdBy.trim() },
+              body: {
+                tenant_id: `${org.trim()}:${tenantName.trim()}`,
+                created_by: createdBy.trim(),
+                base_schemas: (bases.data?.schemas ?? []).filter((name) => selected.includes(name)),
+              },
             });
             setDone(
               `Created ${tenant.tenant_full_id} with schemas ${tenant.schemas_deployed.join(', ')}.`,
@@ -291,38 +324,59 @@ function CreateTenant({
           });
         }}
       >
-        <label>
-          Organization
-          <input
-            required
-            list="known-orgs"
-            value={org}
-            onChange={(e) => setOrgId(e.target.value)}
-            placeholder="acme"
-          />
-          <datalist id="known-orgs">
-            {orgIds.map((id) => (
-              <option key={id} value={id} />
-            ))}
-          </datalist>
-        </label>
-        <label>
-          Tenant name
-          <input required value={tenantName} onChange={(e) => setTenantName(e.target.value)} placeholder="production" />
-        </label>
-        <label>
-          Created by
-          <input required value={createdBy} onChange={(e) => setCreatedBy(e.target.value)} />
-        </label>
-        <button type="submit" disabled={action.pending}>
+        <div className="inline-form">
+          <label>
+            Organization
+            <input
+              required
+              list="known-orgs"
+              value={org}
+              onChange={(e) => setOrgId(e.target.value)}
+              placeholder="acme"
+            />
+            <datalist id="known-orgs">
+              {orgIds.map((id) => (
+                <option key={id} value={id} />
+              ))}
+            </datalist>
+          </label>
+          <label>
+            Tenant name
+            <input
+              required
+              value={tenantName}
+              onChange={(e) => setTenantName(e.target.value)}
+              placeholder="production"
+            />
+          </label>
+          <label>
+            Created by
+            <input required value={createdBy} onChange={(e) => setCreatedBy(e.target.value)} />
+          </label>
+        </div>
+        <fieldset>
+          <legend>Base schemas</legend>
+          {bases.error && <Alert>{bases.error}</Alert>}
+          {(bases.data?.schemas ?? []).map((schema) => (
+            <label key={schema} className="check">
+              <input
+                type="checkbox"
+                checked={selected.includes(schema)}
+                onChange={(e) => toggle(schema, e.target.checked)}
+              />
+              {schema}
+            </label>
+          ))}
+        </fieldset>
+        <button type="submit" disabled={action.pending || !bases.data}>
           {action.pending ? 'Creating and deploying schemas…' : 'Create tenant'}
         </button>
         {action.error && <Alert>{action.error}</Alert>}
         {done && <Alert tone="ok">{done}</Alert>}
       </form>
       <p className="muted">
-        A new organization is created when the name is new. The tenant gets the runtime's base
-        schemas.
+        A new organization is created when the name is new. The tenant gets the checked base schemas; the
+        runtime's defaults are checked to start with.
       </p>
     </Panel>
   );
