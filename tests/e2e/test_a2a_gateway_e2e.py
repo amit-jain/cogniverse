@@ -1027,15 +1027,6 @@ _ENTITY_EXTRACTION_ENVELOPE_KEYS = {
 }
 
 
-def _entity_extraction_payload(envelope: dict) -> dict:
-    """The agent's output fields: what the dispatcher renders as ``answer``."""
-    return {
-        key: value
-        for key, value in envelope.items()
-        if key not in {"status", "agent", "answer"}
-    }
-
-
 @pytest.mark.e2e
 class TestEntityExtractionAgent:
     """Entity extraction agent is an internal orchestration agent.
@@ -1102,7 +1093,13 @@ class TestEntityExtractionAgent:
         assert data["entity_count"] == 3
         assert data["has_entities"] is True
         assert data["dominant_types"] == ["PERSON", "ORGANIZATION", "CONCEPT"]
-        assert json.loads(data["answer"]) == _entity_extraction_payload(data)
+        # The answer is the sentence a person reads; the fields above carry
+        # the structured result.
+        assert data["answer"] == (
+            "Found 3 entities: Obama (person), MIT (organization), "
+            "climate change (concept). Relationships: Obama at MIT; "
+            "MIT about climate change."
+        )
 
     def test_entity_extraction_tech_entities(self):
         """Technology entities for "Python programming with TensorFlow for deep
@@ -1143,7 +1140,10 @@ class TestEntityExtractionAgent:
         assert data["entity_count"] == 3
         assert data["has_entities"] is True
         assert data["dominant_types"] == ["TECHNOLOGY", "CONCEPT"]
-        assert json.loads(data["answer"]) == _entity_extraction_payload(data)
+        assert data["answer"] == (
+            "Found 3 entities: Python (technology), TensorFlow (technology), "
+            "deep learning (concept)."
+        )
 
     def test_entity_extraction_agent_is_registered(self):
         """The agent should be registered in the registry."""
