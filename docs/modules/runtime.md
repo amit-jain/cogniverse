@@ -836,6 +836,7 @@ Codes by router: search `search_failed`, `search_degraded`,
 `memory_unavailable`, `store_unavailable`, `harness_key_store_unavailable`,
 `schema_drift_unavailable`, `tenant_deleted` (410), `session_close_incomplete`;
 tenant management `organization_create_failed`, `organization_list_failed`,
+`organization_registry_unavailable`,
 `organization_delete_failed`, `tenant_create_failed`, `tenant_list_failed`,
 `tenant_delete_failed`, `tenant_delete_marker_unavailable`,
 `tenant_delete_incomplete`, `tenant_operation_in_progress`,
@@ -1331,7 +1332,7 @@ Admin events every worker process and replica acts on. Each worker's lifespan su
 **Tenant lifecycle** (`libs/runtime/cogniverse_runtime/admin/tenant_manager.py`)
 
 **POST /admin/organizations** - Create organization
-**GET /admin/organizations** - List all organizations
+**GET /admin/organizations** - List all organizations, each with its tenant count. A registry that does not answer (a Vespa query that times out or fails) is a 503: `organization_registry_unavailable` for the organization query, `Tenant registry temporarily unavailable` for an organization's tenant query.
 **GET /admin/organizations/{org_id}** - Get organization
 **DELETE /admin/organizations/{org_id}** - Delete organization and its tenants. A failed child deletion returns 503 with `deleted_tenant_ids` and `failed_tenant_ids`, retaining the organization for retry. The parent record is removed only after all child deletions succeed; an unconfirmed parent deletion returns 502 while its record remains.
 **GET /admin/organizations/{org_id}/tenants** - List tenants for an organization
