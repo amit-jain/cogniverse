@@ -282,6 +282,10 @@ def _page_errors(page: Page) -> list:
     return errors
 
 
+def _nav(page: Page):
+    return page.get_by_role("navigation", name="Navigation")
+
+
 def _send(page: Page, text: str) -> None:
     box = page.get_by_placeholder("Ask Shell…")
     box.fill(text)
@@ -489,6 +493,18 @@ class TestShell:
             page.goto(f"{web_url}/#/ops/{view}")
             expect(header.get_by_role("heading", level=1)).to_have_text(heading)
             expect(header.locator("p.view-description")).to_have_text(description)
+
+    def test_opening_the_open_agent_again_keeps_its_thread(
+        self, page, web_url, tenants
+    ):
+        alpha, _ = tenants
+        page.goto(f"{web_url}/#/agents/{AGENT}")
+        _use_tenant(page, alpha)
+        expect(page).to_have_url(THREAD)
+        opened = page.url
+        _nav(page).get_by_role("link", name="Shell", exact=True).click()
+        expect(page.get_by_placeholder("Ask Shell…")).to_be_visible()
+        expect(page).to_have_url(opened)
 
     def test_a_malformed_tenant_is_refused_and_the_active_one_kept(
         self, page, web_url, tenants

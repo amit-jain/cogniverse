@@ -115,12 +115,14 @@ export function App() {
     threads.set(`${tenant}/${agentName}`, threadId);
     threadTenants.set(threadId, tenant);
   }
+  // Runs on every route change too: opening the agent already open, without
+  // a thread, keeps its thread in the address.
   useEffect(() => {
     if (!agentName || !threadId || !tenant) return;
     rememberThread(tenant, agentName, threadId);
     const hash = routeHash({ kind: 'agent', name: agentName, thread: threadId });
     if (window.location.hash !== hash) window.history.replaceState(null, '', hash);
-  }, [agentName, threadId, tenant]);
+  }, [agentName, threadId, tenant, route]);
   const opsView = route.kind === 'ops' ? OPS_VIEWS.find((view) => view.id === route.id) : undefined;
 
   let main;
