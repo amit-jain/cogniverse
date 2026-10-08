@@ -17,6 +17,7 @@ import pandas as pd
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.telemetry.providers.base import (
+    DATASET_TENANT_KEY,
     DatasetNotFoundError,
     DatasetStore,
 )
@@ -119,7 +120,7 @@ class DatasetManager:
         description: Optional[str] = None,
     ) -> str:
         """
-        Create dataset from list of queries.
+        Create dataset from list of queries, owned by this manager's tenant.
 
         Args:
             queries: List of query dictionaries
@@ -138,6 +139,7 @@ class DatasetManager:
                     "description": description or "",
                     "input_keys": INPUT_KEYS,
                     "output_keys": OUTPUT_KEYS,
+                    DATASET_TENANT_KEY: self.tenant_id,
                 },
             )
         )

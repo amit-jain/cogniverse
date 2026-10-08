@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { Alert, Panel, useLoad } from './common';
-import { runtimeJson, seg } from './http';
-import { Bars, LookbackSelect, delta, percent } from './metrics';
+import { Alert, Panel } from './common';
+import { seg } from './http';
+import { HoursInput } from './lookback';
+import { Bars, delta, percent } from './metrics';
 import { TenantChooser } from './tenants';
+import { TtlCache, useCachedJson } from './ttlCache';
 
 interface DatasetComparison {
   queries_dataset: string | null;
@@ -33,43 +35,49 @@ interface RlmAb {
   comparisons: Comparison[];
 }
 
+/** The lookback bounds of the RLM A/B route, in hours. */
+export const RLM_AB_MIN_HOURS = 0.1;
+export const RLM_AB_MAX_HOURS = 720;
+
+/** The command that records comparisons for ``tenant``. */
+export function abCompareCommand(tenant: string): string {
+  return `cogniverse-optim --mode ab-compare --tenant-id ${tenant} --queries-dataset <name>`;
+}
+
+const cache = new TtlCache<unknown>(30_000);
+
 export function RlmAbView() {
   const [tenant, setTenant] = useState('');
-  const [lookback, setLookback] = useState(24);
   return (
     <div className="ops-view">
       <TenantChooser action="Show comparisons" onChoose={setTenant} />
-      {tenant && <Comparisons key={`${tenant}-${lookback}`} tenant={tenant} lookback={lookback} onLookback={setLookback} />}
+      {tenant && <Comparisons key={tenant} tenant={tenant} />}
     </div>
   );
 }
 
-function Comparisons({
-  tenant,
-  lookback,
-  onLookback,
-}: {
-  tenant: string;
-  lookback: number;
-  onLookback: (hours: number) => void;
-}) {
-  const ab = useLoad(
-    (signal) =>
-      runtimeJson<RlmAb>(`/admin/tenant/${seg(tenant)}/telemetry/rlm-ab?lookback_hours=${lookback}`, { signal }),
-    [tenant, lookback],
-  );
+function Comparisons({ tenant }: { tenant: string }) {
+  const [lookback, setLookback] = useState(24);
+  const ab = useCachedJson<RlmAb>(cache, `/admin/tenant/${seg(tenant)}/telemetry/rlm-ab?lookback_hours=${lookback}`);
   const data = ab.data;
   return (
     <>
-      <Panel title={`RLM A/B comparisons of ${tenant}`} actions={<button onClick={ab.reload}>Refresh</button>}>
-        <div className="inline-form">
-          <LookbackSelect value={lookback} onChange={onLookback} />
-        </div>
+      <Panel title={`RLM A/B comparisons of ${tenant}`} actions={<button onClick={ab.refresh}>Refresh</button>}>
+        <p className="caption">
+          Spans recorded by <code>cogniverse-optim --mode ab-compare</code>. Each row is one query and context from the
+          input dataset, answered with and without RLM; both answers share one A/B id.
+        </p>
+        <HoursInput
+          value={lookback}
+          onChange={setLookback}
+          min={RLM_AB_MIN_HOURS}
+          max={RLM_AB_MAX_HOURS}
+          step={RLM_AB_MIN_HOURS}
+        />
         {ab.error && <Alert>{ab.error}</Alert>}
         {data && data.rows === 0 && (
           <p className="muted">
-            No comparisons in this window. Run <code>cogniverse-optim --mode ab-compare</code> for this tenant to
-            record some.
+            No rlm.ab_compare spans in this window. Run <code>{abCompareCommand(tenant)}</code> to populate.
           </p>
         )}
         {data && data.rows > 0 && (
@@ -126,6 +134,7 @@ function Comparisons({
           <table aria-label="Comparisons">
             <thead>
               <tr>
+                <th>A/B id</th>
                 <th>When</th>
                 <th>Query</th>
                 <th>Dataset</th>
@@ -138,6 +147,7 @@ function Comparisons({
             <tbody>
               {data.comparisons.map((row, index) => (
                 <tr key={row.ab_id ?? index}>
+                  <td>{row.ab_id ?? '—'}</td>
                   <td>{row.start_time ? new Date(row.start_time).toLocaleString() : '—'}</td>
                   <td>{row.query ?? '—'}</td>
                   <td>{row.queries_dataset ?? '—'}</td>

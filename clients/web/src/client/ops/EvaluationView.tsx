@@ -1,49 +1,155 @@
 import { useMemo, useState } from 'react';
-import { Alert, Panel, useLoad } from './common';
+import { Alert, Panel } from './common';
 import {
-  EVALUATION_LOOKBACKS,
+  EVALUATION_MAX_HOURS,
+  createdDate,
+  datasetOption,
   markRetrieved,
   pairName,
+  phoenixDatasetUrl,
+  scoreTone,
+  strategiesByProfile,
   successMatrix,
+  type DatasetEvaluation,
+  type EvaluationDataset,
+  type EvaluationDatasets,
   type GoldenEvaluation,
   type StrategyScores,
 } from './evaluation';
-import { runtimeJson, seg } from './http';
-import { LookbackSelect, percent } from './metrics';
+import { seg } from './http';
+import { HoursInput } from './lookback';
+import { percent } from './metrics';
 import { Plot } from './Plot';
+import { Tabs } from './Tabs';
 import { TenantChooser } from './tenants';
+import { TtlCache, useCachedJson } from './ttlCache';
 
 const score = (value: number) => value.toFixed(3);
 const when = (iso: string) => new Date(iso).toLocaleString();
+// Evaluations are kept for a minute; Refresh reads again.
+const cache = new TtlCache<unknown>(60_000);
 
 export function EvaluationView() {
   const [tenant, setTenant] = useState('');
-  const [lookback, setLookback] = useState(168);
   return (
     <div className="ops-view">
       <TenantChooser action="Evaluate" onChoose={setTenant} />
-      {tenant && <Evaluation key={`${tenant}-${lookback}`} tenant={tenant} lookback={lookback} onLookback={setLookback} />}
+      {tenant && (
+        <Tabs
+          key={tenant}
+          label="Evaluate against"
+          tabs={[
+            { name: 'Golden set', panel: () => <GoldenSet tenant={tenant} /> },
+            { name: 'Phoenix datasets', panel: () => <Datasets tenant={tenant} /> },
+          ]}
+        />
+      )}
     </div>
   );
 }
 
-function Evaluation({ tenant, lookback, onLookback }: { tenant: string; lookback: number; onLookback: (hours: number) => void }) {
-  const evaluation = useLoad(
-    (signal) =>
-      runtimeJson<GoldenEvaluation>(`/admin/tenant/${seg(tenant)}/evaluation/golden?lookback_hours=${lookback}`, {
-        signal,
-      }),
-    [tenant, lookback],
+function GoldenSet({ tenant }: { tenant: string }) {
+  const [lookback, setLookback] = useState(168);
+  const evaluation = useCachedJson<GoldenEvaluation>(
+    cache,
+    `/admin/tenant/${seg(tenant)}/evaluation/golden?lookback_hours=${lookback}`,
   );
-  const data = evaluation.data;
+  return (
+    <Evaluation
+      title={`Golden set evaluation of ${tenant}`}
+      loaded={evaluation}
+      lookback={lookback}
+      onLookback={setLookback}
+      none={`No searches of the golden queries were recorded for tenant ${tenant} in the last ${lookback} hours.`}
+    />
+  );
+}
+
+function Datasets({ tenant }: { tenant: string }) {
+  const listing = useCachedJson<EvaluationDatasets>(cache, `/admin/tenant/${seg(tenant)}/evaluation/datasets`);
+  const [chosen, setChosen] = useState('');
+  const datasets = listing.data?.datasets ?? [];
+  const dataset = datasets.find((d) => d.id === chosen) ?? datasets[0];
+  const phoenixUrl = listing.data?.phoenix_url ?? null;
+  return (
+    <>
+      <Panel title={`Phoenix datasets of ${tenant}`} actions={<button onClick={listing.refresh}>Refresh</button>}>
+        {listing.error && <Alert>{listing.error}</Alert>}
+        {listing.data && datasets.length === 0 && (
+          <p className="muted">No datasets of tenant {tenant} were found in Phoenix.</p>
+        )}
+        {dataset && (
+          <>
+            <div className="inline-form">
+              <label>
+                Dataset
+                <select value={dataset.id} onChange={(e) => setChosen(e.target.value)}>
+                  {datasets.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {datasetOption(d)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <dl className="facts" aria-label="Dataset details">
+              <dt>Dataset examples</dt>
+              <dd>{dataset.example_count}</dd>
+              <dt>Created</dt>
+              <dd>{createdDate(dataset)}</dd>
+            </dl>
+            {phoenixUrl ? (
+              <a href={phoenixDatasetUrl(phoenixUrl, dataset)} target="_blank" rel="noreferrer">
+                View in Phoenix
+              </a>
+            ) : (
+              <p className="muted">No Phoenix address is configured, so the dataset is not linked.</p>
+            )}
+          </>
+        )}
+      </Panel>
+      {dataset && <DatasetScores key={dataset.id} tenant={tenant} dataset={dataset} />}
+    </>
+  );
+}
+
+function DatasetScores({ tenant, dataset }: { tenant: string; dataset: EvaluationDataset }) {
+  const [lookback, setLookback] = useState(168);
+  const evaluation = useCachedJson<DatasetEvaluation>(
+    cache,
+    `/admin/tenant/${seg(tenant)}/evaluation/dataset?dataset_id=${seg(dataset.id)}&lookback_hours=${lookback}`,
+  );
+  return (
+    <Evaluation
+      title={`Evaluation of ${dataset.name}`}
+      loaded={evaluation}
+      lookback={lookback}
+      onLookback={setLookback}
+      none={`No searches of this dataset's queries were recorded for tenant ${tenant} in the last ${lookback} hours.`}
+    />
+  );
+}
+
+function Evaluation({
+  title,
+  loaded,
+  lookback,
+  onLookback,
+  none,
+}: {
+  title: string;
+  loaded: { data?: GoldenEvaluation; error?: string; refresh: () => void };
+  lookback: number;
+  onLookback: (hours: number) => void;
+  none: string;
+}) {
+  const data = loaded.data;
   const scoredQueries = new Set(data?.queries.map((query) => query.query)).size;
   return (
     <>
-      <Panel title={`Golden set evaluation of ${tenant}`} actions={<button onClick={evaluation.reload}>Refresh</button>}>
-        <div className="inline-form">
-          <LookbackSelect value={lookback} onChange={onLookback} options={EVALUATION_LOOKBACKS} />
-        </div>
-        {evaluation.error && <Alert>{evaluation.error}</Alert>}
+      <Panel title={title} actions={<button onClick={loaded.refresh}>Refresh</button>}>
+        <HoursInput value={lookback} onChange={onLookback} min={1} max={EVALUATION_MAX_HOURS} />
+        {loaded.error && <Alert>{loaded.error}</Alert>}
         {data && (
           <dl className="facts" aria-label="Evaluation summary">
             <dt>Golden queries</dt>
@@ -63,9 +169,7 @@ function Evaluation({ tenant, lookback, onLookback }: { tenant: string; lookback
             Unscored searches returned a result with no source title, so they cannot be matched to the golden set.
           </p>
         )}
-        {data && data.strategies.length === 0 && (
-          <p className="muted">No searches of the golden queries were recorded in this window.</p>
-        )}
+        {data && data.strategies.length === 0 && <p className="muted">{none}</p>}
       </Panel>
       {data && data.strategies.length > 0 && (
         <>
@@ -152,20 +256,47 @@ function Scores({ strategies }: { strategies: StrategyScores[] }) {
 }
 
 function Queries({ data }: { data: GoldenEvaluation }) {
-  const [pair, setPair] = useState(pairName(data.strategies[0]));
-  const queries = data.queries.filter((query) => pairName(query) === pair);
+  const groups = strategiesByProfile(data.strategies);
   return (
     <Panel title="Query results">
-      <div className="inline-form">
-        <label>
-          Profile and strategy
-          <select value={pair} onChange={(e) => setPair(e.target.value)}>
-            {data.strategies.map((row) => (
-              <option key={pairName(row)}>{pairName(row)}</option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <Tabs
+        label="Profiles"
+        tabs={groups.map((group) => ({
+          name: group.profile,
+          panel: () => (
+            <Tabs
+              key={group.profile}
+              label={`Strategies of ${group.profile}`}
+              tabs={group.strategies.map((scores) => ({
+                name: scores.strategy,
+                panel: () => <StrategyResults key={pairName(scores)} data={data} scores={scores} />,
+              }))}
+            />
+          ),
+        }))}
+      />
+    </Panel>
+  );
+}
+
+function Badge({ value }: { value: number }) {
+  return <td className={`score ${scoreTone(value)}`}>{score(value)}</td>;
+}
+
+function StrategyResults({ data, scores }: { data: GoldenEvaluation; scores: StrategyScores }) {
+  const queries = data.queries.filter((query) => pairName(query) === pairName(scores));
+  return (
+    <>
+      <dl className="facts" aria-label={`Summary of ${pairName(scores)}`}>
+        <dt>MRR</dt>
+        <dd>{percent(scores.mrr)}</dd>
+        <dt>Recall@1</dt>
+        <dd>{percent(scores.recall_at_1)}</dd>
+        <dt>Recall@5</dt>
+        <dd>{percent(scores.recall_at_5)}</dd>
+        <dt>Queries</dt>
+        <dd>{scores.queries}</dd>
+      </dl>
       <table aria-label="Query results">
         <thead>
           <tr>
@@ -196,14 +327,14 @@ function Queries({ data }: { data: GoldenEvaluation }) {
                   </ol>
                 )}
               </td>
-              <td>{score(query.mrr)}</td>
-              <td>{score(query.recall_at_1)}</td>
-              <td>{score(query.recall_at_5)}</td>
+              <Badge value={query.mrr} />
+              <Badge value={query.recall_at_1} />
+              <Badge value={query.recall_at_5} />
               <td title={query.trace_id ? `Trace ${query.trace_id}` : undefined}>{when(query.searched_at)}</td>
             </tr>
           ))}
         </tbody>
       </table>
-    </Panel>
+    </>
   );
 }

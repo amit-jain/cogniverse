@@ -198,7 +198,7 @@ def test_profile_metrics_show_an_outage_rather_than_an_empty_window(
     expect(panel.get_by_role("alert")).to_have_text(
         f"Could not read the cogniverse.profile_selection spans of tenant {tenant}."
     )
-    expect(panel.get_by_text("No profile selections in this window.")).to_have_count(0)
+    expect(panel.locator("p.muted")).to_have_count(0)
 
 
 def test_rlm_ab_shows_averages_datasets_and_comparisons(page, web_url, telemetry):
@@ -221,10 +221,10 @@ def test_rlm_ab_shows_averages_datasets_and_comparisons(page, web_url, telemetry
 
     _show(page, web_url, "rlm-ab", "RLM A/B", "Show comparisons", tenant)
     rows_shown = _rows_until(page, f"RLM A/B comparisons of {tenant}", "Comparisons", 3)
-    assert [row[1:] for row in rows_shown] == [
-        ["third question", "podcasts", "+600.0", "+10.0", "-0.500", "no"],
-        ["second question", "lectures", "+400.0", "+50.0", "+0.250", "yes"],
-        ["first question", "lectures", "+200.0", "+30.0", "+0.250", "no"],
+    assert [[row[0], *row[2:]] for row in rows_shown] == [
+        ["ab-3", "third question", "podcasts", "+600.0", "+10.0", "-0.500", "no"],
+        ["ab-2", "second question", "lectures", "+400.0", "+50.0", "+0.250", "yes"],
+        ["ab-1", "first question", "lectures", "+200.0", "+30.0", "+0.250", "no"],
     ]
     expect(page.get_by_role("region", name="Comparisons", exact=True)).to_be_visible()
     averages = page.locator('dl[aria-label="Comparison averages"]')
@@ -254,8 +254,8 @@ def test_rlm_ab_with_no_comparisons_says_how_to_record_them(page, web_url, telem
         "region", name=f"RLM A/B comparisons of {tenant}", exact=True
     )
     expect(panel.locator("p.muted")).to_have_text(
-        "No comparisons in this window. Run cogniverse-optim --mode ab-compare "
-        "for this tenant to record some."
+        "No rlm.ab_compare spans in this window. Run cogniverse-optim --mode "
+        f"ab-compare --tenant-id {tenant} --queries-dataset <name> to populate."
     )
 
 
@@ -647,7 +647,8 @@ def test_evaluation_scores_a_tenants_searches_of_its_golden_set(
     ).all_inner_texts() == [DOG]
 
     results = page.get_by_role("region", name="Query results", exact=True)
-    results.get_by_label("Profile and strategy").select_option("video_colpali / hybrid")
+    strategies = results.get_by_role("tablist", name="Strategies of video_colpali")
+    strategies.get_by_role("tab", name="hybrid", exact=True).click()
     assert _rows(page, "Query results") == [
         [
             SUNSET,
@@ -668,7 +669,7 @@ def test_evaluation_scores_a_tenants_searches_of_its_golden_set(
             _local(page, red_car),
         ],
     ]
-    results.get_by_label("Profile and strategy").select_option("video_colpali / bm25")
+    strategies.get_by_role("tab", name="bm25", exact=True).click()
     assert _rows(page, "Query results") == [
         [
             SUNSET,
@@ -716,11 +717,7 @@ def test_evaluation_shows_an_outage_rather_than_no_searches(
     expect(panel.get_by_role("alert")).to_have_text(
         f"Could not read the {SEARCH} spans of tenant {tenant}."
     )
-    expect(
-        panel.get_by_text(
-            "No searches of the golden queries were recorded in this window."
-        )
-    ).to_have_count(0)
+    expect(panel.locator("p.muted")).to_have_count(0)
 
 
 def _show_routing(page, web_url, tenant):

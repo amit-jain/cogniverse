@@ -10,6 +10,7 @@ import logging
 import weakref
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncIterator, Dict, Generator, List, Optional, Sequence
 
@@ -242,6 +243,28 @@ class DatasetReplaceRestoreFailedError(RuntimeError):
         )
 
 
+# The dataset metadata key naming the tenant that owns a dataset.
+DATASET_TENANT_KEY = "tenant_id"
+
+
+@dataclass(frozen=True)
+class DatasetSummary:
+    """One stored dataset as a listing describes it.
+
+    ``tenant_id`` is the owning tenant recorded when the dataset was created
+    (``create_dataset`` metadata ``tenant_id``), or None for a dataset created
+    without one.
+    """
+
+    id: str
+    name: str
+    example_count: int
+    created_at: datetime
+    description: str
+    tenant_id: Optional[str]
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
 class DatasetStore(ABC):
     """
     Manage training datasets.
@@ -259,12 +282,24 @@ class DatasetStore(ABC):
         Args:
             name: Dataset name
             data: DataFrame with dataset records
-            metadata: Optional metadata
+            metadata: Optional metadata. ``tenant_id`` names the tenant that
+                owns the dataset; it is recorded on the dataset and reported
+                by ``describe_datasets``.
 
         Returns:
             Dataset identifier
         """
         pass
+
+    async def describe_datasets(self) -> List[DatasetSummary]:
+        """Every stored dataset, newest first.
+
+        Raises:
+            DatasetStoreUnavailableError: The store could not answer.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support describe_datasets"
+        )
 
     @abstractmethod
     async def get_dataset(self, name: str) -> pd.DataFrame:

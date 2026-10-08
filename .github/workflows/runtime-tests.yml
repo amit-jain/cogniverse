@@ -260,6 +260,7 @@ jobs:
           --ignore=tests/runtime/integration/test_web_ops_approvals.py \
           --ignore=tests/runtime/integration/test_web_ops_atlas.py \
           --ignore=tests/runtime/integration/test_web_ops_config.py \
+          --ignore=tests/runtime/integration/test_web_ops_eval_metrics.py \
           --ignore=tests/runtime/integration/test_web_ops_ingestion.py \
           --ignore=tests/runtime/integration/test_web_ops_memory.py \
           --ignore=tests/runtime/integration/test_web_ops_optimization.py \
@@ -351,6 +352,7 @@ jobs:
           tests/runtime/integration/test_web_ops_approvals.py \
           tests/runtime/integration/test_web_ops_atlas.py \
           tests/runtime/integration/test_web_ops_config.py \
+          tests/runtime/integration/test_web_ops_eval_metrics.py \
           tests/runtime/integration/test_web_ops_ingestion.py \
           tests/runtime/integration/test_web_ops_memory.py \
           tests/runtime/integration/test_web_ops_optimization.py \

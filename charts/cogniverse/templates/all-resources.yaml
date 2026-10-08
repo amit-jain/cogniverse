@@ -313,6 +313,10 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
+        {{- with .Values.phoenix.uiUrl }}
+        - name: PHOENIX_UI_URL
+          value: {{ . | quote }}
+        {{- end }}
         # Instrument DSPy LM spans; the runtime routes each to the tenant's
         # own Phoenix project via the tenant-routing tracer provider.
         - name: OPENINFERENCE_DSPY

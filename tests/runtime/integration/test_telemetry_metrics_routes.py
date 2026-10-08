@@ -195,6 +195,8 @@ async def test_every_selection_in_the_window_is_counted(telemetry, app):
         body = await _until(client, _profile_path(tenant), _counted(1001), 180)
 
     assert body == {
+        "project": telemetry.config.get_project_name(tenant),
+        "spans": 1001,
         "modalities": [
             {
                 "modality": "video",
@@ -204,14 +206,22 @@ async def test_every_selection_in_the_window_is_counted(telemetry, app):
                 "p99_ms": pytest.approx(10.0, abs=1e-6),
                 "success_rate": 1.0,
             }
-        ]
+        ],
     }
 
 
 async def test_a_tenant_with_no_selections_has_no_modalities(telemetry, app):
+    tenant = _tenant("empty")
     async with _client(app) as client:
-        response = await client.get(_profile_path(_tenant("empty")))
-    assert (response.status_code, response.json()) == (200, {"modalities": []})
+        response = await client.get(_profile_path(tenant))
+    assert (response.status_code, response.json()) == (
+        200,
+        {
+            "project": telemetry.config.get_project_name(tenant),
+            "spans": 0,
+            "modalities": [],
+        },
+    )
 
 
 async def test_rlm_ab_comparisons_aggregate_per_dataset(telemetry, app):
