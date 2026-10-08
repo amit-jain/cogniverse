@@ -129,6 +129,7 @@ export function App() {
       <div className="workspace">
         <header className="workspace-header">
           <h1>{opsView.label}</h1>
+          {opsView.description && <p className="view-description">{opsView.description}</p>}
         </header>
         <div className="ops-scroll">
           <opsView.component />

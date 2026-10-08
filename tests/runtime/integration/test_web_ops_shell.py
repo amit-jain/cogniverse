@@ -469,6 +469,27 @@ class TestAgents:
             ] == [tenant]
 
 
+class TestShell:
+    def test_each_operations_view_says_what_it_is_for(self, page, web_url):
+        header = page.locator("header.workspace-header")
+        for view, heading, description in (
+            (
+                "ingestion",
+                "Ingestion",
+                "Interactive testing and configuration of ingestion pipelines with "
+                "different processing profiles.",
+            ),
+            (
+                "tenants",
+                "Tenants",
+                "Create and delete organizations and their tenants, and set each "
+                "tenant's router tier.",
+            ),
+        ):
+            page.goto(f"{web_url}/#/ops/{view}")
+            expect(header.get_by_role("heading", level=1)).to_have_text(heading)
+            expect(header.locator("p.view-description")).to_have_text(description)
+
 class TestIngress:
     """The client served over plain http on a hostname other than localhost,
     as the cluster ingress serves it: not a secure context."""

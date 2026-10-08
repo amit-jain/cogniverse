@@ -83,8 +83,9 @@ reach the server can use those routes and act for any registered tenant.
 
 ## Operations views
 
-The sidebar's Operations section manages the runtime. Each view calls the
-runtime's existing routes through `/ui-api/runtime/*`.
+The sidebar's Operations section manages the runtime. Each view says in one
+sentence under its heading what it is for, and calls the runtime's existing
+routes through `/ui-api/runtime/*`.
 
 | View | What it does | Runtime routes |
 |---|---|---|
