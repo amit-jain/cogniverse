@@ -36,6 +36,7 @@ DEV_TAG = "0.1.dev5-gabc1234"
 DEV_VERSIONS = {
     "runtime": "0.1.dev11+gaaa111aaa",
     "dashboard": "0.1.dev12+gbbb222bbb",
+    "web": "0.1.dev19+giii999iii",
     "pylate": "0.1.dev13+gccc333ccc",
     "gliner": "0.1.dev14+gddd444ddd",
     "clap_embed": "0.1.dev15+geee555eee",
@@ -55,21 +56,26 @@ def _make_project_root(
     face_embed: bool = False,
     colbert_pylate: bool = False,
     code_colbert_pylate: bool = False,
+    web: bool = True,
+    dashboard: bool = False,
 ) -> Path:
     """A project root with just the chart files images.py reads: Chart.yaml
-    (appVersion) and values.yaml (inference.<svc>.enabled → build set)."""
+    (appVersion) and values.yaml (web/dashboard and inference.<svc> enabled
+    flags → build set). The UI defaults match the shipped chart."""
     chart_dir = tmp_path / "charts" / "cogniverse"
     chart_dir.mkdir(parents=True)
     (chart_dir / "Chart.yaml").write_text(
         f'version: {app_version}\nappVersion: "{app_version}"\n'
     )
     values = {
+        "web": {"enabled": web},
+        "dashboard": {"enabled": dashboard},
         "inference": {
             "clap_embed": {"enabled": clap_embed},
             "face_embed": {"enabled": face_embed},
             "colbert_pylate": {"enabled": colbert_pylate},
             "code_colbert_pylate": {"enabled": code_colbert_pylate},
-        }
+        },
     }
     (chart_dir / "values.yaml").write_text(yaml.safe_dump(values))
     return tmp_path
@@ -109,6 +115,7 @@ class TestPerImageDevVersion:
     ALL_IMAGE_FAMILIES = {
         "runtime",
         "dashboard",
+        "web",
         "pylate",
         "gliner",
         "clap_embed",
@@ -200,8 +207,8 @@ class TestPerImageDevVersion:
         (
             ".dockerignore",
             ".dockerignore",
-            "tests/\nscripts/run_*.py\n*.md\n# changed\n",
-            ALL_IMAGE_FAMILIES,
+            "tests/\nsrc/\nscripts/run_*.py\n*.md\n# changed\n",
+            ALL_IMAGE_FAMILIES - {"web"},
         ),
         (
             "libs/dashboard/Dockerfile",
@@ -216,6 +223,18 @@ class TestPerImageDevVersion:
             {"dashboard"},
         ),
         ("scripts", "scripts/dashboard_tab.py", "VALUE = 'changed'\n", {"dashboard"}),
+        (
+            "clients/web/Dockerfile",
+            "clients/web/Dockerfile",
+            "FROM node:22.22.0-bookworm-slim\n",
+            {"web"},
+        ),
+        (
+            "clients/web",
+            "clients/web/src/server/app.ts",
+            "export const changed = true;\n",
+            {"web"},
+        ),
         (
             "deploy/pylate/Dockerfile",
             "deploy/pylate/Dockerfile",
@@ -317,7 +336,11 @@ class TestPerImageDevVersion:
         repo_root = tmp_path / "repo"
         files = {
             "pyproject.toml": "[project]\nname = 'demo'\nversion = '0.1.0'\n",
-            ".dockerignore": "tests/\nscripts/run_*.py\n*.md\n",
+            ".dockerignore": "tests/\nsrc/\nscripts/run_*.py\n*.md\n",
+            "clients/web/Dockerfile": "FROM scratch\n",
+            "clients/web/.dockerignore": "/node_modules\n/dist\n/tests\n",
+            "clients/web/src/server/app.ts": "export const changed = false;\n",
+            "clients/web/tests/server.test.ts": "export {};\n",
             "libs/core/module.py": "CORE = 'base'\n",
             "libs/dashboard/module.py": "DASHBOARD = 'base'\n",
             "libs/runtime/module.py": "RUNTIME = 'base'\n",
@@ -375,6 +398,27 @@ class TestPerImageDevVersion:
         after = self._versions(repo_root)
 
         assert self._changed_images(before, after) == {"dashboard"}
+
+    def test_web_tag_follows_its_own_context_ignore_rules(self, tmp_path: Path) -> None:
+        """The web image builds from clients/web, so its source counts even
+        where the root ignore rules (``src/``) would drop it, and its own
+        ignore rules drop its tests and its ignore file still counts."""
+        repo_root = self._seed_git_repo(tmp_path)
+        before = self._versions(repo_root)
+
+        self._commit(
+            repo_root, "clients/web/tests/server.test.ts", "export const x = 1;\n"
+        )
+        assert self._versions(repo_root) == before
+
+        self._commit(
+            repo_root, "clients/web/src/client/App.tsx", "export const y = 1;\n"
+        )
+        after_source = self._versions(repo_root)
+        assert self._changed_images(before, after_source) == {"web"}
+
+        self._commit(repo_root, "clients/web/.dockerignore", "/node_modules\n/dist\n")
+        assert self._changed_images(after_source, self._versions(repo_root)) == {"web"}
 
     def test_dockerignored_copy_source_commit_changes_no_image_tag(
         self, tmp_path: Path
@@ -468,9 +512,18 @@ class TestImageInputDeclarations:
         assert set(images_mod.IMAGE_DOCKERFILES) == set(images_mod.IMAGE_INPUT_PATHS)
         for image, dockerfile_path in images_mod.IMAGE_DOCKERFILES.items():
             declared = images_mod.IMAGE_INPUT_PATHS[image]
+            context = images_mod.image_build_context(image)
             assert dockerfile_path in declared, f"{image} omits its Dockerfile"
-            assert ".dockerignore" in declared, f"{image} omits .dockerignore"
-            for source in self._local_copy_sources(self.REPO_ROOT / dockerfile_path):
+            ignore_file = images_mod.image_dockerignore(image)
+            assert (self.REPO_ROOT / ignore_file).is_file(), (
+                f"{image} builds from {context} without {ignore_file}"
+            )
+            assert any(
+                ignore_file == path or ignore_file.startswith(f"{path}/")
+                for path in declared
+            ), f"{image} omits {ignore_file}"
+            for copied in self._local_copy_sources(self.REPO_ROOT / dockerfile_path):
+                source = copied if context == "." else f"{context}/{copied}"
                 covered = any(
                     source == path or source.startswith(f"{path.rstrip('/')}/")
                     for path in declared
@@ -545,13 +598,13 @@ class TestDeploymentImageIdentity:
             },
             "image_tags": (
                 f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}",
-                f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}",
+                f"cogniverse/web:{DEV_TAGS['web']}",
                 f"cogniverse/gliner:{DEV_TAGS['gliner']}",
                 f"cogniverse/clap-embed:{DEV_TAGS['clap_embed']}",
                 f"cogniverse/pylate:{DEV_TAGS['pylate']}-rocm",
             ),
             "chart_digest": (
-                "sha256:9bfac69a7266217612dce4dd1601bf7402118883b53fdf6e9f649c29db9628e1"
+                "sha256:d7bd3773fdbb4c2713ef1d2f6c422c45fa783a83dbdfdca464ec4d1fccc4232b"
             ),
         }
 
@@ -591,7 +644,7 @@ class TestBuildImages:
 
         assert tags == [
             f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}",
-            f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}",
+            f"cogniverse/web:{DEV_TAGS['web']}",
             f"cogniverse/gliner:{DEV_TAGS['gliner']}",
         ]
         build_commands = [
@@ -603,10 +656,15 @@ class TestBuildImages:
             f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSIONS['runtime']}"
             in (build_commands[0])
         )
-        assert (
-            f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSIONS['dashboard']}"
-            in (build_commands[1])
-        )
+        assert build_commands[1] == [
+            "docker",
+            "build",
+            "-f",
+            "clients/web/Dockerfile",
+            "-t",
+            f"cogniverse/web:{DEV_TAGS['web']}",
+            "clients/web",
+        ]
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_build_images_skips_host_present_tag_but_returns_complete_set(
@@ -626,7 +684,7 @@ class TestBuildImages:
 
         assert tags == [
             runtime_tag,
-            f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
+            f"cogniverse/web:{DEV_TAGS['web']}",
             f"cogniverse/gliner:{DEV_TAGS['gliner']}",
         ]
         build_commands = [
@@ -639,14 +697,10 @@ class TestBuildImages:
                 "docker",
                 "build",
                 "-f",
-                "libs/dashboard/Dockerfile",
-                "--build-arg",
-                "TORCH_BACKEND=cpu",
-                "--build-arg",
-                f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSIONS['dashboard']}",
+                "clients/web/Dockerfile",
                 "-t",
-                f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
-                ".",
+                f"cogniverse/web:{DEV_TAGS['web']}",
+                "clients/web",
             ],
             [
                 "docker",
@@ -698,7 +752,7 @@ class TestBuildImages:
 
         assert tags == (
             f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}",
-            f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}",
+            f"cogniverse/web:{DEV_TAGS['web']}",
             f"cogniverse/gliner:{DEV_TAGS['gliner']}",
             f"cogniverse/clap-embed:{DEV_TAGS['clap_embed']}",
             f"cogniverse/pylate:{DEV_TAGS['pylate']}-rocm",
@@ -765,7 +819,7 @@ class TestBuildImages:
 
         expected_tags = [
             f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}",
-            f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
+            f"cogniverse/web:{DEV_TAGS['web']}",
             f"cogniverse/gliner:{DEV_TAGS['gliner']}",
         ]
         assert overlapped_inventory is False
@@ -777,8 +831,8 @@ class TestBuildImages:
         self, mock_run: object, tmp_path: Path
     ) -> None:
         """The default build (no sidecars enabled) is exactly three images:
-        backend-specific runtime + dashboard plus the backend-agnostic GLiNER
-        sidecar, all tagged with the deploy-input-derived git version (``+``
+        the backend-specific runtime, the web client and the backend-agnostic
+        GLiNER sidecar, all tagged with the deploy-input-derived git version (``+``
         sanitized to ``-``). ColPali/Whisper/LateOn/DenseOn are served by
         vLLM."""
         _completed(mock_run)
@@ -788,7 +842,7 @@ class TestBuildImages:
 
         assert tags == [
             f"cogniverse/runtime-cpu:{DEV_TAG}",
-            f"cogniverse/dashboard-cpu:{DEV_TAG}",
+            f"cogniverse/web:{DEV_TAG}",
             f"cogniverse/gliner:{DEV_TAG}",
         ]
         assert mock_run.call_count == 4  # type: ignore[attr-defined]
@@ -801,7 +855,7 @@ class TestBuildImages:
     def test_build_images_runtime_passes_torch_backend_and_version(
         self, mock_run: object, tmp_path: Path
     ) -> None:
-        """Runtime + dashboard builds get the matching --build-arg
+        """The runtime build gets the matching --build-arg
         TORCH_BACKEND=<name>, a tag carrying the deploy-input-derived git
         version, and the FULL git version fed into the git-less docker context
         via SETUPTOOLS_SCM_PRETEND_VERSION (the tag sanitizes ``+``, the
@@ -816,13 +870,20 @@ class TestBuildImages:
             for call in mock_run.call_args_list  # type: ignore[attr-defined]
             if call.args[0][:2] == ["docker", "build"]
         ]
-        runtime_cmd, dashboard_cmd, gliner_cmd = build_commands
+        runtime_cmd, web_cmd, gliner_cmd = build_commands
         assert "TORCH_BACKEND=rocm" in runtime_cmd
         assert f"cogniverse/runtime-rocm:{DEV_TAG}" in runtime_cmd
         assert f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSION}" in runtime_cmd
-        assert "TORCH_BACKEND=rocm" in dashboard_cmd
-        assert f"cogniverse/dashboard-rocm:{DEV_TAG}" in dashboard_cmd
-        assert f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSION}" in dashboard_cmd
+        # The web image installs no Python workspace and no torch: no args.
+        assert web_cmd == [
+            "docker",
+            "build",
+            "-f",
+            "clients/web/Dockerfile",
+            "-t",
+            f"cogniverse/web:{DEV_TAG}",
+            "clients/web",
+        ]
         # GLiNER + sidecars don't install the workspace, so no scm arg.
         assert not any("SETUPTOOLS_SCM_PRETEND_VERSION" in a for a in gliner_cmd)
 
@@ -841,7 +902,7 @@ class TestBuildImages:
 
         assert built == [
             f"cogniverse/runtime-cpu:{DEV_TAG}",
-            f"cogniverse/dashboard-cpu:{DEV_TAG}",
+            f"cogniverse/web:{DEV_TAG}",
             f"cogniverse/gliner:{DEV_TAG}",
         ]
         all_cmds = [
@@ -880,7 +941,7 @@ class TestBuildImages:
 
         assert built == [
             f"cogniverse/runtime-rocm:{DEV_TAG}",
-            f"cogniverse/dashboard-rocm:{DEV_TAG}",
+            f"cogniverse/web:{DEV_TAG}",
             f"cogniverse/gliner:{DEV_TAG}",
             f"cogniverse/pylate:{DEV_TAG}-rocm",
         ]
@@ -926,6 +987,67 @@ class TestBuildImages:
         assert len(built) == 3
 
     @patch("cogniverse_cli.images.subprocess.run")
+    def test_ui_images_follow_their_enabled_flags(
+        self, mock_run: object, tmp_path: Path
+    ) -> None:
+        """An overlay that turns the dashboard on and the web client off builds
+        the dashboard for the host backend, with the workspace build args, and
+        no web image."""
+        _completed(mock_run)
+        root = _make_project_root(tmp_path)
+        overlay = tmp_path / "values.ui.yaml"
+        overlay.write_text(
+            yaml.safe_dump({"web": {"enabled": False}, "dashboard": {"enabled": True}})
+        )
+
+        built = build_images(
+            root, torch_backend="rocm", values_files=[overlay], versions=DEV_VERSIONS
+        )
+
+        assert built == [
+            f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}",
+            f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}",
+            f"cogniverse/gliner:{DEV_TAGS['gliner']}",
+        ]
+        dashboard_cmd = next(
+            call[0][0]
+            for call in mock_run.call_args_list  # type: ignore[attr-defined]
+            if f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}" in call[0][0]
+        )
+        assert dashboard_cmd == [
+            "docker",
+            "build",
+            "-f",
+            "libs/dashboard/Dockerfile",
+            "--build-arg",
+            "TORCH_BACKEND=rocm",
+            "--build-arg",
+            f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSIONS['dashboard']}",
+            "-t",
+            f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}",
+            ".",
+        ]
+
+    def test_verification_names_a_missing_web_image(self, tmp_path: Path) -> None:
+        root = _make_project_root(tmp_path)
+        runtime_tag = f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}"
+
+        with pytest.raises(RuntimeError) as excinfo:
+            images_mod.verify_local_images_cover_deploy(
+                root,
+                None,
+                built_tags=[runtime_tag],
+                versions=DEV_VERSIONS,
+                torch_backend="cpu",
+            )
+
+        assert str(excinfo.value) == (
+            "Deploy enables first-party images that were not built: web -> "
+            f"cogniverse/web:{DEV_TAGS['web']}. "
+            "Build with the same values files helm receives."
+        )
+
+    @patch("cogniverse_cli.images.subprocess.run")
     def test_overlay_enabling_face_embed_adds_its_build(
         self, mock_run: object, tmp_path: Path
     ) -> None:
@@ -949,7 +1071,7 @@ class TestBuildImages:
 
         assert built == [
             f"cogniverse/runtime-cpu:{DEV_TAG}",
-            f"cogniverse/dashboard-cpu:{DEV_TAG}",
+            f"cogniverse/web:{DEV_TAG}",
             f"cogniverse/gliner:{DEV_TAG}",
             f"cogniverse/face-embed:{DEV_TAG}",
         ]
@@ -985,7 +1107,7 @@ class TestBuildImages:
 
         assert built == [
             f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}",
-            f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
+            f"cogniverse/web:{DEV_TAGS['web']}",
             f"cogniverse/gliner:{DEV_TAGS['gliner']}",
             f"cogniverse/video-embed:{DEV_TAGS['video_embed']}",
         ]
@@ -1012,6 +1134,33 @@ def test_release_gliner_build_includes_canonical_server() -> None:
         "backend": "",
     }
     assert "videoprism" not in entries
+
+
+def test_release_builds_the_web_image_from_its_own_context() -> None:
+    """The release publishes the image ``cogniverse up`` builds for the web
+    client, from the same Dockerfile and build context, and every release
+    entry builds from the context the CLI uses for its Dockerfile."""
+    workflow_path = Path(__file__).parents[3] / ".github/workflows/release-images.yml"
+    workflow = yaml.safe_load(workflow_path.read_text())
+    image_matrix = workflow["jobs"]["build-push"]["strategy"]["matrix"]["include"]
+    entries = {entry["repo"]: entry for entry in image_matrix}
+
+    assert entries["web"] == {
+        "repo": "web",
+        "dockerfile": "clients/web/Dockerfile",
+        "context": "clients/web",
+        "backend": "",
+    }
+    assert images_mod.WEB_REPO == "cogniverse/web"
+    family_by_dockerfile = {
+        dockerfile: image for image, dockerfile in images_mod.IMAGE_DOCKERFILES.items()
+    }
+    assert {entry["repo"]: entry["context"] for entry in image_matrix} == {
+        entry["repo"]: images_mod.image_build_context(
+            family_by_dockerfile[entry["dockerfile"]]
+        )
+        for entry in image_matrix
+    }
 
 
 def _with_vllm_asr(root: Path, device: str, repository: str) -> Path:
@@ -1044,7 +1193,7 @@ class TestDeviceImageBuilds:
         audio_tag = f"cogniverse/vllm-audio-rocm:{DEV_TAGS['vllm_audio']}"
         assert built == [
             f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}",
-            f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
+            f"cogniverse/web:{DEV_TAGS['web']}",
             f"cogniverse/gliner:{DEV_TAGS['gliner']}",
             audio_tag,
         ]
@@ -1068,7 +1217,7 @@ class TestDeviceImageBuilds:
             root, torch_backend="cpu", versions=DEV_VERSIONS
         ) == {
             "runtime.imagesByBackend.cpu.tag": DEV_TAGS["runtime"],
-            "dashboard.imagesByBackend.cpu.tag": DEV_TAGS["dashboard"],
+            "web.image.tag": DEV_TAGS["web"],
             "inference.gliner.image.tag": DEV_TAGS["gliner"],
             "inference.vllm_asr.imagesByDevice.rocm.tag": DEV_TAGS["vllm_audio"],
         }
@@ -1098,7 +1247,7 @@ class TestDeviceImageBuilds:
 
         assert built == [
             f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}",
-            f"cogniverse/dashboard-cpu:{DEV_TAGS['dashboard']}",
+            f"cogniverse/web:{DEV_TAGS['web']}",
             f"cogniverse/gliner:{DEV_TAGS['gliner']}",
         ]
 
@@ -1108,11 +1257,18 @@ class TestDeviceImageBuilds:
         root = _with_vllm_asr(
             _make_project_root(tmp_path), "cuda", "cogniverse/vllm-audio-cuda"
         )
+        app_tags = [
+            f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}",
+            f"cogniverse/web:{DEV_TAGS['web']}",
+        ]
         with pytest.raises(RuntimeError) as excinfo:
             verify_local_images_cover_deploy(
                 root,
                 None,
-                built_tags=[f"cogniverse/vllm-audio-cpu:{DEV_TAGS['vllm_audio']}"],
+                built_tags=[
+                    *app_tags,
+                    f"cogniverse/vllm-audio-cpu:{DEV_TAGS['vllm_audio']}",
+                ],
                 versions=DEV_VERSIONS,
                 torch_backend="cpu",
             )
@@ -1124,7 +1280,10 @@ class TestDeviceImageBuilds:
         verify_local_images_cover_deploy(
             root,
             None,
-            built_tags=[f"cogniverse/vllm-audio-cuda:{DEV_TAGS['vllm_audio']}"],
+            built_tags=[
+                *app_tags,
+                f"cogniverse/vllm-audio-cuda:{DEV_TAGS['vllm_audio']}",
+            ],
             versions=DEV_VERSIONS,
             torch_backend="cpu",
         )
@@ -1140,7 +1299,18 @@ class TestDevImageSetValues:
         )
         assert overrides == {
             "runtime.imagesByBackend.cpu.tag": DEV_TAGS["runtime"],
-            "dashboard.imagesByBackend.cpu.tag": DEV_TAGS["dashboard"],
+            "web.image.tag": DEV_TAGS["web"],
+            "inference.gliner.image.tag": DEV_TAGS["gliner"],
+        }
+
+    def test_enabled_dashboard_gets_its_backend_tag(self, tmp_path: Path) -> None:
+        root = _make_project_root(tmp_path, web=False, dashboard=True)
+        overrides = dev_image_set_values(
+            root, torch_backend="rocm", versions=DEV_VERSIONS
+        )
+        assert overrides == {
+            "runtime.imagesByBackend.rocm.tag": DEV_TAGS["runtime"],
+            "dashboard.imagesByBackend.rocm.tag": DEV_TAGS["dashboard"],
             "inference.gliner.image.tag": DEV_TAGS["gliner"],
         }
 

@@ -25,6 +25,8 @@ on:
       - 'charts/cogniverse/**'
       - 'workflows/**'
       - 'configs/**'
+      # test_web_image.py builds clients/web with the CLI's image spec.
+      - 'clients/web/**'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -49,6 +51,8 @@ on:
       - 'charts/cogniverse/**'
       - 'workflows/**'
       - 'configs/**'
+      # test_web_image.py builds clients/web with the CLI's image spec.
+      - 'clients/web/**'
 
 jobs:
   unit-tests:

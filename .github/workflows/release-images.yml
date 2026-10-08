@@ -50,6 +50,10 @@ jobs:
             dockerfile: libs/dashboard/Dockerfile
             context: .
             backend: rocm
+          - repo: web
+            dockerfile: clients/web/Dockerfile
+            context: clients/web
+            backend: ""
           - repo: gliner
             dockerfile: deploy/gliner/Dockerfile
             context: .
