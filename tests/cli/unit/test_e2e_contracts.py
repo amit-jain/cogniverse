@@ -762,12 +762,19 @@ def test_run_e2e_batched_script_covers_every_e2e_test_file():
 
     assert exclusion_files == {
         "tests/e2e/test_web_client_e2e.py",
+        "tests/e2e/test_web_optimization_e2e.py",
+        "tests/e2e/test_web_optimization_framework_e2e.py",
         "tests/e2e/test_modal_inference_e2e.py",
         "tests/e2e/test_cronworkflow_execution_heavy_e2e.py",
     }, sorted(exclusion_files)
-    assert exclusion_reasons["tests/e2e/test_web_client_e2e.py"] == (
-        "browser lane via pytest.mark.browser"
-    )
+    for browser_suite in (
+        "tests/e2e/test_web_client_e2e.py",
+        "tests/e2e/test_web_optimization_e2e.py",
+        "tests/e2e/test_web_optimization_framework_e2e.py",
+    ):
+        assert exclusion_reasons[browser_suite] == (
+            "browser lane via pytest.mark.browser"
+        )
     assert exclusion_reasons["tests/e2e/test_modal_inference_e2e.py"] == (
         "requires_modal_inference collection gate"
     )
