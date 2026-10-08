@@ -133,7 +133,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 23
+    timeout-minutes: 28
     needs: unit-tests
 
     steps:
@@ -181,11 +181,20 @@ jobs:
           sleep 2
         done
 
-    - name: Run integration tests
+    - name: Run multi-tenant telemetry integration tests
       timeout-minutes: 8
       run: |
         uv run --no-sync python -m pytest \
+          tests/telemetry/integration/test_multi_tenant_telemetry.py \
+          -m "integration and ci_fast and not requires_lm" \
+          -v --tb=short
+
+    - name: Run dataset, evaluation and session integration tests
+      timeout-minutes: 5
+      run: |
+        uv run --no-sync python -m pytest \
           tests/telemetry/integration/ \
+          --ignore=tests/telemetry/integration/test_multi_tenant_telemetry.py \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short
 
