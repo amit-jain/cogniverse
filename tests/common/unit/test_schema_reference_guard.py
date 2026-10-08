@@ -307,6 +307,10 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Injected profile for the offloaded profile create and update",
         "s",
     ),
+    "tests/runtime/unit/test_harness_turn.py": (
+        "Tenant-scoped schema in a hit's Vespa document id",
+        "video_colpali_smol500_mv_frame_t_main",
+    ),
     "tests/runtime/unit/test_main_startup_schema_removal.py": (
         "Tenant schema names in fabricated drift migration outcomes",
         "document_text_globex_globex video_colpali_smol500_mv_frame_acme_acme video_colpali_smol500_mv_frame_globex_globex",
