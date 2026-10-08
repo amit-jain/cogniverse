@@ -6,6 +6,7 @@ metrics specific to routing quality, separate from search or generation quality.
 """
 
 import logging
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,13 +23,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _coerce_latency(value: object) -> float:
-    """Coerce a span's processing_time to milliseconds, defaulting to 0.0 for
-    a missing/non-numeric value rather than raising."""
+def span_duration_ms(span_data: Dict[str, Any]) -> Optional[float]:
+    """Milliseconds from a span's ``start_time`` to its ``end_time``; ``None``
+    when either is missing."""
+    start, end = span_data.get("start_time"), span_data.get("end_time")
+    if start is None or end is None or pd.isna(start) or pd.isna(end):
+        return None
+    return (pd.Timestamp(end) - pd.Timestamp(start)).total_seconds() * 1000
+
+
+def _decision_latency_ms(
+    processing_time: object, span_data: Dict[str, Any]
+) -> Optional[float]:
+    """A routing decision's time in milliseconds: its recorded
+    ``processing_time`` when that is a finite number, else its span's
+    duration; ``None`` when the span carries neither."""
     try:
-        return float(value)
+        recorded = float(processing_time)
     except (TypeError, ValueError):
-        return 0.0
+        recorded = math.nan
+    if math.isfinite(recorded):
+        return recorded
+    return span_duration_ms(span_data)
 
 
 def per_agent_precision_recall_f1(
@@ -108,7 +124,8 @@ def evaluate_routing_span(
 
     Returns ``(outcome, metrics)``; ``metrics`` holds ``chosen_agent``,
     ``confidence``, ``latency_ms`` (the decision's recorded
-    ``processing_time``), ``success`` and ``downstream_status``. Raises
+    ``processing_time``, else its span's duration; ``None`` when the span
+    carries neither), ``success`` and ``downstream_status``. Raises
     ``ValueError`` when the span is not a routing span or records no chosen
     agent or confidence.
     """
@@ -123,7 +140,7 @@ def evaluate_routing_span(
 
     chosen_agent = None
     confidence = None
-    latency_ms = 0.0
+    processing_time = None
 
     # Canonical span contract: the routing decision is on output.value.
     from cogniverse_foundation.telemetry.span_contract import read_span_io
@@ -132,7 +149,7 @@ def evaluate_routing_span(
     if isinstance(output, dict):
         chosen_agent = output.get("chosen_agent") or output.get("recommended_agent")
         confidence = output.get("confidence")
-        latency_ms = output.get("processing_time", 0.0)
+        processing_time = output.get("processing_time")
 
     # Try Phoenix flattened format first (attributes.routing.*)
     if (
@@ -145,7 +162,7 @@ def evaluate_routing_span(
             "recommended_agent"
         )
         confidence = routing_attrs.get("confidence")
-        latency_ms = routing_attrs.get("processing_time", 0.0)
+        processing_time = routing_attrs.get("processing_time")
 
     # Try nested format (attributes with routing.* keys)
     if not chosen_agent or confidence is None:
@@ -160,7 +177,8 @@ def evaluate_routing_span(
             if confidence is not None
             else attributes.get("routing.confidence")
         )
-        latency_ms = latency_ms or attributes.get("routing.processing_time", 0.0)
+        if processing_time is None:
+            processing_time = attributes.get("routing.processing_time")
 
     if not chosen_agent or confidence is None:
         raise ValueError(
@@ -175,9 +193,7 @@ def evaluate_routing_span(
         # Routers emit floats, labels ("high") or percents ("85%") —
         # parse_confidence maps them all into [0, 1].
         "confidence": parse_confidence(confidence),
-        # Coerce defensively: a None/list processing_time must not raise a
-        # TypeError that aborts the whole calculate_metrics batch.
-        "latency_ms": _coerce_latency(latency_ms),
+        "latency_ms": _decision_latency_ms(processing_time, span_data),
         "success": outcome == RoutingOutcome.SUCCESS,
         "downstream_status": downstream_status,
     }
@@ -204,7 +220,9 @@ class RoutingMetrics:
 
     routing_accuracy: float  # Percentage of successful routing decisions
     confidence_calibration: float  # Correlation between confidence and success
-    avg_routing_latency: float  # Average time to make routing decision (ms)
+    # Mean decision time (ms) over the decisions that carry one; None when
+    # none does.
+    avg_routing_latency: Optional[float]
     per_agent_precision: Dict[str, float]  # Precision per agent type
     per_agent_recall: Dict[str, float]  # Recall per agent type
     per_agent_f1: Dict[str, float]  # F1 score per agent type
@@ -319,9 +337,13 @@ class RoutingEvaluator:
         # Calculate confidence calibration (correlation between confidence and success)
         confidence_calibration = self._calculate_confidence_calibration(evaluations)
 
-        # Calculate average latency
-        latencies = [metrics["latency_ms"] for _, metrics in evaluations]
-        avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+        # A decision without a timing is left out of the mean, not read as 0.
+        latencies = [
+            metrics["latency_ms"]
+            for _, metrics in evaluations
+            if metrics["latency_ms"] is not None
+        ]
+        avg_latency = sum(latencies) / len(latencies) if latencies else None
 
         # Calculate per-agent metrics
         per_agent_precision, per_agent_recall, per_agent_f1 = (
@@ -469,7 +491,6 @@ def summarize_routing_decisions(spans: pd.DataFrame) -> Dict[str, Any]:
         output = io["output"] if isinstance(io["output"], dict) else {}
         start = pd.Timestamp(span["start_time"])
         start = start.tz_localize("UTC") if start.tzinfo is None else start
-        duration = pd.Timestamp(span["end_time"]) - pd.Timestamp(span["start_time"])
         decisions.append(
             {
                 "span_id": span.get("context.span_id"),
@@ -480,7 +501,7 @@ def summarize_routing_decisions(spans: pd.DataFrame) -> Dict[str, Any]:
                 "confidence": metrics["confidence"],
                 "outcome": outcome.value,
                 "reason": metrics["downstream_status"],
-                "latency_ms": duration.total_seconds() * 1000,
+                "latency_ms": span_duration_ms(span),
                 "entity_extraction_failed": output.get("entity_extraction_failed")
                 is True,
             }

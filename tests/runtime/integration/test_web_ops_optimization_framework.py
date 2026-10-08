@@ -729,12 +729,18 @@ class TestMetricsAndReranking:
         self, page, web_url, telemetry
     ):
         tenant = _tenant("webmetrics")
-        for minutes in (1, 2, 3):
+        # Timed by their spans only, as the gateway records them.
+        for minutes, duration_ms in ((1, 200), (2, 300), (3, 400)):
             record_routing(
-                telemetry, tenant, "search_agent", 0.9, 20, minutes_ago=minutes
+                telemetry,
+                tenant,
+                "search_agent",
+                0.9,
+                duration_ms,
+                minutes_ago=minutes,
             )
         record_routing(
-            telemetry, tenant, "search_agent", 0.3, 20, minutes_ago=4, failed=True
+            telemetry, tenant, "search_agent", 0.3, 500, minutes_ago=4, failed=True
         )
         record_trace(telemetry, tenant, "cogniverse.optimization", 10, minutes_ago=5)
         telemetry.force_flush(timeout_millis=10000)
@@ -751,7 +757,7 @@ class TestMetricsAndReranking:
             page.wait_for_timeout(2000)
             page.get_by_role("button", name="Refresh metrics").click()
         expect(_fact(panel, "Routing accuracy")).to_have_text("75.0%")
-        expect(_fact(panel, "Average routing latency")).to_have_text("0ms")
+        expect(_fact(panel, "Average routing latency")).to_have_text("350ms")
         expect(_fact(panel, "Confidence calibration")).to_have_text("1.000")
         assert _cells(panel.get_by_role("table", name="Per-agent performance")) == [
             ["search_agent", "0.750", "1.000", f"{2 * 0.75 / 1.75:.3f}"]

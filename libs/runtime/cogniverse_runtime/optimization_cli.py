@@ -611,6 +611,26 @@ def _profile_selection_result_titles(
     return keys, untitled
 
 
+def _profile_selection_profiles(
+    config_manager: Any, tenant_id: str, candidate_profiles: Iterable[str]
+) -> dict[str, Any]:
+    """Each candidate profile as search resolves it for the tenant: the
+    tenant's profile catalog (shipped and system profiles, the tenant's
+    stored profiles merged on top), which also names the candidates."""
+    from cogniverse_foundation.config.utils import ConfigUtils
+
+    catalog = ConfigUtils(tenant_id, config_manager).backend_profiles()
+    profiles: dict[str, Any] = {}
+    for profile in candidate_profiles:
+        if profile not in catalog:
+            raise ValueError(
+                f"Profile selection derivation: profile {profile!r} is not "
+                f"configured for tenant {tenant_id!r}"
+            )
+        profiles[profile] = catalog[profile]
+    return profiles
+
+
 def _profile_selection_title_fields(
     config_manager: Any,
     tenant_id: str,
@@ -622,15 +642,9 @@ def _profile_selection_title_fields(
     from cogniverse_sdk.document import DocumentFieldMapping
 
     title_fields: dict[str, str] = {}
-    for profile in candidate_profiles:
-        profile_config = config_manager.get_backend_profile(
-            profile, tenant_id=tenant_id
-        )
-        if profile_config is None:
-            raise ValueError(
-                f"Profile selection derivation: profile {profile!r} is not "
-                f"configured for tenant {tenant_id!r}"
-            )
+    for profile, profile_config in _profile_selection_profiles(
+        config_manager, tenant_id, candidate_profiles
+    ).items():
         schema_name = profile_config.schema_name
         if not schema_name:
             raise ValueError(
@@ -659,17 +673,11 @@ def _profile_selection_profile_types(
     tenant_id: str,
     candidate_profiles: Iterable[str],
 ) -> dict[str, str]:
-    """Media type of each candidate profile from its shipped config."""
+    """Media type of each candidate profile."""
     profile_types: dict[str, str] = {}
-    for profile in candidate_profiles:
-        profile_config = config_manager.get_backend_profile(
-            profile, tenant_id=tenant_id
-        )
-        if profile_config is None:
-            raise ValueError(
-                f"Profile selection derivation: profile {profile!r} is not "
-                f"configured for tenant {tenant_id!r}"
-            )
+    for profile, profile_config in _profile_selection_profiles(
+        config_manager, tenant_id, candidate_profiles
+    ).items():
         profile_type = str(getattr(profile_config, "type", "") or "").strip().lower()
         if not profile_type:
             raise ValueError(

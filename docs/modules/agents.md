@@ -226,6 +226,16 @@ resolver seam — it resolves through `BackendRegistry` on every call — and
 `_search_backend(query_dict)` runs one search with that instance leased for
 the call. `AudioAnalysisAgent` and `SearchService` use the same two methods.
 
+**Recorded searches**: every text search the agent runs records a
+`search_service.search` span (`search_span`, the span `SearchService.search`
+records) under the request's tenant, with the user's query as `query`, the
+rewrite it searched as `enhanced_query`, and the profile, strategy (`default`
+when none was requested), `top_k` and result rows. A single-profile or
+relationship-aware search records one span, an ensemble one per profile, and a
+multi-query fusion one span holding the fused results. The evaluation views
+and the optimization framework read these spans; a failure to record the
+result rows is logged and never fails the search.
+
 **Profile resolution**: profiles, models and encoder services come from the
 config of `SearchAgentDeps.tenant_id` — the tenant's own profiles merged over
 the system's — and from the system tenant when it is unset. The dispatcher

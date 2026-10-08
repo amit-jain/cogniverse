@@ -1119,7 +1119,8 @@ class AgentScores(BaseModel):
 class RoutingScores(BaseModel):
     accuracy: float
     total_decisions: int
-    avg_latency_ms: float
+    # None when no decision in the window carries a timing.
+    avg_latency_ms: Optional[float]
     confidence_calibration: float
     per_agent: List[AgentScores]
 

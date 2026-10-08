@@ -228,7 +228,7 @@ export interface OptimizationMetrics {
   routing: {
     accuracy: number;
     total_decisions: number;
-    avg_latency_ms: number;
+    avg_latency_ms: number | null;
     confidence_calibration: number;
     per_agent: { agent: string; precision: number; recall: number; f1: number }[];
   } | null;

@@ -211,7 +211,11 @@ def _render_summary_metrics(metrics):
     with col3:
         st.metric(
             label="Avg Routing Latency",
-            value=f"{metrics.avg_routing_latency:.0f}ms",
+            value=(
+                "—"
+                if metrics.avg_routing_latency is None
+                else f"{metrics.avg_routing_latency:.0f}ms"
+            ),
             help="Average time to make a routing decision",
         )
 
