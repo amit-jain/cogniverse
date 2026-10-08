@@ -16,7 +16,7 @@ const ALLOWED = [
   /^\/admin\/tenant\/[^/]+\/orchestration-workflows(\/[^/]+\/annotation)?$/,
   /^\/admin\/tenant\/[^/]+\/telemetry\/(profile-selection|rlm-ab|traces|root-causes)$/,
   /^\/admin\/tenant\/[^/]+\/evaluation\/(golden|datasets|dataset)$/,
-  /^\/admin\/tenant\/[^/]+\/embeddings\/atlas$/,
+  /^\/admin\/tenant\/[^/]+\/embeddings\/atlas(\/umap)?$/,
   /^\/admin\/tenant\/[^/]+\/routing-decisions(\/[^/]+\/(approve|label))?$/,
   /^\/ag-ui\/results\/relevance$/,
   /^\/agents\/$/,

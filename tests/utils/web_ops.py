@@ -7,7 +7,8 @@ with a cluster-events channel of their own so tenant deletes and session
 closes reach this worker the way they reach a runtime replica, and a task
 event store on the same Redis that uploads open their tasks in and tenant
 deletes cancel them through.
-The annotation queue is a real Redis queue under ``annotation_queue_prefix``.
+The annotation queue is a real Redis queue under ``annotation_queue_prefix``,
+and the embedding atlas cache keeps its generations in the same Redis.
 Given an ingest processor, the ingestion worker's claim loop runs on the
 server's loop against ``REDIS_URL`` with the same task event store, as a
 worker pod runs it, so a cancelled job stops before it starts.
@@ -40,6 +41,7 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.admin import tenant_manager as tm
+from cogniverse_runtime.atlas_projection import ProjectionCache, set_projection_cache
 from cogniverse_runtime.cluster_events import ClusterEvents
 from cogniverse_runtime.ingestion_worker import status_api
 from cogniverse_runtime.ingestion_worker import worker as ingest_worker
@@ -102,6 +104,7 @@ def serve_ops_runtime(
         )
         await events.start()
         shared_state = await connect_shared_state_redis(redis_url)
+        set_projection_cache(ProjectionCache(shared_state))
         task_events = TaskEventStore(shared_state)
         task_events.start()
         agents.set_task_event_store(task_events)
@@ -147,6 +150,7 @@ def serve_ops_runtime(
             events_router.set_task_event_store(None)
             ingestion.set_task_event_store(None)
             await task_events.close()
+            set_projection_cache(None)
             await shared_state.aclose()
             await events.close()
 

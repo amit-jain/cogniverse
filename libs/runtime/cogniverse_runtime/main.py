@@ -1405,6 +1405,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     )
     openai_compat.set_continuation_store(ContinuationStore(shared_state_redis))
+    from cogniverse_runtime.atlas_projection import (
+        ProjectionCache,
+        set_projection_cache,
+    )
+
+    set_projection_cache(ProjectionCache(shared_state_redis))
     # Workflow and ingestion progress, cancellations and the active-task index
     # (/events) live in the same Redis; this process's poller renews the leases
     # of the tasks it runs and delivers their cancellations.
@@ -1940,6 +1946,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(sandbox_manager.close)
     except Exception as exc:
         logger.warning("SandboxManager close failed during shutdown: %s", exc)
+    set_projection_cache(None)
     await shared_state_redis.aclose()
     logger.info("Cogniverse Runtime shut down successfully")
 

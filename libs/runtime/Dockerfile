@@ -45,6 +45,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv pip install pylate --no-deps && \
     uv pip install datasets && \
     uv pip install -e ./libs/telemetry-phoenix && \
+    /app/.venv/bin/python -c "import umap" && \
     rm -rf /root/.cache/pip
 
 # Runtime stage

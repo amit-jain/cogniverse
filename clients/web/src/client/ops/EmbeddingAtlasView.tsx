@@ -1,6 +1,17 @@
 import { useMemo, useState } from 'react';
+import {
+  clusterCounts,
+  clusterName,
+  kindCounts,
+  parseQueries,
+  selectedIds,
+  selectedPoints,
+  umapTraces,
+  type UmapAtlas,
+} from './atlas';
 import { Alert, Panel, useAction, useLoad } from './common';
 import { runtimeJson, seg } from './http';
+import { Bars } from './metrics';
 import { Plot } from './Plot';
 import { TenantChooser } from './tenants';
 
@@ -24,7 +35,7 @@ export interface Atlas {
 }
 
 /** The points whose title or text holds ``query`` (any case), by title. */
-export function matchingPoints(points: AtlasPoint[], query: string): AtlasPoint[] {
+export function matchingPoints<P extends AtlasPoint>(points: P[], query: string): P[] {
   const needle = query.trim().toLowerCase();
   return points
     .filter((p) => !needle || `${p.title ?? ''} ${p.text ?? ''}`.toLowerCase().includes(needle))
@@ -58,9 +69,38 @@ function MapPanel({ tenant }: { tenant: string }) {
   );
   const [profile, setProfile] = useState('');
   const [limit, setLimit] = useState('500');
+  const [projection, setProjection] = useState<'pca' | 'umap'>('pca');
+  const [queries, setQueries] = useState('');
   const [atlas, setAtlas] = useState<Atlas>();
+  const [umap, setUmap] = useState<UmapAtlas>();
   const action = useAction();
   const chosen = profile || profiles.data?.[0] || '';
+  const umapPath = `/admin/tenant/${seg(tenant)}/embeddings/atlas/umap`;
+  const loadUmap = async (count: number, placed: string[], recompute: boolean) => {
+    if (recompute) await runtimeJson(`${umapPath}?profile=${seg(chosen)}`, { method: 'DELETE' });
+    setUmap(
+      await runtimeJson<UmapAtlas>(umapPath, {
+        method: 'POST',
+        body: { profile: chosen, limit: count, queries: placed },
+      }),
+    );
+  };
+  const show = (recompute: boolean) =>
+    action.run(async () => {
+      const count = Number(limit);
+      if (!Number.isInteger(count) || count < 1) throw new Error('Documents must be a whole number above 0.');
+      setAtlas(undefined);
+      setUmap(undefined);
+      if (projection === 'pca') {
+        setAtlas(
+          await runtimeJson<Atlas>(`/admin/tenant/${seg(tenant)}/embeddings/atlas?profile=${seg(chosen)}&limit=${count}`),
+        );
+        return;
+      }
+      const parsed = parseQueries(queries);
+      if ('error' in parsed) throw new Error(parsed.error);
+      await loadUmap(count, parsed.queries, recompute);
+    });
   return (
     <>
       <Panel title={`Map documents of ${tenant}`}>
@@ -71,16 +111,7 @@ function MapPanel({ tenant }: { tenant: string }) {
             aria-label="Map documents"
             onSubmit={(e) => {
               e.preventDefault();
-              action.run(async () => {
-                const count = Number(limit);
-                if (!Number.isInteger(count) || count < 1) throw new Error('Documents must be a whole number above 0.');
-                setAtlas(undefined);
-                setAtlas(
-                  await runtimeJson<Atlas>(
-                    `/admin/tenant/${seg(tenant)}/embeddings/atlas?profile=${seg(chosen)}&limit=${count}`,
-                  ),
-                );
-              });
+              show(false);
             }}
           >
             <label>
@@ -95,14 +126,33 @@ function MapPanel({ tenant }: { tenant: string }) {
               Documents
               <input inputMode="numeric" value={limit} onChange={(e) => setLimit(e.target.value)} />
             </label>
+            <label>
+              Projection
+              <select value={projection} onChange={(e) => setProjection(e.target.value as 'pca' | 'umap')}>
+                <option value="pca">PCA, read live</option>
+                <option value="umap">UMAP with clusters</option>
+              </select>
+            </label>
+            {projection === 'umap' && (
+              <label>
+                Queries (one per line)
+                <textarea rows={3} value={queries} onChange={(e) => setQueries(e.target.value)} />
+              </label>
+            )}
             <button type="submit" disabled={action.pending}>
               {action.pending ? 'Mapping…' : 'Show map'}
             </button>
+            {projection === 'umap' && (
+              <button type="button" disabled={action.pending} onClick={() => show(true)}>
+                Recompute
+              </button>
+            )}
             {action.error && <Alert>{action.error}</Alert>}
           </form>
         )}
       </Panel>
       {atlas && <AtlasPanel atlas={atlas} />}
+      {umap && <UmapPanel key={`${umap.generation}-${umap.computed_at}`} atlas={umap} />}
     </>
   );
 }
@@ -179,5 +229,124 @@ function AtlasPanel({ atlas }: { atlas: Atlas }) {
         </>
       )}
     </Panel>
+  );
+}
+
+const when = (iso: string) => new Date(iso).toLocaleString();
+
+function UmapPanel({ atlas }: { atlas: UmapAtlas }) {
+  const [density, setDensity] = useState(false);
+  const [selection, setSelection] = useState<Set<string> | null>(null);
+  const [query, setQuery] = useState('');
+  const data = useMemo(() => umapTraces(atlas, density), [atlas, density]);
+  const chosen = useMemo(() => selectedPoints(atlas, selection), [atlas, selection]);
+  const shown = useMemo(() => {
+    const ids = new Set(chosen.map((p) => p.id));
+    return matchingPoints(atlas.points, query).filter((p) => ids.has(p.id));
+  }, [atlas, chosen, query]);
+  const layout = useMemo(
+    () => ({
+      dragmode: 'lasso',
+      xaxis: { title: { text: 'UMAP 1' } },
+      yaxis: { title: { text: 'UMAP 2' } },
+    }),
+    [],
+  );
+  const cluster = (id: number) => clusterName(atlas, id);
+  return (
+    <>
+      <Panel title={`UMAP map of ${atlas.profile} for ${atlas.tenant_id}`}>
+        <dl className="facts" aria-label="Map facts">
+          <dt>Schema</dt>
+          <dd>{atlas.schema_name}</dd>
+          <dt>Embedding</dt>
+          <dd>
+            {atlas.embedding_field}, {atlas.dimensions} dimensions
+          </dd>
+          <dt>Documents mapped</dt>
+          <dd>{atlas.points.length}</dd>
+          <dt>Without an embedding</dt>
+          <dd>{atlas.without_embedding}</dd>
+          <dt>Clusters</dt>
+          <dd>{atlas.clusters.length}</dd>
+          <dt>Queries placed</dt>
+          <dd>{atlas.queries.length}</dd>
+          <dt>Laid out</dt>
+          <dd>{when(atlas.computed_at)}</dd>
+        </dl>
+        <label>
+          <input type="checkbox" checked={density} onChange={(e) => setDensity(e.target.checked)} /> Density
+        </label>
+        <Plot
+          title={`Documents of ${atlas.profile} by UMAP`}
+          data={data}
+          layout={layout}
+          onSelect={(points) => setSelection(points ? selectedIds(points) : null)}
+        />
+        <p className="muted" aria-label="Selection">
+          {selection
+            ? `Selection: ${chosen.length} documents of ${atlas.points.length}.`
+            : 'Draw a lasso or box on the map to select documents.'}
+          {selection && (
+            <button type="button" onClick={() => setSelection(null)}>
+              Clear selection
+            </button>
+          )}
+        </p>
+        <div className="chart-grid">
+          <Bars title="Documents per cluster" entries={clusterCounts(atlas, chosen)} format={String} />
+          <Bars title="Points by kind" entries={kindCounts(atlas, selection)} format={String} />
+        </div>
+        <Plot
+          title="Text length"
+          data={[{ type: 'histogram', x: chosen.map((p) => (p.text ?? '').length), name: 'Documents' }]}
+          layout={{ xaxis: { title: { text: 'Characters' } }, yaxis: { title: { text: 'Documents' } } }}
+        />
+        <label>
+          Find documents
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="title or text" />
+        </label>
+        <table aria-label="Mapped documents">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Cluster</th>
+              <th>Across</th>
+              <th>Up</th>
+              <th>Text</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((p) => (
+              <tr key={p.id}>
+                <td>{p.title ?? p.id}</td>
+                <td>{cluster(p.cluster)}</td>
+                <td>{p.x.toFixed(3)}</td>
+                <td>{p.y.toFixed(3)}</td>
+                <td>{p.text ?? ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Panel>
+      {atlas.queries.length > 0 && (
+        <Panel title="Query analysis">
+          {atlas.queries.map((q) => (
+            <section key={q.label} aria-label={q.label}>
+              <h3>
+                {q.label}: {q.text}
+              </h3>
+              <ol aria-label={`Documents most similar to ${q.label}`}>
+                {q.similar.map((d) => (
+                  <li key={d.id}>
+                    {d.title ?? d.id} (similarity {d.similarity.toFixed(3)})
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ))}
+        </Panel>
+      )}
+    </>
   );
 }
