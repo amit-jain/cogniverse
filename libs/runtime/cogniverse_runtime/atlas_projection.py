@@ -49,7 +49,9 @@ class DocumentMap:
     layout, each document's place and cluster, and the cluster names."""
 
     documents: List[Dict[str, Any]]
-    vectors: np.ndarray
+    # None for a map laid out from given places without vectors.
+    vectors: Optional[np.ndarray]
+    # None for a map laid out from given places.
     reducer: Any
     coords: np.ndarray
     clusters: np.ndarray
@@ -160,21 +162,29 @@ def automatic_clusters(
     return labels, _unique_names(ranked)
 
 
-def build_map(documents: List[Dict[str, Any]], vectors: np.ndarray) -> DocumentMap:
+def build_map(
+    documents: List[Dict[str, Any]],
+    vectors: Optional[np.ndarray],
+    coords: Optional[np.ndarray] = None,
+) -> DocumentMap:
     """The map of ``documents`` (each with ``title`` and ``text``) from their
-    pooled ``vectors``."""
+    pooled ``vectors``, laid out with UMAP, or at the given ``coords`` (one
+    2D place per document) when there are some; ``vectors`` may then be
+    None."""
     if len(documents) < MIN_DOCUMENTS:
         raise TooFewDocumentsError(len(documents))
-    reducer, coords = umap_layout(vectors)
+    reducer = None
+    if coords is None:
+        reducer, coords = umap_layout(vectors)
     clusters, names = automatic_clusters(
         coords,
         [" ".join(filter(None, (d.get("title"), d.get("text")))) for d in documents],
     )
     return DocumentMap(
         documents=documents,
-        vectors=unit_rows(vectors),
+        vectors=None if vectors is None else unit_rows(vectors),
         reducer=reducer,
-        coords=coords,
+        coords=np.asarray(coords, dtype=np.float64),
         clusters=clusters,
         cluster_names=names,
     )

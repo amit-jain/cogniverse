@@ -2,11 +2,13 @@ import { useMemo, useState } from 'react';
 import {
   clusterCounts,
   clusterName,
+  isExportAtlas,
   kindCounts,
   parseQueries,
   selectedIds,
   selectedPoints,
   umapTraces,
+  type ExportAtlas,
   type UmapAtlas,
 } from './atlas';
 import { Alert, Panel, useAction, useLoad } from './common';
@@ -69,7 +71,8 @@ function MapPanel({ tenant }: { tenant: string }) {
   );
   const [profile, setProfile] = useState('');
   const [limit, setLimit] = useState('500');
-  const [projection, setProjection] = useState<'pca' | 'umap'>('pca');
+  const [projection, setProjection] = useState<'pca' | 'umap' | 'export'>('pca');
+  const [exportFile, setExportFile] = useState<File | null>(null);
   const [queries, setQueries] = useState('');
   const [atlas, setAtlas] = useState<Atlas>();
   const [umap, setUmap] = useState<UmapAtlas>();
@@ -87,10 +90,22 @@ function MapPanel({ tenant }: { tenant: string }) {
   };
   const show = (recompute: boolean) =>
     action.run(async () => {
-      const count = Number(limit);
-      if (!Number.isInteger(count) || count < 1) throw new Error('Documents must be a whole number above 0.');
       setAtlas(undefined);
       setUmap(undefined);
+      if (projection === 'export') {
+        if (!exportFile) throw new Error('Choose an embedding export file (.parquet) first.');
+        const body = new FormData();
+        body.append('file', exportFile);
+        setUmap(
+          await runtimeJson<ExportAtlas>(`/admin/tenant/${seg(tenant)}/embeddings/atlas/export`, {
+            method: 'POST',
+            body,
+          }),
+        );
+        return;
+      }
+      const count = Number(limit);
+      if (!Number.isInteger(count) || count < 1) throw new Error('Documents must be a whole number above 0.');
       if (projection === 'pca') {
         setAtlas(
           await runtimeJson<Atlas>(`/admin/tenant/${seg(tenant)}/embeddings/atlas?profile=${seg(chosen)}&limit=${count}`),
@@ -114,25 +129,43 @@ function MapPanel({ tenant }: { tenant: string }) {
               show(false);
             }}
           >
-            <label>
-              Profile
-              <select aria-label="Profile" value={chosen} onChange={(e) => setProfile(e.target.value)}>
-                {profiles.data.map((name) => (
-                  <option key={name}>{name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Documents
-              <input inputMode="numeric" value={limit} onChange={(e) => setLimit(e.target.value)} />
-            </label>
+            {projection !== 'export' && (
+              <>
+                <label>
+                  Profile
+                  <select aria-label="Profile" value={chosen} onChange={(e) => setProfile(e.target.value)}>
+                    {profiles.data.map((name) => (
+                      <option key={name}>{name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Documents
+                  <input inputMode="numeric" value={limit} onChange={(e) => setLimit(e.target.value)} />
+                </label>
+              </>
+            )}
             <label>
               Projection
-              <select value={projection} onChange={(e) => setProjection(e.target.value as 'pca' | 'umap')}>
+              <select
+                value={projection}
+                onChange={(e) => setProjection(e.target.value as 'pca' | 'umap' | 'export')}
+              >
                 <option value="pca">PCA, read live</option>
                 <option value="umap">UMAP with clusters</option>
+                <option value="export">Exported file</option>
               </select>
             </label>
+            {projection === 'export' && (
+              <label>
+                Embedding export file
+                <input
+                  type="file"
+                  accept=".parquet"
+                  onChange={(e) => setExportFile(e.target.files?.[0] ?? null)}
+                />
+              </label>
+            )}
             {projection === 'umap' && (
               <label>
                 Queries (one per line)
@@ -244,25 +277,44 @@ function UmapPanel({ atlas }: { atlas: UmapAtlas }) {
     const ids = new Set(chosen.map((p) => p.id));
     return matchingPoints(atlas.points, query).filter((p) => ids.has(p.id));
   }, [atlas, chosen, query]);
+  const exported = isExportAtlas(atlas) ? atlas : null;
+  const fromFile = exported?.layout === 'file';
   const layout = useMemo(
     () => ({
       dragmode: 'lasso',
-      xaxis: { title: { text: 'UMAP 1' } },
-      yaxis: { title: { text: 'UMAP 2' } },
+      xaxis: { title: { text: fromFile ? 'x' : 'UMAP 1' } },
+      yaxis: { title: { text: fromFile ? 'y' : 'UMAP 2' } },
     }),
-    [],
+    [fromFile],
   );
   const cluster = (id: number) => clusterName(atlas, id);
+  const plotTitle = exported ? `Documents of ${exported.file_name}` : `Documents of ${atlas.profile} by UMAP`;
   return (
     <>
-      <Panel title={`UMAP map of ${atlas.profile} for ${atlas.tenant_id}`}>
+      <Panel
+        title={
+          exported
+            ? `Map of ${exported.file_name} for ${atlas.tenant_id}`
+            : `UMAP map of ${atlas.profile} for ${atlas.tenant_id}`
+        }
+      >
         <dl className="facts" aria-label="Map facts">
+          {exported && (
+            <>
+              <dt>File</dt>
+              <dd>
+                {exported.file_name}, {exported.rows} rows
+              </dd>
+              <dt>Places</dt>
+              <dd>{fromFile ? "The file's x/y columns" : 'UMAP over the embeddings'}</dd>
+              <dt>Encoder profile</dt>
+              <dd>{atlas.profile || 'not recorded'}</dd>
+            </>
+          )}
           <dt>Schema</dt>
-          <dd>{atlas.schema_name}</dd>
+          <dd>{atlas.schema_name || 'not recorded'}</dd>
           <dt>Embedding</dt>
-          <dd>
-            {atlas.embedding_field}, {atlas.dimensions} dimensions
-          </dd>
+          <dd>{atlas.embedding_field ? `${atlas.embedding_field}, ${atlas.dimensions} dimensions` : 'none'}</dd>
           <dt>Documents mapped</dt>
           <dd>{atlas.points.length}</dd>
           <dt>Without an embedding</dt>
@@ -278,7 +330,7 @@ function UmapPanel({ atlas }: { atlas: UmapAtlas }) {
           <input type="checkbox" checked={density} onChange={(e) => setDensity(e.target.checked)} /> Density
         </label>
         <Plot
-          title={`Documents of ${atlas.profile} by UMAP`}
+          title={plotTitle}
           data={data}
           layout={layout}
           onSelect={(points) => setSelection(points ? selectedIds(points) : null)}

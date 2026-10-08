@@ -4,7 +4,9 @@ Documents are ingested into real Vespa through the production pipeline under a
 profile made from the shipped text template (a stand-in PyLate sidecar encodes
 the tokens, documents and queries alike). The page's maps are read back from
 Plotly and compared with the runtime's own answer for the same profile; a
-lasso is drawn on the UMAP map with the mouse.
+lasso is drawn on the UMAP map with the mouse. Embedding export files written
+by ``scripts/export_backend_embeddings.py``'s writer are uploaded through the
+page and mapped the same way.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import httpx
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
+from tests.utils.atlas_export import PROFILE, QUERIES, SCHEMA, write_export
 from tests.utils.document_ingest import ingest_texts
 from tests.utils.http_fault_proxy import HTTPFaultProxy
 from tests.utils.profile_payload import profile_create_payload
@@ -544,3 +547,201 @@ class TestEmptyAndFailedMaps:
                 registry.clear_instances()
         assert proxy.entered.is_set()
         expect(page.get_by_role("figure")).to_have_count(0)
+
+
+def _export_form(page: Page, web_url: str, tenant: str, path):
+    _atlas_view(page, web_url, tenant)
+    form = page.get_by_role("form", name="Map documents")
+    form.get_by_label("Projection").select_option("Exported file")
+    expect(form.get_by_label("Profile")).to_have_count(0)
+    expect(form.get_by_label("Documents")).to_have_count(0)
+    if path is not None:
+        form.get_by_label("Embedding export file").set_input_files(str(path))
+    return form
+
+
+@pytest.fixture
+def export_tenant():
+    return f"atlasexport{uuid.uuid4().hex[:6]}:main"
+
+
+class TestExportedFile:
+    def test_an_uploaded_export_is_mapped_clustered_and_answers_a_lasso(
+        self, page, web_url, runtime_url, export_tenant, tmp_path
+    ):
+        path = write_export(tmp_path / "frames.parquet", places=True)
+        form = _export_form(page, web_url, export_tenant, path)
+        form.get_by_role("button", name="Show map").click()
+        panel = page.get_by_role(
+            "region", name=f"Map of frames.parquet for {export_tenant}"
+        )
+        facts = panel.locator('dl[aria-label="Map facts"]')
+        expect(facts).to_be_visible(timeout=UMAP_FIRST_LAYOUT_S * 1000)
+
+        with path.open("rb") as handle:
+            expected = httpx.post(
+                f"{runtime_url}/admin/tenant/{export_tenant}/embeddings/atlas/export",
+                files={"file": ("frames.parquet", handle)},
+                timeout=300,
+            ).json()
+        labels = {c["id"]: c["label"] for c in expected["clusters"]}
+        assert labels == {
+            0: "canyon, flowing, river",
+            1: "canyon, flowing, river, rivers",
+            2: "island, volcano, erupting",
+            3: "island, volcano, erupting, lava",
+        }
+        laid_out = facts.locator("dd").last.inner_text()
+        assert dict(
+            zip(
+                facts.locator("dt").all_inner_texts(),
+                facts.locator("dd").all_inner_texts(),
+                strict=True,
+            )
+        ) == {
+            "File": "frames.parquet, 10 rows",
+            "Places": "The file's x/y columns",
+            "Encoder profile": PROFILE,
+            "Schema": SCHEMA,
+            "Embedding": "embedding, 16 dimensions",
+            "Documents mapped": "8",
+            "Without an embedding": "0",
+            "Clusters": "4",
+            "Queries placed": "2",
+            "Laid out": laid_out,
+        }
+
+        title = "Documents of frames.parquet"
+        drawn = _traces(page, title)
+        assert [(t["type"], t["name"]) for t in drawn] == [
+            ("scatter", labels[c]) for c in sorted(labels)
+        ] + [("scatter", "Queries")]
+        for trace in drawn[:-1]:
+            cluster = next(c for c in labels if labels[c] == trace["name"])
+            assert sorted(
+                (d[3], x, y)
+                for d, x, y in zip(trace["customdata"], trace["x"], trace["y"])
+            ) == sorted(
+                (p["id"], p["x"], p["y"])
+                for p in expected["points"]
+                if p["cluster"] == cluster
+            )
+        assert drawn[-1]["text"] == ["Query 1", "Query 2"]
+        assert (drawn[-1]["x"], drawn[-1]["y"]) == (
+            [q["x"] for q in expected["queries"]],
+            [q["y"] for q in expected["queries"]],
+        )
+        assert _bars(page, "Documents per cluster") == [
+            (labels[c], "2") for c in sorted(labels)
+        ]
+
+        analysis = page.get_by_role("region", name="Query analysis")
+        for query, text in zip(expected["queries"], QUERIES):
+            assert query["text"] == text
+            expect(
+                analysis.get_by_role(
+                    "list", name=f"Documents most similar to {query['label']}"
+                ).locator("li")
+            ).to_have_count(3)
+            expect(
+                analysis.get_by_role(
+                    "list", name=f"Documents most similar to {query['label']}"
+                ).locator("li")
+            ).to_have_text(
+                [
+                    f"{d['title']} (similarity {d['similarity']:.3f})"
+                    for d in query["similar"]
+                ]
+            )
+        assert [d["id"] for d in expected["queries"][0]["similar"]] == [
+            "rivers_canyon.mp4-1",
+            "rivers_canyon.mp4-2",
+            "rivers_canyon.mp4-3",
+        ]
+
+        table = panel.get_by_role("table", name="Mapped documents")
+        expect(table.locator("tbody tr")).to_have_count(8)
+        rivers = [
+            [p["x"], p["y"]]
+            for p in expected["points"]
+            if p["title"] == "rivers_canyon.mp4"
+        ]
+        _lasso(page, title, rivers)
+        expect(panel.get_by_label("Selection")).to_have_text(
+            "Selection: 4 documents of 8.Clear selection"
+        )
+        expect(table.locator("tbody tr td:first-child")).to_have_text(
+            ["rivers_canyon.mp4"] * 4
+        )
+        assert _bars(page, "Documents per cluster") == [
+            (labels[0], "2"),
+            (labels[1], "2"),
+        ]
+        assert _bars(page, "Points by kind") == [("Documents", "4"), ("Queries", "1")]
+
+    def test_a_file_without_places_is_laid_out_with_umap(
+        self, page, web_url, export_tenant, tmp_path
+    ):
+        path = write_export(tmp_path / "embeddings.parquet", places=False)
+        form = _export_form(page, web_url, export_tenant, path)
+        form.get_by_role("button", name="Show map").click()
+        facts = page.get_by_role(
+            "region", name=f"Map of embeddings.parquet for {export_tenant}"
+        ).locator('dl[aria-label="Map facts"]')
+        expect(facts).to_be_visible(timeout=UMAP_FIRST_LAYOUT_S * 1000)
+        expect(facts.locator("dd").nth(1)).to_have_text("UMAP over the embeddings")
+        assert _bars(page, "Documents per cluster") == [
+            ("canyon, flowing, river", "4"),
+            ("island, volcano, erupting", "4"),
+        ]
+
+    def test_files_the_runtime_cannot_map_show_its_reason(
+        self, page, web_url, export_tenant, tmp_path
+    ):
+        import pyarrow.parquet as pq
+
+        full = write_export(tmp_path / "full.parquet", places=False)
+        empty = tmp_path / "empty.parquet"
+        pq.write_table(pq.read_table(full).slice(0, 0), empty)
+        bare = tmp_path / "bare.parquet"
+        pq.write_table(pq.read_table(full).drop(["embedding"]), bare)
+        corrupt = tmp_path / "corrupt.parquet"
+        corrupt.write_bytes(full.read_bytes()[:-100])
+
+        form = _export_form(page, web_url, export_tenant, None)
+        form.get_by_role("button", name="Show map").click()
+        expect(form.get_by_role("alert")).to_have_text(
+            "Choose an embedding export file (.parquet) first."
+        )
+        for path, reason in (
+            (empty, "'empty.parquet' holds no rows."),
+            (
+                bare,
+                "'bare.parquet' has no x/y place for every row and no embedding "
+                "column to lay its rows out from; export it again with "
+                "scripts/export_backend_embeddings.py.",
+            ),
+            (corrupt, "'corrupt.parquet' is not a readable parquet file."),
+        ):
+            form.get_by_label("Embedding export file").set_input_files(str(path))
+            form.get_by_role("button", name="Show map").click()
+            expect(form.get_by_role("alert")).to_have_text(reason)
+            expect(page.get_by_role("figure")).to_have_count(0)
+
+    def test_a_file_over_the_limit_is_refused_with_413(
+        self, page, web_url, export_tenant, tmp_path
+    ):
+        from cogniverse_runtime.routers.embedding_atlas import MAX_EXPORT_BYTES
+
+        huge = tmp_path / "huge.parquet"
+        with huge.open("wb") as handle:
+            handle.truncate(MAX_EXPORT_BYTES + 1)
+        form = _export_form(page, web_url, export_tenant, huge)
+        with page.expect_response(
+            lambda r: r.url.endswith("/embeddings/atlas/export")
+        ) as answered:
+            form.get_by_role("button", name="Show map").click()
+        assert answered.value.status == 413
+        expect(form.get_by_role("alert")).to_have_text(
+            "'huge.parquet' is larger than the 64 MiB an export file may be."
+        )

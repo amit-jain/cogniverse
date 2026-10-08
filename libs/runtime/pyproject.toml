@@ -57,6 +57,8 @@ dependencies = [
     # Embedding Atlas UMAP projection (pulls numba, which needs NumPy <= 2.4;
     # the workspace lock pins NumPy 2.4.4).
     "umap-learn==0.5.12",
+    # Reads the embedding export files the atlas export route maps.
+    "pyarrow==23.0.1",
 
     # Utilities
     "msgpack==1.1.2",

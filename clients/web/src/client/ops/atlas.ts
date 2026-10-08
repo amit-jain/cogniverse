@@ -45,6 +45,19 @@ export interface UmapAtlas {
   queries: QueryPoint[];
 }
 
+/** The map of an uploaded embedding export file. */
+export interface ExportAtlas extends UmapAtlas {
+  file_name: string;
+  /** Rows the file holds, queries included. */
+  rows: number;
+  /** Whether the places come from the file's x/y columns or from UMAP. */
+  layout: 'file' | 'umap';
+}
+
+export function isExportAtlas(atlas: UmapAtlas): atlas is ExportAtlas {
+  return 'file_name' in atlas;
+}
+
 export const UNCLUSTERED = -1;
 /** The most queries one map places. */
 export const MAX_QUERIES = 10;
