@@ -10,6 +10,7 @@ import {
   type UmapAtlas,
   type UmapPoint,
 } from '../src/client/ops/atlas';
+import { Bars } from '../src/client/ops/metrics';
 
 function point(id: string, cluster: number, text: string | null = null): UmapPoint {
   return { id, x: Number(id.length), y: cluster, title: `${id}.txt`, text, cluster };
@@ -82,8 +83,8 @@ describe('selection', () => {
 
   it('counts the selected documents per cluster, leaving out empty clusters', () => {
     expect(clusterCounts(atlas, selectedPoints(atlas, new Set(['a', 'c', 'd'])))).toEqual([
-      { label: 'lava, islands', value: 2 },
-      { label: 'Unclustered', value: 1 },
+      { key: 1, label: 'lava, islands', value: 2 },
+      { key: -1, label: 'Unclustered', value: 1 },
     ]);
   });
 
@@ -93,5 +94,21 @@ describe('selection', () => {
       'Unclustered',
       'Unclustered',
     ]);
+  });
+});
+
+describe('Bars', () => {
+  it('keys each row by its entry key, so equal labels stay apart', () => {
+    const named: UmapAtlas = {
+      ...atlas,
+      clusters: [
+        { id: 0, label: 'blazes', size: 1 },
+        { id: 1, label: 'blazes', size: 2 },
+      ],
+    };
+    const entries = clusterCounts(named, named.points);
+    const figure = Bars({ title: 'Documents per cluster', entries, format: String });
+    const rows = (figure.props as { children: unknown[] }).children[1] as { key: string }[];
+    expect(rows.map((row) => row.key)).toEqual(['0', '1', '-1']);
   });
 });

@@ -45,6 +45,19 @@ export interface UmapAtlas {
   queries: QueryPoint[];
 }
 
+/** The map of an uploaded embedding export file. */
+export interface ExportAtlas extends UmapAtlas {
+  file_name: string;
+  /** Rows the file holds, queries included. */
+  rows: number;
+  /** Whether the places come from the file's x/y columns or from UMAP. */
+  layout: 'file' | 'umap';
+}
+
+export function isExportAtlas(atlas: UmapAtlas): atlas is ExportAtlas {
+  return 'file_name' in atlas;
+}
+
 export const UNCLUSTERED = -1;
 /** The most queries one map places. */
 export const MAX_QUERIES = 10;
@@ -135,11 +148,16 @@ export function selectedPoints(atlas: UmapAtlas, selection: Set<string> | null):
   return selection ? atlas.points.filter((p) => selection.has(p.id)) : atlas.points;
 }
 
-/** How many of ``points`` each cluster holds, clusters by id, the
- * unclustered last; clusters without a point are left out. */
-export function clusterCounts(atlas: UmapAtlas, points: UmapPoint[]): { label: string; value: number }[] {
+/** How many of ``points`` each cluster holds, keyed by cluster id,
+ * clusters by id, the unclustered last; clusters without a point are left
+ * out. */
+export function clusterCounts(
+  atlas: UmapAtlas,
+  points: UmapPoint[],
+): { key: number; label: string; value: number }[] {
   return [...atlas.clusters.map((c) => c.id), UNCLUSTERED]
     .map((cluster) => ({
+      key: cluster,
       label: clusterName(atlas, cluster),
       value: points.filter((p) => p.cluster === cluster).length,
     }))

@@ -23,7 +23,7 @@ const ALLOWED = [
   /^\/admin\/tenant\/[^/]+\/orchestration-workflows(\/[^/]+\/annotation)?$/,
   /^\/admin\/tenant\/[^/]+\/telemetry\/(profile-selection|rlm-ab|traces|root-causes|phoenix)$/,
   /^\/admin\/tenant\/[^/]+\/evaluation\/(golden|datasets|dataset)$/,
-  /^\/admin\/tenant\/[^/]+\/embeddings\/atlas(\/umap)?$/,
+  /^\/admin\/tenant\/[^/]+\/embeddings\/atlas(\/umap|\/export)?$/,
   /^\/admin\/tenant\/[^/]+\/routing-decisions(\/[^/]+\/(approve|label))?$/,
   /^\/admin\/tenant\/[^/]+\/routing-decisions\/(annotation-candidates|label-statistics)$/,
   /^\/ag-ui\/results\/relevance$/,

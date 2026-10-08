@@ -41,14 +41,15 @@ export function delta(value: number | null, digits = 1): string {
   return value > 0 ? `+${text}` : text;
 }
 
-/** One horizontal bar per entry, each as wide as its share of the largest. */
+/** One horizontal bar per entry, each as wide as its share of the largest;
+ * an entry's ``key`` (its label when it has none) tells the rows apart. */
 export function Bars({
   title,
   entries,
   format,
 }: {
   title: string;
-  entries: { label: string; value: number }[];
+  entries: { key?: string | number; label: string; value: number }[];
   format: (value: number) => string;
 }) {
   const largest = Math.max(0, ...entries.map((entry) => Math.abs(entry.value)));
@@ -56,7 +57,7 @@ export function Bars({
     <figure className="bars" aria-label={title}>
       <figcaption>{title}</figcaption>
       {entries.map((entry) => (
-        <div key={entry.label} className="bar-row">
+        <div key={entry.key ?? entry.label} className="bar-row">
           <span className="bar-label">{entry.label}</span>
           <span className="bar-track">
             <span

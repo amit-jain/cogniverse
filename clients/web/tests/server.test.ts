@@ -452,6 +452,7 @@ describe('runtime proxy', () => {
       ['GET', '/admin/tenant/acme:prod/evaluation/datasets'],
       ['POST', '/admin/tenant/acme:prod/embeddings/atlas/umap'],
       ['DELETE', '/admin/tenant/acme:prod/embeddings/atlas/umap?profile=notes'],
+      ['POST', '/admin/tenant/acme:prod/embeddings/atlas/export'],
       ['GET', '/admin/tenant/acme:prod/evaluation/dataset?dataset_id=RGF0YXNldDox&lookback_hours=168'],
       ['GET', '/admin/tenant/acme:prod/routing-decisions?lookback_hours=24'],
       ['POST', '/admin/tenant/acme:prod/routing-decisions/abc123/approve'],

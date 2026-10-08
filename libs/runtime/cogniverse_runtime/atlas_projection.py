@@ -15,6 +15,7 @@ built share that one build.
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -31,6 +32,15 @@ UNCLUSTERED = -1
 CLUSTER_LABEL_TERMS = 3
 CACHE_CAPACITY = 8
 GENERATION_KEY = "cogniverse:embedding-atlas:generation:{tenant}:{profile}"
+# File extensions document titles carry, never a cluster's name.
+FILE_EXTENSIONS = frozenset(
+    "avi csv doc docx flac gif htm html jpeg jpg json m4a md mkv mov mp3 mp4 "
+    "mpeg ogg pdf png ppt pptx srt txt vtt wav webm webp xls xlsx".split()
+)
+_FILE_EXTENSION = re.compile(
+    r"\.(?:" + "|".join(sorted(FILE_EXTENSIONS)) + r")$", re.IGNORECASE
+)
+_WORD_JOINERS = re.compile(r"[_.\-]+")
 
 
 @dataclass
@@ -39,7 +49,9 @@ class DocumentMap:
     layout, each document's place and cluster, and the cluster names."""
 
     documents: List[Dict[str, Any]]
-    vectors: np.ndarray
+    # None for a map laid out from given places without vectors.
+    vectors: Optional[np.ndarray]
+    # None for a map laid out from given places.
     reducer: Any
     coords: np.ndarray
     clusters: np.ndarray
@@ -71,57 +83,108 @@ def umap_layout(vectors: np.ndarray) -> Tuple[Any, np.ndarray]:
     return reducer, np.asarray(coords, dtype=np.float64)
 
 
+def label_text(text: str) -> str:
+    """``text`` as cluster naming reads it: each word's trailing file
+    extension cut off, the rest split at ``_``, ``-`` and ``.``, and the
+    pieces holding a digit (ids, frame numbers) left out, so
+    ``for_bigger_blazes.mp4`` reads ``for bigger blazes``, ``rivers-1.txt``
+    reads ``rivers`` and ``v_-6Os86HzwCs`` reads ``v``."""
+    pieces = (
+        piece
+        for word in text.split()
+        for piece in _WORD_JOINERS.split(_FILE_EXTENSION.sub("", word))
+    )
+    return " ".join(p for p in pieces if p and not any(ch.isdigit() for ch in p))
+
+
+def _unique_names(
+    ranked_terms: Dict[int, List[str]],
+) -> Dict[int, str]:
+    """Each cluster's name from its ranked terms, unique within the map: a
+    name an earlier cluster (by id) already has takes the cluster's next
+    terms until it differs, and failing that the cluster's number."""
+    names: Dict[int, str] = {}
+    taken = set()
+    for cluster in sorted(ranked_terms):
+        terms = ranked_terms[cluster]
+        name = ", ".join(terms[:CLUSTER_LABEL_TERMS]) or f"Cluster {cluster + 1}"
+        extra = CLUSTER_LABEL_TERMS
+        while name in taken and extra < len(terms):
+            extra += 1
+            name = ", ".join(terms[:extra])
+        if name in taken:
+            name = f"{name} (cluster {cluster + 1})"
+        taken.add(name)
+        names[cluster] = name
+    return names
+
+
 def automatic_clusters(
     coords: np.ndarray, texts: Sequence[str]
 ) -> Tuple[np.ndarray, Dict[int, str]]:
     """Density clusters of the 2D places (``UNCLUSTERED`` for a document in
     none) and each cluster's name: its ``CLUSTER_LABEL_TERMS`` most
-    distinctive terms by TF-IDF across the clusters' texts."""
+    distinctive terms by TF-IDF across the clusters' texts (read through
+    ``label_text``, file extensions left out), unique within the map."""
     from sklearn.cluster import HDBSCAN
-    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
 
     labels = HDBSCAN(min_cluster_size=max(2, len(coords) // 10)).fit_predict(coords)
     ids = sorted({int(label) for label in labels if label != UNCLUSTERED})
     if not ids:
         return labels, {}
     corpus = [
-        " ".join(text for text, label in zip(texts, labels) if label == cluster)
+        " ".join(
+            label_text(text) for text, label in zip(texts, labels) if label == cluster
+        )
         for cluster in ids
     ]
     try:
-        vectorizer = TfidfVectorizer(stop_words="english")
+        vectorizer = TfidfVectorizer(
+            stop_words=sorted(ENGLISH_STOP_WORDS | FILE_EXTENSIONS),
+            token_pattern=r"(?u)\b[^\W\d_]{2,}\b",
+        )
         weights = vectorizer.fit_transform(corpus).toarray()
     except ValueError:
         # No cluster has a term to name it by.
         return labels, {cluster: f"Cluster {cluster + 1}" for cluster in ids}
     terms = vectorizer.get_feature_names_out()
-    names = {}
-    for cluster, row in zip(ids, weights):
-        ranked = sorted(
-            (i for i in range(len(terms)) if row[i] > 0),
-            key=lambda i: (-row[i], terms[i]),
-        )[:CLUSTER_LABEL_TERMS]
-        names[cluster] = (
-            ", ".join(terms[i] for i in ranked) if ranked else f"Cluster {cluster + 1}"
-        )
-    return labels, names
+    ranked = {
+        cluster: [
+            str(terms[i])
+            for i in sorted(
+                (i for i in range(len(terms)) if row[i] > 0),
+                key=lambda i: (-row[i], terms[i]),
+            )
+        ]
+        for cluster, row in zip(ids, weights)
+    }
+    return labels, _unique_names(ranked)
 
 
-def build_map(documents: List[Dict[str, Any]], vectors: np.ndarray) -> DocumentMap:
+def build_map(
+    documents: List[Dict[str, Any]],
+    vectors: Optional[np.ndarray],
+    coords: Optional[np.ndarray] = None,
+) -> DocumentMap:
     """The map of ``documents`` (each with ``title`` and ``text``) from their
-    pooled ``vectors``."""
+    pooled ``vectors``, laid out with UMAP, or at the given ``coords`` (one
+    2D place per document) when there are some; ``vectors`` may then be
+    None."""
     if len(documents) < MIN_DOCUMENTS:
         raise TooFewDocumentsError(len(documents))
-    reducer, coords = umap_layout(vectors)
+    reducer = None
+    if coords is None:
+        reducer, coords = umap_layout(vectors)
     clusters, names = automatic_clusters(
         coords,
         [" ".join(filter(None, (d.get("title"), d.get("text")))) for d in documents],
     )
     return DocumentMap(
         documents=documents,
-        vectors=unit_rows(vectors),
+        vectors=None if vectors is None else unit_rows(vectors),
         reducer=reducer,
-        coords=coords,
+        coords=np.asarray(coords, dtype=np.float64),
         clusters=clusters,
         cluster_names=names,
     )
