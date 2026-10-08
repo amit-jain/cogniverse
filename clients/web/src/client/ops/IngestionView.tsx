@@ -50,7 +50,7 @@ function useIngestEvents(ingestId: string): { events: IngestEvent[]; error: stri
       let lastId: string | undefined;
       for (;;) {
         const query = lastId ? `?last-event-id=${seg(lastId)}` : '';
-        const response = await fetch(`/api/runtime/ingestion/${seg(ingestId)}/events${query}`, {
+        const response = await fetch(`/ui-api/runtime/ingestion/${seg(ingestId)}/events${query}`, {
           headers: { accept: 'text/event-stream' },
           signal: controller.signal,
         });
