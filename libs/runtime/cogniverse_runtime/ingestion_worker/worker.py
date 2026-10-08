@@ -26,6 +26,7 @@ import contextlib
 import logging
 import math
 import os
+import re
 import signal
 import socket
 import threading
@@ -112,6 +113,19 @@ async def _note_graph_failure(
         f"{GRAPH_REDRIVE_KEY_PREFIX}{job.message_id}",
         mapping={"at_ms": await _server_time_ms(redis), "cause": cause},
     )
+
+
+# An absolute filesystem path with at least one directory, not part of a URL.
+_LOCAL_PATH = re.compile(r"(?<![\w.:/-])/(?:[^\s'\"(),;/]+/)+([^\s'\"(),;/]*)")
+
+
+def _without_local_paths(text: str) -> str:
+    """``text`` with every absolute path reduced to its file name.
+
+    A status event's error reaches clients; where the worker localised the
+    upload or kept its scratch is not theirs to see.
+    """
+    return _LOCAL_PATH.sub(r"\1", text)
 
 
 def _raise_if_pipeline_failed(result: object) -> None:
@@ -912,7 +926,7 @@ async def _run_job(
                 terminal_event = {
                     "state": "retrying",
                     "ingest_id": job.ingest_id,
-                    "error": str(exc),
+                    "error": _without_local_paths(str(exc)),
                     "error_type": type(exc).__name__,
                 }
                 job_span.set_attribute("job.outcome", "retrying")
@@ -931,7 +945,7 @@ async def _run_job(
                 terminal_event = {
                     "state": "failed",
                     "ingest_id": job.ingest_id,
-                    "error": error_text,
+                    "error": _without_local_paths(error_text),
                     "error_type": type(exc).__name__,
                 }
                 job_span.set_attribute("job.outcome", "failed")
@@ -985,7 +999,9 @@ async def _run_job(
     )
     await _cleanup_step("ack", queue.ack(redis, config.consumer_group, job.message_id))
     if cleanup_errors:
-        terminal_event["cleanup_error"] = "; ".join(cleanup_errors)
+        terminal_event["cleanup_error"] = _without_local_paths(
+            "; ".join(cleanup_errors)
+        )
 
     await queue.publish_status(redis, job.ingest_id, terminal_event)
 

@@ -1381,6 +1381,71 @@ async def _cancel_tenant_tasks(tenant_id: str) -> tuple[list[str], bool]:
     return cancelled, True
 
 
+def _left_pending(what: str, tenant_id: str, exc: BaseException, them: str) -> None:
+    logger.error(
+        f"Cannot {what} of deleted tenant {tenant_id} "
+        f"({type(exc).__name__}: {exc}); the delete stays pending and its "
+        f"retry, or the next create of the tenant, deletes {them}"
+    )
+
+
+async def _delete_tenant_projects(tenant_id: str) -> tuple[list[str], bool]:
+    """Delete the tenant's telemetry projects, its own and its service ones,
+    with their spans. Returns the projects found and whether every one was
+    deleted. Nothing raises: a project that cannot be listed or deleted is
+    logged at ERROR naming the tenant."""
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    try:
+        manager = get_telemetry_manager()
+        if not manager.config.enabled:
+            return [], True
+        provider = manager.get_provider(tenant_id=SYSTEM_TENANT_ID)
+        listed = await provider.list_projects(
+            name_contains=manager.config.get_project_name(tenant_id)
+        )
+    except Exception as exc:
+        _left_pending("list the telemetry projects", tenant_id, exc, "them")
+        return [], False
+    found = sorted(
+        name for name in listed if manager.config.is_tenant_project(name, tenant_id)
+    )
+    deleted = True
+    for name in found:
+        try:
+            await provider.delete_project(name)
+        except Exception as exc:
+            deleted = False
+            _left_pending(f"delete telemetry project {name}", tenant_id, exc, "it")
+    if found:
+        logger.info(
+            f"Deleted the telemetry projects {found} of deleted tenant {tenant_id}"
+        )
+    return found, deleted
+
+
+async def _delete_tenant_workflows(tenant_id: str) -> tuple[list[str], bool]:
+    """Delete the tenant's finished Argo Workflows. Returns the Workflows
+    found and whether every one was deleted. Nothing raises: a Workflow that
+    cannot be listed or deleted is logged at ERROR naming the tenant."""
+    from cogniverse_runtime.routers.tenant import delete_finished_tenant_workflows
+
+    try:
+        deleted, failed = await delete_finished_tenant_workflows(tenant_id)
+    except Exception as exc:
+        _left_pending("list the workflows", tenant_id, exc, "them")
+        return [], False
+    for name, reason in sorted(failed.items()):
+        logger.error(
+            f"Cannot delete workflow {name} of deleted tenant {tenant_id} "
+            f"({reason}); the delete stays pending and its retry, or the next "
+            "create of the tenant, deletes it"
+        )
+    if deleted:
+        logger.info(f"Deleted the workflows {deleted} of deleted tenant {tenant_id}")
+    return sorted([*deleted, *failed]), not failed
+
+
 class TenantRecordRetained(RuntimeError):
     """The ``tenant_metadata`` delete did not confirm and the record is
     still present."""
@@ -1550,10 +1615,13 @@ async def _delete_tenant(
         deleted_schemas: list = list(
             await asyncio.to_thread(schema_manager.delete_tenant_schemas, canonical_tid)
         )
-        # Its schemas are gone, so is everything the config store holds for it.
+        # Its schemas are gone, so is everything the config store holds for it,
+        # its telemetry projects and its finished workflows.
         state_rows, state_deleted = await asyncio.to_thread(
             _delete_tenant_state, config_manager, canonical_tid
         )
+        projects, projects_deleted = await _delete_tenant_projects(canonical_tid)
+        workflows, workflows_deleted = await _delete_tenant_workflows(canonical_tid)
 
         # Allow schema-only orphans (no tenant_metadata record) to be cleaned
         # up — they're created by /ingestion/upload auto-deploy bypassing
@@ -1562,8 +1630,12 @@ async def _delete_tenant(
             not tenant
             and not deleted_schemas
             and not state_rows
+            and not projects
+            and not workflows
             and not tasks_cancelled
             and tasks_settled
+            and projects_deleted
+            and workflows_deleted
         ):
             # Nothing existed to delete: the tenant id stays free to use.
             await asyncio.to_thread(clear_tenant_deleted, store, canonical_tid)
@@ -1642,13 +1714,18 @@ async def _delete_tenant(
                     f"failed (organization {org_id} may remain): {e}"
                 )
 
-        # Every step has completed, unless some of the tenant's state could not
-        # be deleted or its tasks not cancelled: the delete then stays pending,
-        # and its retry or the next create of the tenant finishes it. A failure
-        # to record completion leaves it pending too, so the next create runs
-        # its steps again.
+        # Every step has completed, unless some of the tenant's state, telemetry
+        # projects or workflows could not be deleted or its tasks not
+        # cancelled: the delete then stays pending, and its retry or the next
+        # create of the tenant finishes it. A failure to record completion
+        # leaves it pending too, so the next create runs its steps again.
         try:
-            if state_deleted and tasks_settled:
+            if (
+                state_deleted
+                and tasks_settled
+                and projects_deleted
+                and workflows_deleted
+            ):
                 await asyncio.to_thread(complete_tenant_delete, store, canonical_tid)
         except Exception as exc:
             logger.error(

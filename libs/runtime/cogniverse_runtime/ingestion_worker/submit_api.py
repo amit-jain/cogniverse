@@ -196,6 +196,7 @@ async def _restore_status_trail(
     *,
     state: str,
     source_url: str,
+    filename: str,
     profile: str,
     tenant_id: str,
 ) -> None:
@@ -213,6 +214,7 @@ async def _restore_status_trail(
             "state": state,
             "ingest_id": ingest_id,
             "source_url": source_url,
+            "filename": filename,
             "profile": profile,
             "tenant_id": tenant_id,
             "existing": True,
@@ -255,6 +257,7 @@ async def enqueue_ingestion(
     *,
     task_events: "TaskEventStore",
     source_url: str,
+    filename: str,
     profile: str,
     tenant_id: str,
     force: bool = False,
@@ -264,7 +267,9 @@ async def enqueue_ingestion(
     """Enqueue an ingestion or return the existing run.
 
     A new job is listed as a queued ingestion task in ``task_events``, the
-    calling process's task event store.
+    calling process's task event store. ``filename`` is the name the content
+    was uploaded under; the job's first status event carries it, so a client
+    following the ingest by id shows that name rather than the object key.
 
     Raises ``BackpressureError`` when either backpressure axis is
     exceeded. Caller (the HTTP route) maps it to 429.
@@ -283,6 +288,7 @@ async def enqueue_ingestion(
                 existing_id,
                 state=state,
                 source_url=source_url,
+                filename=filename,
                 profile=profile,
                 tenant_id=tenant_id,
             )
@@ -369,6 +375,7 @@ async def enqueue_ingestion(
                 "state": "queued",
                 "ingest_id": ingest_id,
                 "source_url": source_url,
+                "filename": filename,
                 "profile": profile,
                 "tenant_id": tenant_id,
             },

@@ -42,13 +42,23 @@ _EXPLICIT_DOCUMENT_PROFILE = "explicit_document_pages"
 _EXPLICIT_AUDIO_PROFILE = "explicit_audio_segments"
 _EXPLICIT_IMAGE_PROFILE = "explicit_image_frames"
 _STRATEGYLESS_DOCUMENT_PROFILE = "explicit_document_no_strategies"
+_TEXT_DOCUMENT_PROFILE = "document_text_files"
+_PDF_DOCUMENT_PROFILE = "document_pdf_pages"
+_AUDIO_FILE_PROFILE = "audio_files"
+_IMAGE_FILE_PROFILE = "image_files"
+_CODE_PROFILE = "python_code"
+_UNSEGMENTED_PROFILE = "embedding_only"
 
 
-def _profile_config(profile_type: str = "video") -> dict:
+def _profile_config(
+    profile_type: str = "video",
+    segmentation: str = "ChunkSegmentationStrategy",
+    params: dict | None = None,
+) -> dict:
     return {
         "type": profile_type,
         "strategies": {
-            "segmentation": {"class": "ChunkSegmentationStrategy", "params": {}},
+            "segmentation": {"class": segmentation, "params": params or {}},
         },
     }
 
@@ -127,6 +137,32 @@ def upload_client(monkeypatch):
                             "type": "document",
                             "strategies": {},
                         },
+                        _TEXT_DOCUMENT_PROFILE: _profile_config(
+                            "document", "DocumentSegmentationStrategy"
+                        ),
+                        _PDF_DOCUMENT_PROFILE: _profile_config(
+                            "document", "DocumentVisualSegmentationStrategy"
+                        ),
+                        _AUDIO_FILE_PROFILE: _profile_config(
+                            "audio", "AudioFileSegmentationStrategy"
+                        ),
+                        _IMAGE_FILE_PROFILE: _profile_config(
+                            "image", "ImageSegmentationStrategy"
+                        ),
+                        _CODE_PROFILE: _profile_config(
+                            "code",
+                            "CodeSegmentationStrategy",
+                            {"languages": ["python"]},
+                        ),
+                        _UNSEGMENTED_PROFILE: {
+                            "type": "document",
+                            "strategies": {
+                                "embedding": {
+                                    "class": "DocumentTextEmbeddingStrategy",
+                                    "params": {},
+                                }
+                            },
+                        },
                     },
                     "default_profiles": {
                         "video": {
@@ -187,6 +223,7 @@ def test_async_default_returns_queued_envelope(upload_client):
     assert body["wait_timed_out"] is False
     assert body["source_url"] == _SOURCE_URL
     assert body["filename"] == "v.mp4"
+    assert captured["filename"] == "v.mp4"
     # Defaults reached the queue: not a synchronous wait, no idempotency bypass.
     assert captured["wait"] is False
     assert captured["force"] is False
@@ -466,6 +503,125 @@ def test_invalid_explicit_profile_rejected_before_side_effects(upload_client, pr
     assert resp.status_code == 422, resp.text
     assert resp.json()["detail"] == (
         "profile must name a configured profile with usable strategies"
+    )
+    assert state["uploads"] == []
+    assert state["enqueued"] == []
+    assert captured == {}
+
+
+_VIDEO_SUFFIXES = ".avi, .mkv, .mov, .mp4, .webm"
+
+
+@pytest.mark.parametrize(
+    ("filename", "profile", "detail"),
+    [
+        (
+            "zephyr_kangaroo.txt",
+            None,
+            "zephyr_kangaroo.txt is a .txt file; profile 'tenant_video_chunked' "
+            f"ingests video files ({_VIDEO_SUFFIXES}).",
+        ),
+        (
+            "clip.mp4",
+            _TEXT_DOCUMENT_PROFILE,
+            "clip.mp4 is a .mp4 file; profile 'document_text_files' ingests "
+            "document files (.doc, .docx, .md, .pdf, .rtf, .txt).",
+        ),
+        (
+            "notes",
+            _TEXT_DOCUMENT_PROFILE,
+            "notes has no file extension; profile 'document_text_files' ingests "
+            "document files (.doc, .docx, .md, .pdf, .rtf, .txt).",
+        ),
+        (
+            "paper.txt",
+            _PDF_DOCUMENT_PROFILE,
+            "paper.txt is a .txt file; profile 'document_pdf_pages' ingests PDF "
+            "files (.pdf).",
+        ),
+        (
+            "clip.mp4",
+            _AUDIO_FILE_PROFILE,
+            "clip.mp4 is a .mp4 file; profile 'audio_files' ingests audio files "
+            "(.aac, .flac, .m4a, .mp3, .ogg, .wav, .wma).",
+        ),
+        (
+            "song.mp3",
+            _IMAGE_FILE_PROFILE,
+            "song.mp3 is a .mp3 file; profile 'image_files' ingests image files "
+            "(.bmp, .jpeg, .jpg, .png, .tiff, .webp).",
+        ),
+        (
+            "main.go",
+            _CODE_PROFILE,
+            "main.go is a .go file; profile 'python_code' ingests source files (.py).",
+        ),
+    ],
+)
+def test_a_file_the_profile_does_not_ingest_is_refused_before_side_effects(
+    upload_client, filename, profile, detail
+):
+    """The profile's segmentation decides what its pipeline can read; any
+    other file is refused at upload with the reason, before its bytes reach
+    the object store or a job reaches the queue."""
+    client, captured, state = upload_client
+
+    resp = client.post(
+        "/ingestion/upload",
+        files={"file": (filename, b"zephyr the kangaroo", "text/plain")},
+        data={"tenant_id": "acme:acme", **({"profile": profile} if profile else {})},
+    )
+
+    assert (resp.status_code, resp.json()) == (400, {"detail": detail})
+    assert state["uploads"] == []
+    assert state["enqueued"] == []
+    assert captured == {}
+
+
+@pytest.mark.parametrize(
+    ("filename", "profile"),
+    [
+        ("CLIP.MP4", None),
+        ("dusk.webm", None),
+        ("notes.md", _TEXT_DOCUMENT_PROFILE),
+        ("paper.pdf", _PDF_DOCUMENT_PROFILE),
+        ("song.mp3", _AUDIO_FILE_PROFILE),
+        ("frame.PNG", _IMAGE_FILE_PROFILE),
+        ("main.py", _CODE_PROFILE),
+    ],
+)
+def test_a_file_the_profile_ingests_is_queued_under_its_name(
+    upload_client, filename, profile
+):
+    client, captured, state = upload_client
+
+    resp = client.post(
+        "/ingestion/upload",
+        files={"file": (filename, b"content", "application/octet-stream")},
+        data={"tenant_id": "acme:acme", **({"profile": profile} if profile else {})},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["filename"], captured["filename"]) == (filename, filename)
+    assert captured["profile"] == (profile or _TENANT_DEFAULT_PROFILE)
+    assert [kwargs["filename"] for _, kwargs in state["uploads"]] == [filename]
+
+
+def test_a_profile_without_segmentation_is_refused_before_side_effects(
+    upload_client,
+):
+    client, captured, state = upload_client
+
+    resp = _post(client, data={"profile": _UNSEGMENTED_PROFILE})
+
+    assert (resp.status_code, resp.json()) == (
+        422,
+        {
+            "detail": (
+                "profile 'embedding_only' has no segmentation strategy, so it "
+                "ingests no uploaded file"
+            )
+        },
     )
     assert state["uploads"] == []
     assert state["enqueued"] == []

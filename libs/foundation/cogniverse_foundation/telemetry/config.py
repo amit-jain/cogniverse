@@ -153,6 +153,23 @@ class TelemetryConfig:
             )
         return self.tenant_project_template.format(tenant_id=tenant_id)
 
+    def is_tenant_project(self, name: str, tenant_id: str) -> bool:
+        """Whether project ``name`` is ``tenant_id``'s: its own project or one
+        of its service projects. ``tenant_id`` is the canonical id, as for
+        ``get_project_name``."""
+        if name == self.get_project_name(tenant_id):
+            return True
+        head, marker, tail = self.tenant_service_template.partition("{service}")
+        if not marker:
+            return False
+        prefix = head.format(tenant_id=tenant_id)
+        suffix = tail.format(tenant_id=tenant_id)
+        return (
+            len(name) > len(prefix) + len(suffix)
+            and name.startswith(prefix)
+            and name.endswith(suffix)
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary for persistence."""
         return {

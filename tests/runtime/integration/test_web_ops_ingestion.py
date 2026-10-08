@@ -192,6 +192,11 @@ def _status(runtime_url: str, ingest_id: str) -> dict:
     return response.json()
 
 
+def _stored_keys(minio, tenant: str) -> list:
+    listed = minio.boto3_client().list_objects_v2(Bucket=BUCKET, Prefix=f"{tenant}/")
+    return sorted(item["Key"] for item in listed.get("Contents", []))
+
+
 def _ingest_id_from_notice(page: Page, filename: str) -> str:
     notice = page.get_by_role("status")
     expect(notice).to_contain_text(f"Queued {filename} as ingest ")
@@ -203,7 +208,7 @@ class TestIngestion:
         self, page, web_url, runtime_url, tenant, config_manager, minio, tmp_path
     ):
         _release.clear()
-        clip = tmp_path / f"clip-{uuid.uuid4().hex[:6]}.txt"
+        clip = tmp_path / f"clip-{uuid.uuid4().hex[:6]}.mp4"
         clip.write_text("hold\nframe two\nframe three\n")
         _ingestion_view(page, web_url, tenant)
         _upload(page, clip)
@@ -264,7 +269,7 @@ class TestIngestion:
     def test_a_failed_pipeline_shows_the_workers_error(
         self, page, web_url, runtime_url, tenant, tmp_path
     ):
-        empty = tmp_path / f"empty-{uuid.uuid4().hex[:6]}.txt"
+        empty = tmp_path / f"empty-{uuid.uuid4().hex[:6]}.mp4"
         empty.write_text("")
         _ingestion_view(page, web_url, tenant)
         _upload(page, empty)
@@ -288,7 +293,7 @@ class TestIngestion:
     def test_following_an_ingest_by_id(
         self, page, web_url, runtime_url, tenant, config_manager, tmp_path
     ):
-        clip = tmp_path / f"follow-{uuid.uuid4().hex[:6]}.txt"
+        clip = tmp_path / f"follow-{uuid.uuid4().hex[:6]}.mp4"
         clip.write_text("one\n")
         _ingestion_view(page, web_url, tenant)
         _upload(page, clip)
@@ -320,6 +325,29 @@ class TestIngestion:
             ]
         )
 
+    def test_a_file_the_profile_cannot_read_is_refused_with_the_reason(
+        self, page, web_url, tenant, config_manager, minio, tmp_path
+    ):
+        """A text file sent to the tenant's default video profile is refused
+        when it is uploaded, with the reason, and nothing is stored or
+        queued."""
+        stored_before = _stored_keys(minio, tenant)
+        text = tmp_path / "zephyr_kangaroo.txt"
+        text.write_text("A red kangaroo named Zephyr plays chess.\n")
+        profile = resolve_default_profile(get_config(tenant, config_manager))
+        _ingestion_view(page, web_url, tenant)
+
+        form = _upload(page, text)
+
+        expect(form.get_by_role("alert")).to_have_text(
+            f"zephyr_kangaroo.txt is a .txt file; profile '{profile}' ingests "
+            "video files (.avi, .mkv, .mov, .mp4, .webm)."
+        )
+        expect(
+            page.get_by_role("region", name="Ingests").get_by_role("table")
+        ).to_have_count(0)
+        assert _stored_keys(minio, tenant) == stored_before
+
 
 class TestConcurrency:
     def test_two_uploads_at_once_each_follow_their_own_job(
@@ -327,7 +355,7 @@ class TestConcurrency:
     ):
         files = []
         for lines in (2, 4):
-            path = tmp_path / f"clip{lines}-{uuid.uuid4().hex[:6]}.txt"
+            path = tmp_path / f"clip{lines}-{uuid.uuid4().hex[:6]}.mp4"
             path.write_text("".join(f"frame {n}\n" for n in range(lines)))
             files.append((path, lines))
         contexts = [browser.new_context() for _ in files]
@@ -363,7 +391,7 @@ class TestFaultContract:
         self, page, built_client, tmp_path
     ):
         dead_runtime = f"http://127.0.0.1:{free_port()}"
-        clip = tmp_path / "clip.txt"
+        clip = tmp_path / "clip.mp4"
         clip.write_text("frame\n")
         with recording_telemetry_sink() as (sink_url, _):
             with serve_web(

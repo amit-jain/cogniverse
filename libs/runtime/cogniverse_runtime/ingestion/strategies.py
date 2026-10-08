@@ -10,6 +10,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+from cogniverse_core.common.media import DEFAULT_VIDEO_EXTENSIONS
+
 from .processor_base import BaseStrategy
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
@@ -22,6 +24,34 @@ CODE_EXTENSIONS = {
     "typescript": {".ts", ".tsx"},
     "go": {".go"},
 }
+
+
+def ingested_files(segmentation: BaseStrategy) -> tuple[str, frozenset[str]]:
+    """What a segmentation strategy reads from one uploaded file: the kind
+    of file, named for a person, and the suffixes it accepts (lowercase).
+
+    Raises:
+        ValueError: the strategy needs a processor no single file feeds.
+    """
+    requirements = segmentation.get_required_processors()
+    if requirements.keys() & {"keyframe", "chunk", "single_vector"}:
+        return "video", frozenset(DEFAULT_VIDEO_EXTENSIONS)
+    if "document_file" in requirements:
+        return "document", frozenset(DOCUMENT_EXTENSIONS)
+    if "document_page" in requirements:
+        return "PDF", frozenset({".pdf"})
+    if "audio_file" in requirements:
+        return "audio", frozenset(AUDIO_EXTENSIONS)
+    if "image" in requirements:
+        return "image", frozenset(IMAGE_EXTENSIONS)
+    if "code_file" in requirements and isinstance(
+        segmentation, CodeSegmentationStrategy
+    ):
+        return "source", frozenset(segmentation.get_supported_extensions())
+    raise ValueError(
+        f"{type(segmentation).__name__} reads no single uploaded file "
+        f"(processors {sorted(requirements)})"
+    )
 
 
 def content_type_for_profile(
