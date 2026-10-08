@@ -2323,10 +2323,14 @@ def _assert_synthetic_metadata_fields(
     assert isinstance(sampled_content, list), (
         f"metadata has no sampled_content block: {metadata}"
     )
+    # The generation's wall-clock time varies by run; it is a positive number
+    # of milliseconds.
+    generation_time_ms = metadata.get("generation_time_ms")
+    assert isinstance(generation_time_ms, float) and generation_time_ms > 0, metadata
     assert {
         key: value
         for key, value in metadata.items()
-        if key not in {"generation", "sampled_content"}
+        if key not in {"generation", "sampled_content", "generation_time_ms"}
     } == {
         "backend_query_strategy": backend_query_strategy,
         "sampled_content_count": sampled_content_count,
