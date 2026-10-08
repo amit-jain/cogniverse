@@ -48,7 +48,7 @@ export async function runtimeJson<T>(
   init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<T> {
   const form = init.body instanceof FormData;
-  const response = await fetch(`/api/runtime${path}`, {
+  const response = await fetch(`/ui-api/runtime${path}`, {
     method: init.method ?? 'GET',
     headers: init.body === undefined || form ? undefined : { 'content-type': 'application/json' },
     body: init.body === undefined ? undefined : form ? (init.body as FormData) : JSON.stringify(init.body),

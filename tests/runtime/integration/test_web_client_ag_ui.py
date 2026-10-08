@@ -97,7 +97,7 @@ const WEB = process.env.WEB_URL;
 async function run(agentId, messages, tools = [], thread = agentId) {
   const agent = new HttpAgent({
     agentId,
-    url: `${WEB}/api/copilotkit/agent/${agentId}/run`,
+    url: `${WEB}/ui-api/copilotkit/agent/${agentId}/run`,
     threadId: `thread-${thread}`,
   });
   agent.setMessages(messages);
@@ -135,22 +135,22 @@ if (process.env.SCENARIO === 'fault') {
   try {
     const agent = new HttpAgent({
       agentId: 'search_agent',
-      url: `${WEB}/api/copilotkit/agent/search_agent/run`,
+      url: `${WEB}/ui-api/copilotkit/agent/search_agent/run`,
     });
     agent.setMessages([{ id: 'u1', role: 'user', content: process.env.QUERY }]);
     await agent.runAgent({}, { onEvent: ({ event }) => events.push(event) });
   } catch (caught) {
     error = caught instanceof Error ? caught.message : String(caught);
   }
-  const listed = await fetch(`${WEB}/api/agents`);
+  const listed = await fetch(`${WEB}/ui-api/agents`);
   console.log(
     JSON.stringify({ events, error, listedStatus: listed.status, listed: await listed.json() }),
   );
   process.exit(0);
 }
 
-const listed = await (await fetch(`${WEB}/api/agents`)).json();
-const info = await (await fetch(`${WEB}/api/copilotkit/info`)).json();
+const listed = await (await fetch(`${WEB}/ui-api/agents`)).json();
+const info = await (await fetch(`${WEB}/ui-api/copilotkit/info`)).json();
 
 const search = await run('search_agent', [
   { id: 'u1', role: 'user', content: process.env.QUERY },
@@ -594,7 +594,7 @@ def test_the_server_stops_after_a_grace_period_with_a_request_in_flight(
 
             def call():
                 try:
-                    connection.request("GET", "/api/runtime/agents/")
+                    connection.request("GET", "/ui-api/runtime/agents/")
                     outcome.append(connection.getresponse().status)
                 except (http.client.HTTPException, OSError) as exc:
                     outcome.append(type(exc).__name__)

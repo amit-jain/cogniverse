@@ -113,7 +113,7 @@ export function App() {
   }
 
   return (
-    <CopilotKitProvider runtimeUrl="/api/copilotkit" renderActivityMessages={[noticeRenderer]}>
+    <CopilotKitProvider runtimeUrl="/ui-api/copilotkit" renderActivityMessages={[noticeRenderer]}>
       <div className="shell">
         <Sidebar agents={agents ?? []} route={route.kind === 'agent' ? { kind: 'agent', name: agentName } : route} />
         <main className="main">{main}</main>
