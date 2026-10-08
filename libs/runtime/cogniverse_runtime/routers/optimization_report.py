@@ -13,9 +13,12 @@ from typing import Any, AsyncIterator, Dict
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.agent_registry import AgentRegistryUnavailableError
-from cogniverse_runtime.http_errors import failure_response, record_failure
+from cogniverse_runtime.http_errors import (
+    canonical_tenant_or_400,
+    failure_response,
+    record_failure,
+)
 from cogniverse_runtime.routers import agents
 
 router = APIRouter()
@@ -55,7 +58,7 @@ async def _report_frames(dispatcher: Any, tenant_id: str) -> AsyncIterator[str]:
 @router.post("/{tenant_id}/optimize/report")
 async def stream_optimization_report(tenant_id: str):
     """The tenant's optimization report as the agent produces it."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     dispatcher = agents.get_dispatcher()
     try:
         await dispatcher.refresh_agent_registry()

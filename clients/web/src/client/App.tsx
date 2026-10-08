@@ -2,6 +2,7 @@ import { CopilotKitProvider } from '@copilotkit/react-core/v2';
 import { useEffect, useMemo, useState } from 'react';
 import { AgentWorkspace } from './AgentWorkspace';
 import { fetchAgents } from './api';
+import { newId } from './ids';
 import { noticeRenderer } from './Notice';
 import { OPS_VIEWS } from './ops/views';
 import { parseRoute, routeHash } from './route';
@@ -37,6 +38,9 @@ function rememberThread(tenant: string, agent: string, thread: string) {
     // Without storage the thread lives in the address alone.
   }
 }
+
+/** CopilotKit takes its renderers once; a new array on a render is an error. */
+const ACTIVITY_RENDERERS = [noticeRenderer];
 
 /** Every request CopilotKit sends names the active tenant. */
 const tenantHeaders = (): Record<string, string> => {
@@ -107,16 +111,18 @@ export function App() {
       (routed && (owner === undefined || owner === tenant) ? routed : undefined) ??
       threads.get(`${tenant}/${agentName}`) ??
       rememberedThread(tenant, agentName) ??
-      crypto.randomUUID();
+      newId();
     threads.set(`${tenant}/${agentName}`, threadId);
     threadTenants.set(threadId, tenant);
   }
+  // Runs on every route change too: opening the agent already open, without
+  // a thread, keeps its thread in the address.
   useEffect(() => {
     if (!agentName || !threadId || !tenant) return;
     rememberThread(tenant, agentName, threadId);
     const hash = routeHash({ kind: 'agent', name: agentName, thread: threadId });
     if (window.location.hash !== hash) window.history.replaceState(null, '', hash);
-  }, [agentName, threadId, tenant]);
+  }, [agentName, threadId, tenant, route]);
   const opsView = route.kind === 'ops' ? OPS_VIEWS.find((view) => view.id === route.id) : undefined;
 
   let main;
@@ -125,6 +131,7 @@ export function App() {
       <div className="workspace">
         <header className="workspace-header">
           <h1>{opsView.label}</h1>
+          {opsView.description && <p className="view-description">{opsView.description}</p>}
         </header>
         <div className="ops-scroll">
           <opsView.component />
@@ -170,7 +177,7 @@ export function App() {
             saveSettings(next);
           }}
           onNewThread={() => {
-            window.location.hash = routeHash({ kind: 'agent', name: agentName, thread: crypto.randomUUID() });
+            window.location.hash = routeHash({ kind: 'agent', name: agentName, thread: newId() });
           }}
         />
       </>
@@ -181,7 +188,7 @@ export function App() {
     <CopilotKitProvider
       runtimeUrl="/ui-api/copilotkit"
       headers={tenantHeaders}
-      renderActivityMessages={[noticeRenderer]}
+      renderActivityMessages={ACTIVITY_RENDERERS}
       properties={properties}
     >
       <div className="shell">

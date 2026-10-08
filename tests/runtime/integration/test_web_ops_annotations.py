@@ -188,8 +188,12 @@ def _cells(page: Page, title: str):
     return page.get_by_role("table", name=f"{title} requests").locator("tbody td")
 
 
-def _row(request, tenant, assignee=None, due=None, actions=None):
+def _row(page: Page, request, tenant, assignee=None, due=None, actions=None):
     cells = [
+        # When the request was made, in the browser's locale and time zone.
+        page.evaluate(
+            "iso => new Date(iso).toLocaleString()", request.timestamp.isoformat()
+        ),
         request.span_id,
         tenant,
         request.query,
@@ -253,11 +257,11 @@ class TestAnnotationsView:
             "2 pending, 0 assigned, 1 expired, 0 completed."
         )
         expect(_cells(page, "Pending")).to_have_text(
-            _row(high, tenant, actions="Assign to meAnnotate")
-            + _row(low, tenant, actions="Assign to meAnnotate")
+            _row(page, high, tenant, actions="Assign to meAnnotate")
+            + _row(page, low, tenant, actions="Assign to meAnnotate")
         )
         expect(_cells(page, "Expired")).to_have_text(
-            _row(overdue, tenant, "away@example.com", due)
+            _row(page, overdue, tenant, "away@example.com", due)
         )
         expect(
             page.get_by_role("region", name="Assigned").get_by_text(
@@ -285,6 +289,7 @@ class TestAnnotationsView:
         )
         expect(_cells(page, "Assigned")).to_have_text(
             _row(
+                page,
                 high,
                 tenant,
                 "reviewer@example.com",
@@ -309,7 +314,7 @@ class TestAnnotationsView:
             "1 pending, 0 assigned, 1 expired, 1 completed."
         )
         expect(_cells(page, "Pending")).to_have_text(
-            _row(low, tenant, actions="Assign to meAnnotate")
+            _row(page, low, tenant, actions="Assign to meAnnotate")
         )
 
         pending = page.get_by_role("region", name="Pending")

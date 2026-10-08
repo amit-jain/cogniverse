@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  approvable,
   calibrationPoints,
   decisionsPerHourByAgent,
   initialReviewLabel,
@@ -236,6 +237,18 @@ describe('labelState and labelledBy', () => {
       ['reviewed', 'LLM, approved by dana'],
       ['reviewed', 'sam'],
     ]);
+  });
+});
+
+describe('approvable', () => {
+  it('offers approval only for an LLM label that needs no review', () => {
+    const sure = { ...LLM_LABEL, requires_review: false };
+    const unsure = { ...LLM_LABEL, requires_review: true };
+    const approved = { ...sure, human_reviewed: true, approved_by: 'dana' };
+    const reviewer = { ...sure, label: 'correct', annotator: 'sam', human_reviewed: true };
+    expect(
+      [null, sure, unsure, approved, reviewer].map((label) => approvable({ ...decision(0.5, 'success'), label })),
+    ).toEqual([false, true, false, false, false]);
   });
 });
 

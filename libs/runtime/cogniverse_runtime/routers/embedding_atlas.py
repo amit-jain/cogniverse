@@ -27,7 +27,6 @@ from pydantic import BaseModel, Field
 
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import BackendRegistry
-from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime import atlas_projection
@@ -36,7 +35,7 @@ from cogniverse_runtime.atlas_projection import (
     DocumentMap,
     TooFewDocumentsError,
 )
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 from cogniverse_runtime.routers.admin import (
     get_config_manager_dependency,
     get_schema_loader_dependency,
@@ -335,7 +334,7 @@ async def embedding_atlas(
         HTTPException 502: Vespa could not be read, or answered a tensor this
             route cannot read
     """
-    tenant = canonical_tenant_id(tenant_id)
+    tenant = canonical_tenant_or_400(tenant_id)
 
     def _read() -> Atlas:
         read = _read_documents(tenant, profile, limit, config_manager, schema_loader)
@@ -401,7 +400,7 @@ async def umap_atlas(
         HTTPException 502: Vespa or the query encoder failed
         HTTPException 503: The atlas cache (Redis) is unavailable
     """
-    tenant = canonical_tenant_id(tenant_id)
+    tenant = canonical_tenant_or_400(tenant_id)
     profile = request.profile
     cache = _cache()
     try:
@@ -538,7 +537,7 @@ def _map_figures(document_map: DocumentMap) -> Dict[str, Any]:
 async def invalidate_umap_atlas(tenant_id: str, profile: str) -> Invalidated:
     """Retire every cached UMAP map of the tenant's ``profile`` on every
     replica; the next read lays the documents out again."""
-    tenant = canonical_tenant_id(tenant_id)
+    tenant = canonical_tenant_or_400(tenant_id)
     cache = _cache()
     try:
         generation = await cache.invalidate(tenant, profile)

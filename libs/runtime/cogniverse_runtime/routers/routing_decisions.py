@@ -18,16 +18,16 @@ from pydantic import BaseModel, Field
 from cogniverse_agents.routing.annotation_agent import AnnotationAgent
 from cogniverse_agents.routing.annotation_storage import (
     AnnotationStorage,
+    LLMAnnotationNeedsReviewError,
     LLMAnnotationNotFoundError,
     NotAnLLMAnnotationError,
 )
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel
-from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_evaluation.evaluators.routing_evaluator import (
     summarize_routing_decisions,
 )
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +243,7 @@ async def list_routing_decisions(
     """The tenant's routing decisions in the last ``lookback_hours``, newest
     first with their labels, and their outcome counts, accuracy, confidence
     calibration, latency and per-agent figures."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     storage = AnnotationStorage(tenant_id=tenant_id)
     end = datetime.now(timezone.utc)
     try:
@@ -279,7 +279,7 @@ async def find_annotation_candidates(
     a reviewer: failures, low-confidence, ambiguous and near-boundary ones as
     ``AnnotationAgent`` finds them with ``confidence_threshold``, highest
     priority first, at most ``max_annotations``."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     try:
         agent = AnnotationAgent(
             tenant_id=tenant_id,
@@ -318,7 +318,7 @@ async def label_statistics(tenant_id: str):
     """How many routing decisions of the last 30 days carry a stored label,
     how many of those a reviewer has reviewed and how many still await
     review, and the count of each label."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     storage = AnnotationStorage(tenant_id=tenant_id)
     try:
         statistics = await storage.get_annotation_statistics()
@@ -382,7 +382,7 @@ def _not_stored(exc: Exception, tenant_id: str, span_id: str) -> HTTPException:
 async def approve_llm_label(tenant_id: str, span_id: str, request: DecisionRef):
     """Approve the LLM annotator's label of one decision as the reviewer's,
     keeping its label and reasoning; answers the decision with it."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     storage = AnnotationStorage(tenant_id=tenant_id)
     decision = await _read_decision(storage, tenant_id, span_id, request)
     try:
@@ -393,6 +393,14 @@ async def approve_llm_label(tenant_id: str, span_id: str, request: DecisionRef):
         raise HTTPException(
             status_code=404,
             detail=f"Routing decision {span_id} has no LLM label to approve.",
+        ) from exc
+    except LLMAnnotationNeedsReviewError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The LLM flagged its label of routing decision {span_id} for "
+                "review; label the decision instead of approving it."
+            ),
         ) from exc
     except NotAnLLMAnnotationError as exc:
         raise HTTPException(
@@ -419,7 +427,7 @@ async def approve_llm_label(tenant_id: str, span_id: str, request: DecisionRef):
 async def label_decision(tenant_id: str, span_id: str, request: LabelRequest):
     """Store the reviewer's label of one decision, replacing any LLM label;
     answers the decision with it."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     storage = AnnotationStorage(tenant_id=tenant_id)
     decision = await _read_decision(storage, tenant_id, span_id, request)
     suggested_agent = request.suggested_agent or None

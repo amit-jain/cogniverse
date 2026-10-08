@@ -20,6 +20,7 @@ from opentelemetry.trace import Status, StatusCode
 from cogniverse_core.common.models.model_loaders import (
     INFERENCE_BREAKER_RESET_TIMEOUT_S,
 )
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.query.encoders import (
     EncoderNotConfiguredError,
     EncoderUnavailableError,
@@ -76,6 +77,26 @@ def failure_response(
         detail=failure_body(error, message, exc, **fields),
         headers=headers,
     )
+
+
+INVALID_TENANT_ID = "invalid_tenant_id"
+
+
+def canonical_tenant_or_400(tenant_id: str) -> str:
+    """The canonical ``org:tenant`` form of a tenant id a request names;
+    400 ``invalid_tenant_id`` when the id is malformed (an empty part, or
+    more than one ``:``), which is the caller's error, not a server fault."""
+    try:
+        return canonical_tenant_id(tenant_id)
+    except ValueError as exc:
+        raise failure_response(
+            400,
+            INVALID_TENANT_ID,
+            f"Tenant ID '{tenant_id}' is malformed: use '<org>:<tenant>' or "
+            "'<tenant>', with no empty part.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
 
 
 QUERY_ENCODER_NOT_CONFIGURED = "query_encoder_not_configured"

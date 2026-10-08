@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { agentLabel } from './api';
+import { newId } from './ids';
 import { messageOf } from './ops/common';
 import { errorMessage, runtimeJson, seg } from './ops/http';
 import { TENANT_HEADER } from './tenant';
@@ -117,11 +118,11 @@ export async function summarize(
     headers: { 'content-type': 'application/json', accept: 'text/event-stream', [TENANT_HEADER]: tenant },
     signal,
     body: JSON.stringify({
-      threadId: `summary-${crypto.randomUUID()}`,
-      runId: crypto.randomUUID(),
+      threadId: `summary-${newId()}`,
+      runId: newId(),
       state: {},
       messages: [
-        { id: crypto.randomUUID(), role: 'user', content: `Summarize the search results for '${query}'` },
+        { id: newId(), role: 'user', content: `Summarize the search results for '${query}'` },
       ],
       tools: [],
       context: [],

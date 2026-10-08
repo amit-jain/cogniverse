@@ -2,6 +2,7 @@ import type { ActivityMessage } from '@ag-ui/client';
 import { CopilotChat, useAgent, useCopilotKit } from '@copilotkit/react-core/v2';
 import { useEffect, useRef, useState } from 'react';
 import { agentLabel } from './api';
+import { newId } from './ids';
 import { NOTICE_ACTIVITY, type Notice } from './Notice';
 import { ResultPanel, resultGroupsOf, type Rating } from './ResultCards';
 import { Annotations, History, SessionBar, SessionEvaluation, SUMMARIZER, SummarizeResults } from './SearchSession';
@@ -157,7 +158,7 @@ export function AgentWorkspace({
         failure.current = undefined;
         stopped.current = false;
         if (!notice) return;
-        return { messages: [...messages, noticeMessage(crypto.randomUUID(), notice)] };
+        return { messages: [...messages, noticeMessage(newId(), notice)] };
       },
     });
     return () => subscription.unsubscribe();

@@ -39,11 +39,17 @@ export function TenantsView() {
       ),
     [],
   );
-  const [selectedOrg, setSelectedOrg] = useState<string>();
+  // Undefined until one is chosen (the first is shown); null once the chosen
+  // one was deleted, so none is shown.
+  const [selectedOrg, setSelectedOrg] = useState<string | null>();
   const [tenantsVersion, setTenantsVersion] = useState(0);
   const [notice, setNotice] = useState('');
   const orgIds = (orgs.data ?? []).map((org) => org.org_id);
-  const activeOrg = selectedOrg && orgIds.includes(selectedOrg) ? selectedOrg : orgIds[0];
+  const activeOrg =
+    selectedOrg === null ? undefined : selectedOrg && orgIds.includes(selectedOrg) ? selectedOrg : orgIds[0];
+  const deleted = (orgId: string) => {
+    if (orgId === activeOrg) setSelectedOrg(null);
+  };
   const changed = (message = '') => {
     setNotice(message);
     orgs.reload();
@@ -101,6 +107,7 @@ export function TenantsView() {
                           `/admin/organizations/${seg(org.org_id)}`,
                           { method: 'DELETE' },
                         );
+                        deleted(org.org_id);
                         changed(
                           `Deleted organization ${org.org_id} and its ${result.tenants_deleted} tenant(s).`,
                         );
@@ -115,14 +122,27 @@ export function TenantsView() {
         <CreateOrganization onCreated={() => changed()} />
       </Panel>
       {activeOrg && (
-        <TenantsPanel key={`${activeOrg}-${tenantsVersion}`} orgId={activeOrg} onChanged={changed} />
+        <TenantsPanel
+          key={`${activeOrg}-${tenantsVersion}`}
+          orgId={activeOrg}
+          onChanged={changed}
+          onOrgDeleted={() => deleted(activeOrg)}
+        />
       )}
       <CreateTenant orgIds={orgIds} defaultOrg={activeOrg} onCreated={() => changed()} />
     </div>
   );
 }
 
-function TenantsPanel({ orgId, onChanged }: { orgId: string; onChanged: (notice: string) => void }) {
+function TenantsPanel({
+  orgId,
+  onChanged,
+  onOrgDeleted,
+}: {
+  orgId: string;
+  onChanged: (notice: string) => void;
+  onOrgDeleted: () => void;
+}) {
   const tenants = useLoad(
     (signal) =>
       runtimeJson<{ tenants: Tenant[] }>(`/admin/organizations/${seg(orgId)}/tenants`, {
@@ -174,6 +194,7 @@ function TenantsPanel({ orgId, onChanged }: { orgId: string; onChanged: (notice:
                         `/admin/tenants/${seg(tenant.tenant_full_id)}`,
                         { method: 'DELETE' },
                       );
+                      if (result.organization_deleted) onOrgDeleted();
                       onChanged(
                         result.organization_deleted
                           ? `Deleted tenant ${tenant.tenant_full_id} and organization ${orgId}, which had no tenants left.`

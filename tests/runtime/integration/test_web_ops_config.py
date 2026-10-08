@@ -200,6 +200,24 @@ class TestSectionForms:
             is None
         )
 
+    def test_reload_discards_unsaved_edits(self, page, web_url, tenant):
+        _config_view(page, web_url, tenant)
+        form = _routing_form(page, tenant)
+        default = RoutingConfigUnified(tenant_id=tenant)
+        form.get_by_label("min_unique_queries", exact=True).fill("77")
+        form.get_by_label("routing_mode", exact=True).select_option("direct")
+        page.get_by_role("region", name=f"Routing config of {tenant}").get_by_role(
+            "button", name="Reload"
+        ).click()
+        form = _routing_form(page, tenant)
+        expect(form.get_by_label("min_unique_queries", exact=True)).to_have_value(
+            str(default.min_unique_queries)
+        )
+        expect(form.get_by_label("routing_mode", exact=True)).to_have_value(
+            default.routing_mode
+        )
+        expect(form.get_by_text("Not saved yet; showing the defaults.")).to_be_visible()
+
     def test_an_agent_config_is_created_for_the_named_agent(
         self, page, web_url, tenant, reader
     ):
@@ -580,15 +598,8 @@ class TestAgentConfigEdit:
             {},
         )
 
-        # A save closes the agent's editor; reopening it reads the stored one.
-        chooser = page.get_by_role("region", name=f"Agents of {tenant}").get_by_role(
-            "form", name="Choose agent"
-        )
-        chooser.get_by_label("Agent").fill("summarizer_agent")
-        chooser.get_by_role("button", name="Edit agent config").click()
-        form = page.get_by_role(
-            "form", name=f"Edit Agent summarizer_agent config of {tenant}"
-        )
+        # The agent's editor stays open after the save, reading the stored one.
+        expect(form.get_by_text("Version 2, saved ")).to_be_visible()
         optimizer = form.get_by_role("group", name="optimizer_config")
         expect(optimizer.get_by_label("optimizer_type", exact=True)).to_have_value(
             "mipro_v2"
@@ -604,6 +615,8 @@ class TestAgentConfigEdit:
         assert (
             reader.get_agent_config(tenant, "summarizer_agent").optimizer_config is None
         )
+        expect(form.get_by_text("Version 3, saved ")).to_be_visible()
+        expect(optimizer.get_by_label("optimizer_type", exact=True)).to_have_count(0)
 
 
 class TestHistoryScopes:

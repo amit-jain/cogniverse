@@ -3,6 +3,7 @@ import { Alert, Panel, messageOf, useAction, useLoad } from './common';
 import { errorMessage, runtimeJson, seg } from './http';
 import { parseSse } from './sse';
 import { TenantChooser } from './tenants';
+import { newId } from '../ids';
 
 interface IngestEvent {
   state: string;
@@ -405,7 +406,7 @@ function UploadContent({
           e.preventDefault();
           if (!file || !ready || unreadable.length) return;
           action.run(async () => {
-            const batch: Batch = { id: crypto.randomUUID(), filename: file.name, entries: [] };
+            const batch: Batch = { id: newId(), filename: file.name, entries: [] };
             const uploads: { profile: string; upload: Upload }[] = [];
             const failures: string[] = [];
             for (const profile of selected) {

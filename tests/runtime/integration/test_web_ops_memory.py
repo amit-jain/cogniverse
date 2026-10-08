@@ -283,8 +283,14 @@ class TestMemoryView:
         expect(search.get_by_role("alert")).to_have_text(
             "Results must be a whole number from 1 to 200."
         )
-        search.get_by_label("Results").fill("20")
+        # Show all is not refused over the invalid count: it lists with the
+        # count in use (1) and puts it back in the box.
         search.get_by_role("button", name="Show all").click()
+        expect(_table_rows(panel).locator(ID_COLUMN)).to_have_text(["m-dark"])
+        expect(search.get_by_label("Results")).to_have_value("1")
+        expect(search.get_by_role("alert")).to_have_count(0)
+        search.get_by_label("Results").fill("20")
+        search.get_by_role("button", name="Search").click()
         expect(_table_rows(panel).locator(ID_COLUMN)).to_have_text(["m-dark", "m-zone"])
 
         add = page.get_by_role("form", name="Add memory")

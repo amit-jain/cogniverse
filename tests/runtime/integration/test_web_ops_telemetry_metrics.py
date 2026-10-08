@@ -777,6 +777,21 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
                 confidence=0.8,
                 reasoning="Summaries belong to the summarizer.",
                 suggested_correct_agent="summarizer_agent",
+                requires_human_review=False,
+            ),
+        )
+    )
+    # A label the LLM flagged for review: a reviewer labels it, never
+    # approves it as it is.
+    run_in_own_loop(
+        storage.store_llm_annotation(
+            confident,
+            AutoAnnotation(
+                span_id=confident,
+                label=AnnotationLabel.CORRECT,
+                confidence=0.55,
+                reasoning="Search may fit.",
+                suggested_correct_agent=None,
                 requires_human_review=True,
             ),
         )
@@ -803,8 +818,8 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
         "0.30",
         "failure",
         "300.0 ms",
-        "wrong_routing (should be summarizer_agent)\nLLM · confidence 0.80 · "
-        "needs review\nSummaries belong to the summarizer.",
+        "wrong_routing (should be summarizer_agent)\nLLM · confidence 0.80\n"
+        "Summaries belong to the summarizer.",
     ]
     approved_label = (
         "wrong_routing (should be summarizer_agent)\nLLM, approved by dana · "
@@ -817,7 +832,7 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
         "0.90",
         "success",
         "100.0 ms",
-        "Unlabelled",
+        "correct\nLLM · confidence 0.55 · needs review\nSearch may fit.",
     ]
 
     panel = _show_routing(page, web_url, tenant)
@@ -948,7 +963,12 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
 
     decisions = page.get_by_role("region", name="Decisions", exact=True)
     decisions.get_by_label("Show").select_option("LLM labels to review")
-    assert _decision_rows(page) == [llm_row]
+    assert _decision_rows(page) == [llm_row, confident_row]
+    # The flagged label is offered for relabelling only.
+    assert [row[-1] for row in _rows(page, "Decisions")] == [
+        "Approve\nRelabel",
+        "Relabel",
+    ]
     approve = decisions.get_by_role("button", name=f"Approve the LLM label of {failed}")
     approve.click()
     expect(decisions.get_by_role("alert")).to_have_text(
@@ -959,7 +979,8 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
     expect(page.get_by_role("status")).to_have_text(
         f"Approved the LLM label of {failed}."
     )
-    expect(decisions.get_by_text("No decisions match.")).to_be_visible()
+    expect(decisions.get_by_role("button", name=f"Relabel {failed}")).to_have_count(0)
+    assert _decision_rows(page) == [confident_row]
     decisions.get_by_label("Show").select_option("Reviewed")
     assert _decision_rows(page) == [[*llm_row[:-1], approved_label]]
 

@@ -35,7 +35,7 @@ from cogniverse_evaluation.recorded_searches import SEARCH_SPAN_NAME
 from cogniverse_foundation.config.unified_config import ApprovalConfig
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_foundation.telemetry.span_contract import read_span_io
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 from cogniverse_runtime.routers import tenant as tenant_router
 from cogniverse_sdk.document import result_source_title_key
 from cogniverse_synthetic.approval.corrections import (
@@ -245,7 +245,7 @@ async def annotatable_searches(
 ):
     """The tenant's recorded searches in the window, newest first, each with
     its top results and the search-quality annotation it already carries."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     end = datetime.now(timezone.utc)
     spans = await _spans(
         tenant_id,
@@ -337,7 +337,7 @@ def annotation_label(score: float) -> str:
 async def annotate_search(tenant_id: str, span_id: str, body: AnnotationRequest):
     """Record a reviewer's rating of one recorded search as its
     ``search_quality_annotation``, replacing the one it carried."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     try:
         score = annotation_score(body.kind, body.value)
     except ValueError as exc:
@@ -391,7 +391,7 @@ class AnnotationCount(BaseModel):
 async def annotation_count(tenant_id: str, lookback_days: int = Query(30, ge=1, le=90)):
     """How many of the tenant's recorded searches in the window carry a
     search-quality annotation."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     end = datetime.now(timezone.utc)
     spans = await _spans(
         tenant_id,
@@ -481,7 +481,7 @@ def build_golden_dataset(
 async def golden_dataset(tenant_id: str, body: GoldenDatasetRequest):
     """A golden dataset from the tenant's annotated searches: query to the
     sources its well-rated search found."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     end = datetime.now(timezone.utc)
     spans = await _spans(
         tenant_id,
@@ -665,7 +665,7 @@ async def synthetic_run_results(tenant_id: str, workflow_name: str):
             status_code=400,
             detail=f"Run {workflow_name} is not a synthetic run.",
         )
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     phase = (data.get("status") or {}).get("phase")
     try:
         options = json.loads(tenant_router._workflow_parameter(data, "options") or "{}")
@@ -766,7 +766,7 @@ class TrainingDatasets(BaseModel):
 @router.get("/{tenant_id}/datasets", response_model=TrainingDatasets)
 async def training_datasets(tenant_id: str):
     """The tenant's telemetry datasets, newest first."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     suffix = tenant_dataset_name(tenant_id, "")
     listed = await _bounded(
         _provider(tenant_id).datasets.list_datasets(),
@@ -800,7 +800,7 @@ async def upload_dataset(
 ):
     """Create a telemetry dataset of the tenant from a CSV of ``query``,
     ``expected_videos`` (comma-separated) and optional ``category`` columns."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     stored_name = tenant_dataset_name(tenant_id, name.strip())
     content = await file.read()
 
@@ -938,7 +938,7 @@ async def profile_span_analysis(
 ):
     """How the tenant's search spans in the window used each profile and
     scored, as the recommender's training data sees them."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     end = datetime.now(timezone.utc)
     spans = await _spans(
         tenant_id, end - timedelta(days=lookback_days), end, "the search spans"
@@ -990,7 +990,7 @@ def _artifacts(tenant_id: str) -> ArtifactManager:
 async def train_recommender(tenant_id: str, body: TrainRequest):
     """Train the XGBoost profile recommender on the tenant's search and
     evaluation spans in the window and store it as the tenant's model."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     end = datetime.now(timezone.utc)
     optimizer = ProfilePerformanceOptimizer(
         model_dir=Path(tempfile.gettempdir()) / "cogniverse-profile-performance"
@@ -1074,7 +1074,7 @@ async def _stored_recommender(tenant_id: str) -> Optional[ProfilePerformanceOpti
 @router.get("/{tenant_id}/profile-selection/model", response_model=RecommenderState)
 async def recommender_state(tenant_id: str):
     """Whether the tenant has a trained recommender, and its profiles."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     optimizer = await _stored_recommender(tenant_id)
     if optimizer is None:
         return RecommenderState(trained=False, profiles=[])
@@ -1087,7 +1087,7 @@ async def recommender_state(tenant_id: str):
 async def predict_profile(tenant_id: str, body: PredictRequest):
     """The stored recommender's profile for ``query``, its confidence and
     the features it read from the query."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     optimizer = await _stored_recommender(tenant_id)
     if optimizer is None:
         raise HTTPException(
@@ -1172,7 +1172,7 @@ async def optimization_metrics(
 ):
     """Routing accuracy with per-agent precision, recall and F1, evaluation
     activity, and optimization runs per day over the window."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=lookback_days)
     spans = await _spans(tenant_id, start, end, "the spans")

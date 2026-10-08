@@ -25,6 +25,8 @@ from tests.utils.node_env import node_env
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLIENT_DIR = REPO_ROOT / "clients" / "web"
 MIN_NODE_MAJOR = 22
+# Starts of the web server tried before a lost port race fails the test.
+PORT_ATTEMPTS = 5
 CLIENT_FILES = (
     "package.json",
     "package-lock.json",
@@ -106,36 +108,49 @@ def serve_web(
     so a test never reports to CopilotKit's servers.
     """
     node = _node()
-    port = free_port()
     entry = (
         ["dist/server/index.js"]
         if built
         else ["--import", "tsx", "src/server/index.ts"]
     )
-    proc = subprocess.Popen(
-        [node, *entry],
-        cwd=client_dir,
-        env=node_env(
-            node,
-            COGNIVERSE_RUNTIME_URL=runtime_url,
-            PORT=str(port),
-            COPILOTKIT_TELEMETRY_URL=telemetry_url,
-        ),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    # Drained on a thread so a chatty server never blocks on a full pipe.
-    output: List[str] = []
-    reader = threading.Thread(
-        target=lambda: output.extend(iter(proc.stdout.readline, "")), daemon=True
-    )
-    reader.start()
-    ready = f"cogniverse-web listening on http://127.0.0.1:{port}\n"
-    deadline = time.monotonic() + 60
-    while ready not in output and proc.poll() is None:
-        assert time.monotonic() < deadline, f"the web server did not start: {output}"
-        time.sleep(0.05)
+    # A free port can be taken by another process before the server binds
+    # it; the server then exits with EADDRINUSE and starts on another port.
+    for _ in range(PORT_ATTEMPTS):
+        port = free_port()
+        proc = subprocess.Popen(
+            [node, *entry],
+            cwd=client_dir,
+            env=node_env(
+                node,
+                COGNIVERSE_RUNTIME_URL=runtime_url,
+                PORT=str(port),
+                COPILOTKIT_TELEMETRY_URL=telemetry_url,
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        # Drained on a thread so a chatty server never blocks on a full pipe.
+        output: List[str] = []
+        reader = threading.Thread(
+            target=lambda proc=proc, output=output: output.extend(
+                iter(proc.stdout.readline, "")
+            ),
+            daemon=True,
+        )
+        reader.start()
+        ready = f"cogniverse-web listening on http://127.0.0.1:{port}\n"
+        deadline = time.monotonic() + 60
+        while ready not in output and proc.poll() is None:
+            assert time.monotonic() < deadline, (
+                f"the web server did not start: {output}"
+            )
+            time.sleep(0.05)
+        if ready in output:
+            break
+        reader.join(timeout=10)
+        if not any("EADDRINUSE" in line for line in output):
+            break
     assert ready in output, f"the web server exited: {output}"
     try:
         yield f"http://127.0.0.1:{port}"

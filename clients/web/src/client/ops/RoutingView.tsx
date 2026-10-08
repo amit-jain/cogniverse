@@ -5,6 +5,7 @@ import { runtimeJson, seg } from './http';
 import { LookbackSelect, percent } from './metrics';
 import { Plot } from './Plot';
 import {
+  approvable,
   LABEL_FILTERS,
   MAX_LOOKBACK_HOURS,
   PRIORITIES,
@@ -689,7 +690,7 @@ function Decisions({
                   <td>
                     {decision.span_id && (
                       <span className="confirm">
-                        {labelState(decision) === 'llm' && (
+                        {approvable(decision) && (
                           <button
                             aria-label={`Approve the LLM label of ${decision.span_id}`}
                             disabled={approve.pending}

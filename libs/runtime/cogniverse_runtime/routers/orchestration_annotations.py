@@ -22,10 +22,9 @@ from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotation,
     OrchestrationAnnotationStorage,
 )
-from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
 from cogniverse_foundation.telemetry.span_contract import read_span_io
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +153,7 @@ async def list_workflows(
 ):
     """The tenant's orchestration workflows of the last ``lookback_hours``,
     newest first, each with its latest review."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     storage = OrchestrationAnnotationStorage(tenant_id=tenant_id)
     end = datetime.now(timezone.utc)
     try:
@@ -189,7 +188,7 @@ async def list_workflows(
 async def annotate_workflow(tenant_id: str, span_id: str, request: AnnotationRequest):
     """Store a reviewer's verdict on one workflow as its
     ``orchestration_quality`` annotation; answers the workflow with it."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     if request.start_time.utcoffset() is None:
         raise HTTPException(
             status_code=422, detail="start_time must include a timezone."
