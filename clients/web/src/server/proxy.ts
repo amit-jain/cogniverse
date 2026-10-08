@@ -18,6 +18,7 @@ const ALLOWED = [
   /^\/admin\/tenant\/[^/]+\/evaluation\/golden$/,
   /^\/admin\/tenant\/[^/]+\/embeddings\/atlas$/,
   /^\/admin\/tenant\/[^/]+\/routing-decisions(\/[^/]+\/(approve|label))?$/,
+  /^\/admin\/tenant\/[^/]+\/routing-decisions\/(annotation-candidates|label-statistics)$/,
   /^\/ag-ui\/results\/relevance$/,
   /^\/agents\/$/,
   /^\/agents\/annotations\/labels$/,

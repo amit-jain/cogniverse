@@ -376,3 +376,34 @@ class TestFaultContract:
                 "region", name=f"Optimization runs of {tenant}"
             ).get_by_role("alert")
         ).to_have_text("Argo is not configured on this deployment.")
+
+
+class TestLlmLabellingRun:
+    def test_label_with_the_llm_starts_a_run_over_the_routing_window(
+        self, page, web_url, argo
+    ):
+        tenant = f"webllm{uuid.uuid4().hex[:8]}:main"
+        page.goto(f"{web_url}/#/ops/routing")
+        chooser = page.get_by_role("form", name="Choose tenant")
+        chooser.get_by_label("Tenant ID").fill(tenant)
+        chooser.get_by_role("button", name="Show decisions").click()
+        page.get_by_role("region", name=f"Routing decisions of {tenant}").get_by_role(
+            "combobox", name=re.compile(r"^Window")
+        ).select_option("168")
+        labelling = page.get_by_role("region", name="Labelling", exact=True)
+        labelling.get_by_role("button", name="Label with the LLM").click()
+        notice = page.get_by_role("status")
+        expect(notice).to_contain_text("Started LLM labelling run ")
+        name = re.fullmatch(
+            r"Started LLM labelling run (manual-optimize-llm-annotate-\w+)\. "
+            r"Follow it in Optimization runs, then refresh\.",
+            notice.inner_text(),
+        ).group(1)
+        stored = _workflow(argo, name)
+        assert {
+            p["name"]: p["value"] for p in stored["spec"]["arguments"]["parameters"]
+        } == {
+            "mode": "llm-annotate",
+            "tenant-id": tenant,
+            "lookback-hours": "168",
+        }

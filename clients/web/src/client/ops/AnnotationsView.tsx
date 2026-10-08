@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Alert, Panel, useAction, useLoad } from './common';
+import { ViewErrorBoundary } from './ErrorBoundary';
 import { runtimeJson, seg } from './http';
 
 interface AnnotationRequest {
@@ -35,6 +36,14 @@ export function queueSummary(byStatus: Record<string, number>): string {
 }
 
 export function AnnotationsView() {
+  return (
+    <ViewErrorBoundary view="Annotation queue">
+      <AnnotationQueue />
+    </ViewErrorBoundary>
+  );
+}
+
+function AnnotationQueue() {
   const [reviewer, setReviewer] = useState('');
   const [version, setVersion] = useState(0);
   const [notice, setNotice] = useState('');

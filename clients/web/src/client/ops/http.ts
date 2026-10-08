@@ -2,9 +2,28 @@ export class RuntimeRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** The response's parsed JSON body. */
+    readonly body: unknown = null,
   ) {
     super(message);
   }
+}
+
+/** The typed fields a runtime failure carries beside its message (its
+ * ``error`` code and ``failure`` type) and its HTTP status, as one line;
+ * ``null`` for an error that is not a runtime answer. */
+export function failureDetail(error: unknown): string | null {
+  if (!(error instanceof RuntimeRequestError)) return null;
+  const detail = (error.body as { detail?: unknown } | null)?.detail as
+    | { error?: unknown; failure?: unknown }
+    | null
+    | undefined;
+  const parts = [
+    typeof detail?.error === 'string' ? `error ${detail.error}` : null,
+    typeof detail?.failure === 'string' ? `failure ${detail.failure}` : null,
+    `HTTP ${error.status}`,
+  ];
+  return parts.filter(Boolean).join(', ');
 }
 
 /**
@@ -64,7 +83,7 @@ export async function runtimeJson<T>(
       response.status,
     );
   }
-  if (!response.ok) throw new RuntimeRequestError(errorMessage(body, response.status), response.status);
+  if (!response.ok) throw new RuntimeRequestError(errorMessage(body, response.status), response.status, body);
   return body as T;
 }
 

@@ -801,8 +801,13 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
         "0.30",
         "failure",
         "300.0 ms",
-        "wrong_routing (should be summarizer_agent)\nLLM",
+        "wrong_routing (should be summarizer_agent)\nLLM · confidence 0.80 · "
+        "needs review\nSummaries belong to the summarizer.",
     ]
+    approved_label = (
+        "wrong_routing (should be summarizer_agent)\nLLM, approved by dana · "
+        "confidence 0.80\nSummaries belong to the summarizer."
+    )
     confident_row = [
         started[confident],
         "a query for search_agent",
@@ -834,51 +839,109 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
         "Latency p50": "200.0 ms",
         "Latency p95": "290.0 ms",
     }
+    expect(
+        panel.get_by_text(
+            f"Spans from telemetry project {telemetry.config.get_project_name(tenant)}.",
+            exact=True,
+        )
+    ).to_be_visible()
+    # search_agent: one success of two, no false negatives recorded.
     assert _rows(page, "Decisions by agent") == [
-        ["search_agent", "2", "1", "1", "0", "50.0%", "0.60", "200.0 ms"],
-        ["summarizer_agent", "1", "1", "0", "0", "100.0%", "0.65", "200.0 ms"],
+        [
+            "search_agent",
+            "2",
+            "1",
+            "1",
+            "0",
+            "50.0%",
+            "0.60",
+            "200.0 ms",
+            "50.0%",
+            "100.0%",
+            "66.7%",
+        ],
+        [
+            "summarizer_agent",
+            "1",
+            "1",
+            "0",
+            "0",
+            "100.0%",
+            "0.65",
+            "200.0 ms",
+            "100.0%",
+            "100.0%",
+            "100.0%",
+        ],
+    ]
+    # Each score cell is shaded red (0) through yellow (0.5) to green (1).
+    assert [
+        row.locator("td").evaluate_all(
+            "cells => cells.slice(8).map(c => getComputedStyle(c).backgroundColor)"
+        )
+        for row in _table(page, "Decisions by agent").locator("tbody tr").all()
+    ] == [
+        ["rgb(255, 255, 191)", "rgb(26, 152, 80)", "rgb(179, 221, 154)"],
+        ["rgb(26, 152, 80)", "rgb(26, 152, 80)", "rgb(26, 152, 80)"],
+    ]
+    agents = ["search_agent", "summarizer_agent"]
+    assert _plot(page, "Precision, recall and F1 by agent") == [
+        {"name": "Precision", "type": "bar", "x": agents, "y": [0.5, 1]},
+        {"name": "Recall", "type": "bar", "x": agents, "y": [1, 1]},
+        {"name": "F1", "type": "bar", "x": agents, "y": [pytest.approx(2 / 3), 1]},
     ]
     assert _plot(page, "Confidence by outcome") == [
         {"name": "success", "type": "histogram", "x": [0.65, 0.9]},
         {"name": "failure", "type": "histogram", "x": [0.3]},
         {"name": "ambiguous", "type": "histogram", "x": []},
     ]
-    assert _plot(page, "Success rate by confidence") == [
+    # Ten bins from the lowest confidence to the highest, as pandas.cut
+    # makes them: 0.3, 0.65 and 0.9 each land in their own.
+    assert _plot(page, "Confidence calibration") == [
+        {
+            "name": "Actual success rate",
+            "type": "scatter",
+            "x": [0.3, 0.65, 0.9],
+            "y": [0, 1, 1],
+        },
+        {"name": "Perfect calibration", "type": "scatter", "x": [0, 1], "y": [0, 1]},
+    ]
+
+    def hour(d):
+        return pd.Timestamp(d["start_time"]).floor("h").strftime("%Y-%m-%dT%H:00:00Z")
+
+    def per_hour(ds):
+        hours = sorted({hour(d) for d in ds})
+        return hours, [[d for d in ds if hour(d) == h] for h in hours]
+
+    by_agent = []
+    for agent in agents:
+        hours, groups = per_hour([d for d in served if d["chosen_agent"] == agent])
+        by_agent.append(
+            {
+                "name": agent,
+                "type": "scatter",
+                "x": hours,
+                "y": [len(group) for group in groups],
+            }
+        )
+    assert _plot(page, "Decisions per hour by agent") == by_agent
+    hours, groups = per_hour(served)
+    every_hour = [
+        h.strftime("%Y-%m-%dT%H:00:00Z")
+        for h in pd.date_range(hours[0], hours[-1], freq="h")
+    ]
+    rates = {
+        h: sum(d["outcome"] == "success" for d in group) / len(group)
+        for h, group in zip(hours, groups, strict=True)
+    }
+    assert _plot(page, "Success rate per hour") == [
         {
             "name": "Success rate",
             "type": "scatter",
-            "x": ["0.0–0.2", "0.2–0.4", "0.4–0.6", "0.6–0.8", "0.8–1.0"],
-            "y": [None, 0, None, 1, 1],
+            "x": every_hour,
+            "y": [rates.get(h) for h in every_hour],
         }
-    ]
-    hours = sorted(
-        {
-            pd.Timestamp(d["start_time"]).floor("h").strftime("%Y-%m-%dT%H:00:00Z")
-            for d in served
-        }
-    )
-    per_hour = [
-        [
-            d
-            for d in served
-            if pd.Timestamp(d["start_time"]).floor("h").strftime("%Y-%m-%dT%H:00:00Z")
-            == hour
-        ]
-        for hour in hours
-    ]
-    assert _plot(page, "Decisions per hour") == [
-        {
-            "name": "Decisions",
-            "type": "bar",
-            "x": hours,
-            "y": [len(ds) for ds in per_hour],
-        },
-        {
-            "name": "Succeeded",
-            "type": "bar",
-            "x": hours,
-            "y": [sum(d["outcome"] == "success" for d in ds) for ds in per_hour],
-        },
     ]
 
     decisions = page.get_by_role("region", name="Decisions", exact=True)
@@ -896,16 +959,28 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
     )
     expect(decisions.get_by_text("No decisions match.")).to_be_visible()
     decisions.get_by_label("Show").select_option("Reviewed")
-    assert _decision_rows(page) == [
-        [
-            *llm_row[:-1],
-            "wrong_routing (should be summarizer_agent)\nLLM, approved by dana",
-        ]
-    ]
+    assert _decision_rows(page) == [[*llm_row[:-1], approved_label]]
+
+    # A relabel starts from the decision's label, in reviewer terms.
+    decisions.get_by_role("button", name=f"Relabel {failed}").click()
+    prefilled = page.get_by_role("form", name=f"Label {failed}")
+    expect(prefilled.get_by_role("combobox")).to_have_value("wrong")
+    expect(prefilled.get_by_role("combobox").locator("option")).to_have_text(
+        ["correct", "wrong", "ambiguous", "insufficient_info"]
+    )
+    expect(prefilled.get_by_label("Reasoning")).to_have_value(
+        "Summaries belong to the summarizer."
+    )
+    expect(prefilled.get_by_label("Should have gone to")).to_have_value(
+        "summarizer_agent"
+    )
+    decisions.get_by_role("button", name=f"Relabel {failed}").click()
+    expect(prefilled).to_have_count(0)
 
     decisions.get_by_label("Show").select_option("All decisions")
     decisions.get_by_role("button", name=f"Relabel {boundary}").click()
     form = page.get_by_role("form", name=f"Label {boundary}")
+    expect(form.get_by_role("combobox")).to_have_value("correct")
     form.get_by_role("combobox").select_option("wrong")
     form.get_by_label("Reasoning").fill("Needs a search.")
     form.get_by_label("Should have gone to").fill("search_agent")
@@ -913,11 +988,8 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
     expect(page.get_by_role("status")).to_have_text(f"Labelled {boundary} wrong.")
     expect(form).to_have_count(0)
     assert _decision_rows(page) == [
-        [*unlabelled_row[:-1], "wrong (should be search_agent)\ndana"],
-        [
-            *llm_row[:-1],
-            "wrong_routing (should be summarizer_agent)\nLLM, approved by dana",
-        ],
+        [*unlabelled_row[:-1], "wrong (should be search_agent)\ndana\nNeeds a search."],
+        [*llm_row[:-1], approved_label],
         confident_row,
     ]
 
@@ -964,6 +1036,192 @@ def test_routing_evaluation_reviews_a_tenants_decisions(
     }
 
 
+def _labelling_facts(page: Page, want: dict, timeout=90.0):
+    """The Stored labels facts once they read ``want``, refreshing meanwhile
+    (Phoenix serves a new label after a short indexing delay)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        expect(page.locator('dl[aria-label="Stored labels"]')).to_be_visible()
+        facts = _facts(page, "Stored labels")
+        if facts == want or time.monotonic() > deadline:
+            return facts
+        page.get_by_role("button", name="Refresh").first.click()
+        page.wait_for_timeout(2000)
+
+
+def test_routing_evaluation_finds_decisions_needing_review_and_counts_labels(
+    page, web_url, runtime_url, telemetry
+):
+    tenant = _tenant("webcandidates")
+    failed = record_routing(
+        telemetry, tenant, "search_agent", 0.3, 100, minutes_ago=4, failed=True
+    )
+    unsure = record_routing(telemetry, tenant, "search_agent", 0.5, 100, minutes_ago=3)
+    boundary = record_routing(
+        telemetry, tenant, "summarizer_agent", 0.7, 100, minutes_ago=2
+    )
+    record_routing(telemetry, tenant, "search_agent", 0.9, 100, minutes_ago=1)
+    # Outside a two-hour window, inside the default day.
+    record_routing(telemetry, tenant, "search_agent", 0.9, 100, minutes_ago=180)
+    telemetry.force_flush(timeout_millis=10000)
+    served = {d["span_id"]: d for d in _routing_decisions(runtime_url, tenant, 4)}
+    run_in_own_loop(
+        AnnotationStorage(tenant_id=tenant).store_llm_annotation(
+            unsure,
+            AutoAnnotation(
+                span_id=unsure,
+                label=AnnotationLabel.WRONG_ROUTING,
+                confidence=0.7,
+                reasoning="A summary was asked for.",
+                suggested_correct_agent="summarizer_agent",
+                requires_human_review=False,
+            ),
+        )
+    )
+    started = {
+        span_id: page.evaluate("iso => new Date(iso).toLocaleString()", d["start_time"])
+        for span_id, d in served.items()
+    }
+
+    panel = _show_routing(page, web_url, tenant)
+    assert _labelling_facts(
+        page,
+        {
+            "Stored labels (30 days)": "1",
+            "Reviewed": "0",
+            "Pending review": "1",
+            "By label": "wrong_routing 1",
+        },
+    ) == {
+        "Stored labels (30 days)": "1",
+        "Reviewed": "0",
+        "Pending review": "1",
+        "By label": "wrong_routing 1",
+    }
+    expect(panel.locator("dl").first).to_be_visible()
+    assert _facts(page, "Routing summary")["Decisions"] == "5"
+
+    labelling = page.get_by_role("region", name="Labelling", exact=True)
+    finder = labelling.get_by_role("form", name="Find decisions needing review")
+    expect(finder.get_by_label("Confidence threshold")).to_have_value("0.6")
+    expect(finder.get_by_label("Most to show")).to_have_value("20")
+    finder.get_by_role("button", name="Find decisions needing review").click()
+    expect(page.get_by_role("status")).to_have_text("Found 3 decisions needing review.")
+    high = [
+        "high",
+        started[failed],
+        "a query for search_agent",
+        "search_agent",
+        "0.30",
+        "failure",
+        "Failure with low confidence (0.30)",
+        "Unlabelled",
+    ]
+    medium = [
+        "medium",
+        started[unsure],
+        "a query for search_agent",
+        "search_agent",
+        "0.50",
+        "success",
+        "Success but low confidence (0.50) - verify correctness",
+        "wrong_routing (should be summarizer_agent)\nLLM · confidence 0.70\n"
+        "A summary was asked for.",
+    ]
+    low = [
+        "low",
+        started[boundary],
+        "a query for summarizer_agent",
+        "summarizer_agent",
+        "0.70",
+        "success",
+        "Near decision boundary (0.70) - training data diversity",
+        "Unlabelled",
+    ]
+
+    def candidates():
+        return [row[:-1] for row in _rows(page, "Decisions needing review")]
+
+    def showing(shown, found):
+        expect(
+            labelling.get_by_text(
+                f"Showing {shown} of {found} decisions needing review.", exact=True
+            )
+        ).to_be_visible()
+
+    showing(3, 3)
+    assert candidates() == [high, medium, low]
+    priority = labelling.get_by_role("group", name="Priority")
+    priority.get_by_label("low").uncheck()
+    showing(2, 3)
+    assert candidates() == [high, medium]
+    labelling.get_by_label("Show LLM-labelled").uncheck()
+    showing(1, 3)
+    assert candidates() == [high]
+    labelling.get_by_label("Show LLM-labelled").check()
+    priority.get_by_label("low").check()
+    priority.get_by_label("high").uncheck()
+    priority.get_by_label("medium").uncheck()
+    showing(1, 3)
+    assert candidates() == [low]
+    priority.get_by_label("high").check()
+
+    finder.get_by_label("Confidence threshold").fill("0.4")
+    finder.get_by_label("Most to show").fill("1")
+    finder.get_by_role("button", name="Find decisions needing review").click()
+    expect(page.get_by_role("status")).to_have_text("Found 1 decision needing review.")
+    showing(1, 1)
+    assert candidates() == [high]
+
+    panel.get_by_label("Reviewer").fill("dana")
+    labelling.get_by_role("button", name=f"Label {failed} for review").click()
+    form = page.get_by_role("form", name=f"Label {failed}")
+    expect(form.get_by_role("combobox")).to_have_value("correct")
+    form.get_by_role("combobox").select_option("wrong")
+    form.get_by_label("Reasoning").fill("Summaries go to the summarizer.")
+    form.get_by_role("button", name="Save label").click()
+    expect(page.get_by_role("status")).to_have_text(f"Labelled {failed} wrong.")
+    assert candidates() == [
+        [*high[:-1], "wrong\ndana\nSummaries go to the summarizer."]
+    ]
+    assert _labelling_facts(
+        page,
+        {
+            "Stored labels (30 days)": "2",
+            "Reviewed": "1",
+            "Pending review": "1",
+            "By label": "wrong 1, wrong_routing 1",
+        },
+    ) == {
+        "Stored labels (30 days)": "2",
+        "Reviewed": "1",
+        "Pending review": "1",
+        "By label": "wrong 1, wrong_routing 1",
+    }
+
+    hours = panel.get_by_role("spinbutton", name="Hours")
+    hours.fill("0")
+    hours.press("Enter")
+    expect(panel.get_by_role("alert")).to_have_text(
+        "Hours must be a whole number from 1 to 720."
+    )
+    with page.expect_response(
+        lambda r: "/routing-decisions?lookback_hours=2" in r.url
+    ) as response:
+        hours.fill("2")
+        hours.press("Enter")
+    assert response.value.status == 200
+    expect(panel.get_by_role("combobox", name=re.compile(r"^Window"))).to_have_value(
+        "2"
+    )
+    expect(
+        panel.get_by_role("combobox", name=re.compile(r"^Window")).locator(
+            "option:checked"
+        )
+    ).to_have_text("Last 2 hours")
+    expect(panel.locator('dl[aria-label="Routing summary"] dd').first).to_have_text("4")
+
+
 def test_routing_evaluation_of_a_quiet_tenant_says_there_are_no_decisions(
     page, web_url, telemetry
 ):
@@ -987,7 +1245,9 @@ def test_routing_evaluation_shows_an_outage_rather_than_no_decisions(
     phoenix_proxy.intercept = fail_span_reads
     panel = _show_routing(page, web_url, tenant)
     expect(panel.get_by_role("alert")).to_have_text(
-        f"Could not read the routing decisions of tenant {tenant}."
+        f"Could not read the routing decisions of tenant {tenant}: the telemetry "
+        "store did not answer (HTTPStatusError). It may be starting rather than "
+        "misconfigured; refresh to try again."
     )
     expect(
         panel.get_by_text("No routing decisions were recorded in this window.")

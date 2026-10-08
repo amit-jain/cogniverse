@@ -98,6 +98,7 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; }
 .facts pre { margin: 0; font-size: 12px; white-space: pre-wrap; }
+pre.traceback { margin: 6px 0 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .confirm { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .alert { margin: 8px 0 0; font-size: 13px; width: 100%; }
 .alert.error { color: #c0392b; }

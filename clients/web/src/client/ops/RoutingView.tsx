@@ -1,19 +1,29 @@
 import { useMemo, useState } from 'react';
 import { Alert, Panel, useAction, useLoad } from './common';
+import { ViewErrorBoundary } from './ErrorBoundary';
 import { runtimeJson, seg } from './http';
 import { LookbackSelect, percent } from './metrics';
 import { Plot } from './Plot';
 import {
   LABEL_FILTERS,
-  REVIEW_LABELS,
+  MAX_LOOKBACK_HOURS,
+  PRIORITIES,
   ROUTING_LOOKBACKS,
-  calibrationBins,
-  decisionsByHour,
+  calibrationPoints,
+  decisionsPerHourByAgent,
+  initialReviewLabel,
   labelState,
   labelledBy,
+  lookbackHours,
+  scoreColor,
+  shownCandidates,
+  successRatePerHour,
   withReviews,
   type AgentRouting,
+  type AnnotationCandidate,
+  type DecisionLabel,
   type LabelState,
+  type Priority,
   type RoutingDecision,
   type RoutingDecisions,
 } from './routing';
@@ -27,13 +37,22 @@ function decisionsPath(tenant: string): string {
   return `/admin/tenant/${seg(tenant)}/routing-decisions`;
 }
 
+interface LabelStatistics {
+  total: number;
+  human_reviewed: number;
+  pending_review: number;
+  by_label: Record<string, number>;
+}
+
 export function RoutingView() {
   const [tenant, setTenant] = useState('');
   const [lookback, setLookback] = useState(24);
   return (
     <div className="ops-view">
-      <TenantChooser action="Show decisions" onChoose={setTenant} />
-      {tenant && <Routing key={`${tenant}-${lookback}`} tenant={tenant} lookback={lookback} onLookback={setLookback} />}
+      <ViewErrorBoundary view="Routing evaluation">
+        <TenantChooser action="Show decisions" onChoose={setTenant} />
+        {tenant && <Routing key={`${tenant}-${lookback}`} tenant={tenant} lookback={lookback} onLookback={setLookback} />}
+      </ViewErrorBoundary>
     </div>
   );
 }
@@ -49,6 +68,8 @@ function Routing({
 }) {
   const [notice, setNotice] = useState('');
   const [reviewer, setReviewer] = useState('');
+  const [relabelling, setRelabelling] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
   // Decisions as the review routes answered them; Phoenix serves a new
   // label to the list only after a short indexing delay.
   const [reviewed, setReviewed] = useState<Record<string, RoutingDecision>>({});
@@ -56,45 +77,39 @@ function Routing({
     (signal) => runtimeJson<RoutingDecisions>(`${decisionsPath(tenant)}?lookback_hours=${lookback}`, { signal }),
     [tenant, lookback],
   );
-  const annotate = useAction();
+  const labels = useLoad(
+    (signal) => runtimeJson<{ labels: string[] }>('/agents/annotations/labels', { signal }).then((body) => body.labels),
+    [],
+  );
   const changed = (message: string, decision: RoutingDecision) => {
     setNotice(message);
+    setRelabelling(null);
     setReviewed((previous) => ({ ...previous, [decision.span_id!]: decision }));
   };
   const refresh = () => {
     setReviewed({});
+    setVersion((n) => n + 1);
     routing.reload();
   };
   const data = routing.data;
   const decisions = useMemo(() => withReviews(data?.decisions ?? [], reviewed), [data, reviewed]);
+  const relabel = (decision: RoutingDecision) =>
+    setRelabelling(relabelling === decision.span_id ? null : decision.span_id);
+  const labelling = decisions.find((decision) => decision.span_id === relabelling);
   return (
     <>
       <Panel title={`Routing decisions of ${tenant}`} actions={<button onClick={refresh}>Refresh</button>}>
         <div className="inline-form">
-          <LookbackSelect value={lookback} onChange={onLookback} options={ROUTING_LOOKBACKS} />
+          <LookbackSelect value={lookback} onChange={onLookback} options={windowOptions(lookback)} />
+          <HoursInput hours={lookback} onHours={onLookback} />
           <label>
             Reviewer
             <input value={reviewer} onChange={(e) => setReviewer(e.target.value)} placeholder="you@example.com" />
           </label>
-          <button
-            disabled={annotate.pending}
-            onClick={() =>
-              annotate.run(async () => {
-                const run = await runtimeJson<{ workflow_name: string }>(`/admin/tenant/${seg(tenant)}/optimize`, {
-                  method: 'POST',
-                  body: { mode: 'llm-annotate' },
-                });
-                setNotice(
-                  `Started LLM labelling run ${run.workflow_name}. Follow it in Optimization runs, then refresh.`,
-                );
-              })
-            }
-          >
-            {annotate.pending ? 'Starting…' : 'Label with the LLM'}
-          </button>
         </div>
-        {annotate.error && <Alert>{annotate.error}</Alert>}
         {routing.error && <Alert>{routing.error}</Alert>}
+        {labels.error && <Alert>Review labels are unavailable: {labels.error}</Alert>}
+        {data && <p className="muted">Spans from telemetry project {data.project}.</p>}
         {data && (
           <dl className="facts" aria-label="Routing summary">
             <dt>Decisions</dt>
@@ -132,14 +147,93 @@ function Routing({
         <>
           <Agents agents={data.per_agent} />
           <Charts decisions={decisions} />
-          <Decisions tenant={tenant} decisions={decisions} reviewer={reviewer} onChanged={changed} />
         </>
+      )}
+      <Labelling
+        tenant={tenant}
+        lookback={lookback}
+        version={version}
+        decisions={decisions}
+        relabelling={relabelling}
+        onRelabel={relabel}
+        onNotice={setNotice}
+      />
+      {data && data.total > 0 && (
+        <Decisions
+          tenant={tenant}
+          decisions={decisions}
+          reviewer={reviewer}
+          relabelling={relabelling}
+          onRelabel={relabel}
+          onChanged={changed}
+        />
+      )}
+      {labelling?.span_id && labels.data && (
+        <Relabel
+          key={labelling.span_id}
+          tenant={tenant}
+          decision={labelling}
+          reviewer={reviewer}
+          choices={labels.data}
+          onDone={changed}
+        />
       )}
     </>
   );
 }
 
+/** The preset windows, plus ``hours`` when it is none of them. */
+function windowOptions(hours: number) {
+  return ROUTING_LOOKBACKS.some((option) => option.hours === hours)
+    ? ROUTING_LOOKBACKS
+    : [...ROUTING_LOOKBACKS, { hours, label: `Last ${hours} hours` }].sort((a, b) => a.hours - b.hours);
+}
+
+function HoursInput({ hours, onHours }: { hours: number; onHours: (hours: number) => void }) {
+  const [text, setText] = useState(String(hours));
+  const [invalid, setInvalid] = useState(false);
+  const apply = () => {
+    const chosen = lookbackHours(text);
+    setInvalid(chosen === null);
+    if (chosen !== null && chosen !== hours) onHours(chosen);
+  };
+  return (
+    <>
+      <label>
+        Hours
+        <input
+          type="number"
+          min={1}
+          max={MAX_LOOKBACK_HOURS}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={apply}
+          onKeyDown={(e) => e.key === 'Enter' && apply()}
+        />
+      </label>
+      {invalid && <Alert>Hours must be a whole number from 1 to {MAX_LOOKBACK_HOURS}.</Alert>}
+    </>
+  );
+}
+
+const SCORES = [
+  { key: 'precision', name: 'Precision', color: 'lightblue' },
+  { key: 'recall', name: 'Recall', color: 'lightgreen' },
+  { key: 'f1', name: 'F1', color: 'orange' },
+] as const;
+
 function Agents({ agents }: { agents: AgentRouting[] }) {
+  const scores = useMemo(
+    () =>
+      SCORES.map((score) => ({
+        type: 'bar',
+        name: score.name,
+        x: agents.map((agent) => agent.agent),
+        y: agents.map((agent) => agent[score.key]),
+        marker: { color: score.color },
+      })),
+    [agents],
+  );
   return (
     <Panel title="Decisions by agent">
       <table aria-label="Decisions by agent">
@@ -153,6 +247,9 @@ function Agents({ agents }: { agents: AgentRouting[] }) {
             <th>Success rate</th>
             <th>Mean confidence</th>
             <th>Mean latency</th>
+            {SCORES.map((score) => (
+              <th key={score.key}>{score.name}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -166,10 +263,24 @@ function Agents({ agents }: { agents: AgentRouting[] }) {
               <td>{percent(agent.success_rate)}</td>
               <td>{agent.mean_confidence.toFixed(2)}</td>
               <td>{ms(agent.mean_latency_ms)}</td>
+              {SCORES.map((score) => (
+                <td key={score.key} style={{ background: scoreColor(agent[score.key]), color: '#1a1a1a' }}>
+                  {percent(agent[score.key])}
+                </td>
+              ))}
             </tr>
           ))}
         </tbody>
       </table>
+      <Plot
+        title="Precision, recall and F1 by agent"
+        data={scores}
+        layout={{
+          barmode: 'group',
+          xaxis: { title: { text: 'Agent' } },
+          yaxis: { title: { text: 'Score' }, range: [0, 1] },
+        }}
+      />
     </Panel>
   );
 }
@@ -193,33 +304,48 @@ function Charts({ decisions }: { decisions: RoutingDecision[] }) {
     [decisions],
   );
   const calibration = useMemo(() => {
-    const bins = calibrationBins(decisions);
+    const points = calibrationPoints(decisions);
+    return [
+      {
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'Actual success rate',
+        x: points.map((point) => point.confidence),
+        y: points.map((point) => point.success_rate),
+        text: points.map((point) => `${point.decisions} decisions`),
+        marker: { size: points.map((point) => point.decisions * 2), sizemode: 'area', sizemin: 4 },
+        hovertemplate: 'Confidence %{x:.2f}<br>Success %{y:.0%}<br>%{text}<extra></extra>',
+      },
+      {
+        type: 'scatter',
+        mode: 'lines',
+        name: 'Perfect calibration',
+        x: [0, 1],
+        y: [0, 1],
+        line: { dash: 'dash', color: 'gray' },
+      },
+    ];
+  }, [decisions]);
+  const perAgent = useMemo(
+    () =>
+      decisionsPerHourByAgent(decisions).map((series) => ({
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: series.agent,
+        x: series.hours,
+        y: series.decisions,
+      })),
+    [decisions],
+  );
+  const successRate = useMemo(() => {
+    const hours = successRatePerHour(decisions);
     return [
       {
         type: 'scatter',
         mode: 'lines+markers',
         name: 'Success rate',
-        x: bins.map((bin) => bin.range),
-        y: bins.map((bin) => bin.success_rate),
-        text: bins.map((bin) => `${bin.decisions} decisions`),
-        hovertemplate: 'Confidence %{x}<br>Success %{y:.0%}<br>%{text}<extra></extra>',
-      },
-    ];
-  }, [decisions]);
-  const overTime = useMemo(() => {
-    const hours = decisionsByHour(decisions);
-    return [
-      {
-        type: 'bar',
-        name: 'Decisions',
-        x: hours.map((h) => h.hour),
-        y: hours.map((h) => h.decisions),
-      },
-      {
-        type: 'bar',
-        name: 'Succeeded',
-        x: hours.map((h) => h.hour),
-        y: hours.map((h) => h.successes),
+        x: hours.map((hour) => hour.hour),
+        y: hours.map((hour) => hour.success_rate),
       },
     ];
   }, [decisions]);
@@ -235,26 +361,262 @@ function Charts({ decisions }: { decisions: RoutingDecision[] }) {
         }}
       />
       <Plot
-        title="Success rate by confidence"
+        title="Confidence calibration"
         data={calibration}
         layout={{
-          xaxis: { title: { text: 'Confidence' } },
-          yaxis: {
-            title: { text: 'Success rate' },
-            range: [0, 1],
-            tickformat: '.0%',
-          },
+          xaxis: { title: { text: 'Routing confidence' }, range: [0, 1] },
+          yaxis: { title: { text: 'Actual success rate' }, range: [0, 1], tickformat: '.0%' },
         }}
       />
       <Plot
-        title="Decisions per hour"
-        data={overTime}
+        title="Decisions per hour by agent"
+        data={perAgent}
         layout={{
-          barmode: 'group',
           xaxis: { title: { text: 'Hour (UTC)' } },
           yaxis: { title: { text: 'Decisions' } },
         }}
       />
+      <Plot
+        title="Success rate per hour"
+        data={successRate}
+        layout={{
+          xaxis: { title: { text: 'Hour (UTC)' } },
+          yaxis: { title: { text: 'Success rate' }, range: [0, 1], tickformat: '.0%' },
+        }}
+      />
+    </Panel>
+  );
+}
+
+/** A decision's label as the tables show it: the label and the agent it
+ * should have gone to, who gave it with the LLM's confidence and whether it
+ * awaits review, and the reasoning. */
+function LabelCell({ label }: { label: DecisionLabel | null }) {
+  if (!label) return <>Unlabelled</>;
+  const llm = label.annotator === 'llm';
+  const by = [
+    labelledBy(label),
+    llm && label.confidence !== null ? `confidence ${label.confidence.toFixed(2)}` : null,
+    llm && label.requires_review && !label.human_reviewed ? 'needs review' : null,
+  ];
+  return (
+    <>
+      {label.label}
+      {label.suggested_agent && ` (should be ${label.suggested_agent})`}
+      <br />
+      <span className="muted">{by.filter(Boolean).join(' · ')}</span>
+      {label.reasoning && (
+        <>
+          <br />
+          <span className="muted">{label.reasoning}</span>
+        </>
+      )}
+    </>
+  );
+}
+
+function Labelling({
+  tenant,
+  lookback,
+  version,
+  decisions,
+  relabelling,
+  onRelabel,
+  onNotice,
+}: {
+  tenant: string;
+  lookback: number;
+  /** Changes when the view refreshes, to read the stored labels again. */
+  version: number;
+  decisions: RoutingDecision[];
+  relabelling: string | null;
+  onRelabel: (decision: RoutingDecision) => void;
+  onNotice: (notice: string) => void;
+}) {
+  const statistics = useLoad(
+    (signal) => runtimeJson<LabelStatistics>(`${decisionsPath(tenant)}/label-statistics`, { signal }),
+    [tenant, version],
+  );
+  const annotate = useAction();
+  const find = useAction();
+  const [threshold, setThreshold] = useState('0.6');
+  const [limit, setLimit] = useState('20');
+  const [candidates, setCandidates] = useState<AnnotationCandidate[] | null>(null);
+  const [priorities, setPriorities] = useState<Priority[]>(PRIORITIES);
+  const [showLlmLabelled, setShowLlmLabelled] = useState(true);
+  const bySpan = useMemo(
+    () => Object.fromEntries(decisions.map((decision) => [decision.span_id ?? '', decision])),
+    [decisions],
+  );
+  const labels = useMemo(
+    () => Object.fromEntries(decisions.map((decision) => [decision.span_id ?? '', decision.label])),
+    [decisions],
+  );
+  const shown = candidates && shownCandidates(candidates, priorities, showLlmLabelled, labels);
+  const stats = statistics.data;
+  return (
+    <Panel title="Labelling">
+      <div className="inline-form">
+        <button
+          disabled={annotate.pending}
+          onClick={() =>
+            annotate.run(async () => {
+              const run = await runtimeJson<{ workflow_name: string }>(`/admin/tenant/${seg(tenant)}/optimize`, {
+                method: 'POST',
+                body: { mode: 'llm-annotate', lookback_hours: lookback },
+              });
+              onNotice(`Started LLM labelling run ${run.workflow_name}. Follow it in Optimization runs, then refresh.`);
+            })
+          }
+        >
+          {annotate.pending ? 'Starting…' : 'Label with the LLM'}
+        </button>
+      </div>
+      {annotate.error && <Alert>{annotate.error}</Alert>}
+      {statistics.error && <Alert>Stored labels are unavailable: {statistics.error}</Alert>}
+      {stats && (
+        <dl className="facts" aria-label="Stored labels">
+          <dt>Stored labels (30 days)</dt>
+          <dd>{stats.total}</dd>
+          <dt>Reviewed</dt>
+          <dd>{stats.human_reviewed}</dd>
+          <dt>Pending review</dt>
+          <dd>{stats.pending_review}</dd>
+          <dt>By label</dt>
+          <dd>
+            {Object.keys(stats.by_label).length
+              ? Object.entries(stats.by_label)
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([label, count]) => `${label} ${count}`)
+                  .join(', ')
+              : '—'}
+          </dd>
+        </dl>
+      )}
+      <form
+        className="inline-form"
+        aria-label="Find decisions needing review"
+        onSubmit={(e) => {
+          e.preventDefault();
+          find.run(async () => {
+            const query = new URLSearchParams({
+              lookback_hours: String(lookback),
+              confidence_threshold: threshold,
+              max_annotations: limit,
+            });
+            const found = await runtimeJson<{ candidates: AnnotationCandidate[] }>(
+              `${decisionsPath(tenant)}/annotation-candidates?${query}`,
+            );
+            setCandidates(found.candidates);
+            const count = found.candidates.length;
+            onNotice(`Found ${count} decision${count === 1 ? '' : 's'} needing review.`);
+          });
+        }}
+      >
+        <label>
+          Confidence threshold
+          <input
+            required
+            type="number"
+            min={0}
+            max={1}
+            step={0.05}
+            value={threshold}
+            onChange={(e) => setThreshold(e.target.value)}
+          />
+        </label>
+        <label>
+          Most to show
+          <input required type="number" min={1} max={100} value={limit} onChange={(e) => setLimit(e.target.value)} />
+        </label>
+        <button type="submit" disabled={find.pending}>
+          {find.pending ? 'Finding…' : 'Find decisions needing review'}
+        </button>
+      </form>
+      {find.error && <Alert>{find.error}</Alert>}
+      {candidates && (
+        <>
+          <div className="inline-form">
+            <fieldset>
+              <legend>Priority</legend>
+              {PRIORITIES.map((priority) => (
+                <label key={priority} className="check">
+                  <input
+                    type="checkbox"
+                    checked={priorities.includes(priority)}
+                    onChange={(e) =>
+                      setPriorities(
+                        PRIORITIES.filter((p) => (p === priority ? e.target.checked : priorities.includes(p))),
+                      )
+                    }
+                  />
+                  {priority}
+                </label>
+              ))}
+            </fieldset>
+            <label className="check">
+              <input type="checkbox" checked={showLlmLabelled} onChange={(e) => setShowLlmLabelled(e.target.checked)} />
+              Show LLM-labelled
+            </label>
+          </div>
+          <p className="muted">
+            Showing {shown!.length} of {candidates.length} decisions needing review.
+          </p>
+          {shown!.length > 0 && (
+            <table aria-label="Decisions needing review">
+              <thead>
+                <tr>
+                  <th>Priority</th>
+                  <th>Time</th>
+                  <th>Query</th>
+                  <th>Agent</th>
+                  <th>Confidence</th>
+                  <th>Outcome</th>
+                  <th>Reason</th>
+                  <th>Label</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {shown!.map((candidate) => {
+                  const decision: RoutingDecision = bySpan[candidate.span_id] ?? {
+                    span_id: candidate.span_id,
+                    trace_id: null,
+                    start_time: candidate.start_time,
+                    query: candidate.query,
+                    chosen_agent: candidate.chosen_agent,
+                    confidence: candidate.confidence,
+                    outcome: candidate.outcome,
+                    reason: '',
+                    latency_ms: 0,
+                    entity_extraction_failed: false,
+                    label: null,
+                  };
+                  return (
+                    <tr key={candidate.span_id} className={relabelling === candidate.span_id ? 'selected' : undefined}>
+                      <td>{candidate.priority}</td>
+                      <td title={`Span ${candidate.span_id}`}>{when(candidate.start_time)}</td>
+                      <td>{candidate.query}</td>
+                      <td>{candidate.chosen_agent}</td>
+                      <td>{candidate.confidence.toFixed(2)}</td>
+                      <td>{candidate.outcome}</td>
+                      <td>{candidate.reason}</td>
+                      <td>
+                        <LabelCell label={decision.label} />
+                      </td>
+                      <td>
+                        <button aria-label={`Label ${candidate.span_id} for review`} onClick={() => onRelabel(decision)}>
+                          Label
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
     </Panel>
   );
 }
@@ -263,15 +625,18 @@ function Decisions({
   tenant,
   decisions,
   reviewer,
+  relabelling,
+  onRelabel,
   onChanged,
 }: {
   tenant: string;
   decisions: RoutingDecision[];
   reviewer: string;
+  relabelling: string | null;
+  onRelabel: (decision: RoutingDecision) => void;
   onChanged: (notice: string, decision: RoutingDecision) => void;
 }) {
   const [filter, setFilter] = useState<LabelState | 'all'>('all');
-  const [relabelling, setRelabelling] = useState<string | null>(null);
   const approve = useAction();
   const shown = decisions.filter((decision) => filter === 'all' || labelState(decision) === filter);
   return (
@@ -309,7 +674,7 @@ function Decisions({
             {shown.map((decision) => {
               const id = decision.span_id ?? decision.start_time;
               return (
-                <tr key={id} className={relabelling === id ? 'selected' : undefined}>
+                <tr key={id} className={relabelling === decision.span_id ? 'selected' : undefined}>
                   <td title={decision.trace_id ? `Trace ${decision.trace_id}` : undefined}>
                     {when(decision.start_time)}
                   </td>
@@ -319,16 +684,7 @@ function Decisions({
                   <td title={decision.reason}>{decision.outcome}</td>
                   <td>{ms(decision.latency_ms)}</td>
                   <td>
-                    {decision.label ? (
-                      <span title={decision.label.reasoning ?? undefined}>
-                        {decision.label.label}
-                        {decision.label.suggested_agent && ` (should be ${decision.label.suggested_agent})`}
-                        <br />
-                        <span className="muted">{labelledBy(decision.label)}</span>
-                      </span>
-                    ) : (
-                      'Unlabelled'
-                    )}
+                    <LabelCell label={decision.label} />
                   </td>
                   <td>
                     {decision.span_id && (
@@ -357,10 +713,7 @@ function Decisions({
                             Approve
                           </button>
                         )}
-                        <button
-                          aria-label={`Relabel ${decision.span_id}`}
-                          onClick={() => setRelabelling(relabelling === id ? null : id)}
-                        >
+                        <button aria-label={`Relabel ${decision.span_id}`} onClick={() => onRelabel(decision)}>
                           Relabel
                         </button>
                       </span>
@@ -372,23 +725,6 @@ function Decisions({
           </tbody>
         </table>
       )}
-      {(() => {
-        const decision = shown.find((row) => (row.span_id ?? row.start_time) === relabelling);
-        return (
-          decision?.span_id && (
-            <Relabel
-              key={decision.span_id}
-              tenant={tenant}
-              decision={decision}
-              reviewer={reviewer}
-              onDone={(message, labelled) => {
-                setRelabelling(null);
-                onChanged(message, labelled);
-              }}
-            />
-          )
-        );
-      })()}
     </Panel>
   );
 }
@@ -397,61 +733,67 @@ function Relabel({
   tenant,
   decision,
   reviewer,
+  choices,
   onDone,
 }: {
   tenant: string;
   decision: RoutingDecision;
   reviewer: string;
+  choices: string[];
   onDone: (notice: string, decision: RoutingDecision) => void;
 }) {
-  const [label, setLabel] = useState(REVIEW_LABELS[0]);
-  const [reasoning, setReasoning] = useState('');
-  const [suggested, setSuggested] = useState('');
+  const [label, setLabel] = useState(initialReviewLabel(decision.label, choices));
+  const [reasoning, setReasoning] = useState(decision.label?.reasoning ?? '');
+  const [suggested, setSuggested] = useState(decision.label?.suggested_agent ?? '');
   const save = useAction();
   const spanId = decision.span_id!;
   return (
-    <form
-      className="inline-form"
-      aria-label={`Label ${spanId}`}
-      onSubmit={(e) => {
-        e.preventDefault();
-        save.run(async () => {
-          if (!reviewer.trim()) throw new Error('Enter your name as the reviewer first.');
-          const labelled = await runtimeJson<RoutingDecision>(`${decisionsPath(tenant)}/${seg(spanId)}/label`, {
-            method: 'PUT',
-            body: {
-              start_time: decision.start_time,
-              reviewer: reviewer.trim(),
-              label,
-              reasoning,
-              suggested_agent: suggested.trim() || null,
-            },
+    <Panel title={`Label ${spanId}`}>
+      <form
+        className="inline-form"
+        aria-label={`Label ${spanId}`}
+        onSubmit={(e) => {
+          e.preventDefault();
+          save.run(async () => {
+            if (!reviewer.trim()) throw new Error('Enter your name as the reviewer first.');
+            const labelled = await runtimeJson<RoutingDecision>(`${decisionsPath(tenant)}/${seg(spanId)}/label`, {
+              method: 'PUT',
+              body: {
+                start_time: decision.start_time,
+                reviewer: reviewer.trim(),
+                label,
+                reasoning,
+                suggested_agent: suggested.trim() || null,
+              },
+            });
+            onDone(`Labelled ${spanId} ${label}.`, labelled);
           });
-          onDone(`Labelled ${spanId} ${label}.`, labelled);
-        });
-      }}
-    >
-      <strong>Label {spanId}</strong>
-      <label>
-        Label
-        <select value={label} onChange={(e) => setLabel(e.target.value)}>
-          {REVIEW_LABELS.map((value) => (
-            <option key={value}>{value}</option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Reasoning
-        <input value={reasoning} onChange={(e) => setReasoning(e.target.value)} />
-      </label>
-      <label>
-        Should have gone to
-        <input value={suggested} onChange={(e) => setSuggested(e.target.value)} placeholder="agent name" />
-      </label>
-      <button type="submit" disabled={save.pending}>
-        {save.pending ? 'Saving…' : 'Save label'}
-      </button>
-      {save.error && <Alert>{save.error}</Alert>}
-    </form>
+        }}
+      >
+        <span>
+          {decision.query ?? '—'} → {decision.chosen_agent} ({decision.confidence.toFixed(2)})
+        </span>
+        <label>
+          Label
+          <select required value={label} onChange={(e) => setLabel(e.target.value)}>
+            {choices.map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Reasoning
+          <textarea rows={2} value={reasoning} onChange={(e) => setReasoning(e.target.value)} />
+        </label>
+        <label>
+          Should have gone to
+          <input value={suggested} onChange={(e) => setSuggested(e.target.value)} placeholder="agent name" />
+        </label>
+        <button type="submit" disabled={save.pending}>
+          {save.pending ? 'Saving…' : 'Save label'}
+        </button>
+        {save.error && <Alert>{save.error}</Alert>}
+      </form>
+    </Panel>
   );
 }

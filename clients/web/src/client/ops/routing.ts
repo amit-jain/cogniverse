@@ -35,9 +35,14 @@ export interface AgentRouting {
   success_rate: number;
   mean_confidence: number;
   mean_latency_ms: number;
+  precision: number;
+  recall: number;
+  f1: number;
 }
 
 export interface RoutingDecisions {
+  /** The telemetry project the decisions were read from. */
+  project: string;
   total: number;
   successes: number;
   failures: number;
@@ -58,8 +63,26 @@ export const ROUTING_LOOKBACKS = [
   { hours: 720, label: 'Last 30 days' },
 ];
 
-/** The labels a reviewer gives a decision. */
-export const REVIEW_LABELS = ['correct', 'wrong', 'ambiguous', 'insufficient_info'];
+/** The most hours a window may span: the runtime reads at most 30 days. */
+export const MAX_LOOKBACK_HOURS = 720;
+
+/** ``text`` as a window in whole hours, or ``null`` when it is not one from
+ * 1 to ``MAX_LOOKBACK_HOURS``. */
+export function lookbackHours(text: string): number | null {
+  const hours = Number(text.trim());
+  return text.trim() && Number.isInteger(hours) && hours >= 1 && hours <= MAX_LOOKBACK_HOURS ? hours : null;
+}
+
+/** The read-only labels the LLM annotator gives, with the reviewer label
+ * each stands for. */
+const LEGACY_LABELS: Record<string, string> = { correct_routing: 'correct', wrong_routing: 'wrong' };
+
+/** The reviewer label a relabel form starts on: the decision's own label in
+ * reviewer terms when it has one the reviewer may give, otherwise the first. */
+export function initialReviewLabel(label: DecisionLabel | null, choices: string[]): string {
+  const value = label ? (LEGACY_LABELS[label.label] ?? label.label) : '';
+  return choices.includes(value) ? value : (choices[0] ?? '');
+}
 
 export type LabelState = 'unlabelled' | 'llm' | 'reviewed';
 
@@ -77,48 +100,151 @@ export const LABEL_FILTERS: { value: LabelState | 'all'; label: string }[] = [
   { value: 'reviewed', label: 'Reviewed' },
 ];
 
-export interface CalibrationBin {
-  range: string;
+export interface CalibrationPoint {
+  /** The mean confidence of the bin's decisions. */
+  confidence: number;
+  /** The share of the bin's decisions that succeeded. */
+  success_rate: number;
   decisions: number;
-  /** The share of the bin's decisions that succeeded; ``null`` when empty. */
+}
+
+/** Decisions in ``bins`` equal-width confidence bins spanning the lowest to
+ * the highest confidence, as pandas ``cut`` makes them (each bin closed on
+ * the right, the first widened by 0.1% of the span so it holds the lowest),
+ * with each non-empty bin's mean confidence and success rate, lowest first. */
+export function calibrationPoints(decisions: RoutingDecision[], bins = 10): CalibrationPoint[] {
+  if (!decisions.length) return [];
+  const confidences = decisions.map((decision) => decision.confidence);
+  let low = Math.min(...confidences);
+  let high = Math.max(...confidences);
+  const span = high - low;
+  if (span === 0) {
+    const pad = low === 0 ? 0.001 : Math.abs(low) * 0.001;
+    low -= pad;
+    high += pad;
+  }
+  const edges = Array.from({ length: bins + 1 }, (_, index) =>
+    index === bins ? high : low + ((high - low) * index) / bins,
+  );
+  if (span !== 0) edges[0] -= span * 0.001;
+  const grouped = new Map<number, RoutingDecision[]>();
+  for (const decision of decisions) {
+    const index = edges.findIndex((edge, at) => at > 0 && decision.confidence <= edge) - 1;
+    grouped.set(index, [...(grouped.get(index) ?? []), decision]);
+  }
+  return [...grouped.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, members]) => ({
+      confidence: members.reduce((sum, decision) => sum + decision.confidence, 0) / members.length,
+      success_rate: members.filter((decision) => decision.outcome === 'success').length / members.length,
+      decisions: members.length,
+    }));
+}
+
+/** The start of ``iso``'s UTC hour, as ``YYYY-MM-DDTHH:00:00Z``. */
+function hourOf(iso: string): string {
+  return `${new Date(iso).toISOString().slice(0, 13)}:00:00Z`;
+}
+
+export interface AgentHours {
+  agent: string;
+  /** The UTC hours with a decision for the agent, oldest first. */
+  hours: string[];
+  decisions: number[];
+}
+
+/** Each agent's decisions per UTC hour, agents by name; an hour without a
+ * decision for the agent is left out of its series. */
+export function decisionsPerHourByAgent(decisions: RoutingDecision[]): AgentHours[] {
+  const counts = new Map<string, Map<string, number>>();
+  for (const decision of decisions) {
+    const hours = counts.get(decision.chosen_agent) ?? new Map<string, number>();
+    const hour = hourOf(decision.start_time);
+    hours.set(hour, (hours.get(hour) ?? 0) + 1);
+    counts.set(decision.chosen_agent, hours);
+  }
+  return [...counts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([agent, hours]) => {
+      const ordered = [...hours.entries()].sort(([a], [b]) => a.localeCompare(b));
+      return { agent, hours: ordered.map(([hour]) => hour), decisions: ordered.map(([, count]) => count) };
+    });
+}
+
+export interface HourRate {
+  hour: string;
+  /** The share of the hour's decisions that succeeded; ``null`` for an hour
+   * without decisions. */
   success_rate: number | null;
 }
 
-/** Decisions grouped into ``bins`` equal confidence ranges over [0, 1], each
- * with its success rate; a confidence of 1 falls in the last range. */
-export function calibrationBins(decisions: RoutingDecision[], bins = 5): CalibrationBin[] {
-  return Array.from({ length: bins }, (_, index) => {
-    const low = index / bins;
-    const high = (index + 1) / bins;
-    const inBin = decisions.filter((decision) => Math.min(Math.floor(decision.confidence * bins), bins - 1) === index);
-    const successes = inBin.filter((decision) => decision.outcome === 'success').length;
-    return {
-      range: `${low.toFixed(1)}–${high.toFixed(1)}`,
-      decisions: inBin.length,
-      success_rate: inBin.length ? successes / inBin.length : null,
-    };
-  });
-}
-
-export interface HourCount {
-  /** The start of the UTC hour, as ``YYYY-MM-DDTHH:00:00Z``. */
-  hour: string;
-  decisions: number;
-  successes: number;
-}
-
-/** Decisions and successes per UTC hour, oldest hour first; hours without a
- * decision are left out. */
-export function decisionsByHour(decisions: RoutingDecision[]): HourCount[] {
-  const hours = new Map<string, HourCount>();
+/** The success rate of every UTC hour from the first decision's to the
+ * last's, oldest first. */
+export function successRatePerHour(decisions: RoutingDecision[]): HourRate[] {
+  if (!decisions.length) return [];
+  const tally = new Map<string, { decisions: number; successes: number }>();
   for (const decision of decisions) {
-    const hour = `${new Date(decision.start_time).toISOString().slice(0, 13)}:00:00Z`;
-    const count = hours.get(hour) ?? { hour, decisions: 0, successes: 0 };
+    const hour = hourOf(decision.start_time);
+    const count = tally.get(hour) ?? { decisions: 0, successes: 0 };
     count.decisions += 1;
     if (decision.outcome === 'success') count.successes += 1;
-    hours.set(hour, count);
+    tally.set(hour, count);
   }
-  return [...hours.values()].sort((a, b) => a.hour.localeCompare(b.hour));
+  const ordered = [...tally.keys()].sort();
+  const rates: HourRate[] = [];
+  const last = Date.parse(ordered[ordered.length - 1]);
+  for (let at = Date.parse(ordered[0]); at <= last; at += 3_600_000) {
+    const hour = hourOf(new Date(at).toISOString());
+    const count = tally.get(hour);
+    rates.push({ hour, success_rate: count ? count.successes / count.decisions : null });
+  }
+  return rates;
+}
+
+/** A ``value`` from 0 to 1 as a red-yellow-green background, red at 0. */
+export function scoreColor(value: number): string {
+  const stops = [
+    [215, 48, 39],
+    [255, 255, 191],
+    [26, 152, 80],
+  ];
+  const at = Math.min(Math.max(value, 0), 1) * 2;
+  const index = Math.min(Math.floor(at), 1);
+  const share = at - index;
+  const channel = (c: number) => Math.round(stops[index][c] + (stops[index + 1][c] - stops[index][c]) * share);
+  return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
+}
+
+export type Priority = 'high' | 'medium' | 'low';
+
+export const PRIORITIES: Priority[] = ['high', 'medium', 'low'];
+
+/** A decision the annotation agent says needs a reviewer. */
+export interface AnnotationCandidate {
+  span_id: string;
+  start_time: string;
+  query: string;
+  chosen_agent: string;
+  confidence: number;
+  outcome: string;
+  priority: Priority;
+  reason: string;
+}
+
+/** The candidates of a chosen priority, without those the LLM has labelled
+ * unless ``showLlmLabelled``; ``labels`` holds each decision's label by span
+ * ID. */
+export function shownCandidates(
+  candidates: AnnotationCandidate[],
+  priorities: Priority[],
+  showLlmLabelled: boolean,
+  labels: Record<string, DecisionLabel | null>,
+): AnnotationCandidate[] {
+  return candidates.filter(
+    (candidate) =>
+      priorities.includes(candidate.priority) &&
+      (showLlmLabelled || labels[candidate.span_id]?.annotator !== 'llm'),
+  );
 }
 
 /** Who labelled a decision, as the view names it. */

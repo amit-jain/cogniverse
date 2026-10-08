@@ -206,6 +206,8 @@ describe('runtime proxy', () => {
       ['GET', '/admin/tenant/acme:prod/telemetry/spans'],
       ['POST', '/admin/tenant/acme:prod/routing-decisions/abc123/delete'],
       ['GET', '/admin/tenant/acme:prod/routing-decisions/abc123'],
+      ['GET', '/admin/tenant/acme:prod/routing-decisions/annotation-candidates/extra'],
+      ['GET', '/admin/tenant/acme:prod/routing-decisions/statistics'],
     ]) {
       const response = await app.request(`/api/runtime${path}`, { method });
       expect(response.status).toBe(404);
@@ -274,6 +276,9 @@ describe('runtime proxy', () => {
       ['GET', '/admin/tenant/acme:prod/routing-decisions?lookback_hours=24'],
       ['POST', '/admin/tenant/acme:prod/routing-decisions/abc123/approve'],
       ['PUT', '/admin/tenant/acme:prod/routing-decisions/abc123/label'],
+      ['GET', '/admin/tenant/acme:prod/routing-decisions/annotation-candidates?lookback_hours=24&confidence_threshold=0.6&max_annotations=20'],
+      ['GET', '/admin/tenant/acme:prod/routing-decisions/label-statistics'],
+      ['GET', '/admin/tenant/acme:prod/orchestration-workflows?lookback_hours=24&limit=20'],
     ];
     for (const [method, path] of calls) {
       const response = await app.request(`/api/runtime${path}`, { method });
