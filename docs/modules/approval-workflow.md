@@ -391,7 +391,9 @@ the owning export task before its protected body can continue, and raises with
 the tenant, batch, and original item identifiers. Duplicate or conflicting
 events, non-canonical JSON, duplicate JSON keys, malformed fields, identity or
 digest mismatches, naive timestamps, and non-finite confidence all raise
-instead of producing a partial batch view.
+instead of producing a partial batch view. In the batch view an original with a
+replacement event reads `rejected`, with `reviewed_at` the timestamp of the
+decision its replacement records when no annotation gives it one.
 Redis and Phoenix connection or timeout failures raise with the tenant, batch,
 and original item identifiers.
 
