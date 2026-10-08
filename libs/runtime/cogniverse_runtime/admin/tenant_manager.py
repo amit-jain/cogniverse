@@ -541,15 +541,26 @@ async def list_organizations() -> OrganizationListResponse:
 
     Returns:
         List of all organizations with count
+
+    Raises:
+        HTTPException 503: The organization or tenant registry did not answer
     """
     try:
         with metadata_backend() as backend:
-            # Query all organizations
-            documents = backend.query_metadata_documents(
-                schema="organization_metadata",
-                yql="select * from organization_metadata where true",
-                hits=400,
-            )
+            try:
+                documents = backend.query_metadata_documents(
+                    schema="organization_metadata",
+                    yql="select * from organization_metadata where true",
+                    hits=400,
+                )
+            except Exception as e:
+                raise failure_response(
+                    503,
+                    "organization_registry_unavailable",
+                    "The organization registry did not answer, so the "
+                    "organizations could not be listed; retry.",
+                    e,
+                ) from e
 
             organizations = []
             for fields in documents:
@@ -572,6 +583,8 @@ async def list_organizations() -> OrganizationListResponse:
                 organizations=organizations, total_count=len(organizations)
             )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise failure_response(
             500,

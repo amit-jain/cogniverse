@@ -117,6 +117,7 @@ def _record_agent_selection(telemetry, tenant_id, modality):
             modality=modality,
             complexity="simple",
             confidence=0.8,
+            started_ns=time.time_ns(),
         )
     )
 

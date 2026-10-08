@@ -1,6 +1,7 @@
 """Tests for DetailedReportAgent with DSPy integration."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     DetailedReportDeps,
+    ReportGenerationSignature,
     ReportRequest,
     ReportResult,
     ThinkingPhase,
@@ -283,7 +285,7 @@ class TestDetailedReportAgent:
         agent.call_dspy = AsyncMock(
             return_value=Mock(
                 executive_summary="report for test query",
-                recommendations="deepen coverage, add benchmarks",
+                recommendations="deepen coverage\nadd benchmarks",
             )
         )
 
@@ -734,7 +736,7 @@ class TestDetailedReportAgentCoreFunctionality:
         # Mock DSPy module to return proper result instead of using fallback
         mock_dspy_result = Mock()
         mock_dspy_result.executive_summary = "Comprehensive analysis of 3 results for test query, covering key topics in HD quality with educational content"
-        mock_dspy_result.recommendations = "expand coverage, add benchmarks"
+        mock_dspy_result.recommendations = "expand coverage\nadd benchmarks"
 
         with patch.object(
             agent.report_module, "forward", return_value=mock_dspy_result
@@ -1093,3 +1095,58 @@ class TestEnforceMaxLength:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# The recommendations the served report LM wrote for "Write a short report on
+# the videos showing a burning castle", verbatim from a live run.
+LIVE_RECOMMENDATIONS = (
+    "If the user is interested in the source material, they should search "
+    "specifically for 'Game of Thrones' content. If the user is interested in "
+    "general fire/destruction imagery, they should refine their search terms."
+)
+
+
+def _served_recommendations(value: str) -> list:
+    """``value`` as the report's recommendations, parsed by the shipped
+    adapter from the LM's answer and then by the agent."""
+    parsed = LenientJSONAdapter().parse(
+        ReportGenerationSignature,
+        json.dumps(
+            {
+                "reasoning": "r",
+                "executive_summary": "s",
+                "key_findings": "k",
+                "recommendations": value,
+                "confidence_score": "0.8",
+            }
+        ),
+    )
+    return DetailedReportAgent._parse_llm_list(parsed["recommendations"])
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestRecommendationItems:
+    def test_the_signature_asks_for_one_recommendation_per_line(self):
+        assert (
+            ReportGenerationSignature.output_fields[
+                "recommendations"
+            ].json_schema_extra["desc"]
+            == "Recommendations, one per line; a recommendation never spans lines"
+        )
+
+    def test_a_line_with_commas_is_one_recommendation(self):
+        assert _served_recommendations(LIVE_RECOMMENDATIONS) == [LIVE_RECOMMENDATIONS]
+
+    def test_parentheses_and_commas_stay_inside_their_line(self):
+        assert _served_recommendations(
+            "- Narrow the query (e.g. 'castle fire, night'), then compare the "
+            "top clips\n"
+            "2. Add the 'Game of Thrones' title, if known, to the query\n"
+            "\n"
+            "* Review clips 3, 4 and 7 (low relevance) by hand"
+        ) == [
+            "Narrow the query (e.g. 'castle fire, night'), then compare the top clips",
+            "Add the 'Game of Thrones' title, if known, to the query",
+            "Review clips 3, 4 and 7 (low relevance) by hand",
+        ]

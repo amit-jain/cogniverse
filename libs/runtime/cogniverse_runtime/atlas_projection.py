@@ -8,21 +8,30 @@ every document.
 Maps are cached per tenant, profile and document limit. Each tenant and
 profile has a generation counter in Redis; a cached map is used only while
 its generation is current, so ``invalidate`` on any replica makes every
-replica rebuild on its next read. Concurrent reads of a map that is being
-built share that one build.
+replica rebuild on its next read. A built map is stored in Redis under its
+generation, so every worker process and replica serves the one layout; one
+process builds it while the others wait for it, and concurrent reads within
+a process share one build. A Redis that does not answer leaves the map to be
+built without the cache.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import logging
+import pickle
 import re
 import threading
+import uuid
+import zlib
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+from redis.exceptions import RedisError
 
 # UMAP cannot lay out fewer documents than this.
 MIN_DOCUMENTS = 4
@@ -32,6 +41,18 @@ UNCLUSTERED = -1
 CLUSTER_LABEL_TERMS = 3
 CACHE_CAPACITY = 8
 GENERATION_KEY = "cogniverse:embedding-atlas:generation:{tenant}:{profile}"
+LAYOUT_KEY = "cogniverse:embedding-atlas:layout:{tenant}:{profile}:{limit}:{generation}"
+BUILD_KEY = "cogniverse:embedding-atlas:build:{tenant}:{profile}:{limit}:{generation}"
+# A stored map is kept this long; a newer generation retires it before then.
+LAYOUT_TTL_S = 24 * 60 * 60
+# How long one process holds the build of a map before another may take it.
+BUILD_LEASE_S = 300
+# How often a process waiting for another's build looks for the stored map.
+BUILD_POLL_S = 0.25
+_RELEASE_BUILD_LUA = (
+    "if redis.call('get', KEYS[1]) == ARGV[1] then "
+    "return redis.call('del', KEYS[1]) end return 0"
+)
 # File extensions document titles carry, never a cluster's name.
 FILE_EXTENSIONS = frozenset(
     "avi csv doc docx flac gif htm html jpeg jpg json m4a md mkv mov mp3 mp4 "
@@ -41,6 +62,8 @@ _FILE_EXTENSION = re.compile(
     r"\.(?:" + "|".join(sorted(FILE_EXTENSIONS)) + r")$", re.IGNORECASE
 )
 _WORD_JOINERS = re.compile(r"[_.\-]+")
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -61,6 +84,22 @@ class DocumentMap:
     # What the caller read the documents from, kept with the map.
     source: Any = None
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def __getstate__(self) -> Dict[str, Any]:
+        state = dict(self.__dict__)
+        del state["lock"]
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        self.__dict__.update(state, lock=threading.Lock())
+
+
+def _encoded(document_map: DocumentMap) -> str:
+    return base64.b64encode(zlib.compress(pickle.dumps(document_map))).decode()
+
+
+def _decoded(payload: str) -> DocumentMap:
+    return pickle.loads(zlib.decompress(base64.b64decode(payload)))
 
 
 def unit_rows(vectors: np.ndarray) -> np.ndarray:
@@ -218,7 +257,8 @@ class TooFewDocumentsError(ValueError):
 
 class ProjectionCache:
     """Built maps per (tenant, profile, limit), current while their tenant and
-    profile's Redis generation is unchanged."""
+    profile's Redis generation is unchanged, shared through Redis by every
+    process."""
 
     def __init__(self, redis: Any, capacity: int = CACHE_CAPACITY) -> None:
         self._redis = redis
@@ -244,16 +284,22 @@ class ProjectionCache:
         tenant_id: str,
         profile: str,
         limit: int,
-        generation: int,
+        generation: Optional[int],
         build: Callable[[], DocumentMap],
     ) -> DocumentMap:
         """The map of ``generation`` (the current one, read with
-        ``generation``), built with ``build`` in a worker thread when there is
-        none. A build that fails is not kept, and every reader waiting on it
-        receives its error."""
+        ``generation``): this process's copy, else the one stored in Redis,
+        else built with ``build`` in a worker thread and stored for every
+        process. A ``generation`` of None (the generation could not be read)
+        builds the map without the cache. A build that fails is not kept,
+        and every reader waiting on it receives its error."""
         key = (tenant_id, profile, limit)
         cached = self._maps.get(key)
-        if cached is not None and cached.generation == generation:
+        if (
+            generation is not None
+            and cached is not None
+            and cached.generation == generation
+        ):
             self._maps.move_to_end(key)
             return cached
         flight = (key, generation)
@@ -274,10 +320,14 @@ class ProjectionCache:
     async def _build(
         self,
         key: Tuple[str, str, int],
-        generation: int,
+        generation: Optional[int],
         build: Callable[[], DocumentMap],
     ) -> DocumentMap:
-        document_map = await asyncio.to_thread(build)
+        if generation is None:
+            document_map = await asyncio.to_thread(build)
+            document_map.generation = 0
+            return document_map
+        document_map = await self._shared(key, generation, build)
         document_map.generation = generation
         current = self._maps.get(key)
         if current is None or current.generation <= generation:
@@ -286,6 +336,79 @@ class ProjectionCache:
             while len(self._maps) > self._capacity:
                 self._maps.popitem(last=False)
         return document_map
+
+    async def _shared(
+        self,
+        key: Tuple[str, str, int],
+        generation: int,
+        build: Callable[[], DocumentMap],
+    ) -> DocumentMap:
+        """The map every process serves for ``key`` and ``generation``: the
+        one stored in Redis, else one this process builds holding the
+        build lease and stores, waiting while another process holds it.
+        When Redis stops answering the map is built here and not stored."""
+        tenant, profile, limit = key
+        names = {
+            "tenant": tenant,
+            "profile": profile,
+            "limit": limit,
+            "generation": generation,
+        }
+        layout_key, build_key = LAYOUT_KEY.format(**names), BUILD_KEY.format(**names)
+        token = uuid.uuid4().hex
+        try:
+            while True:
+                stored = await self._redis.get(layout_key)
+                if stored is not None:
+                    return await asyncio.to_thread(_decoded, stored)
+                if await self._redis.set(build_key, token, nx=True, ex=BUILD_LEASE_S):
+                    break
+                await asyncio.sleep(BUILD_POLL_S)
+        except (RedisError, OSError) as exc:
+            logger.warning(
+                "Embedding atlas cache unavailable; laying out %s/%s (limit %d) "
+                "without it: %s: %s",
+                tenant,
+                profile,
+                limit,
+                type(exc).__name__,
+                exc,
+            )
+            return await asyncio.to_thread(build)
+        try:
+            document_map = await asyncio.to_thread(build)
+            payload = await asyncio.to_thread(_encoded, document_map)
+            try:
+                if not await self._redis.set(
+                    layout_key, payload, nx=True, ex=LAYOUT_TTL_S
+                ):
+                    # A process that took over the lease stored its map first.
+                    stored = await self._redis.get(layout_key)
+                    if stored is not None:
+                        return await asyncio.to_thread(_decoded, stored)
+            except (RedisError, OSError) as exc:
+                logger.warning(
+                    "Embedding atlas cache unavailable; the layout of %s/%s "
+                    "(limit %d) is served without being stored: %s: %s",
+                    tenant,
+                    profile,
+                    limit,
+                    type(exc).__name__,
+                    exc,
+                )
+            return document_map
+        finally:
+            try:
+                await self._redis.eval(_RELEASE_BUILD_LUA, 1, build_key, token)
+            except (RedisError, OSError) as exc:
+                logger.warning(
+                    "Embedding atlas build lease %s not released; it lapses in "
+                    "%ds: %s: %s",
+                    build_key,
+                    BUILD_LEASE_S,
+                    type(exc).__name__,
+                    exc,
+                )
 
 
 _cache: Optional[ProjectionCache] = None

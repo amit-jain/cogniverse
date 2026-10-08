@@ -2244,7 +2244,7 @@ class DetailedReportAgent(
 | `detailed_findings` | List[Dict] | Detailed analysis results |
 | `visual_analysis` | List[Dict] | VLM visual insights |
 | `technical_details` | List[Dict] | Technical breakdown |
-| `recommendations` | List[str] | Actionable recommendations |
+| `recommendations` | List[str] | Actionable recommendations: the report LM writes one per line and each line, less a bullet or number, is one item, commas and parentheses included |
 | `confidence_assessment` | Dict[str, float] | Per-dimension confidence scores (keys: overall, data_quality, completeness, visual_analysis, technical_analysis) |
 | `thinking_process` | Dict | Thinking phase details |
 | `metadata` | Dict | Additional metadata |

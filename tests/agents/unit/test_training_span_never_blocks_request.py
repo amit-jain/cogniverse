@@ -118,6 +118,7 @@ async def _emit_all(manager) -> None:
         modality="video",
         complexity="simple",
         confidence=0.8,
+        started_ns=time.time_ns(),
     )
 
 

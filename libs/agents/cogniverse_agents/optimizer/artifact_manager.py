@@ -31,6 +31,7 @@ from cogniverse_foundation.telemetry.providers.base import (
     DatasetNotFoundError,
     DatasetStoreUnavailableError,
     TelemetryProvider,
+    artifact_dataset_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -217,8 +218,8 @@ class ArtifactManager:
     """Manage DSPy optimization artifacts through telemetry stores.
 
     Uses DatasetStore for prompts, demonstrations, and experiment-metric rows.
-    Dataset naming: ``dspy-{kind}-{tenant_id}-{agent_type}`` where *kind* is
-    ``prompts`` or ``demos``.
+    Datasets are named by ``artifact_dataset_name``:
+    ``dspy-{kind}-{tenant_id}-{key}``.
     """
 
     def __init__(self, telemetry_provider: TelemetryProvider, tenant_id: str) -> None:
@@ -275,17 +276,17 @@ class ArtifactManager:
         return variant_qualified_agent_key(agent_type, variant_id)
 
     def _prompt_dataset_name(self, agent_type: str) -> str:
-        return f"dspy-prompts-{self._tenant_id}-{agent_type}"
+        return artifact_dataset_name("prompts", self._tenant_id, agent_type)
 
     def _demo_dataset_name(self, agent_type: str) -> str:
-        return f"dspy-demos-{self._tenant_id}-{agent_type}"
+        return artifact_dataset_name("demos", self._tenant_id, agent_type)
 
     def _experiment_name(self) -> str:
         return f"dspy-optimization-{self._tenant_id}"
 
     def _experiments_dataset_name(self, agent_type: str) -> str:
         """Dataset that stores typed ExperimentMetrics rows for an agent."""
-        return f"dspy-experiments-{self._tenant_id}-{agent_type}"
+        return artifact_dataset_name("experiments", self._tenant_id, agent_type)
 
     async def save_prompts(self, agent_type: str, prompts: Dict[str, str]) -> str:
         """Persist optimized prompts as a dataset.
@@ -505,7 +506,7 @@ class ArtifactManager:
         return demos
 
     def _blob_dataset_name(self, kind: str, key: str) -> str:
-        return f"dspy-{kind}-{self._tenant_id}-{key}"
+        return artifact_dataset_name(kind, self._tenant_id, key)
 
     def _blob_slot_name(self, kind: str, key: str, revision: int) -> str:
         """Dataset holding serving revision ``revision`` of blob ``kind/key``.
@@ -938,7 +939,7 @@ class ArtifactManager:
             return await self.get_blob_state(kind, key)
 
     def _versioned_dataset_name(self, kind: str, agent_type: str, version: int) -> str:
-        return f"dspy-{kind}-{self._tenant_id}-{agent_type}-v{version}"
+        return artifact_dataset_name(kind, self._tenant_id, f"{agent_type}-v{version}")
 
     async def _get_next_version(self, kind: str, agent_type: str) -> int:
         """Probe versioned dataset names sequentially to find the next version.

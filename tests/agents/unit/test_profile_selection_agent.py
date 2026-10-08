@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 import dspy
 import pytest
 
+from cogniverse_agents import profile_selection_agent
 from cogniverse_agents.profile_selection_agent import (
     ProfileCandidate,
     ProfileSelectionAgent,
@@ -38,6 +39,9 @@ from tests.utils.memory_store import (
     store_profile_types,
 )
 from tests.utils.vespa_test_helpers import shipped_profile
+
+# When the selection under test began, as the agent's clock reads it.
+SELECTION_STARTED_NS = 1_760_000_000_123_456_789
 
 
 def _messages(caplog, logger_name: str) -> list[str]:
@@ -713,10 +717,17 @@ class TestProfileSelectionAgent:
         assert len(skills[0]["examples"]) > 0
 
     @pytest.mark.asyncio
-    async def test_span_emitted_with_tenant_id(self, profile_agent):
-        """Span is emitted with cogniverse.profile_selection name when tenant_id is set."""
+    async def test_span_emitted_with_tenant_id(self, profile_agent, monkeypatch):
+        """Span is emitted with cogniverse.profile_selection name when tenant_id
+        is set, starting when the selection started."""
         telemetry = RecordingTelemetryManager()
         profile_agent.telemetry_manager = telemetry
+        monkeypatch.setattr(
+            profile_selection_agent,
+            "time",
+            SimpleNamespace(time_ns=lambda: SELECTION_STARTED_NS),
+            raising=False,
+        )
 
         captured = {}
         candidate_profiles = ["video_colpali_base", "video_colpali_large"]
@@ -749,6 +760,7 @@ class TestProfileSelectionAgent:
             {
                 "name": "cogniverse.profile_selection",
                 "tenant_id": "test_tenant:test_tenant",
+                "start_time": SELECTION_STARTED_NS,
             }
         ]
         assert captured["available_profiles"] == ", ".join(candidate_profiles)
@@ -781,6 +793,7 @@ class TestProfileSelectionAgent:
                     modality="video",
                     complexity="simple",
                     confidence=0.85,
+                    started_ns=time.time_ns(),
                 )
             )
         assert _messages(caplog, "cogniverse_agents.profile_selection_agent") == [
@@ -813,10 +826,18 @@ class TestProfileSelectionAgent:
 
     @pytest.mark.asyncio
     @pytest.mark.expects_telemetry_loss_warning
-    async def test_span_failure_warns_and_request_succeeds(self, profile_agent, caplog):
+    async def test_span_failure_warns_and_request_succeeds(
+        self, profile_agent, caplog, monkeypatch
+    ):
         """A telemetry enqueue failure never fails the request; it is a WARNING."""
         telemetry = FailingTelemetryManager(RuntimeError("telemetry down"))
         profile_agent.telemetry_manager = telemetry
+        monkeypatch.setattr(
+            profile_selection_agent,
+            "time",
+            SimpleNamespace(time_ns=lambda: SELECTION_STARTED_NS),
+            raising=False,
+        )
 
         profile_agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -841,6 +862,7 @@ class TestProfileSelectionAgent:
             {
                 "name": "cogniverse.profile_selection",
                 "tenant_id": "test_tenant:test_tenant",
+                "start_time": SELECTION_STARTED_NS,
             }
         ]
         assert _messages(caplog, "cogniverse_agents.profile_selection_agent") == [

@@ -39,7 +39,10 @@ from cogniverse_evaluation.recorded_searches import (
 )
 from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-from cogniverse_foundation.telemetry.providers.base import DatasetSummary
+from cogniverse_foundation.telemetry.providers.base import (
+    DatasetSummary,
+    is_artifact_dataset,
+)
 from cogniverse_foundation.telemetry.span_metrics import (
     AB_COMPARE_SPAN_NAME,
     aggregate_ab_compare,
@@ -820,7 +823,7 @@ def _dataset(summary: DatasetSummary) -> EvaluationDataset:
 
 async def _tenant_datasets(tenant_id: str) -> Tuple[Any, List[DatasetSummary]]:
     """The tenant's telemetry provider and the evaluation datasets it owns,
-    newest first."""
+    newest first: every dataset it owns but its optimization artifacts."""
     try:
         provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
     except Exception as exc:
@@ -842,7 +845,11 @@ async def _tenant_datasets(tenant_id: str) -> Tuple[Any, List[DatasetSummary]]:
             exc,
             tenant_id=tenant_id,
         ) from exc
-    return provider, [s for s in summaries if s.tenant_id == tenant_id]
+    return provider, [
+        s
+        for s in summaries
+        if s.tenant_id == tenant_id and not is_artifact_dataset(s.name, tenant_id)
+    ]
 
 
 @router.get("/{tenant_id}/evaluation/datasets", response_model=EvaluationDatasets)

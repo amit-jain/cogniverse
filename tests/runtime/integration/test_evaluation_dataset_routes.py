@@ -19,6 +19,7 @@ import pytest
 from fastapi import FastAPI
 
 import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_evaluation.data.datasets import INPUT_KEYS, OUTPUT_KEYS, DatasetManager
 from cogniverse_foundation.telemetry.config import (
@@ -174,6 +175,58 @@ class TestDatasets:
         }
         assert [d["example_count"] for d in response.json()["datasets"]] == [3, 1]
         assert response.json()["datasets"][0]["description"] == "three queries"
+
+    async def test_the_tenants_optimization_artifacts_are_not_evaluation_datasets(
+        self, app, store, telemetry
+    ):
+        """The artifact datasets a golden-set upload and the optimizers write
+        for the tenant, newer than its evaluation dataset, are left out: the
+        newest dataset listed is the evaluation dataset."""
+        tenant, other = _tenant(), _tenant()
+        evaluation = await _create(store, tenant, f"golden-{uuid4().hex[:8]}")
+        artifacts = ArtifactManager(telemetry.get_provider(tenant_id=tenant), tenant)
+        await artifacts.save_blob("config", "golden_set_ground_truth", "[]")
+        await artifacts.save_blob("model", "profile_selection", "{}")
+        await artifacts.save_prompts("query_enhancement", {"system": "Expand."})
+        await artifacts.save_prompts_versioned(
+            "query_enhancement", {"system": "Expand."}
+        )
+        await ArtifactManager(telemetry.get_provider(tenant_id=other), other).save_blob(
+            "config", "golden_set_ground_truth", "[]"
+        )
+        written = [
+            d.name
+            for d in await store.describe_datasets()
+            if d.tenant_id == tenant and d.id != evaluation
+        ]
+        assert sorted(written) == sorted(
+            [
+                f"dspy-config-{tenant}-golden_set_ground_truth--r1",
+                f"dspy-model-{tenant}-profile_selection--r1",
+                f"dspy-prompts-{tenant}-query_enhancement",
+                f"dspy-prompts-{tenant}-query_enhancement-v1",
+            ]
+        )
+        artifact = next(
+            d
+            for d in await store.describe_datasets()
+            if d.name == f"dspy-prompts-{tenant}-query_enhancement"
+        )
+
+        async with _client(app) as client:
+            listing = await client.get(f"/admin/tenant/{tenant}/evaluation/datasets")
+            scored = await client.get(
+                f"/admin/tenant/{tenant}/evaluation/dataset",
+                params={"dataset_id": artifact.id},
+            )
+        assert listing.status_code == 200, listing.text
+        assert listing.json()["datasets"] == [
+            _listed(await _summary(store, evaluation))
+        ]
+        assert (scored.status_code, scored.json()["detail"]) == (
+            404,
+            f"Tenant {tenant} has no dataset {artifact.id}.",
+        )
 
     async def test_without_a_phoenix_ui_address_no_link_is_offered(
         self, app, store, monkeypatch

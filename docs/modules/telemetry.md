@@ -1863,7 +1863,7 @@ def search_videos_with_telemetry(tenant_id: str, query: str):
 
 Per-modality runtime metrics (P50/P95/P99 latency, success rate, request count) are available in the web client's **Profile metrics** view (`GET /admin/tenant/{tenant}/telemetry/profile-selection`).
 
-The runtime queries `cogniverse.profile_selection` spans from Phoenix for the selected tenant and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. No additional code is needed in the application — drive traffic through the routing agent and the view reflects real-time modality breakdown.
+The runtime queries `cogniverse.profile_selection` spans from Phoenix for the selected tenant and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. Each span starts when the agent began selecting (before it reads the candidate profiles and calls the LM) and ends once the answer is built, so its duration is the selection latency. No additional code is needed in the application — drive traffic through the routing agent and the view reflects real-time modality breakdown.
 
 To view, open the web client (http://localhost:28400 under `cogniverse up`), choose **Profile metrics** under Operations, and pick the tenant and window.
 

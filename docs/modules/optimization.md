@@ -1906,7 +1906,7 @@ uv run python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds -
 
 ### Output Artifacts
 
-After optimization, artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`:
+After optimization, artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`, in datasets named `dspy-{kind}-{tenant_id}-{key}` (`kind` one word) by `artifact_dataset_name` in `cogniverse_foundation.telemetry.providers.base`; `is_artifact_dataset(name, tenant_id)` reads the name back, and the runtime's evaluation dataset listing leaves these out:
 
 - Every artifact dataset writes `metadata.created_at` as a timezone-aware
   UTC ISO-8601 timestamp, including stable and versioned prompts,

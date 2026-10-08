@@ -3,14 +3,17 @@
 Documents go through the production ingestion pipeline under a profile made
 from the shipped ``document_text_semantic`` template, with a stand-in PyLate
 sidecar encoding each token as a known vector, so documents sharing words
-share most of their pooled vector. Maps are cached in the runtime with their
-generation in a real Redis.
+share most of their pooled vector. Maps are cached in a real Redis with their
+generation, and worker processes are real processes sharing it.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import multiprocessing
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -19,6 +22,7 @@ import numpy as np
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from redis import Redis as SyncRedis
 from redis.asyncio import Redis
 
 from cogniverse_runtime import atlas_projection
@@ -48,6 +52,59 @@ VOLCANOES = {
     "volcanoes-4.txt": "volcanoes erupt lava that build islands",
 }
 TEXTS = {**RIVERS, **VOLCANOES}
+
+_SPAWN = multiprocessing.get_context("spawn")
+# How long a worker's build of the test map takes at least.
+WORKER_BUILD_S = 1.0
+
+
+def _worker_map(redis_url, tenant, generation, builds_key, barrier, results):
+    """One runtime worker process: its own cache on the shared Redis, reading
+    the test map once every worker is ready; puts its coords, computed_at
+    and generation on ``results``."""
+
+    async def read():
+        redis = await connect_shared_state_redis(redis_url)
+        cache = ProjectionCache(redis)
+        documents = [{"id": str(i), "title": None, "text": None} for i in range(5)]
+
+        def build():
+            SyncRedis.from_url(redis_url).incr(builds_key)
+            time.sleep(WORKER_BUILD_S)
+            return atlas_projection.build_map(documents, np.eye(5, 8))
+
+        try:
+            barrier.wait(60)
+            built = await cache.get(tenant, "p", 5, generation, build)
+            return (
+                built.coords.tolist(),
+                built.computed_at.isoformat(),
+                built.generation,
+            )
+        finally:
+            await redis.aclose()
+
+    results.put(asyncio.run(read()))
+
+
+def _in_workers(count, redis_url, tenant, generation, builds_key):
+    """The test map read by ``count`` worker processes at once."""
+    barrier = _SPAWN.Barrier(count)
+    results = _SPAWN.Queue()
+    workers = [
+        _SPAWN.Process(
+            target=_worker_map,
+            args=(redis_url, tenant, generation, builds_key, barrier, results),
+        )
+        for _ in range(count)
+    ]
+    for worker in workers:
+        worker.start()
+    read = [results.get(timeout=240) for _ in workers]
+    for worker in workers:
+        worker.join(60)
+    assert [worker.exitcode for worker in workers] == [0] * count
+    return read
 
 
 def _pooled(text: str) -> np.ndarray:
@@ -333,25 +390,115 @@ class TestConcurrency:
             await first_redis.aclose()
             await second_redis.aclose()
 
+    def test_worker_processes_reading_a_cold_map_at_once_build_it_once(
+        self, workflow_state_redis_url
+    ):
+        """Three worker processes ask for the same map at the same moment:
+        one builds it, and all three serve that one layout."""
+        tenant = f"umapworkers{uuid.uuid4().hex[:6]}:main"
+        builds_key = f"cogniverse:test:umap-builds:{tenant}"
+        read = _in_workers(3, workflow_state_redis_url, tenant, 0, builds_key)
+        redis = SyncRedis.from_url(workflow_state_redis_url)
+        try:
+            assert int(redis.get(builds_key)) == 1
+        finally:
+            redis.delete(builds_key)
+            redis.close()
+        assert [r == read[0] for r in read] == [True] * 3
+        assert read[0][2] == 0
+
+    async def test_another_worker_serves_the_stored_map_until_it_is_invalidated(
+        self, workflow_state_redis_url
+    ):
+        """A map built by one worker process is served by the next one
+        without a build; once invalidated, the next worker builds the new
+        generation."""
+        tenant = f"umapreuse{uuid.uuid4().hex[:6]}:main"
+        builds_key = f"cogniverse:test:umap-builds:{tenant}"
+        redis = await connect_shared_state_redis(workflow_state_redis_url)
+        cache = ProjectionCache(redis)
+        try:
+            generation = await cache.generation(tenant, "p")
+            [first] = _in_workers(
+                1, workflow_state_redis_url, tenant, generation, builds_key
+            )
+            [again] = _in_workers(
+                1, workflow_state_redis_url, tenant, generation, builds_key
+            )
+            assert again == first
+            assert int(await redis.get(builds_key)) == 1
+
+            current = await cache.invalidate(tenant, "p")
+            [rebuilt] = _in_workers(
+                1, workflow_state_redis_url, tenant, current, builds_key
+            )
+            assert int(await redis.get(builds_key)) == 2
+            assert (rebuilt[0], rebuilt[2]) == (first[0], generation + 1)
+            assert rebuilt[1] > first[1]
+        finally:
+            await redis.delete(builds_key)
+            await redis.aclose()
+
 
 class TestFaultContract:
-    def test_an_unreachable_cache_is_an_error_not_a_fresh_build(
-        self, config_manager, schema_loader, tenant
+    def test_an_unreachable_cache_lays_the_map_out_without_it(
+        self, client, config_manager, schema_loader, tenant, caplog
     ):
+        """Redis down: each read lays the documents out itself, the same
+        layout a cached read serves, says so in the log, and keeps nothing."""
+        cached = _umap(client, tenant).json()
         with TestClient(
             _app(config_manager, schema_loader, "redis://127.0.0.1:9/0", connect=False)
         ) as dead:
-            response = _umap(dead, tenant)
-        assert (response.status_code, response.json()["detail"]) == (
-            503,
-            {
-                "error": "atlas_cache_unavailable",
-                "message": "The embedding atlas cache could not be reached.",
-                "failure": "ConnectionError",
-                "tenant_id": tenant,
-                "profile": "notes",
-            },
-        )
+            with caplog.at_level(
+                logging.WARNING, logger="cogniverse_runtime.routers.embedding_atlas"
+            ):
+                first = _umap(dead, tenant)
+                second = _umap(dead, tenant)
+        assert (first.status_code, second.status_code) == (200, 200), first.text
+        assert [
+            (r.json()["generation"], r.json()["points"], r.json()["clusters"])
+            for r in (first, second)
+        ] == [(0, cached["points"], cached["clusters"])] * 2
+        assert second.json()["computed_at"] > first.json()["computed_at"]
+        assert [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "cogniverse_runtime.routers.embedding_atlas"
+        ] == [
+            f"Embedding atlas cache unavailable; laying out {tenant}/notes without "
+            "it: ConnectionError: Error 111 connecting to 127.0.0.1:9. Connect call "
+            "failed ('127.0.0.1', 9)."
+        ] * 2
+
+    async def test_a_cache_lost_after_the_generation_read_still_lays_out_the_map(
+        self, caplog
+    ):
+        """Redis stops answering between the generation read and the stored
+        layout: the map is built here, served, and the outage logged."""
+        cache = ProjectionCache(Redis.from_url("redis://127.0.0.1:9/0"))
+        tenant = f"umaplost{uuid.uuid4().hex[:6]}:main"
+        documents = [{"id": str(i), "title": None, "text": None} for i in range(5)]
+        builds = []
+
+        def build():
+            builds.append(1)
+            return atlas_projection.build_map(documents, np.eye(5, 8))
+
+        with caplog.at_level(
+            logging.WARNING, logger="cogniverse_runtime.atlas_projection"
+        ):
+            built = await cache.get(tenant, "p", 5, 3, build)
+        assert (len(builds), built.generation, built.coords.shape) == (1, 3, (5, 2))
+        assert [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "cogniverse_runtime.atlas_projection"
+        ] == [
+            f"Embedding atlas cache unavailable; laying out {tenant}/p (limit 5) "
+            "without it: ConnectionError: Error 111 connecting to 127.0.0.1:9. "
+            "Connect call failed ('127.0.0.1', 9)."
+        ]
 
     def test_a_refused_document_read_is_an_error_and_is_not_kept(
         self, client, config_manager, vespa_instance, tenant
