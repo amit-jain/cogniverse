@@ -28,7 +28,10 @@ from cogniverse_foundation.config.unified_config import (
 )
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.utils.memory_store import register_deployed_schema
+from tests.utils.memory_store import (
+    register_deployed_schema,
+    unregister_deployed_schema,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -63,17 +66,28 @@ def _config_manager(http_port: int) -> ConfigManager:
     return config_manager
 
 
+# The placeholder registry rows this module wrote to the shared Vespa's config
+# store; removed when the module ends, so no later deploy reconstructs them.
+_REGISTERED: list[tuple[str, str]] = []
+
+
+def _register(config_manager, tenant_id: str, base_schema_name: str) -> None:
+    register_deployed_schema(config_manager, tenant_id, base_schema_name)
+    _REGISTERED.append((tenant_id, base_schema_name))
+
+
 @pytest.fixture(scope="module")
 def config_manager(shared_vespa):
-    return _config_manager(shared_vespa["http_port"])
+    config_manager = _config_manager(shared_vespa["http_port"])
+    yield config_manager
+    while _REGISTERED:
+        unregister_deployed_schema(config_manager, *_REGISTERED.pop())
 
 
 def _video_tenant(config_manager) -> str:
     """Registered: the built-in video schema deployed, no stored profile."""
     tenant_id = _tenant("video")
-    register_deployed_schema(
-        config_manager, tenant_id, "video_colpali_smol500_mv_frame"
-    )
+    _register(config_manager, tenant_id, "video_colpali_smol500_mv_frame")
     return tenant_id
 
 
@@ -85,7 +99,7 @@ def _document_tenant(config_manager) -> str:
         BackendProfileConfig.from_dict("document_text_semantic", data),
         tenant_id=tenant_id,
     )
-    register_deployed_schema(config_manager, tenant_id, data["schema_name"])
+    _register(config_manager, tenant_id, data["schema_name"])
     return tenant_id
 
 
