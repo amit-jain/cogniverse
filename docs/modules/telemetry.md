@@ -69,6 +69,11 @@ libs/foundation/cogniverse_foundation/telemetry/
   from a Phoenix span row. Search (list output) and domain spans like
   `query_enhancement` (dict output) share the same writer and reader, so eval,
   dataset-building, experiments, and optimization read every operation uniformly.
+  `current_span_id()` is the active span's 16-hex id (None with no span), and
+  `record_search_io_on_current_span(query, results, modality)` records a
+  search on the active span (one `search_result_row` per result); the search
+  and document agents stamp both on their process span, whose id a client
+  annotates.
   Query-enhancement spans also carry `enhancement.path` with `lm` for a genuine
   enhancement and `heuristic_fallback` for the heuristic expansion, so served
   rows stay machine-readable when the LM echoes the query or returns empty

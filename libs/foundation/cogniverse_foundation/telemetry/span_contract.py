@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 from typing import Any, Mapping, Optional
+
+logger = logging.getLogger(__name__)
 
 # Operation type values — the discriminator written to the `operation` attribute
 # (also carried by the span name). Consumers filter on these.
@@ -279,6 +282,51 @@ def search_result_row(result: Any) -> dict:
         "score": score_f,
         "content": content,
     }
+
+
+def current_span_id() -> Optional[str]:
+    """16-hex id of the active telemetry span, or None when none is active
+    (telemetry off leaves an invalid span current).
+
+    A search stamps it on its output so a client can annotate this exact
+    search span (``result_relevance``, ``result_click``). Read it on the
+    coroutine that holds the span: a worker thread started by ``to_thread``
+    does not carry the span context.
+    """
+    from opentelemetry import trace
+
+    context = trace.get_current_span().get_span_context()
+    if context and context.is_valid:
+        return f"{context.span_id:016x}"
+    return None
+
+
+def record_search_io_on_current_span(query: str, results: list, modality: str) -> None:
+    """Record a search's query, modality and result rows on the active span.
+
+    The span whose id a search hands its client: the triplet miner reads the
+    anchor (``input.value``), the candidates (``output.value``, one
+    ``search_result_row`` per result) and the client's relevance annotations
+    from that one span. Modality rides on a plain ``modality`` attribute;
+    Phoenix folds ``input.*`` sub-keys into ``input.value``. Nothing is
+    recorded when no span is active, and a failure to record is logged rather
+    than failing the search.
+    """
+    from opentelemetry import trace
+
+    span = trace.get_current_span()
+    if not span.get_span_context().is_valid:
+        return
+    try:
+        record_span_io(
+            span,
+            input_value=query,
+            output=[search_result_row(result) for result in results],
+            operation=OP_SEARCH,
+            modality=modality,
+        )
+    except Exception as exc:
+        logger.warning("search span %s io not recorded: %s", modality, exc)
 
 
 def _reconstruct_attributes(row: Any) -> dict:

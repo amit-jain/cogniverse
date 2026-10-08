@@ -1729,7 +1729,7 @@ success (`well_calibrated` / `moderately_calibrated` / `poorly_calibrated`).
 
 **Purpose:** Continuous, scheduled quality monitor across all agents. Runs two evaluation strategies and decides whether to trigger an Argo optimization workflow — it composes `SpanEvaluator`, `LLMJudgeCore`, and the telemetry provider's `datasets` store rather than reimplementing them. Golden queries come from the tenant's versioned `config/golden_set_ground_truth` blob via `ArtifactManager`.
 
-**`AgentType` enum:** `SEARCH`, `SUMMARY`, `REPORT`, `GATEWAY`, `ROUTING`, `QUERY_ENHANCEMENT`, `ENTITY_EXTRACTION`, `PROFILE_SELECTION` — mapped to span names via `SPAN_NAME_BY_AGENT` (e.g. `"SearchAgent.process"`), matching the `f"{ClassName}.process"` convention emitted by `AgentBase._process_span()`.
+**`AgentType` enum:** `SEARCH`, `SUMMARY`, `REPORT`, `GATEWAY`, `ROUTING`, `QUERY_ENHANCEMENT`, `ENTITY_EXTRACTION`, `PROFILE_SELECTION` — mapped to span names via `SPAN_NAME_BY_AGENT` (e.g. `"SearchAgent.process"`), matching the `f"{ClassName}.process"` convention emitted by `AgentBase.process_span()`.
 
 **`Verdict` enum:** `SKIP = 0`, `OPTIMIZE = 1`, `FULL = 2`.
 

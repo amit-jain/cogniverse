@@ -124,7 +124,7 @@ class TestTheSearchEnvelopeReportsTheRewriteUnderItsOwnKey:
         with (
             dspy.context(lm=DummyLM([dict(_REWRITE_FIELDS)])),
             patch(
-                "cogniverse_agents.search_agent._current_span_id",
+                "cogniverse_agents.search_agent.current_span_id",
                 return_value=_SEARCH_SPAN_ID,
             ),
         ):

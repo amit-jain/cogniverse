@@ -71,7 +71,7 @@ class Verdict(int, Enum):
     FULL = 2
 
 
-# The first four use the AgentBase._process_span() convention
+# The first four use the AgentBase.process_span() convention
 # (f"{ClassName}.process"); the rest score the richer cogniverse.* domain
 # spans their agents emit. The registry is the single source of truth.
 SPAN_NAME_BY_AGENT = {

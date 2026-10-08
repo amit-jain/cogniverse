@@ -28,6 +28,7 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_evaluation.evaluators.routing_evaluator import RoutingOutcome
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher, _GatewayAgentEntry
 from cogniverse_runtime.routers import agents as agents_router
+from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 
 
 @pytest.fixture
@@ -845,17 +846,20 @@ class TestModalitySearchDispatchSerialization:
     async def test_document_search_dispatch_serializes_results(
         self, dispatcher, monkeypatch
     ):
-        from cogniverse_agents.document_agent import DocumentAgentDeps, DocumentResult
+        from cogniverse_agents.document_agent import (
+            DocumentAgent,
+            DocumentAgentDeps,
+            DocumentResult,
+        )
 
         monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
         monkeypatch.setattr(dispatcher, "_init_agent_memory", lambda *a, **k: None)
-        backend = MagicMock()
-        backend.schema_exists = MagicMock(return_value=True)
+        telemetry = RecordingTelemetryManager()
         monkeypatch.setattr(
-            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+            lambda: telemetry,
         )
-        stub = MagicMock()
-        stub.search_documents = AsyncMock(
+        search_documents = AsyncMock(
             return_value=[
                 DocumentResult(
                     document_id="doc1", document_url="http://x/1.pdf", title="Doc One"
@@ -877,7 +881,9 @@ class TestModalitySearchDispatchSerialization:
 
         def build_agent(*, deps, **kwargs):
             captured["deps"] = deps
-            return stub
+            agent = DocumentAgent(deps=deps)
+            agent.search_documents = search_documents
+            return agent
 
         monkeypatch.setattr(
             "cogniverse_agents.document_agent.DocumentAgent", build_agent
@@ -891,6 +897,12 @@ class TestModalitySearchDispatchSerialization:
         assert result["results_count"] == 1
         assert result["results"][0]["document_id"] == "doc1"
         assert result["results"][0]["title"] == "Doc One"
+        # The search runs in the agent's process span; this recording manager
+        # makes no OTel span current, so there is no id to hand the client.
+        assert telemetry.calls == [
+            {"name": "DocumentAgent.process", "tenant_id": "acme:prod"}
+        ]
+        assert result["span_id"] is None
         # The tenant's deployed document schemas are read once each and handed
         # to the agent, which narrows its search strategy to them.
         assert schema_calls == [
@@ -905,7 +917,9 @@ class TestModalitySearchDispatchSerialization:
             "document_text",
             "document_visual",
         )
-        assert stub.search_documents.call_args_list == [call(query="report", limit=5)]
+        assert search_documents.call_args_list == [
+            call(query="report", strategy="auto", limit=5)
+        ]
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
@@ -924,13 +938,19 @@ class TestModalitySearchDispatchSerialization:
         monkeypatch.setattr(
             "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
         )
-        stub = MagicMock()
-        stub.search_documents = AsyncMock(return_value=[])
+        from cogniverse_agents.document_agent import DocumentAgent
+
+        monkeypatch.setattr(
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+            RecordingTelemetryManager,
+        )
         captured = {}
 
         def build_agent(*, deps, **kwargs):
             captured["deps"] = deps
-            return stub
+            agent = DocumentAgent(deps=deps)
+            agent.search_documents = AsyncMock(return_value=[])
+            return agent
 
         monkeypatch.setattr(
             "cogniverse_agents.document_agent.DocumentAgent", build_agent
@@ -951,6 +971,7 @@ class TestModalitySearchDispatchSerialization:
             "message": "Found 0 documents for 'report'",
             "results_count": 0,
             "results": [],
+            "span_id": None,
         }
 
     @pytest.mark.asyncio
@@ -998,17 +1019,29 @@ class TestModalitySearchDispatchSerialization:
         monkeypatch.setattr(
             "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
         )
-        stub = MagicMock()
-        stub.search_documents = AsyncMock(
-            side_effect=VespaSearchDegraded("Vespa query returned errors: [code 12]")
+        from cogniverse_agents.document_agent import DocumentAgent
+
+        monkeypatch.setattr(
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+            RecordingTelemetryManager,
         )
+
+        def build_agent(*, deps, **kwargs):
+            agent = DocumentAgent(deps=deps)
+            agent.search_documents = AsyncMock(
+                side_effect=VespaSearchDegraded(
+                    "Vespa query returned errors: [code 12]"
+                )
+            )
+            return agent
+
         backend = MagicMock()
         backend.schema_exists = MagicMock(return_value=True)
         monkeypatch.setattr(
             "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
         )
         monkeypatch.setattr(
-            "cogniverse_agents.document_agent.DocumentAgent", lambda *a, **k: stub
+            "cogniverse_agents.document_agent.DocumentAgent", build_agent
         )
 
         with pytest.raises(VespaSearchDegraded, match="code 12"):
