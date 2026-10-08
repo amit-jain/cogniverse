@@ -1915,6 +1915,256 @@ async def test_tenant_rows_the_delete_cannot_remove_are_removed_by_its_retry_or_
     ] == []
 
 
+def _deployer_holding_the_lease(
+    vespa_port, tenant_id, take, held, read_now, read_done, report
+) -> None:
+    """Another runtime process deploying: once ``take`` is set it takes the
+    deployment lease the way a deploy does and reports its holder, and once
+    ``read_now`` is set it reads, inside the lease, what a package build
+    reads of the tenant: its registry rows, the schemas the registry reports
+    registered and its deployment intents."""
+    from cogniverse_core.registries.schema_deployment_intents import (
+        SchemaDeploymentIntents,
+    )
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_runtime.admin import tenant_manager
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    store = VespaConfigStore(backend_url="http://localhost", backend_port=vespa_port)
+    tenant_manager.set_config_manager(ConfigManager(store=store))
+    tenant_manager.set_schema_loader(FilesystemSchemaLoader("configs/schemas"))
+    with tenant_manager.metadata_backend() as backend:
+        schema_manager = backend.schema_manager
+        assert take.wait(600) is True
+        with schema_manager.deployment_lease() as lease:
+            report.put(lease.holder)
+            held.set()
+            assert read_now.wait(600) is True
+            registry_rows = {
+                entry.config_key: entry.config_value.get("deleted", False)
+                for entry in store.list_configs(
+                    tenant_id, scope=ConfigScope.SCHEMA, service="schema_registry"
+                )
+            }
+            registered = sorted(
+                info.full_schema_name
+                for info in schema_manager._schema_registry._get_all_schemas(
+                    strict=True
+                )
+                if info.tenant_id == tenant_id
+            )
+            intents = SchemaDeploymentIntents(store).tenant_names(tenant_id)
+            report.put((registry_rows, registered, intents))
+            read_done.set()
+
+
+def _state_deletion_meeting(deployer_events):
+    """Replace the tenant delete's state deletion with one that, on entry,
+    has the deployer take the deployment lease and waits until it holds it.
+    Returns the replacement and the list it records its thread in."""
+    take, held = deployer_events
+    delete_state = tm._delete_tenant_state
+    deleting: list[int] = []
+
+    def state_deleted_while_a_deploy_holds_the_lease(*args):
+        deleting.append(threading.get_ident())
+        take.set()
+        assert held.wait(600) is True
+        return delete_state(*args)
+
+    return state_deleted_while_a_deploy_holds_the_lease, deleting
+
+
+@pytest.mark.asyncio
+async def test_a_deploy_holding_the_lease_never_reads_a_deleted_tenants_schemas_registered(
+    wired_tenant_manager, vespa_instance, cluster_events, monkeypatch
+):
+    """Another runtime process takes the deployment lease to deploy just as a
+    tenant's delete, its schemas dropped and their registry rows tombstoned,
+    goes to delete the tenant's rows. Every version of a registry row is a
+    document of its own, so a registry read landing between the deletion of
+    the tombstone and of the registration under it reads the schema as
+    registered and the deploy activates it again. While the deployer holds
+    the lease the tenant's rows stay tombstoned and its read finds none of
+    the tenant's schemas registered; once it releases the lease the delete
+    removes the rows and completes."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from cogniverse_core.registries.schema_deploy_lease import SchemaDeployLease
+
+    tenant_id = _unique_tenant()
+    store = tm._config_manager.store
+    await _create_bare_tenant(tenant_id)
+    provenance_schema = _schema_names(tenant_id)[1]
+    context = multiprocessing.get_context("spawn")
+    report = context.Queue()
+    take, held, read_now, read_done = (context.Event() for _ in range(4))
+    deployer = context.Process(
+        target=_deployer_holding_the_lease,
+        args=(
+            vespa_instance["http_port"],
+            tenant_id,
+            take,
+            held,
+            read_now,
+            read_done,
+            report,
+        ),
+    )
+    meeting, deleting = _state_deletion_meeting((take, held))
+    acquire = SchemaDeployLease.acquire
+    delete_data = store.vespa_app.delete_data
+
+    def acquiring(self):
+        # The delete waits for the lease the deployer holds: the deployer reads.
+        if deleting and threading.get_ident() == deleting[0]:
+            read_now.set()
+        return acquire(self)
+
+    def deleting_a_version(*, schema, data_id, **kwargs):
+        deleted = delete_data(schema=schema, data_id=data_id, **kwargs)
+        # A registry row version is gone: the deployer reads before the next.
+        if (
+            deleting
+            and threading.get_ident() == deleting[0]
+            and ":schema_registry:" in data_id
+        ):
+            read_now.set()
+            assert read_done.wait(600) is True
+        return deleted
+
+    monkeypatch.setattr(tm, "_delete_tenant_state", meeting)
+    monkeypatch.setattr(SchemaDeployLease, "acquire", acquiring)
+    monkeypatch.setattr(store.vespa_app, "delete_data", deleting_a_version)
+    deployer.start()
+    try:
+        result = await tm.delete_tenant_internal(tenant_id)
+        await asyncio.to_thread(report.get, True, 600)
+        read = await asyncio.to_thread(report.get, True, 600)
+        await asyncio.to_thread(deployer.join, 60)
+    finally:
+        for event in (take, held, read_now, read_done):
+            event.set()
+        if deployer.is_alive():
+            deployer.kill()
+        monkeypatch.undo()
+
+    assert deployer.exitcode == 0
+    assert read == ({"schema_provenance": True}, [], [provenance_schema])
+    assert result["deleted_schemas"] == [provenance_schema]
+    assert result["workers_released"] == [cluster_events.worker_id]
+    assert _tenant_rows(store, tenant_id) == []
+    assert (
+        tenant_is_deleted(store, tenant_id),
+        tenant_delete_pending(store, tenant_id),
+    ) == (True, False)
+    assert _deployed_for(tenant_id) == []
+
+
+@pytest.mark.asyncio
+async def test_registry_rows_a_delete_cannot_take_the_lease_for_are_removed_by_its_retry(
+    wired_tenant_manager, vespa_instance, cluster_events, caplog, monkeypatch
+):
+    """Another runtime process holds the deployment lease for the delete's
+    whole wait when the delete goes to remove the tenant's registry rows and
+    deployment intents. The delete still answers that the tenant is deleted,
+    keeps those rows, names each at ERROR by tenant with the wait's timeout,
+    and stays pending; once the deployer releases the lease, the delete's
+    retry removes them and completes it."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from cogniverse_core.registries import schema_deploy_lease
+    from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+    tenant_id = _unique_tenant()
+    store = tm._config_manager.store
+    await _create_bare_tenant(tenant_id)
+    provenance_schema = _schema_names(tenant_id)[1]
+    context = multiprocessing.get_context("spawn")
+    report = context.Queue()
+    take, held, read_now, read_done = (context.Event() for _ in range(4))
+    deployer = context.Process(
+        target=_deployer_holding_the_lease,
+        args=(
+            vespa_instance["http_port"],
+            tenant_id,
+            take,
+            held,
+            read_now,
+            read_done,
+            report,
+        ),
+    )
+    meeting, _ = _state_deletion_meeting((take, held))
+    monkeypatch.setattr(tm, "_delete_tenant_state", meeting)
+    monkeypatch.setattr(schema_deploy_lease, "DEFAULT_WAIT_SECONDS", 3.0)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+    deployer.start()
+    try:
+        result = await tm.delete_tenant_internal(tenant_id)
+        holder = await asyncio.to_thread(report.get, True, 600)
+        kept = _tenant_rows(store, tenant_id)
+        tombstone = store.get_config(
+            tenant_id, ConfigScope.SCHEMA, "schema_registry", "schema_provenance"
+        )
+        pending = tenant_delete_pending(store, tenant_id)
+        read_now.set()
+        read = await asyncio.to_thread(report.get, True, 600)
+        await asyncio.to_thread(deployer.join, 60)
+    finally:
+        for event in (take, held, read_now, read_done):
+            event.set()
+        if deployer.is_alive():
+            deployer.kill()
+        monkeypatch.undo()
+
+    assert deployer.exitcode == 0
+    assert result["status"] == "deleted"
+    assert result["deleted_schemas"] == [provenance_schema]
+    timeout = (
+        f"LeaseWaitTimeout: Vespa deployment lease still held by {holder!r} after "
+        "3.0s; refusing to replace the application package concurrently with "
+        "another deployer"
+    )
+    retried_by = (
+        "; the delete stays pending and its retry, or the next create of the "
+        "tenant, deletes it"
+    )
+    assert sorted(_error_lines(caplog)) == [
+        f"Cannot delete schema_registry:schema_provenance of deleted tenant "
+        f"{tenant_id} ({timeout}){retried_by}",
+        f"Cannot delete the schema deployment intents of deleted tenant "
+        f"{tenant_id} ({timeout}){retried_by}",
+    ]
+    assert kept == sorted(
+        [
+            "schema_deployment_intents:" + provenance_schema,
+            "schema_registry:schema_provenance",
+        ]
+    )
+    assert tombstone.config_value["deleted"] is True
+    assert pending is True
+    assert read == ({"schema_provenance": True}, [], [provenance_schema])
+
+    caplog.clear()
+    retried = await tm.delete_tenant_internal(tenant_id)
+    assert retried == {
+        "status": "deleted",
+        "tenant_full_id": tenant_id,
+        "schemas_deleted": 0,
+        "deleted_schemas": [],
+        "organization_deleted": False,
+        "workers_released": [cluster_events.worker_id],
+    }
+    assert _tenant_rows(store, tenant_id) == []
+    assert (
+        tenant_is_deleted(store, tenant_id),
+        tenant_delete_pending(store, tenant_id),
+    ) == (True, False)
+    assert _error_lines(caplog) == []
+    assert _deployed_for(tenant_id) == []
+
+
 async def _create_tenant_with_tasks(tenant_id: str, store: TaskEventStore):
     """A tenant with a workflow running on this process, an ingestion job
     queued for it, and a workflow that already ended; returns the running
