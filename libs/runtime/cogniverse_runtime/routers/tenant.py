@@ -1222,8 +1222,11 @@ _OPTIMIZE_RUNS_MAX_LIMIT = 100
 _ARGO_LIST_CEILING = 500
 
 
-async def _argo_list_workflows(label_selector: str) -> List[Dict[str, Any]]:
-    """List namespace Workflows matching ``label_selector``.
+async def _argo_list_workflows(
+    label_selector: str, resource: str = "workflows"
+) -> List[Dict[str, Any]]:
+    """List namespace Workflows (or, with ``resource="cron-workflows"``,
+    CronWorkflows) matching ``label_selector``.
 
     Raises ``ArgoListUnavailableError`` when Argo is unreachable or answers
     anything but 200, so the caller reports the outage instead of an empty
@@ -1233,7 +1236,7 @@ async def _argo_list_workflows(label_selector: str) -> List[Dict[str, Any]]:
     try:
         client = await _shared_argo_client()
         response = await client.get(
-            f"{settings.api_url}/api/v1/workflows/{settings.namespace}",
+            f"{settings.api_url}/api/v1/{resource}/{settings.namespace}",
             params={
                 "listOptions.labelSelector": label_selector,
                 "listOptions.limit": _ARGO_LIST_CEILING,
@@ -1259,52 +1262,149 @@ async def _argo_list_workflows(label_selector: str) -> List[Dict[str, Any]]:
 _FINISHED_WORKFLOW_PHASES = frozenset({"Succeeded", "Failed", "Error"})
 
 
-async def delete_finished_tenant_workflows(
+async def _argo_delete(resource: str, name: str) -> Optional[str]:
+    """Delete one Argo object; None when it is gone (a 404 counts), else why
+    Argo did not delete it."""
+    settings = get_workflow_settings()
+    client = await _shared_argo_client()
+    try:
+        response = await client.delete(
+            f"{settings.api_url}/api/v1/{resource}/{settings.namespace}/{name}",
+            headers=_argo_auth_headers(),
+        )
+    except httpx.HTTPError as exc:
+        return f"{type(exc).__name__}: {exc}"
+    if response.status_code in (200, 404):
+        return None
+    return f"HTTP {response.status_code}: {response.text[:200]}"
+
+
+async def _argo_terminate(name: str) -> Optional[str]:
+    """Terminate one Workflow as the cancel route does; None when it no
+    longer runs (terminated, finished meanwhile, or gone), else why Argo
+    did not stop it."""
+    settings = get_workflow_settings()
+    client = await _shared_argo_client()
+    url = f"{settings.api_url}/api/v1/workflows/{settings.namespace}/{name}"
+    try:
+        response = await client.put(
+            f"{url}/terminate", json={"name": name}, headers=_argo_auth_headers()
+        )
+    except httpx.HTTPError as exc:
+        return f"{type(exc).__name__}: {exc}"
+    if response.status_code in (200, 201, 404):
+        return None
+    refusal = f"HTTP {response.status_code}: {response.text[:200]}"
+    # Argo refuses to terminate a Workflow that finished after it was listed.
+    try:
+        current = await client.get(url, headers=_argo_auth_headers())
+    except httpx.HTTPError:
+        return refusal
+    if current.status_code == 404:
+        return None
+    if current.status_code != 200:
+        return refusal
+    try:
+        phase = (current.json().get("status") or {}).get("phase")
+    except ValueError:
+        return refusal
+    return None if phase in _FINISHED_WORKFLOW_PHASES else refusal
+
+
+def _cron_workflow_belongs_to_tenant(data: Dict[str, Any], tenant_id: str) -> bool:
+    """Whether a CronWorkflow was created for ``tenant_id``, decided on the
+    raw ``tenant-id`` argument it passes each run: its ``tenant`` label is
+    the lossy sanitized form two tenant ids can share."""
+    workflow_spec = (data.get("spec") or {}).get("workflowSpec") or {}
+    for param in (workflow_spec.get("arguments") or {}).get("parameters") or []:
+        if isinstance(param, dict) and param.get("name") == "tenant-id":
+            value = param.get("value")
+            return bool(value) and canonical_tenant_id(value) == canonical_tenant_id(
+                tenant_id
+            )
+    return False
+
+
+async def delete_tenant_cron_workflows(
     tenant_id: str,
 ) -> tuple[List[str], Dict[str, str]]:
-    """Delete every finished Workflow ``tenant_id`` owns.
+    """Delete every CronWorkflow of ``tenant_id``'s scheduled jobs, so none
+    fires again.
 
-    Found as ``list_manual_optimization_runs`` finds a tenant's runs: by the
-    tenant label and, for scheduled runs, the cron-workflow label, owned by
-    the raw ``tenant-id`` argument. A deployment without Argo has none.
-    Returns the names deleted (a Workflow already gone counts) and, for each
-    one Argo did not delete, why.
+    Found by the ``tenant`` label ``create_job`` stamps and owned by the raw
+    ``tenant-id`` argument. A deployment without Argo has none. Returns the
+    names deleted (one already gone counts) and, for each one Argo did not
+    delete, why.
 
     Raises:
         ArgoListUnavailableError: Argo could not be listed.
     """
-    settings = get_workflow_settings()
-    if settings.api_url is None:
+    if get_workflow_settings().api_url is None:
         return [], {}
     listed = await _argo_list_workflows(
-        f"cogniverse.ai/tenant={_sanitize_label_value(tenant_id)}"
+        f"app=cogniverse,tenant={_sanitize_label_value(tenant_id)}",
+        resource="cron-workflows",
     )
-    listed += await _argo_list_workflows(_CRON_WORKFLOW_LABEL)
     names = sorted(
         {
             item["metadata"]["name"]
             for item in listed
             if (item.get("metadata") or {}).get("name")
-            and (item.get("status") or {}).get("phase") in _FINISHED_WORKFLOW_PHASES
-            and _workflow_belongs_to_tenant(item, tenant_id)
+            and _cron_workflow_belongs_to_tenant(item, tenant_id)
         }
     )
     deleted: List[str] = []
     failed: Dict[str, str] = {}
-    client = await _shared_argo_client()
     for name in names:
-        try:
-            response = await client.delete(
-                f"{settings.api_url}/api/v1/workflows/{settings.namespace}/{name}",
-                headers=_argo_auth_headers(),
-            )
-        except httpx.HTTPError as exc:
-            failed[name] = f"{type(exc).__name__}: {exc}"
-            continue
-        if response.status_code in (200, 404):
+        reason = await _argo_delete("cron-workflows", name)
+        if reason is None:
             deleted.append(name)
         else:
-            failed[name] = f"HTTP {response.status_code}: {response.text[:200]}"
+            failed[name] = reason
+    return deleted, failed
+
+
+async def delete_tenant_workflows(
+    tenant_id: str,
+) -> tuple[List[str], Dict[str, tuple[str, str]]]:
+    """Stop and delete every Workflow ``tenant_id`` owns.
+
+    Found as ``list_optimization_runs`` finds a tenant's runs: by the tenant
+    label and, for scheduled runs, the cron-workflow label, owned by the raw
+    ``tenant-id`` argument. Each one not finished is terminated, as the
+    cancel route does, then every one is deleted; one Argo would not
+    terminate is not deleted. A deployment without Argo has none. Returns
+    the names deleted (one already gone counts) and, for each one Argo did
+    not stop or delete, the action (``stop`` or ``delete``) and why.
+
+    Raises:
+        ArgoListUnavailableError: Argo could not be listed.
+    """
+    if get_workflow_settings().api_url is None:
+        return [], {}
+    listed = await _argo_list_workflows(
+        f"cogniverse.ai/tenant={_sanitize_label_value(tenant_id)}"
+    )
+    listed += await _argo_list_workflows(_CRON_WORKFLOW_LABEL)
+    owned: Dict[str, Dict[str, Any]] = {}
+    for item in listed:
+        name = (item.get("metadata") or {}).get("name")
+        if name and _workflow_belongs_to_tenant(item, tenant_id):
+            owned[name] = item
+    failed: Dict[str, tuple[str, str]] = {}
+    for name in sorted(owned):
+        if (owned[name].get("status") or {}).get("phase") in _FINISHED_WORKFLOW_PHASES:
+            continue
+        reason = await _argo_terminate(name)
+        if reason is not None:
+            failed[name] = ("stop", reason)
+    deleted: List[str] = []
+    for name in sorted(set(owned) - set(failed)):
+        reason = await _argo_delete("workflows", name)
+        if reason is None:
+            deleted.append(name)
+        else:
+            failed[name] = ("delete", reason)
     return deleted, failed
 
 

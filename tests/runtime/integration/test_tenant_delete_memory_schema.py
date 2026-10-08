@@ -3152,10 +3152,11 @@ def argo(argo_cluster):
         get_workflow_settings._instance = previous
 
 
-def _workflow(name: str, tenant_id: str, phase: str, *, label: str, cron: bool):
+def _workflow(name: str, tenant_id: str, phase: str | None, *, label: str, cron: bool):
     """A Workflow as the runtime submits it (tenant label) or as a
     CronWorkflow spawns it (cron label only); both carry the raw tenant id
-    as their ``tenant-id`` argument."""
+    as their ``tenant-id`` argument. ``phase`` None is a Workflow Argo has
+    not picked up yet."""
     from cogniverse_foundation.common.tenant_utils import sanitize_k8s_label_value
 
     labels = (
@@ -3163,7 +3164,7 @@ def _workflow(name: str, tenant_id: str, phase: str, *, label: str, cron: bool):
         if cron
         else {"cogniverse.ai/tenant": sanitize_k8s_label_value(label)}
     )
-    return {
+    workflow = {
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "Workflow",
         "metadata": {"name": name, "namespace": "cogniverse", "labels": labels},
@@ -3172,13 +3173,20 @@ def _workflow(name: str, tenant_id: str, phase: str, *, label: str, cron: bool):
             "arguments": {"parameters": [{"name": "tenant-id", "value": tenant_id}]},
             "workflowTemplateRef": {"name": "cogniverse-optimization-runner"},
         },
-        "status": {"phase": phase},
     }
+    if phase is not None:
+        workflow["status"] = {"phase": phase}
+    return workflow
+
+
+# The tenant's Workflows Argo still runs, or has yet to run.
+_UNFINISHED_ROLES = ("running", "pending", "unstarted")
 
 
 def _seed_workflows(kubeconfig, tenant_id: str, peer: str) -> dict:
-    """The tenant's finished and running Workflows, and a peer's finished one
-    carrying the tenant's label; returns their names by role."""
+    """The tenant's finished, running, pending and not yet started Workflows,
+    and a peer's finished and running ones carrying the tenant's label;
+    returns their names by role."""
     from tests.utils.argo_api import apply_manifest
 
     stem = uuid.uuid4().hex[:8]
@@ -3187,14 +3195,20 @@ def _seed_workflows(kubeconfig, tenant_id: str, peer: str) -> dict:
         "failed_scheduled": f"job-failed-{stem}",
         "errored": f"optimize-error-{stem}",
         "running": f"optimize-running-{stem}",
+        "pending": f"job-pending-{stem}",
+        "unstarted": f"optimize-unstarted-{stem}",
         "peer": f"optimize-peer-{stem}",
+        "peer_running": f"optimize-peer-running-{stem}",
     }
     for role, owner, phase, cron in (
         ("succeeded", tenant_id, "Succeeded", False),
         ("failed_scheduled", tenant_id, "Failed", True),
         ("errored", tenant_id, "Error", False),
         ("running", tenant_id, "Running", False),
+        ("pending", tenant_id, "Pending", True),
+        ("unstarted", tenant_id, None, False),
         ("peer", peer, "Succeeded", False),
+        ("peer_running", peer, "Running", True),
     ):
         apply_manifest(
             kubeconfig,
@@ -3203,31 +3217,117 @@ def _seed_workflows(kubeconfig, tenant_id: str, peer: str) -> dict:
     return names
 
 
+def _own_workflows(names: dict) -> set:
+    return {name for role, name in names.items() if not role.startswith("peer")}
+
+
+def _seed_cron_workflows(kubeconfig, tenant_id: str) -> dict:
+    """Two scheduled jobs of the tenant, one of a raw tenant id whose label
+    and CronWorkflow name prefix are the tenant's, and one of a tenant whose
+    id the tenant's begins, each as ``create_job`` builds it; returns their
+    names by role."""
+    from cogniverse_runtime.routers import tenant as tenant_router
+    from tests.utils.argo_api import apply_manifest
+
+    stem = uuid.uuid4().hex[:6]
+    names = {}
+    for role, owner in (
+        ("own_a", tenant_id),
+        ("own_b", tenant_id),
+        ("label_peer", tenant_id.replace(":", "-")),
+        ("prefix_peer", f"{tenant_id}0"),
+    ):
+        manifest = tenant_router._build_cron_workflow(
+            owner, f"{role.replace('_', '')}{stem}", "0 3 * * *", "cogniverse"
+        )
+        apply_manifest(kubeconfig, manifest)
+        names[role] = manifest["metadata"]["name"]
+    return names
+
+
+def _own_cron_workflows(names: dict) -> set:
+    return {names["own_a"], names["own_b"]}
+
+
 def _argo_workflows(api_url: str) -> set:
     listed = requests.get(f"{api_url}/api/v1/workflows/cogniverse", timeout=10)
     assert listed.status_code == 200, listed.text
     return {item["metadata"]["name"] for item in listed.json().get("items") or []}
 
 
+def _argo_cron_workflows(api_url: str) -> set:
+    listed = requests.get(f"{api_url}/api/v1/cron-workflows/cogniverse", timeout=10)
+    assert listed.status_code == 200, listed.text
+    return {item["metadata"]["name"] for item in listed.json().get("items") or []}
+
+
+def _argo_mutations(proxy) -> list:
+    """Every Argo request that changes something, in arrival order."""
+    return [
+        (method, path.split("?", 1)[0])
+        for method, path, _ in proxy.requests
+        if method != "GET"
+    ]
+
+
+def _expected_mutations(cron_names, unfinished, workflow_names) -> list:
+    """CronWorkflows deleted first, then running Workflows terminated, then
+    every Workflow deleted, each in name order."""
+    return [
+        *(
+            ("DELETE", f"/api/v1/cron-workflows/cogniverse/{name}")
+            for name in sorted(cron_names)
+        ),
+        *(
+            ("PUT", f"/api/v1/workflows/cogniverse/{name}/terminate")
+            for name in sorted(unfinished)
+        ),
+        *(
+            ("DELETE", f"/api/v1/workflows/cogniverse/{name}")
+            for name in sorted(workflow_names)
+        ),
+    ]
+
+
 @pytest.mark.asyncio
-async def test_a_delete_removes_the_tenants_finished_workflows(
+async def test_a_delete_stops_and_removes_the_tenants_schedules_and_workflows(
     wired_tenant_manager, argo, caplog
 ):
-    """Its succeeded, failed and errored Workflows go, scheduled or not; its
-    running one, and a peer's run carrying the same label, stay."""
+    """Its scheduled jobs' CronWorkflows go first; then its running, pending
+    and not yet started Workflows are terminated, and every Workflow of it,
+    finished or stopped, run on demand or by a schedule, is deleted. A peer's
+    schedules and runs, whether they carry the tenant's label or its CronWorkflow
+    name prefix, stay untouched."""
     from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from tests.utils.http_fault_proxy import InterceptFaultProxy
 
     tenant_id = _unique_tenant()
-    names = _seed_workflows(argo["kubeconfig"], tenant_id, f"{tenant_id}0")
+    workflows = _seed_workflows(argo["kubeconfig"], tenant_id, f"{tenant_id}0")
+    crons = _seed_cron_workflows(argo["kubeconfig"], tenant_id)
     await _create_bare_tenant(tenant_id)
     caplog.set_level(logging.ERROR, logger=tm.logger.name)
 
-    result = await tm.delete_tenant_internal(tenant_id)
+    with InterceptFaultProxy(argo["url"]) as proxy:
+        _use_argo(proxy.url)
+        try:
+            result = await tm.delete_tenant_internal(tenant_id)
+        finally:
+            _use_argo(argo["url"])
+        mutations = _argo_mutations(proxy)
 
     assert result["status"] == "deleted"
-    assert _argo_workflows(argo["url"]) & set(names.values()) == {
-        names["running"],
-        names["peer"],
+    assert mutations == _expected_mutations(
+        _own_cron_workflows(crons),
+        {workflows[role] for role in _UNFINISHED_ROLES},
+        _own_workflows(workflows),
+    )
+    assert _argo_workflows(argo["url"]) & set(workflows.values()) == {
+        workflows["peer"],
+        workflows["peer_running"],
+    }
+    assert _argo_cron_workflows(argo["url"]) & set(crons.values()) == {
+        crons["label_peer"],
+        crons["prefix_peer"],
     }
     assert _error_lines(caplog) == []
     assert tenant_delete_pending(tm._config_manager.store, tenant_id) is False
@@ -3237,12 +3337,17 @@ async def test_a_delete_removes_the_tenants_finished_workflows(
 async def test_an_unreachable_argo_leaves_the_delete_pending_until_its_retry(
     wired_tenant_manager, argo, cluster_events, caplog
 ):
+    """Argo does not answer: the delete drops the tenant, names at ERROR the
+    schedules and Workflows it could not list, and stays pending with both
+    intact; its retry, once Argo answers, removes them and completes it."""
     from cogniverse_core.common.tenant_utils import tenant_delete_pending
 
     store = tm._config_manager.store
     tenant_id = _unique_tenant()
     names = _seed_workflows(argo["kubeconfig"], tenant_id, f"{tenant_id}0")
-    finished = {names["succeeded"], names["failed_scheduled"], names["errored"]}
+    crons = _seed_cron_workflows(argo["kubeconfig"], tenant_id)
+    own = _own_workflows(names)
+    own_crons = _own_cron_workflows(crons)
     await _create_bare_tenant(tenant_id)
     caplog.set_level(logging.ERROR, logger=tm.logger.name)
     with socket.socket() as probe:
@@ -3256,64 +3361,284 @@ async def test_an_unreachable_argo_leaves_the_delete_pending_until_its_retry(
         _use_argo(argo["url"])
     logged = _error_lines(caplog)
     pending = tenant_delete_pending(store, tenant_id)
-    left = _argo_workflows(argo["url"]) & finished
+    left = _argo_workflows(argo["url"]) & own
+    left_crons = _argo_cron_workflows(argo["url"]) & own_crons
     caplog.clear()
 
     retried = await tm.delete_tenant_internal(tenant_id)
 
     assert result["status"] == "deleted"
     assert [message.split(" (", 1)[0] for message in logged] == [
-        f"Cannot list the workflows of deleted tenant {tenant_id}"
+        f"Cannot list the CronWorkflows of deleted tenant {tenant_id}",
+        f"Cannot list the workflows of deleted tenant {tenant_id}",
     ]
-    assert logged[0].endswith(
-        "; the delete stays pending and its retry, or the next create of the "
+    assert [message.split("; ", 1)[1] for message in logged] == [
+        "the delete stays pending and its retry, or the next create of the "
         "tenant, deletes them"
-    ), logged
-    assert (pending, left) == (True, finished)
+    ] * 2, logged
+    assert [message.split(" (", 1)[1].split(");", 1)[0] for message in logged] == [
+        "ArgoListUnavailableError: Argo API unreachable: All connection attempts failed"
+    ] * 2, logged
+    assert (pending, left, left_crons) == (True, own, own_crons)
     assert retried["workers_released"] == [cluster_events.worker_id]
-    assert _argo_workflows(argo["url"]) & finished == set()
+    assert _argo_workflows(argo["url"]) & set(names.values()) == {
+        names["peer"],
+        names["peer_running"],
+    }
+    assert _argo_cron_workflows(argo["url"]) & set(crons.values()) == {
+        crons["label_peer"],
+        crons["prefix_peer"],
+    }
     assert _error_lines(caplog) == []
     assert tenant_delete_pending(store, tenant_id) is False
 
 
 @pytest.mark.asyncio
-async def test_a_workflow_argo_refuses_to_delete_is_named_and_removed_on_retry(
+async def test_argo_refusals_mid_delete_are_named_and_finished_by_the_retry(
     wired_tenant_manager, argo, caplog
 ):
+    """Argo refuses one CronWorkflow delete, one terminate and one Workflow
+    delete: everything else goes, the refused ones are named at ERROR with
+    Argo's answer and stay, a Workflow it would not stop is not deleted, the
+    delete stays pending, and its retry removes the rest."""
     from cogniverse_core.common.tenant_utils import tenant_delete_pending
     from tests.utils.http_fault_proxy import InterceptFaultProxy
 
     store = tm._config_manager.store
     tenant_id = _unique_tenant()
     names = _seed_workflows(argo["kubeconfig"], tenant_id, f"{tenant_id}0")
-    finished = {names["succeeded"], names["failed_scheduled"], names["errored"]}
+    crons = _seed_cron_workflows(argo["kubeconfig"], tenant_id)
+    own = _own_workflows(names)
+    refused_cron = crons["own_b"]
+    unstoppable = names["running"]
     refused = names["errored"]
+    refusals = {
+        ("DELETE", f"/api/v1/cron-workflows/cogniverse/{refused_cron}"),
+        ("PUT", f"/api/v1/workflows/cogniverse/{unstoppable}/terminate"),
+        ("DELETE", f"/api/v1/workflows/cogniverse/{refused}"),
+    }
     await _create_bare_tenant(tenant_id)
     caplog.set_level(logging.ERROR, logger=tm.logger.name)
 
-    def refuse_one(method, path, _body):
-        if method == "DELETE" and path.endswith(
-            f"/api/v1/workflows/cogniverse/{refused}"
-        ):
+    def refuse(method, path, _body):
+        if (method, path) in refusals:
             return 500, {"code": 13, "message": "injected storage failure"}
         return None
 
-    with InterceptFaultProxy(argo["url"], refuse_one) as proxy:
+    with InterceptFaultProxy(argo["url"], refuse) as proxy:
         _use_argo(proxy.url)
         try:
             await tm.delete_tenant_internal(tenant_id)
         finally:
             _use_argo(argo["url"])
+        mutations = _argo_mutations(proxy)
     logged = _error_lines(caplog)
     pending = tenant_delete_pending(store, tenant_id)
-    left = _argo_workflows(argo["url"]) & finished
+    left = _argo_workflows(argo["url"]) & own
+    left_crons = _argo_cron_workflows(argo["url"]) & _own_cron_workflows(crons)
     caplog.clear()
 
     await tm.delete_tenant_internal(tenant_id)
 
+    assert mutations == _expected_mutations(
+        _own_cron_workflows(crons),
+        {names[role] for role in _UNFINISHED_ROLES},
+        own - {unstoppable},
+    )
     assert [message.split(" (", 1)[0] for message in logged] == [
-        f"Cannot delete workflow {refused} of deleted tenant {tenant_id}"
+        f"Cannot delete CronWorkflow {refused_cron} of deleted tenant {tenant_id}",
+        f"Cannot stop workflow {unstoppable} of deleted tenant {tenant_id}",
+        f"Cannot delete workflow {refused} of deleted tenant {tenant_id}",
     ]
-    assert (pending, left) == (True, {refused})
-    assert _argo_workflows(argo["url"]) & finished == set()
+    assert [message.split(" (", 1)[1].split(")", 1)[0] for message in logged] == [
+        'HTTP 500: {"code": 13, "message": "injected storage failure"}'
+    ] * 3, logged
+    assert (pending, left, left_crons) == (True, {unstoppable, refused}, {refused_cron})
+    assert _argo_workflows(argo["url"]) & own == set()
+    assert _argo_cron_workflows(argo["url"]) & set(crons.values()) == {
+        crons["label_peer"],
+        crons["prefix_peer"],
+    }
+    assert tenant_delete_pending(store, tenant_id) is False
+
+
+@pytest.mark.asyncio
+async def test_a_deployment_without_argo_completes_the_delete_touching_no_workflow(
+    wired_tenant_manager, argo, caplog
+):
+    """With no Argo API configured the runtime schedules and runs nothing on
+    Argo, so the delete has none to remove: it completes, logs no error, and
+    sends Argo nothing."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from cogniverse_runtime.config_loader import WorkflowSettings, get_workflow_settings
+
+    store = tm._config_manager.store
+    tenant_id = _unique_tenant()
+    names = _seed_workflows(argo["kubeconfig"], tenant_id, f"{tenant_id}0")
+    crons = _seed_cron_workflows(argo["kubeconfig"], tenant_id)
+    await _create_bare_tenant(tenant_id)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+
+    get_workflow_settings._instance = WorkflowSettings(api_url=None)
+    try:
+        result = await tm.delete_tenant_internal(tenant_id)
+    finally:
+        _use_argo(argo["url"])
+
+    assert result["status"] == "deleted"
+    assert _error_lines(caplog) == []
+    assert tenant_delete_pending(store, tenant_id) is False
+    assert _argo_workflows(argo["url"]) & set(names.values()) == set(names.values())
+    assert _argo_cron_workflows(argo["url"]) & set(crons.values()) == set(
+        crons.values()
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_tenants_deleted_together_each_remove_only_their_argo_objects(
+    wired_tenant_manager, argo, caplog
+):
+    """Two deletes, one tenant's id beginning the other's, reach Argo
+    together: each holds at a barrier until the other's first CronWorkflow
+    delete has arrived. Each removes exactly its own schedules and Workflows;
+    a third tenant's stay."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+    store = tm._config_manager.store
+    first = _unique_tenant()
+    second = f"{first}0"
+    bystander = _unique_tenant()
+    first_runs = _seed_workflows(argo["kubeconfig"], first, bystander)
+    second_runs = _seed_workflows(argo["kubeconfig"], second, bystander)
+    first_crons = _seed_cron_workflows(argo["kubeconfig"], first)
+    second_crons = _seed_cron_workflows(argo["kubeconfig"], second)
+    bystander_crons = _seed_cron_workflows(argo["kubeconfig"], bystander)
+    # The first tenant's prefix peer is the second tenant.
+    owners = {
+        **{name: first for name in _own_cron_workflows(first_crons)},
+        **{name: second for name in _own_cron_workflows(second_crons)},
+        first_crons["prefix_peer"]: second,
+    }
+    await _create_bare_tenant(first)
+    await _create_bare_tenant(second)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+    together = threading.Barrier(2)
+    arrived: list = []
+    lock = threading.Lock()
+
+    def hold_until_both(method, path, _body):
+        prefix = "/api/v1/cron-workflows/cogniverse/"
+        if method != "DELETE" or not path.startswith(prefix):
+            return None
+        owner = owners.get(path.removeprefix(prefix), "unknown")
+        with lock:
+            first_arrival = owner not in arrived
+            arrived.append(owner)
+        if first_arrival:
+            together.wait(timeout=120)
+        return None
+
+    with InterceptFaultProxy(argo["url"], hold_until_both) as proxy:
+        _use_argo(proxy.url)
+        try:
+            results = await asyncio.gather(
+                tm.delete_tenant_internal(first), tm.delete_tenant_internal(second)
+            )
+        finally:
+            _use_argo(argo["url"])
+
+    seeded_runs = {*first_runs.values(), *second_runs.values()}
+    assert [result["status"] for result in results] == ["deleted", "deleted"]
+    assert (sorted(arrived), together.broken) == (
+        sorted([first, first, second, second, second]),
+        False,
+    )
+    assert _argo_workflows(argo["url"]) & seeded_runs == {
+        first_runs["peer"],
+        first_runs["peer_running"],
+        second_runs["peer"],
+        second_runs["peer_running"],
+    }
+    assert _argo_cron_workflows(argo["url"]) & {
+        *first_crons.values(),
+        *second_crons.values(),
+        *bystander_crons.values(),
+    } == {
+        first_crons["label_peer"],
+        second_crons["label_peer"],
+        second_crons["prefix_peer"],
+        *bystander_crons.values(),
+    }
+    assert _error_lines(caplog) == []
+    assert (
+        tenant_delete_pending(store, first),
+        tenant_delete_pending(store, second),
+    ) == (False, False)
+
+
+@pytest.mark.asyncio
+async def test_a_schedule_firing_while_its_delete_lands_leaves_no_run_behind(
+    wired_tenant_manager, argo, caplog
+):
+    """The tenant's CronWorkflow fires at the moment its delete reaches Argo:
+    the delete request is held at a barrier while the schedule spawns a
+    running Workflow, then forwarded. The spawned run is stopped and deleted
+    with the tenant's others, because schedules go before runs are listed."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from tests.utils.argo_api import apply_manifest
+    from tests.utils.http_fault_proxy import InterceptFaultProxy
+
+    store = tm._config_manager.store
+    tenant_id = _unique_tenant()
+    crons = _seed_cron_workflows(argo["kubeconfig"], tenant_id)
+    firing = crons["own_a"]
+    spawned = f"{firing}-{int(time.time())}"
+    await _create_bare_tenant(tenant_id)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+    fired = threading.Barrier(2)
+    spawn_done = threading.Event()
+    spawns: list = []
+
+    def controller():
+        try:
+            fired.wait(timeout=60)
+        except threading.BrokenBarrierError:
+            return
+        apply_manifest(
+            argo["kubeconfig"],
+            _workflow(spawned, tenant_id, "Running", label=tenant_id, cron=True),
+        )
+        spawns.append(spawned)
+        spawn_done.set()
+
+    def fire_on_delete(method, path, _body):
+        if (method, path) == ("DELETE", f"/api/v1/cron-workflows/cogniverse/{firing}"):
+            fired.wait(timeout=60)
+            spawn_done.wait(timeout=60)
+        return None
+
+    schedule = threading.Thread(target=controller, daemon=True)
+    schedule.start()
+    with InterceptFaultProxy(argo["url"], fire_on_delete) as proxy:
+        _use_argo(proxy.url)
+        try:
+            result = await tm.delete_tenant_internal(tenant_id)
+        finally:
+            _use_argo(argo["url"])
+            fired.abort()
+            schedule.join(timeout=60)
+        mutations = _argo_mutations(proxy)
+
+    assert result["status"] == "deleted"
+    assert spawns == [spawned]
+    assert mutations == _expected_mutations(
+        _own_cron_workflows(crons), {spawned}, {spawned}
+    )
+    assert spawned not in _argo_workflows(argo["url"])
+    assert _argo_cron_workflows(argo["url"]) & set(crons.values()) == {
+        crons["label_peer"],
+        crons["prefix_peer"],
+    }
+    assert _error_lines(caplog) == []
     assert tenant_delete_pending(store, tenant_id) is False
