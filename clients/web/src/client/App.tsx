@@ -39,6 +39,9 @@ function rememberThread(tenant: string, agent: string, thread: string) {
   }
 }
 
+/** CopilotKit takes its renderers once; a new array on a render is an error. */
+const ACTIVITY_RENDERERS = [noticeRenderer];
+
 /** Every request CopilotKit sends names the active tenant. */
 const tenantHeaders = (): Record<string, string> => {
   const tenant = currentTenant();
@@ -182,7 +185,7 @@ export function App() {
     <CopilotKitProvider
       runtimeUrl="/ui-api/copilotkit"
       headers={tenantHeaders}
-      renderActivityMessages={[noticeRenderer]}
+      renderActivityMessages={ACTIVITY_RENDERERS}
       properties={properties}
     >
       <div className="shell">

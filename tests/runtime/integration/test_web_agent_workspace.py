@@ -15,6 +15,7 @@ import asyncio
 import threading
 import uuid
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -678,3 +679,34 @@ class TestNavigation:
         expect(_user_messages(page)).to_have_count(0)
         box.fill("hello")
         expect(send).to_be_enabled()
+
+    def test_the_shell_loads_and_navigates_without_console_errors(self, page, web_url):
+        # This runtime's tenant registry answers 503 by design (see
+        # ``harness_key_admin``), which the browser logs for each tenant check.
+        probe = f"/ui-api/runtime/admin/tenants/{quote(TENANT, safe='')}"
+        errors = []
+        page.on(
+            "console",
+            lambda message: (
+                errors.append(message.text)
+                if message.type == "error"
+                and not (
+                    message.text.startswith("Failed to load resource")
+                    and message.location["url"].endswith(probe)
+                )
+                else None
+            ),
+        )
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(f"{web_url}/#/")
+        expect(page.get_by_placeholder("Ask Gateway…")).to_be_visible()
+        nav = page.get_by_role("navigation")
+        nav.get_by_role("link", name="Chat", exact=True).click()
+        expect(page.get_by_placeholder("Ask Chat…")).to_be_visible()
+        first = page.url
+        page.get_by_role("button", name="New conversation").click()
+        expect(page).not_to_have_url(first)
+        expect(page.get_by_placeholder("Ask Chat…")).to_be_visible()
+        nav.get_by_role("link", name="Search", exact=True).click()
+        expect(page.get_by_placeholder("Ask Search…")).to_be_visible()
+        assert errors == []
