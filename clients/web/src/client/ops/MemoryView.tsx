@@ -254,11 +254,11 @@ function SearchForm({
   const [draft, setDraft] = useState(query);
   const [count, setCount] = useState(String(limit));
   const action = useAction();
+  const n = Number(count);
+  const valid = Number.isInteger(n) && n >= 1 && n <= LIST_LIMIT;
   const run = (text: string) =>
     action.run(async () => {
-      const n = Number(count);
-      if (!Number.isInteger(n) || n < 1 || n > LIST_LIMIT)
-        throw new Error(`Results must be a whole number from 1 to ${LIST_LIMIT}.`);
+      if (!valid) throw new Error(`Results must be a whole number from 1 to ${LIST_LIMIT}.`);
       onSearch(text, n);
     });
   return (
@@ -285,7 +285,18 @@ function SearchForm({
       </label>
       <button type="submit">Search</button>
       {query && (
-        <button type="button" onClick={() => (setDraft(''), run(''))}>
+        <button
+          type="button"
+          onClick={() => {
+            // Never refused: a Results box that holds no valid count gives
+            // way to the count in use.
+            const shown = valid ? n : limit;
+            setDraft('');
+            setCount(String(shown));
+            action.clear();
+            onSearch('', shown);
+          }}
+        >
           Show all
         </button>
       )}
