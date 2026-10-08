@@ -23,7 +23,12 @@ from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
 from cogniverse_agents.optimizer.entity_self_consistency import (
     SELF_CONSISTENCY_METADATA_KEY,
 )
-from cogniverse_core.approval.interfaces import ReviewDecision
+from cogniverse_core.approval.interfaces import (
+    ApprovalBatch,
+    ApprovalStatus,
+    ReviewDecision,
+    ReviewItem,
+)
 from cogniverse_runtime.routers import approvals
 from tests.utils.approval_review import (
     ROUTING,
@@ -31,6 +36,7 @@ from tests.utils.approval_review import (
     WORKFLOW,
     approved_rows,
     approved_rows_until,
+    reject_without_regenerating,
     review_config_manager,
     run_in_own_loop,
     save_review_batch,
@@ -41,7 +47,7 @@ from tests.utils.web_client import (
 )
 from tests.utils.web_ops import serve_ops_runtime
 
-pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast, pytest.mark.no_shared_vespa]
 
 KEY = "web-ops-harness-key"
 
@@ -166,7 +172,45 @@ def _facts(panel) -> dict[str, str]:
 
 
 def _decide(page: Page, item_id: str, button: str):
-    _item(page, item_id).get_by_role("button", name=button).click()
+    _item(page, item_id).get_by_role("button", name=button, exact=True).click()
+
+
+def _rejection(page: Page, item_id: str):
+    return _item(page, item_id).get_by_role("form", name=f"Reject {item_id}")
+
+
+def _section(page: Page, name: str):
+    page.get_by_role("navigation", name="Approval sections").get_by_role(
+        "button", name=name, exact=True
+    ).click()
+
+
+def _history_until(runtime_url, tenant, done, timeout=60.0):
+    """The served review history once ``done(history)`` holds (Phoenix
+    serves spans and annotations after a short indexing delay)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        response = httpx.get(
+            f"{runtime_url}/admin/tenant/{tenant}/approvals/history", timeout=60
+        )
+        assert response.status_code == 200, response.text
+        history = response.json()
+        if done(history) or time.monotonic() > deadline:
+            return history
+        time.sleep(2)
+
+
+def _ids(entries):
+    return [entry["item_id"] for entry in entries]
+
+
+def _rows(table, count: int) -> list[list[str]]:
+    """The cells of each of the table's ``count`` body rows, once it has them."""
+    expect(table.locator("tbody tr")).to_have_count(count)
+    return [
+        row.get_by_role("cell").all_inner_texts()
+        for row in table.locator("tbody tr").all()
+    ]
 
 
 class TestApprovalsView:
@@ -186,17 +230,20 @@ class TestApprovalsView:
             _queue(page, tenant).get_by_text("2 items await review.")
         ).to_be_visible()
         facts = _facts(_item(page, routing))
-        assert {key: value for key, value in facts.items() if key != "Example"} == {
+        assert facts == {
             "Batch": batch,
             "Schema": "RoutingExperienceSchema",
             "Status": "pending_review",
             "Confidence": "0.40",
+            "Retry count": "0",
             "Created": served[routing]["created_at"],
+            "Query": ROUTING["query"],
             **(
                 {"Reasoning": served[routing]["reasoning"]}
                 if served[routing]["reasoning"]
                 else {}
             ),
+            "Entities": "gradient descent (CONCEPT)",
             "Self-consistency": (
                 "Agreement (5 samples): gradient descent (CONCEPT) 0.60 — needs review\n"
                 "Agreement (5 samples): lecture (MEDIA) 1.00"
@@ -205,13 +252,14 @@ class TestApprovalsView:
         assert served[routing]["metadata"][SELF_CONSISTENCY_METADATA_KEY] == (
             SELF_CONSISTENCY
         )
-        assert json.loads(facts["Example"]) == ROUTING
-        template = served[workflow]["correction_template"]
         assert (
             json.loads(
-                _item(page, workflow).get_by_label("Corrections (JSON)").input_value()
+                _item(page, routing).get_by_label("Example", exact=True).text_content()
             )
-            == template
+            == ROUTING
+        )
+        expect(_item(page, routing).get_by_label("Generation metadata")).to_have_count(
+            0
         )
 
         _decide(page, routing, "Approve")
@@ -220,23 +268,38 @@ class TestApprovalsView:
         )
         _queue(page, tenant).get_by_label("Reviewer").fill("reviewer@example.com")
 
+        # Each correctable field has its own editor, prefilled with its value.
+        template = served[workflow]["correction_template"]
         _decide(page, workflow, "Reject with corrections")
-        expect(_item(page, workflow).get_by_role("alert")).to_have_text(
-            "A rejection needs feedback."
-        )
-        form = _item(page, workflow)
-        form.get_by_label("Feedback").fill("a report needs the report agent")
-        _decide(page, workflow, "Reject with corrections")
-        expect(form.get_by_role("alert")).to_have_text(
-            "A WorkflowExecutionSchema rejection needs at least one correction."
-        )
+        form = _rejection(page, workflow)
+        assert form.locator("fieldset > label").evaluate_all(
+            "labels => labels.map(label => [...label.childNodes]"
+            ".filter(node => node.nodeType === Node.TEXT_NODE)"
+            ".map(node => node.textContent).join(''))"
+        ) == list(template)
+        for name, value in template.items():
+            editor = form.get_by_label(name, exact=True)
+            if isinstance(value, bool):
+                assert editor.is_checked() is value
+            elif isinstance(value, (list, dict)):
+                assert json.loads(editor.input_value()) == value
+            else:
+                assert editor.input_value() == str(value)
         expect(_item(page, routing).get_by_role("button")).to_have_text(
             ["Approve", "Reject and regenerate"]
         )
-        form.get_by_label("Corrections (JSON)").fill('{"bogus": 1}')
-        _decide(page, workflow, "Reject with corrections")
-        expect(form.get_by_role("alert")).to_have_text(
-            "WorkflowExecutionSchema unsupported correction fields: bogus"
+
+        form.get_by_role("button", name="Submit rejection").click()
+        expect(_item(page, workflow).get_by_role("alert")).to_have_text(
+            "A WorkflowExecutionSchema rejection needs at least one correction."
+        )
+        form.get_by_label("task_count", exact=True).fill("three")
+        form.get_by_role("button", name="Submit rejection").click()
+        expect(form.get_by_role("alert")).to_have_text("task_count must be a number.")
+        form.get_by_role("button", name="Cancel").click()
+        expect(_rejection(page, workflow)).to_have_count(0)
+        expect(_item(page, workflow).get_by_role("button")).to_have_text(
+            ["Approve", "Reject with corrections"]
         )
         assert {
             key: item["data"]
@@ -245,10 +308,14 @@ class TestApprovalsView:
         assert approved_rows(review["storage"], routing) == 0
 
         corrected = ["video_search_agent", "detailed_report_agent"]
-        form.get_by_label("Corrections (JSON)").fill(
-            json.dumps(dict(template, agent_sequence=corrected))
-        )
         _decide(page, workflow, "Reject with corrections")
+        form = _rejection(page, workflow)
+        expect(form.get_by_label("task_count", exact=True)).to_have_value(
+            str(WORKFLOW["task_count"])
+        )
+        form.get_by_label("Feedback").fill("a report needs the report agent")
+        form.get_by_label("agent_sequence", exact=True).fill(json.dumps(corrected))
+        form.get_by_role("button", name="Submit rejection").click()
         notice = page.get_by_role("status")
         expect(notice).to_contain_text(
             f"Rejected {workflow}; its corrected replacement "
@@ -287,6 +354,223 @@ class TestApprovalsView:
         expect(
             _queue(page, tenant).get_by_text("1 item awaits review.")
         ).to_be_visible()
+
+        # The history tabs read the decisions back from the store.
+        history = _history_until(
+            runtime_url,
+            tenant,
+            lambda body: (
+                _ids(body["approved"]) == [routing, f"{batch}_confident"]
+                and _ids(body["rejected"]) == [workflow]
+            ),
+        )
+        _section(page, "Approved")
+        approved = page.get_by_role("region", name=f"Approved items of {tenant}")
+        expect(approved.get_by_text("2 items approved.")).to_be_visible()
+        assert _rows(approved.get_by_role("table", name="Approved items"), 2) == [
+            [
+                routing,
+                ROUTING["query"],
+                "0.40",
+                "approved",
+                "reviewer@example.com",
+                history["approved"][0]["reviewed_at"],
+            ],
+            [
+                f"{batch}_confident",
+                "play the intro clip",
+                "0.95",
+                "auto_approved",
+                "—",
+                "—",
+            ],
+        ]
+        _section(page, "Rejected")
+        rejected = page.get_by_role("region", name=f"Rejected items of {tenant}")
+        expect(rejected.get_by_text("1 item rejected.")).to_be_visible()
+        assert _rows(rejected.get_by_role("table", name="Rejected items"), 1) == [
+            [
+                workflow,
+                WORKFLOW["query"],
+                "a report needs the report agent",
+                json.dumps({"agent_sequence": corrected}, separators=(",", ":")),
+                "reviewer@example.com",
+                f"{replacement} (regenerated)",
+                "",
+            ]
+        ]
+        _section(page, "Statistics")
+        stats = page.get_by_role("region", name=f"Review statistics of {tenant}")
+        totals = stats.locator("dl.facts > dd")
+        expect(stats.locator("dl.facts > dt")).to_have_text(
+            [
+                "Total items",
+                "Awaiting review",
+                "Auto-approved",
+                "Approved",
+                "Rejected",
+                "Approval rate",
+            ]
+        )
+        expect(totals).to_have_text(["4", "1", "1", "1", "1", "50.0%"])
+        bars = stats.get_by_role("figure", name="Average confidence by status")
+        expect(bars.locator(".bar-label")).to_have_text(
+            ["Awaiting review", "Auto-approved", "Approved", "Rejected"]
+        )
+        expect(bars.locator(".bar-value")).to_have_text(
+            [f"{served[replacement]['confidence']:.2f}", "0.95", "0.40", "0.30"]
+        )
+
+    def test_a_rejected_item_nothing_replaced_is_regenerated_from_the_page(
+        self, page, web_url, runtime_url, review
+    ):
+        tenant, batch = review["tenant"], review["batch"]
+        routing, workflow = review["routing"], review["workflow"]
+        corrected = ["video_search_agent", "detailed_report_agent"]
+        _served_queue_until(runtime_url, tenant, {routing, workflow})
+        run_in_own_loop(
+            reject_without_regenerating(
+                review["storage"],
+                batch,
+                workflow,
+                feedback="wrong agents",
+                corrections={"agent_sequence": corrected},
+                reviewer="earlier@example.com",
+            )
+        )
+        _history_until(
+            runtime_url, tenant, lambda body: _ids(body["rejected"]) == [workflow]
+        )
+        _show(page, web_url, tenant)
+        _section(page, "Rejected")
+        rejected = page.get_by_role("region", name=f"Rejected items of {tenant}")
+        table = rejected.get_by_role("table", name="Rejected items")
+        assert _rows(table, 1) == [
+            [
+                workflow,
+                WORKFLOW["query"],
+                "wrong agents",
+                json.dumps({"agent_sequence": corrected}, separators=(",", ":")),
+                "earlier@example.com",
+                "—",
+                "Regenerate",
+            ]
+        ]
+        table.get_by_role("button", name="Regenerate").click()
+        notice = page.get_by_role("status")
+        expect(notice).to_contain_text(f"Regenerated {workflow} as ")
+        replacement = (
+            notice.inner_text()
+            .removeprefix(f"Regenerated {workflow} as ")
+            .removesuffix("; it awaits review.")
+        )
+        served = _served_queue_until(runtime_url, tenant, {routing, replacement})
+        assert (served[replacement]["data"], served[replacement]["status"]) == (
+            dict(WORKFLOW, agent_sequence=corrected),
+            "regenerated",
+        )
+        _history_until(
+            runtime_url,
+            tenant,
+            lambda body: body["rejected"][0]["replacement_id"] == replacement,
+        )
+        rejected.get_by_role("button", name="Refresh").click()
+        expect(table.locator("tbody tr").get_by_role("cell")).to_have_text(
+            [
+                workflow,
+                WORKFLOW["query"],
+                "wrong agents",
+                json.dumps({"agent_sequence": corrected}, separators=(",", ":")),
+                "earlier@example.com",
+                f"{replacement} (regenerated)",
+                "",
+            ]
+        )
+        _section(page, "Pending")
+        assert _shown_queue_until(page, tenant, {routing, replacement}) == {
+            routing,
+            replacement,
+        }
+
+    def test_an_item_no_schema_describes_is_rejected_without_feedback(
+        self, page, web_url, runtime_url, review
+    ):
+        tenant = review["tenant"]
+        batch = f"batch_{uuid4().hex[:8]}"
+        note = f"{batch}_note"
+        run_in_own_loop(
+            review["storage"].save_batch(
+                ApprovalBatch(
+                    batch_id=batch,
+                    items=[
+                        ReviewItem(
+                            item_id=note,
+                            data={"query": "what is this", "note": "free-form"},
+                            metadata={"agent_type": "routing"},
+                            confidence=0.2,
+                            status=ApprovalStatus.PENDING_REVIEW,
+                        )
+                    ],
+                    context={"tenant_id": tenant, "optimizer": "routing"},
+                )
+            )
+        )
+        pending = {review["routing"], review["workflow"], note}
+        _served_queue_until(runtime_url, tenant, pending)
+        _show(page, web_url, tenant)
+        assert _shown_queue_until(page, tenant, pending) == pending
+        _queue(page, tenant).get_by_label("Reviewer").fill("reviewer@example.com")
+        item = _item(page, note)
+        expect(
+            item.get_by_text(
+                "No example schema describes this item, so it can be approved "
+                "or rejected but not corrected."
+            )
+        ).to_be_visible()
+        _decide(page, note, "Reject")
+        form = _rejection(page, note)
+        expect(form.locator("fieldset")).to_have_count(0)
+        form.get_by_role("button", name="Submit rejection").click()
+        expect(page.get_by_role("status")).to_have_text(f"Rejected {note}.")
+        _history_until(
+            runtime_url, tenant, lambda body: _ids(body["rejected"]) == [note]
+        )
+        _section(page, "Rejected")
+        rejected = page.get_by_role("region", name=f"Rejected items of {tenant}")
+        assert _rows(rejected.get_by_role("table", name="Rejected items"), 1) == [
+            [note, "what is this", "—", "—", "reviewer@example.com", "—", ""]
+        ]
+
+    def test_a_tenant_with_nothing_to_review_says_so_on_every_tab(
+        self, page, web_url, runtime_url, telemetry_manager_with_phoenix
+    ):
+        tenant = f"webapprv{uuid4().hex[:8]}:main"
+        assert _served_queue(runtime_url, tenant) == {}
+        _show(page, web_url, tenant)
+        expect(
+            _queue(page, tenant).get_by_text(f"Nothing awaits review in {tenant}.")
+        ).to_be_visible()
+        for section, region, text in (
+            (
+                "Approved",
+                f"Approved items of {tenant}",
+                f"No approved items in {tenant}.",
+            ),
+            (
+                "Rejected",
+                f"Rejected items of {tenant}",
+                f"No rejected items in {tenant}.",
+            ),
+            (
+                "Statistics",
+                f"Review statistics of {tenant}",
+                f"No items in {tenant} yet.",
+            ),
+        ):
+            _section(page, section)
+            panel = page.get_by_role("region", name=region)
+            expect(panel.get_by_text(text)).to_be_visible()
+            expect(panel.get_by_role("table")).to_have_count(0)
 
 
 class TestConcurrency:
@@ -374,3 +658,27 @@ class TestFaults:
             0
         )
         expect(_review_titles(page)).to_have_count(0)
+        for section, region, empty in (
+            (
+                "Approved",
+                f"Approved items of {tenant}",
+                f"No approved items in {tenant}.",
+            ),
+            (
+                "Rejected",
+                f"Rejected items of {tenant}",
+                f"No rejected items in {tenant}.",
+            ),
+            (
+                "Statistics",
+                f"Review statistics of {tenant}",
+                f"No items in {tenant} yet.",
+            ),
+        ):
+            _section(page, section)
+            panel = page.get_by_role("region", name=region)
+            expect(panel.get_by_role("alert")).to_have_text(
+                f"Could not read the review history of tenant {tenant}."
+            )
+            expect(panel.get_by_text(empty)).to_have_count(0)
+            expect(panel.get_by_role("table")).to_have_count(0)

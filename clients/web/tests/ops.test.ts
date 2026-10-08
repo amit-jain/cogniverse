@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { queueSummary } from '../src/client/ops/AnnotationsView';
-import { changedCorrections, selfConsistencyLines } from '../src/client/ops/ApprovalsView';
+import {
+  changedCorrections,
+  confidenceBars,
+  entityLabels,
+  fieldKind,
+  fieldText,
+  generationMetadata,
+  parseField,
+  regenerable,
+  retryCount,
+  selfConsistencyLines,
+  type ReviewedItem,
+} from '../src/client/ops/ApprovalsView';
 import { ingestOutcome, TERMINAL } from '../src/client/ops/IngestionView';
 import { jsonText, parseJsonObject, sameJson } from '../src/client/ops/forms';
 import { splitList, withSavedReviews } from '../src/client/ops/WorkflowReviewsView';
@@ -266,6 +278,90 @@ describe('selfConsistencyLines', () => {
       'Agreement (5 samples): lecture (MEDIA) 1.00',
     ]);
     expect(selfConsistencyLines({ agent_type: 'routing' })).toEqual([]);
+  });
+});
+
+describe('review item details', () => {
+  const data = {
+    query: 'find the lecture',
+    entities: [{ text: 'gradient descent', type: 'CONCEPT' }, { text: 'lecture', type: 'MEDIA' }],
+    metadata: { _generation_metadata: { retry_count: 2, reasoning: 'two tries' } },
+  };
+
+  it('reads entities, retries and the generation record from the example', () => {
+    expect(entityLabels(data)).toEqual(['gradient descent (CONCEPT)', 'lecture (MEDIA)']);
+    expect(retryCount(data)).toBe(2);
+    expect(generationMetadata(data)).toEqual({ retry_count: 2, reasoning: 'two tries' });
+  });
+
+  it('reads an example without them as none, zero retries and no record', () => {
+    expect(entityLabels({ query: 'q' })).toEqual([]);
+    expect(retryCount({ query: 'q', metadata: {} })).toBe(0);
+    expect(generationMetadata({ query: 'q' })).toBe(undefined);
+  });
+});
+
+describe('corrections editor fields', () => {
+  it('edits each value as its kind and parses the text back to the same value', () => {
+    const template = {
+      chosen_agent: 'video_search_agent',
+      task_count: 2,
+      success: true,
+      agent_sequence: ['a', 'b'],
+      metadata: { k: 1 },
+    };
+    expect(Object.values(template).map(fieldKind)).toEqual(['text', 'number', 'boolean', 'json', 'json']);
+    for (const [name, value] of Object.entries(template))
+      expect(parseField(name, fieldKind(value), fieldText(value))).toEqual(value);
+  });
+
+  it('names the field whose text is not of its kind', () => {
+    expect(() => parseField('task_count', 'number', 'three')).toThrow(new Error('task_count must be a number.'));
+    expect(() => parseField('task_count', 'number', ' ')).toThrow(new Error('task_count must be a number.'));
+    expect(() => parseField('agent_sequence', 'json', '[a')).toThrow(new Error('agent_sequence is not valid JSON.'));
+  });
+});
+
+describe('review history', () => {
+  const rejected = (schema: string | null, replacement: string | null): ReviewedItem => ({
+    item_id: 'i1',
+    batch_id: 'b1',
+    status: 'rejected',
+    confidence: 0.3,
+    query: 'q',
+    data: {},
+    created_at: null,
+    reviewed_at: null,
+    schema_name: schema,
+    reviewer: 'r',
+    feedback: 'f',
+    corrections: {},
+    replacement_id: replacement,
+    replacement_status: replacement ? 'regenerated' : null,
+  });
+
+  it('offers regeneration only for a schema item nothing replaced', () => {
+    expect(regenerable(rejected('WorkflowExecutionSchema', null))).toBe(true);
+    expect(regenerable(rejected('WorkflowExecutionSchema', 'i2'))).toBe(false);
+    expect(regenerable(rejected(null, null))).toBe(false);
+  });
+
+  it('charts the mean confidence of each group that holds items, in group order', () => {
+    expect(
+      confidenceBars({
+        total: 3,
+        pending: 1,
+        auto_approved: 0,
+        approved: 1,
+        rejected: 1,
+        approval_rate: 1 / 3,
+        average_confidence: { rejected: 0.3, approved: 0.4, pending: 0.7 },
+      }),
+    ).toEqual([
+      { label: 'Awaiting review', value: 0.7 },
+      { label: 'Approved', value: 0.4 },
+      { label: 'Rejected', value: 0.3 },
+    ]);
   });
 });
 

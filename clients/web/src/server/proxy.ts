@@ -12,7 +12,7 @@ const ALLOWED = [
   /^\/admin\/tenant\/optimize-modes$/,
   /^\/admin\/tenant\/[^/]+\/optimize(\/runs(\/[^/]+(\/(cancel|retry))?)?)?$/,
   /^\/admin\/tenant\/[^/]+\/memories(\/[^/]+)?$/,
-  /^\/admin\/tenant\/[^/]+\/approvals(\/[^/]+\/[^/]+)?$/,
+  /^\/admin\/tenant\/[^/]+\/approvals(\/(history|stats)|\/[^/]+\/[^/]+(\/regenerate)?)?$/,
   /^\/admin\/tenant\/[^/]+\/orchestration-workflows(\/[^/]+\/annotation)?$/,
   /^\/admin\/tenant\/[^/]+\/telemetry\/(profile-selection|rlm-ab|traces|root-causes)$/,
   /^\/admin\/tenant\/[^/]+\/evaluation\/golden$/,
