@@ -114,7 +114,7 @@ surface without repeating their implementation guides.
 
 | Model module | Public API | Purpose |
 | --- | --- | --- |
-| `models.model_loaders` | `ModelLoader`, `ColPaliModelLoader`, `ColQwenModelLoader`, `ColBERTModelLoader`, `ModelLoaderFactory`, `get_or_load_model`, `is_remote_only_model`, `COLPALI_PROCESSOR_REVISIONS` | Local loader contracts, concrete loaders, loader selection, cache lookup, and the Hub processor revisions the ColPali loader pins. |
+| `models.model_loaders` | `ModelLoader`, `ColPaliModelLoader`, `ColQwenModelLoader`, `ColBERTModelLoader`, `ModelLoaderFactory`, `get_or_load_model`, `is_remote_only_model`, `COLPALI_PROCESSOR_REVISIONS`, `EMBEDDING_MODEL_LOADERS` | Local loader contracts, concrete loaders, loader selection, cache lookup, the Hub processor revisions the ColPali loader pins, and the `model_loader` values ingestion embeds with. |
 | `models.model_loaders` | `RemoteInferenceClient`, `RemoteColPaliLoader`, `RemoteXClipLoader`, `RemoteColBERTLoader`, `RemoteWhisperLoader`, `RemoteGlinerClient`, `get_or_load_gliner`, `GLINER_ENTITY_THRESHOLD` | Authenticated remote inference clients, cached GLiNER resolution, and the one GLiNER entity threshold both paths use. |
 | `models.semantic_embedder` | `SemanticEmbedder`, `RemoteOpenAIEmbedder`, `SemanticEmbedderNotConfiguredError`, `get_semantic_embedder`, `reset_semantic_embedder_cache` | OpenAI-compatible semantic embedding and cache control. |
 

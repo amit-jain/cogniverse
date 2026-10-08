@@ -5,7 +5,6 @@ Implements all store interfaces using Phoenix AsyncClient.
 """
 
 import asyncio
-import csv
 import io
 import logging
 import re
@@ -160,6 +159,27 @@ def _dataset_keys(
     return columns, [], []
 
 
+def _csv_cell_strings(data: pd.DataFrame) -> list[dict[str, str]]:
+    """Each row of ``data`` as ``{column: cell}``, every cell the string the
+    frame's CSV rendering holds for it (an empty cell is ``""``).
+
+    The rendering is parsed back with pandas' parser, which has no per-field
+    size limit; the ``csv`` module rejects any field over 128 KiB, which an
+    optimizer version's content or ledger exceeds routinely.
+    """
+    parsed = pd.read_csv(
+        io.StringIO(data.to_csv(index=False)),
+        header=None,
+        skiprows=1,
+        dtype=str,
+        keep_default_na=False,
+        na_filter=False,
+        skip_blank_lines=False,
+    )
+    names = [str(column) for column in data.columns]
+    return [dict(zip(names, values)) for values in parsed.itertuples(index=False)]
+
+
 def upload_dataset_rows(
     http_endpoint: str,
     *,
@@ -195,7 +215,7 @@ def upload_dataset_rows(
     if missing:
         raise ValueError(f"Dataset {name!r} upload has no columns {missing}")
     columns = list(dict.fromkeys((*inputs, *outputs, *metadata)))
-    rows = list(csv.DictReader(io.StringIO(data[columns].to_csv(index=False))))
+    rows = _csv_cell_strings(data[columns])
     response = httpx.post(
         f"{http_endpoint.rstrip('/')}/v1/datasets/upload",
         params={"sync": "true"},
@@ -376,6 +396,7 @@ def _build_span_query_condition(
     *,
     name_filter: Optional[Any],
     excluded_span_ids: Sequence[str] = (),
+    roots_only: bool = False,
     span_ids: Sequence[str] = (),
 ) -> Optional[str]:
     predicate_parts: List[str] = []
@@ -405,6 +426,8 @@ def _build_span_query_condition(
         )
         predicate_parts.append(f"span_id not in [{joined}]")
 
+    if roots_only:
+        predicate_parts.append("parent_id is None")
     if span_ids:
         joined = ", ".join(
             f"'{_escape_phoenix_query_literal(span_id)}'"
@@ -483,16 +506,16 @@ class PhoenixTraceStore(TraceStore):
             project: Project name (full name like "cogniverse-tenant-service")
             start_time: Optional start time filter
             end_time: Optional end time filter
-            filters: Optional server-side filters. ``{"name": <span name>}``
-                becomes a SpanQuery predicate so only matching spans cross
-                the wire — pulling the whole project window and filtering
-                client-side costs the full frame per call. ``name`` may be a
-                single string (``name == '...'``) or a list/tuple/set of
-                names (``name in ['a', 'b']``) — the list form is required
-                when the caller reconstructs an object from more than one
-                span type in the returned frame (e.g. approval batch + its
-                item children). ``{"span_id": [<id>, ...]}`` returns only
-                those spans.
+            filters: Optional server-side filters, applied as a SpanQuery
+                predicate so only matching spans cross the wire — pulling the
+                whole project window and filtering client-side costs the full
+                frame per call. ``name`` may be a single string
+                (``name == '...'``) or a list/tuple/set of names
+                (``name in ['a', 'b']``) — the list form is required when the
+                caller reconstructs an object from more than one span type in
+                the returned frame (e.g. approval batch + its item children).
+                ``{"span_id": [<id>, ...]}`` returns only those spans. Any
+                other key raises ``ValueError``.
             limit: Maximum number of spans to return
             columns: Optional projection of standardized columns to return.
                 Phoenix selects only the requested columns when supported;
@@ -506,6 +529,15 @@ class PhoenixTraceStore(TraceStore):
             - start_time: Span start timestamp
             - end_time: Span end timestamp
         """
+        unsupported_filters = set(filters or {}).difference({"name", "span_id"})
+        if unsupported_filters:
+            raise ValueError(
+                f"Phoenix span queries do not support filters {sorted(unsupported_filters)}"
+            )
+        if isinstance((filters or {}).get("span_id"), str):
+            raise ValueError(
+                "Phoenix span_id filters take a list of span ids, not one string"
+            )
         try:
             client = self._get_client()
 
@@ -594,11 +626,14 @@ class PhoenixTraceStore(TraceStore):
     ) -> AsyncIterator[pd.DataFrame]:
         """Stream every matching span through Phoenix pagination.
 
+        ``filters`` takes ``name`` (one name or several) and ``roots_only``
+        (true keeps only spans without a parent, one per trace).
+
         Projected columns use adaptive time windows over the requested range:
         full windows split in half, and the leaf window only falls back to
         ``span_id`` exclusions when the window can no longer be split.
         """
-        unsupported_filters = set(filters or {}).difference({"name"})
+        unsupported_filters = set(filters or {}).difference({"name", "roots_only"})
         if unsupported_filters:
             raise ValueError(
                 "Phoenix all-span queries do not support filters "
@@ -613,6 +648,7 @@ class PhoenixTraceStore(TraceStore):
             end_time = end_time.replace(tzinfo=timezone.utc)
 
         name_filter = (filters or {}).get("name")
+        roots_only = bool((filters or {}).get("roots_only"))
         if isinstance(name_filter, set):
             name_filter = sorted(name_filter)
         elif isinstance(name_filter, tuple):
@@ -650,6 +686,7 @@ class PhoenixTraceStore(TraceStore):
                     predicate = _build_span_query_condition(
                         name_filter=name_filter,
                         excluded_span_ids=excluded_span_ids,
+                        roots_only=roots_only,
                     )
                     if predicate:
                         query = query.where(predicate)
@@ -798,6 +835,8 @@ class PhoenixTraceStore(TraceStore):
                         if isinstance(name_filter, str)
                         else list(name_filter)
                     )
+                if roots_only:
+                    params["parent_id"] = "null"
                 if page_cursor:
                     params["cursor"] = page_cursor
 
@@ -894,9 +933,13 @@ class PhoenixAnnotationStore(AnnotationStore):
         score: float,
         metadata: Dict[str, Any],
         project: str,
+        identifier: Optional[str] = None,
     ) -> str:
         """
         Add annotation to a span.
+
+        Phoenix keys an annotation by span, name and identifier: a write with
+        the same three replaces the earlier annotation.
 
         Args:
             span_id: Target span identifier
@@ -905,6 +948,7 @@ class PhoenixAnnotationStore(AnnotationStore):
             score: Numeric score (0.0-1.0)
             metadata: Additional metadata dictionary
             project: Project name (used for logging)
+            identifier: Which of the span's annotations of this name this is
 
         Returns:
             Annotation identifier (span_id in Phoenix's case)
@@ -919,6 +963,7 @@ class PhoenixAnnotationStore(AnnotationStore):
                 score=score,
                 explanation=f"{name}: {label}",
                 metadata=metadata,
+                identifier=identifier,
             )
 
             logger.debug(

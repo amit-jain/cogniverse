@@ -3257,18 +3257,8 @@ def _approval_storage(config_manager, telemetry_manager, tenant_id: str):
     """The store every review batch a run produces is persisted through."""
     from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
 
-    system_config = config_manager.get_system_config()
-    if not system_config.redis_url:
-        raise ValueError("redis_url is required to persist synthetic review batches")
-    grpc_endpoint = system_config.telemetry_collector_endpoint
-    if not grpc_endpoint.startswith("http"):
-        grpc_endpoint = f"http://{grpc_endpoint}"
-    return ApprovalStorageImpl(
-        grpc_endpoint=grpc_endpoint,
-        http_endpoint=system_config.telemetry_url,
-        tenant_id=tenant_id,
-        telemetry_manager=telemetry_manager,
-        redis_url=system_config.redis_url,
+    return ApprovalStorageImpl.from_system_config(
+        config_manager, telemetry_manager, tenant_id
     )
 
 
@@ -4620,6 +4610,76 @@ async def run_online_routing_evaluation(
         "spans_found": len(spans_df),
         "scores_persisted": scores_persisted,
         "statistics": stats,
+    }
+
+
+async def run_llm_annotation(
+    tenant_id: str,
+    lookback_hours: float = 24.0,
+    telemetry_otlp_endpoint: str | None = None,
+) -> dict:
+    """Label the tenant's unlabelled routing decisions that need review.
+
+    ``AnnotationAgent`` picks the decisions the tenant's
+    ``automation_rules.annotation_thresholds`` flag (low confidence, failed or
+    ambiguous outcome); those that already carry a ``routing_annotation`` are
+    left as they are. Up to ``max_annotations_per_batch`` of the rest go to
+    ``LLMAutoAnnotator`` on the ``llm_auto_annotator`` endpoint, and each
+    label is stored for a reviewer to approve or correct. The rest wait for
+    the next run. An LM or store failure propagates; labels stored before it
+    stay stored, and a re-run skips them.
+    """
+    from cogniverse_agents.routing.annotation_agent import AnnotationAgent
+    from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+    from cogniverse_agents.routing.config import AutomationRulesConfig
+    from cogniverse_agents.routing.llm_auto_annotator import LLMAutoAnnotator
+    from cogniverse_foundation.config.utils import get_config
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    cfg = get_config(tenant_id=tenant_id, config_manager=_cli_config_manager())
+    rules = AutomationRulesConfig.from_dict(cfg.get_all().get("automation_rules") or {})
+    get_telemetry_manager(otlp_endpoint=telemetry_otlp_endpoint)
+
+    agent = AnnotationAgent(tenant_id=tenant_id, automation_rules=rules)
+    requests = await agent.identify_spans_needing_annotation(
+        lookback_hours=lookback_hours, agent_type="routing"
+    )
+    storage = AnnotationStorage(tenant_id=tenant_id)
+    end = datetime.now(timezone.utc)
+    labelled = {
+        span["span_id"]
+        for span in await storage.query_annotated_spans(
+            start_time=end - timedelta(hours=lookback_hours),
+            end_time=end,
+            only_human_reviewed=False,
+        )
+    }
+    pending = [request for request in requests if request.span_id not in labelled]
+    batch = pending[: rules.annotation_thresholds.max_annotations_per_batch]
+
+    annotator = LLMAutoAnnotator(
+        llm_config=cfg.get_llm_config().resolve("llm_auto_annotator")
+    )
+    annotations = await asyncio.to_thread(annotator.batch_annotate, batch)
+    labels: dict[str, int] = {}
+    for annotation in annotations:
+        await storage.store_llm_annotation(annotation.span_id, annotation)
+        labels[annotation.label.value] = labels.get(annotation.label.value, 0) + 1
+
+    logger.info(
+        "LLM annotation of %s: %d need review, %d already labelled, %d labelled",
+        tenant_id,
+        len(requests),
+        len(requests) - len(pending),
+        len(annotations),
+    )
+    return {
+        "status": "success" if requests else "no_data",
+        "needing_review": len(requests),
+        "already_labelled": len(requests) - len(pending),
+        "labelled": len(annotations),
+        "deferred": len(pending) - len(batch),
+        "labels": dict(sorted(labels.items())),
     }
 
 
@@ -5988,6 +6048,22 @@ async def run_synthetic_generation(
     }
 
 
+def emit_ab_compare_span(
+    tracer: Any, result: Any, tenant_id: str, queries_dataset: str
+) -> None:
+    """Record one compared row as an ``rlm.ab_compare`` span carrying
+    ``result.to_telemetry_dict()`` as ``openinference.*`` attributes."""
+    from cogniverse_foundation.telemetry.span_metrics import AB_COMPARE_SPAN_NAME
+
+    with tracer.start_as_current_span(AB_COMPARE_SPAN_NAME) as span:
+        for key, value in result.to_telemetry_dict().items():
+            if value is None:
+                continue
+            span.set_attribute(f"openinference.{key}", value)
+        span.set_attribute("openinference.tenant_id", tenant_id)
+        span.set_attribute("openinference.queries_dataset", queries_dataset)
+
+
 async def run_ab_compare(
     *,
     tenant_id: str,
@@ -6096,15 +6172,7 @@ async def run_ab_compare(
             logger.warning("ab-compare: arm failure on query=%r: %s", query[:60], exc)
             continue
 
-        # Emit a Phoenix span with the comparison attributes — the dashboard
-        # tile (when added) will aggregate over these.
-        with tracer.start_as_current_span("rlm.ab_compare") as span:
-            for k, v in result.to_telemetry_dict().items():
-                if v is None:
-                    continue
-                span.set_attribute(f"openinference.{k}", v)
-            span.set_attribute("openinference.tenant_id", tenant_id)
-            span.set_attribute("openinference.queries_dataset", queries_dataset)
+        emit_ab_compare_span(tracer, result, tenant_id, queries_dataset)
         rows.append(result)
 
     # This is a short-lived job: flush batched spans before returning so the
@@ -6496,6 +6564,7 @@ def build_parser() -> argparse.ArgumentParser:
             "workflow",
             "gateway-thresholds",
             "online-routing-eval",
+            "llm-annotate",
             "online-eval",
             "profile",
             "profile-ground-truth-check",
@@ -6795,6 +6864,14 @@ def main():
         elif args.mode == "online-routing-eval":
             result = asyncio.run(
                 run_online_routing_evaluation(
+                    tenant_id=args.tenant_id,
+                    lookback_hours=args.lookback_hours,
+                    telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+                )
+            )
+        elif args.mode == "llm-annotate":
+            result = asyncio.run(
+                run_llm_annotation(
                     tenant_id=args.tenant_id,
                     lookback_hours=args.lookback_hours,
                     telemetry_otlp_endpoint=telemetry_otlp_endpoint,

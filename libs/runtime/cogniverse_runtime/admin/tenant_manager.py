@@ -92,7 +92,8 @@ app = FastAPI(
 _config_manager = None  # For test injection
 _schema_loader: SchemaLoader = None  # For dependency injection
 _backend: Backend | None = None  # Injected metadata backend; bypasses the registry
-# Delivers a tenant delete to every runtime worker process; wired at startup.
+# Delivers a tenant delete or tier set to every runtime worker process; wired
+# at startup.
 _cluster_events: ClusterEvents | None = None
 # Where a tenant delete cancels the tenant's running and queued tasks; wired
 # at startup.
@@ -100,6 +101,9 @@ _task_events: TaskEventStore | None = None
 
 # How long a tenant delete waits for every worker to release the tenant.
 TENANT_DELETE_ACK_TIMEOUT_S = 15.0
+
+# How long a tier set waits for every worker to drop the tier it held.
+TENANT_TIER_ACK_TIMEOUT_S = 15.0
 
 # How long a tenant create or delete waits for another create or delete of the
 # same tenant, on any process, to finish.
@@ -119,7 +123,8 @@ def set_config_manager(config_manager):
 
 
 def set_cluster_events(cluster_events: ClusterEvents | None) -> None:
-    """Wire the channel a tenant delete reaches every worker process through."""
+    """Wire the channel tenant deletes and tier sets reach every worker
+    process through."""
     global _cluster_events
     _cluster_events = cluster_events
 
@@ -164,6 +169,19 @@ def release_deleted_tenant(payload: Dict) -> Dict:
         "memory_managers": memory_managers,
         "queued_memory_writes_cancelled": cancelled,
     }
+
+
+def release_tenant_tier(payload: Dict) -> Dict:
+    """Drop the tier this process holds for the tenant.
+
+    The ``tenant_tier_set`` cluster-event handler, run on every worker: its
+    next request for the tenant reads the tier the set stored.
+    """
+    from cogniverse_foundation.config.tenant_tiers import invalidate_tenant_tier
+
+    tenant_id = canonical_tenant_id(payload["tenant_id"])
+    invalidate_tenant_tier(tenant_id)
+    return {"tenant_id": tenant_id}
 
 
 def set_schema_loader(schema_loader: SchemaLoader) -> None:
@@ -1107,6 +1125,17 @@ async def _assert_tenant_exists(canonical: str) -> None:
         raise HTTPException(status_code=404, detail=f"Tenant {canonical} not found")
 
 
+@router.get("/router-tiers")
+async def list_router_tiers() -> Dict:
+    """The tiers a tenant can be set to, and the one it reads as when unset."""
+    from cogniverse_foundation.config.unified_config import (
+        DEFAULT_ROUTER_TIER,
+        ROUTER_TIERS,
+    )
+
+    return {"tiers": sorted(ROUTER_TIERS), "default": DEFAULT_ROUTER_TIER}
+
+
 @router.get("/tenants/{tenant_full_id}/tier", response_model=TenantTier)
 async def get_tenant_tier(tenant_full_id: str) -> TenantTier:
     """The tenant's semantic-router tier.
@@ -1144,10 +1173,16 @@ async def set_tenant_tier_route(
     outside ``ROUTER_TIERS`` is refused rather than stored: it would match no
     decision and fall through to the default model.
 
+    The answer waits until every runtime worker process has dropped the tier
+    it held for the tenant, so the tenant's next request on any of them is
+    routed on the stored tier.
+
     Raises:
         HTTPException 404: Tenant not found
         HTTPException 422: Tier outside ROUTER_TIERS
-        HTTPException 503: Tenant registry or config store unavailable
+        HTTPException 503: Tenant registry or config store unavailable, or a
+            worker did not confirm dropping the tier it held (the tier is
+            stored; the set can be retried)
     """
     from cogniverse_foundation.config.tenant_tiers import (
         set_tenant_tier,
@@ -1159,6 +1194,8 @@ async def set_tenant_tier_route(
         validate_router_tier(request.tier)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    if _cluster_events is None:
+        raise RuntimeError("Tenant tier sets need the cluster events channel wired")
     await _assert_tenant_exists(canonical)
     try:
         tier = await asyncio.to_thread(
@@ -1168,6 +1205,21 @@ async def set_tenant_tier_route(
         logger.error(f"Tier write failed for {canonical}: {e}")
         raise HTTPException(
             status_code=503, detail="Tenant tier store temporarily unavailable"
+        )
+    try:
+        await _cluster_events.publish(
+            "tenant_tier_set",
+            {"tenant_id": canonical},
+            timeout_s=TENANT_TIER_ACK_TIMEOUT_S,
+        )
+    except ClusterEventError as e:
+        logger.error(f"Tier {tier} stored for {canonical}, not dropped everywhere: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Tier {tier} is stored for {canonical}, but not every runtime "
+                "worker dropped the tier it held; retry the set."
+            ),
         )
     logger.info(f"Set router tier for {canonical} to {tier}")
     return TenantTier(tenant_id=canonical, tier=tier)

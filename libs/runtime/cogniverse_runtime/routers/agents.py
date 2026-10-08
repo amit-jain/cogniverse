@@ -356,7 +356,7 @@ async def get_registry_stats() -> Dict[str, Any]:
 _annotation_queue: Optional[AnnotationQueue] = None
 
 
-def set_annotation_queue(queue: AnnotationQueue) -> None:
+def set_annotation_queue(queue: Optional[AnnotationQueue]) -> None:
     """Inject the annotation queue every runtime process shares."""
     global _annotation_queue
     _annotation_queue = queue
@@ -400,6 +400,19 @@ def _queue_unavailable(
         exc,
         **fields,
     )
+
+
+def _review_label_values() -> List[str]:
+    # Imported here and called off the loop: the module loads litellm.
+    from cogniverse_agents.routing.llm_auto_annotator import REVIEW_LABELS
+
+    return [label.value for label in REVIEW_LABELS]
+
+
+@router.get("/annotations/labels")
+async def list_review_labels() -> Dict[str, List[str]]:
+    """The labels a reviewer can complete an annotation with."""
+    return {"labels": await asyncio.to_thread(_review_label_values)}
 
 
 @router.get("/annotations/queue")

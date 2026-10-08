@@ -2,7 +2,7 @@
 
 Drives the ACTUAL ``SearchAgent._process_impl`` (its real telemetry
 recording), reads the span back out of a real Phoenix, writes a real
-``result_relevance`` annotation through the dashboard's writer helper, and
+``result_relevance`` annotation through the shared relevance writer, and
 mines a triplet with the real ``TripletExtractor``.
 
 This is the test that was missing: every prior optimization/eval test that
@@ -20,19 +20,19 @@ import asyncio
 import json
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
 from uuid import uuid4
 
-import numpy as np
 import pytest
 
-from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps, SearchInput
+from cogniverse_agents.search_agent import SearchInput
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-from cogniverse_dashboard.utils.annotations import persist_result_relevance
 from cogniverse_finetuning.dataset.embedding_extractor import TripletExtractor
+from cogniverse_foundation.telemetry.span_contract import (
+    RESULT_RELEVANCE,
+    SpanNotInProjectError,
+    persist_result_relevance,
+)
+from tests.utils.stub_search import build_stub_search_agent
 
 pytestmark = pytest.mark.integration
 
@@ -41,68 +41,14 @@ POS_CONTENT = "a tabby cat chasing a red ball across the grass"
 NEG_CONTENT = "a dog sleeping on a leather couch"
 
 
-class _StubEncoder:
-    """Stands in for the remote query encoder (not the code under test)."""
-
-    def encode(self, query: str):
-        return np.zeros((1, 128), dtype=np.float32)
-
-
-class _StubBackend:
-    """Returns two deterministic SearchResult-shaped rows.
-
-    Matches what ``_search_by_text`` reads: ``sr.document.id`` / ``sr.score`` /
-    ``sr.document.metadata`` (spread into the result dict).
-    """
-
-    def search(self, query_dict):
-        return [
-            SimpleNamespace(
-                document=SimpleNamespace(
-                    id="vid_pos", metadata={"text_content": POS_CONTENT}
-                ),
-                score=0.91,
-            ),
-            SimpleNamespace(
-                document=SimpleNamespace(
-                    id="vid_neg", metadata={"text_content": NEG_CONTENT}
-                ),
-                score=0.82,
-            ),
-        ]
-
-
-def _memory_config_manager():
-    """The injected ConfigManager every agent constructor requires."""
-    from cogniverse_foundation.config.manager import ConfigManager
-    from tests.utils.memory_store import InMemoryConfigStore
-
-    store = InMemoryConfigStore()
-    store.initialize()
-    return ConfigManager(store=store)
-
-
-def _build_search_agent(tenant_id: str) -> SearchAgent:
-    with patch(
-        "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder",
-        return_value=_StubEncoder(),
-    ):
-        agent = SearchAgent(
-            deps=SearchAgentDeps(
-                tenant_id=tenant_id,
-                backend_url="http://localhost",
-                backend_port=8080,
-                auto_create_memory_schema=False,
-            ),
-            schema_loader=FilesystemSchemaLoader(base_path=Path("configs/schemas")),
-            config_manager=_memory_config_manager(),
-            port=8033,
-        )
-    agent.query_encoder = _StubEncoder()
-    agent._get_backend = lambda: _StubBackend()
-    # Memory would reach Mem0/Vespa; disable so the search stays deterministic.
-    agent.is_memory_enabled = lambda: False
-    return agent
+def _build_search_agent(tenant_id: str):
+    return build_stub_search_agent(
+        tenant_id,
+        [
+            ("vid_pos", 0.91, {"text_content": POS_CONTENT}),
+            ("vid_neg", 0.82, {"text_content": NEG_CONTENT}),
+        ],
+    )
 
 
 @pytest.mark.asyncio
@@ -156,11 +102,29 @@ async def test_real_search_span_carries_io_and_yields_triplet(real_telemetry):
     assert {p["document_id"] for p in payload} == {"vid_pos", "vid_neg"}
     assert {p["content"] for p in payload} == {POS_CONTENT, NEG_CONTENT}
 
-    # 2. Write the relevance annotation through the real dashboard helper.
-    score = await persist_result_relevance(
-        provider, project, out.span_id, "vid_pos", "Highly Relevant"
+    # 2. Write the relevance annotation through the shared writer.
+    #    Each result keeps its own rating: rating the negative afterwards
+    #    must not replace the positive's.
+    scores = [
+        await persist_result_relevance(
+            provider, project, out.span_id, "vid_pos", "Highly Relevant"
+        ),
+        await persist_result_relevance(
+            provider, project, out.span_id, "vid_neg", "Not Relevant"
+        ),
+    ]
+    assert scores == [1.0, 0.0]
+    # The span is not one of another tenant's project, so it is not rated there.
+    other_project = real_telemetry.config.get_project_name(
+        canonical_tenant_id(f"other{uuid4().hex[:8]}")
     )
-    assert score == 1.0
+    with pytest.raises(
+        SpanNotInProjectError,
+        match=f"^span {out.span_id} is not in project {other_project}$",
+    ):
+        await persist_result_relevance(
+            provider, other_project, out.span_id, "vid_neg", "Highly Relevant"
+        )
 
     # 3. The real extractor must mine exactly the triplet those two rows imply.
     extractor = TripletExtractor(provider=provider)
@@ -184,3 +148,27 @@ async def test_real_search_span_carries_io_and_yields_triplet(real_telemetry):
     assert t.negative == NEG_CONTENT
     assert t.modality == "video"
     assert t.metadata["span_id"] == out.span_id
+
+    # Both ratings are stored, each under its own result.
+    span_frame = span_row.to_frame().T
+    ratings = set()
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        annotations = await provider.annotations.get_annotations(
+            spans_df=span_frame, project=project, annotation_names=[RESULT_RELEVANCE]
+        )
+        ratings = {
+            (
+                TripletExtractor._annotation_result_id(row),
+                row["result.label"],
+                row["result.score"],
+            )
+            for _, row in annotations.iterrows()
+        }
+        if len(ratings) == 2:
+            break
+        await asyncio.sleep(2)
+    assert ratings == {
+        ("vid_pos", "Highly Relevant", 1.0),
+        ("vid_neg", "Not Relevant", 0.0),
+    }

@@ -14,9 +14,7 @@ import copy
 import inspect
 import json
 import logging
-import os
 import socket
-import subprocess
 import threading
 import time
 import uuid
@@ -28,7 +26,6 @@ from urllib.parse import unquote
 import httpx
 import jsonschema
 import pytest
-import requests
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -36,14 +33,10 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import WorkflowSettings, get_workflow_settings
 from cogniverse_runtime.routers import tenant
 from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.utils.argo_api import apply_manifest, argo_api_server, set_workflow_status
 from tests.utils.http_fault_proxy import InterceptFaultProxy
-from tests.utils.k8s_api_server import (
-    CRONWORKFLOW_CRD,
-    _kubectl,
-    start_k8s_api_server,
-    stop_k8s_api_server,
-)
 
 _ARGO_SCHEMA_PATH = (
     Path(__file__).parent / "schemas" / "argo_cronworkflow_min.schema.json"
@@ -256,137 +249,8 @@ class TestManifestMatchesArgoSchema:
 @pytest.fixture(scope="module")
 def argo_cluster(tmp_path_factory):
     """Run the real Argo API against a fixture-owned Kubernetes datastore."""
-    cluster = start_k8s_api_server(tmp_path_factory.mktemp("job-argo"))
-    kubeconfig = Path(cluster["kubeconfig"])
-    with socket.socket() as reserved:
-        reserved.bind(("127.0.0.1", 0))
-        port = reserved.getsockname()[1]
-    name = f"cogniverse-test-argo-{os.getpid()}-{port}"
-    try:
-        for plural, kind, namespaced in (
-            ("workflows", "Workflow", True),
-            ("workflowtemplates", "WorkflowTemplate", True),
-            ("clusterworkflowtemplates", "ClusterWorkflowTemplate", False),
-        ):
-            crd = copy.deepcopy(CRONWORKFLOW_CRD)
-            crd["metadata"]["name"] = f"{plural}.argoproj.io"
-            crd["spec"]["scope"] = "Namespaced" if namespaced else "Cluster"
-            crd["spec"]["names"] = {
-                "kind": kind,
-                "listKind": f"{kind}List",
-                "plural": plural,
-                "singular": plural[:-1],
-            }
-            applied = _kubectl(
-                kubeconfig, "apply", "-f", "-", input_text=json.dumps(crd)
-            )
-            assert applied.returncode == 0, applied.stderr
-            ready = _kubectl(
-                kubeconfig,
-                "wait",
-                "--for=condition=Established",
-                f"crd/{plural}.argoproj.io",
-                "--timeout=60s",
-                timeout=70,
-            )
-            assert ready.returncode == 0, ready.stderr
-        # argo-server reads the controller's ConfigMap on startup and exits
-        # fatally without it; the defaults are what this fixture needs.
-        applied = _kubectl(
-            kubeconfig,
-            "apply",
-            "-f",
-            "-",
-            input_text=json.dumps(
-                {
-                    "apiVersion": "v1",
-                    "kind": "ConfigMap",
-                    "metadata": {
-                        "name": "workflow-controller-configmap",
-                        "namespace": "cogniverse",
-                    },
-                }
-            ),
-        )
-        assert applied.returncode == 0, applied.stderr
-        for template_name, entrypoint in (
-            ("cogniverse-job-runner", "job"),
-            ("cogniverse-optimization-runner", "run-optimizer"),
-        ):
-            template = {
-                "apiVersion": "argoproj.io/v1alpha1",
-                "kind": "WorkflowTemplate",
-                "metadata": {"name": template_name, "namespace": "cogniverse"},
-                "spec": {
-                    "entrypoint": entrypoint,
-                    "templates": [
-                        {
-                            "name": entrypoint,
-                            "container": {
-                                "image": "alpine:3.20",
-                                "command": ["true"],
-                            },
-                        }
-                    ],
-                },
-            }
-            applied = _kubectl(
-                kubeconfig, "apply", "-f", "-", input_text=json.dumps(template)
-            )
-            assert applied.returncode == 0, applied.stderr
-        subprocess.run(
-            [
-                "docker",
-                "run",
-                "-d",
-                "--name",
-                name,
-                "--label",
-                f"cogniverse-test-owner-pid={os.getpid()}",
-                "--network",
-                "host",
-                "--user",
-                "0:0",
-                "-v",
-                f"{kubeconfig}:/kubeconfig:ro",
-                "quay.io/argoproj/argocli:v3.7.3",
-                "server",
-                "--kubeconfig",
-                "/kubeconfig",
-                "--namespace",
-                "cogniverse",
-                "--namespaced",
-                "--auth-mode",
-                "server",
-                "--secure=false",
-                "--port",
-                str(port),
-            ],
-            check=True,
-            capture_output=True,
-            timeout=180,
-        )
-        url = f"http://127.0.0.1:{port}"
-        deadline = time.monotonic() + 90
-        while time.monotonic() < deadline:
-            try:
-                response = requests.get(f"{url}/api/v1/info", timeout=2)
-                if response.status_code == 200:
-                    break
-            except requests.ConnectionError:
-                pass
-            time.sleep(0.2)
-        else:
-            logs = subprocess.run(
-                ["docker", "logs", name], capture_output=True, text=True
-            )
-            pytest.fail(
-                f"Argo server did not become ready: {logs.stdout}\n{logs.stderr}"
-            )
-        yield {"url": url, "kubeconfig": kubeconfig}
-    finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-        stop_k8s_api_server(cluster["container"])
+    with argo_api_server(tmp_path_factory.mktemp("job-argo")) as cluster:
+        yield cluster
 
 
 @pytest.fixture(scope="module")
@@ -637,26 +501,6 @@ def _cron_spawned_workflow(name: str, tenant_id: str, template: str, status: dic
     }
 
 
-def _apply(kubeconfig, manifest) -> None:
-    applied = _kubectl(kubeconfig, "apply", "-f", "-", input_text=json.dumps(manifest))
-    assert applied.returncode == 0, applied.stderr
-
-
-def _set_status(kubeconfig, name: str, status: dict) -> None:
-    patched = _kubectl(
-        kubeconfig,
-        "patch",
-        "workflow.argoproj.io",
-        name,
-        "-n",
-        "cogniverse",
-        "--type=merge",
-        "-p",
-        json.dumps({"status": status}),
-    )
-    assert patched.returncode == 0, patched.stderr
-
-
 def _runs_when_settled(client, tenant_id: str, expected: int, **params) -> list:
     """Poll the route until Argo's cache reports ``expected`` runs with a phase.
 
@@ -704,7 +548,7 @@ def optimize_runs_seeded(argo_cluster):
 
         simba_name = simba.json()["workflow_name"]
         gateway_name = gateway.json()["workflow_name"]
-        _set_status(
+        set_workflow_status(
             kubeconfig,
             simba_name,
             {
@@ -713,12 +557,12 @@ def optimize_runs_seeded(argo_cluster):
                 "finishedAt": "2026-09-16T10:05:00Z",
             },
         )
-        _set_status(
+        set_workflow_status(
             kubeconfig,
             gateway_name,
             {"phase": "Running", "startedAt": "2026-09-16T11:00:00Z"},
         )
-        _set_status(
+        set_workflow_status(
             kubeconfig,
             other.json()["workflow_name"],
             {
@@ -729,7 +573,7 @@ def optimize_runs_seeded(argo_cluster):
         )
         # A scheduled optimization run for this tenant, and a scheduled
         # tenant-JOB run that must not be mistaken for one.
-        _apply(
+        apply_manifest(
             kubeconfig,
             _cron_spawned_workflow(
                 "agent-optimization-1758009600",
@@ -742,7 +586,7 @@ def optimize_runs_seeded(argo_cluster):
                 },
             ),
         )
-        _apply(
+        apply_manifest(
             kubeconfig,
             _cron_spawned_workflow(
                 "tenant-job-1758009600",
@@ -951,3 +795,121 @@ class TestOptimizationRunListingFaults:
             "argo_unavailable: ArgoListUnavailableError: Argo list returned a "
             "non-JSON body: <html><body>502 Bad Gateway</body></html>"
         ]
+
+
+@pytest.mark.integration
+def test_every_listed_optimization_mode_submits_a_run_carrying_it(argo_cluster):
+    """``GET /optimize-modes`` lists exactly the modes the submit accepts, and
+    each one lands in Argo as a run of that mode for the tenant."""
+    _configure_workflow(api_url=argo_cluster["url"])
+    tenant_id = "optruns:modes"
+    app = FastAPI()
+    app.include_router(tenant.router, prefix="/admin/tenant")
+    with TestClient(app) as client:
+        listed = client.get("/admin/tenant/optimize-modes")
+        assert listed.status_code == 200, listed.text
+        modes = listed.json()["modes"]
+        assert modes == sorted(tenant._MANUAL_OPTIMIZE_MODES)
+        assert listed.json()["synthetic_optimizers"] == sorted(
+            APPROVED_TRAINING_AGENT_BY_OPTIMIZER
+        )
+        submitted = {}
+        for mode in modes:
+            body = {"mode": mode}
+            if mode == "synthetic":
+                body["optimizers"] = ["profile"]
+            response = client.post(f"/admin/tenant/{tenant_id}/optimize", json=body)
+            assert response.status_code == 200, response.text
+            submitted[response.json()["workflow_name"]] = mode
+        deadline = time.monotonic() + 60
+        runs: list = []
+        while time.monotonic() < deadline:
+            runs = client.get(f"/admin/tenant/{tenant_id}/optimize/runs").json()["runs"]
+            if len(runs) == len(modes):
+                break
+            time.sleep(0.5)
+        assert {run["workflow_name"]: run["mode"] for run in runs} == submitted
+        assert {run["trigger"] for run in runs} == {"manual"}
+
+
+def _submitted_parameters(argo_url: str, workflow_name: str) -> dict:
+    stored = httpx.get(f"{argo_url}/api/v1/workflows/cogniverse/{workflow_name}")
+    assert stored.status_code == 200, stored.text
+    return {
+        p["name"]: p["value"] for p in stored.json()["spec"]["arguments"]["parameters"]
+    }
+
+
+@pytest.mark.integration
+def test_a_run_carries_its_lookback_and_a_synthetic_run_its_optimizers(argo_cluster):
+    _configure_workflow(api_url=argo_cluster["url"])
+    tenant_id = "optruns:params"
+    app = FastAPI()
+    app.include_router(tenant.router, prefix="/admin/tenant")
+    with TestClient(app) as client:
+        simba = client.post(
+            f"/admin/tenant/{tenant_id}/optimize",
+            json={"mode": "simba", "lookback_hours": 6},
+        )
+        assert simba.status_code == 200, simba.text
+        synthetic = client.post(
+            f"/admin/tenant/{tenant_id}/optimize",
+            json={"mode": "synthetic", "optimizers": ["routing", "profile", "routing"]},
+        )
+        assert synthetic.status_code == 200, synthetic.text
+
+    assert _submitted_parameters(
+        argo_cluster["url"], simba.json()["workflow_name"]
+    ) == {
+        "mode": "simba",
+        "tenant-id": tenant_id,
+        "lookback-hours": "6",
+    }
+    assert _submitted_parameters(
+        argo_cluster["url"], synthetic.json()["workflow_name"]
+    ) == {
+        "mode": "synthetic",
+        "tenant-id": tenant_id,
+        "lookback-hours": "48",
+        "agents": "profile,routing",
+    }
+
+
+@pytest.mark.integration
+def test_optimizer_choices_are_refused_where_they_do_not_apply(argo_cluster):
+    _configure_workflow(api_url=argo_cluster["url"])
+    tenant_id = "optruns:refused"
+    supported = sorted(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
+    app = FastAPI()
+    app.include_router(tenant.router, prefix="/admin/tenant")
+    with TestClient(app) as client:
+        refusals = [
+            (
+                {"mode": "synthetic"},
+                400,
+                f"The synthetic mode needs optimizers, from: {supported}",
+            ),
+            (
+                {"mode": "synthetic", "optimizers": ["profile", "workflow"]},
+                400,
+                f"Unknown optimizers ['workflow']; supported: {supported}",
+            ),
+            (
+                {"mode": "simba", "optimizers": ["profile"]},
+                400,
+                "optimizers apply only to the synthetic mode",
+            ),
+        ]
+        for body, status, detail in refusals:
+            response = client.post(f"/admin/tenant/{tenant_id}/optimize", json=body)
+            assert (response.status_code, response.json()["detail"]) == (
+                status,
+                detail,
+            )
+        zero = client.post(
+            f"/admin/tenant/{tenant_id}/optimize",
+            json={"mode": "simba", "lookback_hours": 0},
+        )
+        assert zero.status_code == 422
+        runs = client.get(f"/admin/tenant/{tenant_id}/optimize/runs")
+        assert runs.json()["runs"] == []

@@ -13,6 +13,7 @@ libs/evaluation/cogniverse_evaluation/
 ├── cli.py                               # CLI for evaluation tasks
 ├── online_evaluator.py                  # Online evaluation pipeline
 ├── quality_monitor.py                   # Quality monitoring
+├── recorded_searches.py                 # Recorded searches scored against a tenant's golden set
 ├── span_evaluator.py                    # SpanEvaluator for retrospective evaluation
 ├── core/                                # Core evaluation framework
 │   ├── __init__.py
@@ -870,7 +871,14 @@ ambiguous_count: int                       # Unclear outcomes
 **Main Methods:**
 
 #### `evaluate_routing_decision(span_data: Dict[str, Any]) -> Tuple[RoutingOutcome, Dict[str, Any]]`
-Extract and evaluate a single routing decision.
+Extract and evaluate a single routing decision; delegates to the module function
+`evaluate_routing_span(span_data)`, which needs no provider.
+
+A decision whose span ended in ERROR is a FAILURE. One that chose an agent, ran
+inside a request (its `parent_id` is a non-empty string) and did not end in
+ERROR is a SUCCESS, whether its status is OK or UNSET (the gateway sets none).
+A root decision with no request around it is AMBIGUOUS (`no_parent_span`).
+A span with no chosen agent or confidence raises `ValueError`.
 
 **Parameters:**
 
@@ -1844,6 +1852,30 @@ monitor = QualityMonitor(
     thresholds=QualityThresholds(live_score_floor=0.6),
 )
 ```
+
+### Summarizing routing decisions
+
+**File:** `libs/evaluation/cogniverse_evaluation/evaluators/routing_evaluator.py`
+
+`summarize_routing_decisions(spans)` reads a frame of `cogniverse.routing` spans with
+`evaluate_routing_span` and returns `decisions` (newest first: `span_id`, `trace_id`,
+`start_time` in UTC ISO, `query`, `chosen_agent`, `confidence`, `outcome`, `reason`,
+`latency_ms` (the span's duration) and `entity_extraction_failed`); `total`, `successes`,
+`failures`, `ambiguous` and `unreadable` (spans it could not read); `accuracy` (the share
+that succeeded, `None` without decisions); `confidence_calibration` (the Pearson correlation
+of confidence with success, `None` when either side is constant or there are fewer than two
+decisions); `latency_ms` (`mean`, `p50`, `p95`); and `per_agent` (`agent`, `decisions`,
+`successes`, `failures`, `ambiguous`, `success_rate`, `mean_confidence`, `mean_latency_ms`;
+most decisions first, then by agent). `GET /admin/tenant/{tenant_id}/routing-decisions`
+serves it.
+
+### Scoring recorded searches
+
+**File:** `libs/evaluation/cogniverse_evaluation/recorded_searches.py`
+
+`score_recorded_searches(spans, golden_rows)` scores a tenant's `search_service.search` spans (`SEARCH_SPAN_NAME`) against its canonical golden rows (`query`, list of `expected_videos`), without running a search. A span whose stripped `query` is a golden query is scored under its `profile` and `strategy`; the latest successful search per profile, strategy and query counts. Result rows name their source by `result_source_title_key`, and a source counts once, at its best rank. Each query gets `mrr`, `ndcg` (at 10), `recall_at_1`, `recall_at_5` and `precision_at_5` from `calculate_metrics_suite`.
+
+It returns `golden_queries`; `strategies` (per profile and strategy, sorted: `queries`, the mean of each metric, and `success_rate`, the share of queries whose first result is expected); `queries` (per profile and strategy, in golden order: `query`, `expected`, `retrieved` (first 10), `searched_at`, `trace_id` and the metrics); `unsearched_queries` (golden order); `failed_searches` (searches with an `ERROR` status); and `unscored_searches` (searches with a result that has no source title, or no result rows). The runtime serves it as `GET /admin/tenant/{tenant_id}/evaluation/golden`.
 
 ---
 

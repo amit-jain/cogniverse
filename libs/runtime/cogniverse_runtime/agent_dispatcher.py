@@ -1619,6 +1619,10 @@ class AgentDispatcher:
         reads the registry."""
         await self._registry.refresh()
 
+    def is_registered(self, agent_name: str) -> bool:
+        """Whether the registry, as last refreshed, serves ``agent_name``."""
+        return self._registry.get_agent(agent_name) is not None
+
     def supports_token_stream(self, agent_name: str) -> bool:
         """Return the registered answer-token streaming declaration."""
         agent = self._registry.get_agent(agent_name)
@@ -2892,6 +2896,9 @@ class AgentDispatcher:
                 "degraded": output.degraded_query_rewrite,
             },
             "search_mode": output.search_mode,
+            # The search's telemetry span, which a client annotates to rate
+            # the results (None when telemetry is off).
+            "span_id": output.span_id,
         }
 
         # Multi-turn contract: whenever conversation_history was supplied we
@@ -3304,6 +3311,13 @@ class AgentDispatcher:
                     schema_loader=self._schema_loader,
                     config_manager=self._config_manager,
                 )
+                # Each search runs in its own span, which records the query
+                # and results and whose id the response carries for ratings.
+                from cogniverse_foundation.telemetry.manager import (
+                    get_telemetry_manager,
+                )
+
+                agent.telemetry_manager = get_telemetry_manager()
                 self._search_agent_cache[key] = agent
             return agent
 

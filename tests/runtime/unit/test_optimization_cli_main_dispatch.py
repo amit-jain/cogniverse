@@ -87,6 +87,7 @@ _LOOKBACK_MODES = [
     ("workflow", "run_workflow_optimization"),
     ("gateway-thresholds", "run_gateway_thresholds_optimization"),
     ("online-routing-eval", "run_online_routing_evaluation"),
+    ("llm-annotate", "run_llm_annotation"),
     ("online-eval", "run_online_evaluation"),
     ("profile", "run_profile_optimization"),
     ("entity-extraction", "run_entity_extraction_optimization"),

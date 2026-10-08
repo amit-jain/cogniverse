@@ -150,10 +150,14 @@ def _socket_inodes(pid: int) -> set[int]:
 
 
 def _tcp_rows() -> list[tuple[int, int, str, int]]:
-    """(local port, remote port, state, inode) for every TCP socket."""
+    """(local port, remote port, state, inode) for every TCP socket. A kernel
+    built without IPv6 has no tcp6 table, and no IPv6 sockets to list."""
     rows = []
-    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
-        for line in Path(table).read_text().splitlines()[1:]:
+    tables = [Path("/proc/net/tcp")]
+    if Path("/proc/net/tcp6").exists():
+        tables.append(Path("/proc/net/tcp6"))
+    for table in tables:
+        for line in table.read_text().splitlines()[1:]:
             fields = line.split()
             rows.append(
                 (
@@ -865,17 +869,29 @@ class TestSignals:
             log,
             _,
         ):
+            # Each worker is signalled as soon as uvicorn reports it started,
+            # when its lifespan has only begun. Waiting for both first would
+            # let the faster worker finish its lifespan and register the
+            # handler while the slower one is still importing the app.
+            signalled: list[int] = []
+
+            def signal_started_workers() -> bool:
+                for pid in _started_worker_pids(log):
+                    if pid not in signalled:
+                        os.kill(pid, signal.SIGUSR1)
+                        signalled.append(pid)
+                return len(signalled) == WORKERS
+
             _until(
-                lambda: len(_started_worker_pids(log)) == WORKERS,
+                signal_started_workers,
                 process,
                 log,
                 BOOT_TIMEOUT_S,
                 "both workers loading the app",
             )
-            assert _records(log, MAIN_LOGGER, "INFO").count(registered) == 0
-            for pid in _worker_processes(process.pid):
-                os.kill(pid, signal.SIGUSR1)
             workers = _serving(process, log)
+
+            assert sorted(signalled) == workers
 
             assert sorted(_started_worker_pids(log)) == workers
             assert _records(log, MAIN_LOGGER, "INFO").count(registered) == WORKERS

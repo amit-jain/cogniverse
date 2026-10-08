@@ -236,6 +236,30 @@ class TestSpanAnalysisReadsCanonicalSlots:
         )
         assert request is None
 
+    def test_confident_spans_that_set_no_status_are_not_flagged(self):
+        """The span writer leaves a successful span UNSET; only ERROR fails."""
+        agent = self._agent()
+        routing = self._canonical_routing_row(confidence=0.95)
+        routing["status_code"] = "UNSET"
+        enhancement = pd.Series(
+            {
+                "context.span_id": "qe-2",
+                "name": "cogniverse.query_enhancement",
+                "start_time": "2026-07-17T10:00:00Z",
+                "status_code": "UNSET",
+                "attributes.input.value": "find cats",
+                "attributes.output.value": json.dumps(
+                    {"enhanced_query": "find cats", "confidence": 0.95}
+                ),
+            }
+        )
+        assert [
+            agent._analyze_span_for_annotation(routing),
+            agent._analyze_span_for_annotation(
+                enhancement, agent_type="query_enhancement"
+            ),
+        ] == [None, None]
+
     @pytest.mark.asyncio
     async def test_identify_queries_the_agent_types_span_name(self):
         agent = self._agent()

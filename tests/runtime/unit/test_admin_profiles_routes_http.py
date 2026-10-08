@@ -71,6 +71,9 @@ def _profile(name: str, schema: str, embedding_model: str) -> BackendProfileConf
         embedding_type="multi_vector",
         schema_config={"embedding_dim": 128, "num_patches": 1024},
         model_specific={"revision": "main"},
+        model_loader="colpali",
+        process_type="frame_based",
+        extra_config={"inference_services": {"embedding": "vllm_colpali"}},
     )
 
 
@@ -348,6 +351,9 @@ async def test_get_profile_returns_full_detail_with_canonical_store_lookup(env):
         "embedding_type": "multi_vector",
         "schema_config": {"embedding_dim": 128, "num_patches": 1024},
         "model_specific": {"revision": "main"},
+        "model_loader": "colpali",
+        "process_type": "frame_based",
+        "extra_config": {"inference_services": {"embedding": "vllm_colpali"}},
         "schema_deployed": True,
         "tenant_schema_name": "acme_video_colpali_sv",
         "created_at": "2026-01-02T03:04:05",
@@ -1100,6 +1106,7 @@ async def test_create_profile_adds_profile_without_deploy(env):
             "schema_name": "video_new_sv",
             "embedding_model": "colpali-v1.2",
             "embedding_type": "single_vector",
+            "model_loader": "xclip",
             "pipeline_config": {"extract_keyframes": True},
             "strategies": {"embedding": {"class": "SingleVectorEmbeddingStrategy"}},
             "schema_config": {"embedding_dim": 768},
@@ -1289,6 +1296,7 @@ async def test_profile_writes_losing_every_compare_and_set_answer_409(env):
             "schema_name": "video_new_sv",
             "embedding_model": "colpali-v1.2",
             "embedding_type": "single_vector",
+            "model_loader": "xclip",
             "deploy_schema": False,
         },
     )
@@ -1324,6 +1332,7 @@ async def test_concurrent_creates_of_one_profile_name_store_exactly_one(env):
                 "schema_name": "video_dup_sv",
                 "embedding_model": model,
                 "embedding_type": "single_vector",
+                "model_loader": "xclip",
                 "deploy_schema": False,
             },
         )

@@ -206,6 +206,14 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Postgres system view queried while pg_dump holds its lock",
         "pg_stat_activity",
     ),
+    "tests/runtime/integration/test_approval_routes.py": (
+        "Pydantic training example type identity",
+        "RoutingExperienceSchema",
+    ),
+    "tests/runtime/integration/test_web_ops_approvals.py": (
+        "Pydantic training example type identity",
+        "RoutingExperienceSchema",
+    ),
     "tests/runtime/integration/test_tenant_provisioning_schemas.py": (
         "Unresolvable base schema and phantom tenant schema the provisioning step must reject",
         "no_such_base_schema knowledge_graph_provisionphantom_production",

@@ -21,48 +21,9 @@ from cogniverse_dashboard.utils import tenant_project_name
 from cogniverse_dashboard.utils.traces import span_window_end
 from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.span_metrics import profile_selection_metrics
 
 logger = logging.getLogger(__name__)
-
-
-def _modality_from_row(row: pd.Series) -> str | None:
-    """Pull the modality from a profile_selection span row.
-
-    The profile decision is recorded on the canonical ``output.value`` slot;
-    returns its ``modality`` field or None when absent.
-    """
-    from cogniverse_foundation.telemetry.span_contract import read_span_io
-
-    output = read_span_io(row)["output"]
-    if isinstance(output, dict):
-        value = output.get("modality")
-        if value:
-            return str(value)
-    return None
-
-
-def _aggregate(spans_df: pd.DataFrame) -> pd.DataFrame:
-    """Group spans by modality, compute count + latency stats + success rate."""
-    durations_ms = (
-        spans_df["end_time"] - spans_df["start_time"]
-    ).dt.total_seconds() * 1000
-    spans_df = spans_df.assign(
-        modality=spans_df.apply(_modality_from_row, axis=1),
-        duration_ms=durations_ms,
-        ok=spans_df["status_code"].fillna("OK").eq("OK"),
-    ).dropna(subset=["modality"])
-
-    if spans_df.empty:
-        return pd.DataFrame()
-
-    grouped = spans_df.groupby("modality", as_index=False).agg(
-        count=("duration_ms", "size"),
-        p50_ms=("duration_ms", lambda s: s.quantile(0.50)),
-        p95_ms=("duration_ms", lambda s: s.quantile(0.95)),
-        p99_ms=("duration_ms", lambda s: s.quantile(0.99)),
-        success_rate=("ok", "mean"),
-    )
-    return grouped.sort_values("count", ascending=False)
 
 
 def render_profile_metrics_tab() -> None:
@@ -138,7 +99,7 @@ def render_profile_metrics_tab() -> None:
         )
         return
 
-    aggregated = _aggregate(profile_spans)
+    aggregated = pd.DataFrame(profile_selection_metrics(profile_spans))
     if aggregated.empty:
         st.warning(
             "Spans found but none carried a ``profile_selection.modality`` "

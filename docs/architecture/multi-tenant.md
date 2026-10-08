@@ -1574,7 +1574,8 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    memory_mgr = Mem0MemoryManager(tenant_id="acme")
    health = memory_mgr.health_check()
    stats = memory_mgr.get_memory_stats("acme", "orchestrator_agent")
-   # {"total_memories": 42, "enabled": True}
+   # {"total_memories": 42, "archived_memories": 3, "enabled": True,
+   #  "tenant_id": "acme", "agent_name": "orchestrator_agent"}
    ```
 
 3. **Telemetry Health**:

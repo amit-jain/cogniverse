@@ -519,7 +519,29 @@ uses the priority default, while an explicit value, including `0`, is honored.
 per-agent-type Phoenix annotation name (`{agent_type}_annotation`; routing keeps `routing_annotation`,
 and `RoutingAnnotationStorage` remains as an alias);
 `routing/orchestration_annotation_storage.py`'s `OrchestrationAnnotationStorage` does the same for
-orchestration-workflow-level annotations.
+orchestration-workflow-level annotations, under `ORCHESTRATION_ANNOTATION_NAME`
+(`orchestration_quality`); `store_annotation()` raises when the backend refuses the write.
+
+`AnnotationStorage.get_annotation(span_id)` returns a span's latest annotation as
+`{label, score, metadata}`, or `None` when it has none.
+`approve_llm_annotation(span_id, annotator_id)` marks the LLM's label as reviewed: it keeps
+the label, score and reasoning and adds `human_reviewed: true`, `requires_review: false`,
+`approved_by` and `approval_timestamp` to the metadata, returning the stored annotation. A
+span without an annotation raises `LLMAnnotationNotFoundError`; one labelled by someone other
+than the LLM raises `NotAnLLMAnnotationError`. `store_llm_annotation` and
+`store_human_annotation` replace any earlier label of the span (Phoenix keeps one annotation
+per span and name).
+
+`cogniverse-optim --mode llm-annotate` (`run_llm_annotation` in
+`cogniverse_runtime.optimization_cli`) labels a tenant's routing decisions with the LLM:
+`AnnotationAgent` picks the decisions the tenant's `automation_rules.annotation_thresholds`
+flag in the last `--lookback-hours`, those that already have a `routing_annotation` are
+skipped, and up to `max_annotations_per_batch` of the rest go to `LLMAutoAnnotator` on the
+`llm_config` endpoint resolved for `llm_auto_annotator`; each label is stored with
+`store_llm_annotation` for a reviewer to approve or correct. The rest wait for the next run.
+It returns `{status ("success" | "no_data"), needing_review, already_labelled, labelled,
+deferred, labels}` (`labels` counts the stored labels by value). An LM or Phoenix failure
+raises; labels stored before it stay stored, and a re-run skips them.
 
 ---
 
@@ -554,10 +576,15 @@ incremental resume time advance through one telemetry window at a time.
 
 | Label | Description |
 |-------|-------------|
-| CORRECT_ROUTING | Right agent chosen |
-| WRONG_ROUTING | Wrong agent chosen |
-| AMBIGUOUS | Multiple agents could work |
+| CORRECT | The agent's output was right |
+| WRONG | The agent's output was wrong |
+| AMBIGUOUS | Multiple outputs could work |
 | INSUFFICIENT_INFO | Cannot determine |
+| CORRECT_ROUTING | Right agent chosen (routing annotations only) |
+| WRONG_ROUTING | Wrong agent chosen (routing annotations only) |
+
+`REVIEW_LABELS` holds the labels a reviewer assigns: `CORRECT`, `WRONG`,
+`AMBIGUOUS` and `INSUFFICIENT_INFO`.
 
 **Key Methods**:
 

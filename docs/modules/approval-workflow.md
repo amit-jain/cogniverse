@@ -106,6 +106,12 @@ storage = ApprovalStorageImpl(
     redis_url="redis://redis:6379/0",  # required for dataset writes and replacements
     telemetry_manager=None,  # Optional, creates one if not provided
 )
+
+# Or from the system config: redis_url, telemetry_collector_endpoint (gRPC)
+# and telemetry_url (HTTP).
+storage = ApprovalStorageImpl.from_system_config(
+    config_manager, telemetry_manager, "your_org:production"
+)
 ```
 
 **API Methods** (All async):
@@ -394,8 +400,8 @@ delegates this selection to `RedisReplacementRecordStore.select_review_decision(
 before an approved dataset row or replacement event can be written. The first
 decision intent wins; identical retries receive the selected canonical decision
 and keep its first timestamp. An approve-versus-regenerate race gives exactly
-one winner, and the conflicting reviewer action raises without changing
-Phoenix. Batch tenant identity is canonicalized and compared with the storage
+one winner, and the conflicting reviewer action raises
+`ReviewDecisionConflictError` (a `RuntimeError`) without changing Phoenix. Batch tenant identity is canonicalized and compared with the storage
 tenant before span export, so a mismatch leaves no cross-tenant root or item
 span.
 
@@ -638,6 +644,33 @@ retry and reasoning details under
 entity list when needed. If every configured regeneration attempt fails, the
 handler raises a `RuntimeError` with the item ID and chains the final
 generator exception.
+
+`SyntheticDataFeedbackHandler.for_tenant(config_manager, tenant_id)` builds the
+handler on the tenant's primary LM with three regeneration attempts.
+
+`cogniverse_synthetic.approval.corrections` gives a reviewer surface what it
+needs before a decision reaches the handler:
+
+```python
+from cogniverse_synthetic.approval.corrections import (
+    correction_template,
+    parse_corrections,
+    review_reasoning,
+)
+
+schema_name, template = correction_template(item.data)  # ("RoutingExperienceSchema", {...})
+corrections = parse_corrections(item.data, {"chosen_agent": "summarizer_agent"})
+reasoning = review_reasoning(item.data)
+```
+
+`CORRECTION_ONLY_SCHEMAS` names the schemas whose rejection merges the
+corrections rather than regenerating (`WorkflowExecutionSchema`), so their
+rejection needs at least one correction. `correction_template` returns the item's schema name and its correctable
+fields with their current values; `parse_corrections` validates reviewer
+corrections against that schema and canonicalizes entities and relationships.
+Both raise `ValueError` for data no synthetic schema describes, and
+`parse_corrections` raises for an empty object or a field the schema does not
+let a reviewer change.
 
 `HumanApprovalAgent` persists a successful regeneration through
 `ApprovalStorage.replace_item()`. The replacement event contains the exact
@@ -1200,7 +1233,8 @@ See source files for detailed docstrings:
 - `libs/agents/cogniverse_agents/approval/orchestrator.py` — `DecisionOrchestrator`
 
 - `libs/agents/cogniverse_agents/approval/replacement_store.py` —
-  `CanonicalReplacementRecord`, `RedisReplacementRecordStore`
+  `CanonicalReplacementRecord`, `RedisReplacementRecordStore`,
+  `ReviewDecisionConflictError`
 
 - `libs/agents/cogniverse_agents/workflow/state_machine.py` — `WorkflowState`,
   `WorkflowStateMachine`
@@ -1210,6 +1244,13 @@ See source files for detailed docstrings:
 
 - `libs/synthetic/cogniverse_synthetic/approval/feedback_handler.py` —
   `SyntheticDataFeedbackHandler`
+
+- `libs/synthetic/cogniverse_synthetic/approval/corrections.py` —
+  `correction_template`, `parse_corrections`, `review_reasoning`,
+  `SCHEMA_CORRECTION_FIELDS`, `CORRECTION_ONLY_SCHEMAS`
+
+- `libs/runtime/cogniverse_runtime/routers/approvals.py` — review routes under
+  `/admin/tenant/{tenant_id}/approvals`
 
 - `libs/synthetic/cogniverse_synthetic/dspy_modules.py` —
   `ValidatedSyntheticExampleRegenerator`

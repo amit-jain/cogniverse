@@ -25,6 +25,10 @@ from cogniverse_agents.orchestrator_agent import (
     PARTIAL_STATUS,
     orchestration_status,
 )
+from cogniverse_core.memory.manager import (
+    MEMORY_BASE_SCHEMA,
+    PROVENANCE_BASE_SCHEMA,
+)
 from cogniverse_runtime.harness_turn import (
     TERMINAL_FAILURE_STATUSES,
     NoAnswerError,
@@ -40,7 +44,13 @@ from tests.e2e.conftest import (
 )
 from tests.e2e.loop_probe import LoopProbe, assert_loop_served
 from tests.e2e.sample_corpus import DATA_ROOT
-from tests.e2e.tenants import register_tenant_and_wait, unique_id
+from tests.e2e.tenants import (
+    _deployed_schema_names_strict,
+    _tenant_schema_name,
+    _tenant_schema_names_in_vespa,
+    register_tenant_and_wait,
+    unique_id,
+)
 from tests.e2e.test_api_e2e import (
     DOCUMENT_PROFILE,
     PROFILE,
@@ -1568,7 +1578,16 @@ class TestOrchestrationOutcomeIsTheRecordedOne:
     def test_the_run_status_is_what_the_steps_recorded(self):
         org_id = unique_id("orch_fail")
         tenant_id = f"{org_id}:t1"
-        register_tenant_and_wait(tenant_id, created_by="e2e", timeout_s=600.0)
+        # Registration deploys a video profile schema unless told which bases
+        # to deploy; this tenant gets the memory and provenance schemas only,
+        # so no profile it could ground on is deployed.
+        bases = [MEMORY_BASE_SCHEMA, PROVENANCE_BASE_SCHEMA]
+        register_tenant_and_wait(
+            tenant_id, created_by="e2e", base_schemas=bases, timeout_s=600.0
+        )
+        assert _tenant_schema_names_in_vespa(
+            tenant_id, _deployed_schema_names_strict()
+        ) == {_tenant_schema_name(base, tenant_id) for base in bases}
         query = (
             "Find videos about machine learning, compare them with "
             "the PDF research papers, and write a detailed report"

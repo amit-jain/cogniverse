@@ -68,7 +68,11 @@ class TraceStore(ABC):
         page_size: int = 1000,
         columns: Optional[Sequence[str]] = None,
     ) -> AsyncIterator[pd.DataFrame]:
-        """Stream matching spans as page-sized DataFrames."""
+        """Stream matching spans as page-sized DataFrames.
+
+        ``filters`` takes ``name`` (one name or several) and ``roots_only``
+        (true keeps only spans without a parent).
+        """
         pass
 
     @abstractmethod
@@ -79,7 +83,8 @@ class TraceStore(ABC):
         end_time: Optional[datetime] = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> pd.DataFrame:
-        """Query every matching span using provider-native pagination."""
+        """Query every matching span using provider-native pagination;
+        ``filters`` as for ``iter_spans``."""
         pass
 
     @abstractmethod
@@ -115,9 +120,14 @@ class AnnotationStore(ABC):
         score: float,
         metadata: Dict[str, Any],
         project: str,
+        identifier: Optional[str] = None,
     ) -> str:
         """
         Add annotation to a span.
+
+        An annotation replaces the span's earlier annotation of the same name
+        and ``identifier``; distinct identifiers keep several annotations of
+        one name on one span.
 
         Args:
             span_id: Target span identifier
@@ -126,6 +136,7 @@ class AnnotationStore(ABC):
             score: Numeric score (0.0-1.0)
             metadata: Additional metadata dictionary
             project: Project/namespace identifier
+            identifier: Which of the span's annotations of this name this is
 
         Returns:
             Annotation identifier (if supported by backend)

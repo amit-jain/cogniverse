@@ -72,15 +72,22 @@ from cogniverse_runtime.harness_keys import HarnessKeyStore
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.routers import (
     admin,
+    ag_ui,
     agents,
+    approvals,
+    config_entries,
     debug,
+    embedding_atlas,
     events,
     graph,
     health,
     ingestion,
     knowledge,
     openai_compat,
+    orchestration_annotations,
+    routing_decisions,
     search,
+    telemetry_metrics,
     tenant,
     wiki,
 )
@@ -816,6 +823,9 @@ def _configure_library_module_defaults(
     get_telemetry_manager(config_manager, otlp_endpoint=telemetry_otlp_endpoint)
 
 
+WIKI_MANAGER_CACHE_CAPACITY = 64
+
+
 def build_wiki_manager_factory(resolve_wiki_backend, config, config_manager):
     """Build the per-tenant ``WikiManager`` factory the runtime installs.
 
@@ -836,15 +846,19 @@ def build_wiki_manager_factory(resolve_wiki_backend, config, config_manager):
     concurrent first touches would otherwise each run one. Waiters share the
     owner's outcome, failure included, and a failed build caches nothing — a
     manager bound to a schema that was never deployed answers every later read
-    with a backend error no retry can clear.
+    with a backend error no retry can clear. The cache is released for a
+    tenant on its delete, so the tenant created again deploys its schema anew.
     """
     import threading
     from concurrent.futures import Future
 
     from cogniverse_agents.wiki.wiki_manager import WikiManager
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
+    from cogniverse_foundation.caching import TenantLRUCache, register_tenant_cache
 
-    managers: dict = {}
+    managers: TenantLRUCache[WikiManager] = register_tenant_cache(
+        TenantLRUCache(capacity=WIKI_MANAGER_CACHE_CAPACITY)
+    )
     inflight: dict = {}
     lock = threading.Lock()
 
@@ -891,7 +905,7 @@ def build_wiki_manager_factory(resolve_wiki_backend, config, config_manager):
             raise
         else:
             with lock:
-                managers[tenant_id] = mgr
+                managers.set(tenant_id, mgr)
                 inflight.pop(tenant_id, None)
                 pending.set_result(mgr)
             return mgr
@@ -1163,6 +1177,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
     tenant.set_config_manager(config_manager)
+    approvals.set_config_manager(config_manager)
     _log_workflow_submission_status()
 
     # Wire ingestion and search routers via FastAPI dependency overrides
@@ -1814,8 +1829,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("SIGUSR1 hot-reload not available in this loop: %s", exc)
         app.state.sigusr1_registered = False
 
-    # Tenant deletes and session closes reach every worker process and
-    # replica through Redis, and each waits for every worker to act on it.
+    # Tenant deletes, tier sets and session closes reach every worker process
+    # and replica through Redis, and each waits for every worker to act on it.
     from cogniverse_runtime.cluster_events import ClusterEvents
 
     cluster_events = ClusterEvents(
@@ -1823,6 +1838,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         replica_id,
         {
             "tenant_deleted": tenant_manager.release_deleted_tenant,
+            "tenant_tier_set": tenant_manager.release_tenant_tier,
             "session_closed": admin.sweep_closed_session,
         },
     )
@@ -2007,6 +2023,7 @@ app.include_router(agents.router, prefix="/agents", tags=["agents"])
 app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(config_entries.router, prefix="/admin", tags=["config"])
 app.include_router(knowledge.router, prefix="/admin", tags=["knowledge-agents"])
 app.include_router(tenant_manager.router, prefix="/admin", tags=["tenant-management"])
 app.include_router(events.router, prefix="/events", tags=["events"])
@@ -2014,8 +2031,24 @@ app.include_router(synthetic_router, tags=["synthetic-data"])
 app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
+app.include_router(approvals.router, prefix="/admin/tenant", tags=["approvals"])
+app.include_router(
+    orchestration_annotations.router,
+    prefix="/admin/tenant",
+    tags=["orchestration-annotations"],
+)
+app.include_router(
+    telemetry_metrics.router, prefix="/admin/tenant", tags=["telemetry-metrics"]
+)
+app.include_router(
+    routing_decisions.router, prefix="/admin/tenant", tags=["routing-decisions"]
+)
+app.include_router(
+    embedding_atlas.router, prefix="/admin/tenant", tags=["embedding-atlas"]
+)
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])
+app.include_router(ag_ui.router, prefix="/ag-ui", tags=["ag-ui"])
 
 # Queue-driven ingestion. When REDIS_URL is set, /ingestion/upload
 # streams uploaded bytes to MinIO and submits to the redis queue, and

@@ -21,6 +21,7 @@ from cogniverse_core.approval.interfaces import (
 from cogniverse_core.approval.training_schema import (
     validate_approved_training_values,
 )
+from cogniverse_synthetic.approval.corrections import CORRECTION_ONLY_SCHEMAS
 from cogniverse_synthetic.dspy_modules import ValidatedSyntheticExampleRegenerator
 from cogniverse_synthetic.generators.routing import _enhance_entity_query
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_SCHEMA
@@ -211,6 +212,27 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
             f"(max_attempts: {max_regeneration_attempts})"
         )
 
+    @classmethod
+    def for_tenant(
+        cls, config_manager, tenant_id: str
+    ) -> "SyntheticDataFeedbackHandler":
+        """A handler regenerating with ``tenant_id``'s primary LM, bounded by
+        that LM's request timeout."""
+        from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        from cogniverse_foundation.config.utils import get_config
+
+        primary = (
+            get_config(tenant_id=tenant_id, config_manager=config_manager)
+            .get_llm_config()
+            .primary
+        )
+        generator = ValidatedSyntheticExampleRegenerator(max_retries=3)
+        generator.lm = create_dspy_lm(primary)
+        return cls(
+            generator=generator,
+            generation_timeout_seconds=primary.request_timeout,
+        )
+
     async def process_rejection(
         self, item: ReviewItem, decision: ReviewDecision
     ) -> ReviewItem:
@@ -233,7 +255,7 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
             item_id=item.item_id,
             label="item data",
         )
-        if schema is WorkflowExecutionSchema:
+        if schema in CORRECTION_ONLY_SCHEMAS:
             return self._apply_schema_corrections(
                 item=item,
                 decision=decision,

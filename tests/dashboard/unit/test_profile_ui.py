@@ -121,6 +121,7 @@ class TestDashboardProfileIntegration:
                 "schema_name": "video_test",
                 "embedding_model": "test_model",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             },
         )
 
@@ -173,6 +174,7 @@ class TestDashboardProfileIntegration:
                 "schema_name": "video_test",
                 "embedding_model": "test_model",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             },
         )
         mark_tenant_deleted(admin._config_manager.store, "gone_tenant:gone_tenant")
@@ -215,6 +217,7 @@ class TestDashboardProfileIntegration:
                 "schema_name": "video_test",
                 "embedding_model": "test_model",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             },
         )
 
@@ -260,6 +263,7 @@ class TestDashboardProfileIntegration:
                 "schema_name": "video_test",
                 "embedding_model": "test_model",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
             },
         )
 
@@ -309,6 +313,7 @@ class TestDashboardProfileIntegration:
                 "schema_name": "video_test",
                 "embedding_model": "test_model",
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
                 "description": "E2E test profile",
             },
         )
@@ -520,6 +525,39 @@ def test_create_form_offers_only_valid_embedding_types(monkeypatch):
         "embedding_dim": 320,
         "binary_dim": 40,
     }
+
+
+@pytest.mark.unit
+def test_create_form_offers_the_loaders_ingestion_embeds_with(monkeypatch):
+    """The form's Model Loader options are the loaders profile validation
+    accepts, with none selectable for loaderless types."""
+    from unittest.mock import MagicMock
+
+    from cogniverse_core.common.models.model_loaders import EMBEDDING_MODEL_LOADERS
+    from cogniverse_dashboard.tabs import backend_profile
+
+    st_mock = MagicMock()
+    st_mock.columns.side_effect = lambda spec=2, **k: [
+        MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))
+    ]
+    monkeypatch.setattr(backend_profile, "st", st_mock)
+
+    try:
+        backend_profile.render_create_profile_form(MagicMock(), "acme:acme")
+    except Exception:
+        # Later widgets under a MagicMock st may diverge; the selectbox
+        # renders before them.
+        pass
+
+    loader_calls = [
+        call
+        for call in st_mock.selectbox.call_args_list
+        if (call.args[0] if call.args else call.kwargs.get("label")) == "Model Loader"
+    ]
+    assert len(loader_calls) == 1
+    options = loader_calls[0].kwargs["options"]
+    assert options == ["", *sorted(EMBEDDING_MODEL_LOADERS)]
+    assert options[loader_calls[0].kwargs["index"]] == "colpali"
 
 
 class _SessionState(dict):

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cogniverse_core.common.tenant_utils import (
     canonical_tenant_id,
@@ -28,6 +28,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import get_workflow_settings
 from cogniverse_runtime.http_errors import failure_response, upstream_rejection
 from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +264,34 @@ def _is_owned(agent_name: str) -> bool:
     return agent_name == _USER_MEMORY_AGENT
 
 
+def _is_writable(agent_name: str) -> bool:
+    """User memories and agents' own namespaces; ``_``-prefixed partitions
+    other than the user's belong to the runtime."""
+    return agent_name == _USER_MEMORY_AGENT or not agent_name.startswith("_")
+
+
+def _memory_read_failed(
+    exc: Exception, tenant_id: str, namespaces: List[str]
+) -> HTTPException:
+    """503 for a memory read the store did not answer."""
+    return failure_response(
+        503,
+        "memory_unavailable",
+        f"Could not read the memories of {', '.join(namespaces)} for tenant "
+        f"{tenant_id}.",
+        exc,
+        tenant_id=tenant_id,
+    )
+
+
+def _require_writable(agent_name: str) -> None:
+    if not _is_writable(agent_name):
+        raise HTTPException(
+            status_code=403,
+            detail=f"{agent_name} is a system memory namespace; the runtime manages it.",
+        )
+
+
 class MemoryCreateRequest(BaseModel):
     text: str
     category: Optional[str] = None
@@ -274,12 +303,23 @@ class MemoryCreateRequest(BaseModel):
     # are optional so the original {text, category} caller is unaffected.
     kind: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    # The namespace the memory lands in: the user's memories, or an agent's
+    # own (its mem0 agent_id). System namespaces answer 403.
+    agent_name: str = _USER_MEMORY_AGENT
+
+
+class MemoryStats(BaseModel):
+    agent_name: str
+    total: int
+    archived: int
+    writable: bool
 
 
 @router.post("/{tenant_id}/memories")
 async def create_memory(tenant_id: str, request: MemoryCreateRequest):
-    """Save a user-defined memory with optional category, kind, metadata."""
+    """Save a memory with optional category, kind, metadata."""
     tenant_id = canonical_tenant_id(tenant_id)
+    _require_writable(request.agent_name)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
     metadata: Dict[str, Any] = {}
     if request.category:
@@ -296,14 +336,15 @@ async def create_memory(tenant_id: str, request: MemoryCreateRequest):
         mgr.add_memory,
         content=request.text,
         tenant_id=tenant_id,
-        agent_name=_USER_MEMORY_AGENT,
+        agent_name=request.agent_name,
         metadata=metadata,
         infer=False,
     )
     return {
         "status": "saved",
         "id": str(memory_id),
-        "type": "preference",
+        "type": _namespace_to_type(request.agent_name),
+        "agent_name": request.agent_name,
         "category": request.category,
         "kind": request.kind,
     }
@@ -365,25 +406,28 @@ async def list_memories(
 
     items: List[MemoryItem] = []
     for ns in namespaces:
-        if q:
-            raw = await asyncio.to_thread(
-                mgr.search_memory,
-                query=q,
-                tenant_id=tenant_id,
-                agent_name=ns,
-                top_k=limit,
-            )
-        else:
-            # A category filter is applied in Python below, so the whole
-            # partition must be walked (limit=None) — a capped read would
-            # drop matches sitting past the store's 100-row page. Without a
-            # category, the display limit bounds the read.
-            raw = await asyncio.to_thread(
-                mgr.get_all_memories,
-                tenant_id=tenant_id,
-                agent_name=ns,
-                limit=None if category else limit,
-            )
+        try:
+            if q:
+                raw = await asyncio.to_thread(
+                    mgr.search_memory,
+                    query=q,
+                    tenant_id=tenant_id,
+                    agent_name=ns,
+                    top_k=limit,
+                )
+            else:
+                # A category filter is applied in Python below, so the whole
+                # partition must be walked (limit=None) — a capped read would
+                # drop matches sitting past the store's 100-row page. Without
+                # a category, the display limit bounds the read.
+                raw = await asyncio.to_thread(
+                    mgr.get_all_memories,
+                    tenant_id=tenant_id,
+                    agent_name=ns,
+                    limit=None if category else limit,
+                )
+        except Exception as exc:
+            raise _memory_read_failed(exc, tenant_id, namespaces) from exc
 
         for entry in raw:
             item = _entry_to_item(entry, ns)
@@ -397,23 +441,69 @@ async def list_memories(
     return MemoryListResponse(memories=items, count=len(items))
 
 
-@router.delete("/{tenant_id}/memories/{memory_id}")
-async def delete_memory(tenant_id: str, memory_id: str):
-    """Delete a single user-owned memory by ID.
+@router.get("/{tenant_id}/memories/stats", response_model=MemoryStats)
+async def memory_stats(
+    tenant_id: str,
+    agent_name: str = Query(
+        default=_USER_MEMORY_AGENT, description="The namespace to count"
+    ),
+):
+    """Count a namespace's live and archived memories over its whole partition.
 
-    Returns 403 if the memory belongs to a system namespace.
+    The count reads the store, so a backend outage answers 503 rather than 0.
     """
     tenant_id = canonical_tenant_id(tenant_id)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
-
-    success = await asyncio.to_thread(
-        mgr.delete_memory,
-        memory_id=memory_id,
-        tenant_id=tenant_id,
-        agent_name=_USER_MEMORY_AGENT,
+    try:
+        stats = await asyncio.to_thread(
+            mgr.get_memory_stats, tenant_id=tenant_id, agent_name=agent_name
+        )
+    except Exception as exc:
+        raise _memory_read_failed(exc, tenant_id, [agent_name]) from exc
+    return MemoryStats(
+        agent_name=agent_name,
+        total=stats["total_memories"],
+        archived=stats["archived_memories"],
+        writable=_is_writable(agent_name),
     )
-    if not success:
-        raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
+
+
+@router.delete("/{tenant_id}/memories/{memory_id}")
+async def delete_memory(
+    tenant_id: str,
+    memory_id: str,
+    agent_name: str = Query(
+        default=_USER_MEMORY_AGENT,
+        description="The namespace the memory must belong to",
+    ),
+):
+    """Delete one memory of ``agent_name`` by ID.
+
+    Answers 404 unless the memory is this tenant's and in that namespace,
+    and 403 for a system namespace.
+    """
+    tenant_id = canonical_tenant_id(tenant_id)
+    _require_writable(agent_name)
+    mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
+
+    def _delete() -> bool:
+        # The store deletes by ID alone, so membership is checked first.
+        row = mgr.memory.get(memory_id)
+        if (
+            row is None
+            or row.get("agent_id") != agent_name
+            or canonical_tenant_id(str(row.get("user_id") or "")) != tenant_id
+        ):
+            return False
+        return mgr.delete_memory(
+            memory_id=memory_id, tenant_id=tenant_id, agent_name=agent_name
+        )
+
+    if not await asyncio.to_thread(_delete):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Memory {memory_id} not found among the memories of {agent_name}",
+        )
     return {"status": "deleted"}
 
 
@@ -422,14 +512,18 @@ async def clear_memories(
     tenant_id: str,
     category: Optional[str] = Query(
         default=None,
-        description="Clear only this category, or all user memories if omitted",
+        description="Clear only this category, or the whole namespace if omitted",
+    ),
+    agent_name: str = Query(
+        default=_USER_MEMORY_AGENT, description="The namespace to clear"
     ),
 ):
-    """Clear user-owned memories. System memories (strategies) are not affected.
+    """Clear a namespace's memories, optionally only one category of them.
 
-    Optionally filter by category to only clear a subset.
+    System namespaces answer 403.
     """
     tenant_id = canonical_tenant_id(tenant_id)
+    _require_writable(agent_name)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
     if category:
@@ -443,7 +537,7 @@ async def clear_memories(
             # thing by "cleared".
             results = mgr.get_all_memories(
                 tenant_id=tenant_id,
-                agent_name=_USER_MEMORY_AGENT,
+                agent_name=agent_name,
                 limit=None,
                 include_archived=True,
             )
@@ -451,29 +545,38 @@ async def clear_memories(
             for r in results:
                 if not isinstance(r, dict):
                     continue
-                meta = r.get("metadata", {})
+                meta = r.get("metadata") or {}
                 if meta.get("category") == category:
                     mid = r.get("id")
                     if mid:
                         mgr.delete_memory(
                             memory_id=str(mid),
                             tenant_id=tenant_id,
-                            agent_name=_USER_MEMORY_AGENT,
+                            agent_name=agent_name,
                         )
                         deleted += 1
             return deleted
 
         deleted = await asyncio.to_thread(_clear_category)
         logger.info(
-            "Cleared %d '%s' memories for tenant=%s", deleted, category, tenant_id
+            "Cleared %d '%s' memories of %s for tenant=%s",
+            deleted,
+            category,
+            agent_name,
+            tenant_id,
         )
-        return {"status": "cleared", "category": category, "deleted": deleted}
+        return {
+            "status": "cleared",
+            "agent_name": agent_name,
+            "category": category,
+            "deleted": deleted,
+        }
 
     await asyncio.to_thread(
-        mgr.clear_agent_memory, tenant_id=tenant_id, agent_name=_USER_MEMORY_AGENT
+        mgr.clear_agent_memory, tenant_id=tenant_id, agent_name=agent_name
     )
-    logger.info("Cleared all user memories for tenant=%s", tenant_id)
-    return {"status": "cleared"}
+    logger.info("Cleared all memories of %s for tenant=%s", agent_name, tenant_id)
+    return {"status": "cleared", "agent_name": agent_name}
 
 
 _JOBS_SERVICE = "tenant_jobs"
@@ -592,17 +695,19 @@ async def _delete_cron_workflow(name: str, namespace: str) -> None:
     logger.info("Deleted CronWorkflow: %s", name)
 
 
-# Modes accepted by POST /{tenant_id}/optimize. Matches the `--mode` choices
-# declared by cogniverse_runtime.optimization_cli (minus `triggered` and
-# `cleanup`, which aren't intended for interactive dashboard use, and
-# `synthetic` which has its own scheduled CronWorkflow).
+# Modes accepted by POST /{tenant_id}/optimize: the `--mode` choices of
+# cogniverse_runtime.optimization_cli meant for an operator to start.
 _MANUAL_OPTIMIZE_MODES = {
     "gateway-thresholds",
     "simba",
     "workflow",
     "profile",
     "entity-extraction",
+    "llm-annotate",
+    "synthetic",
 }
+_SYNTHETIC_MODE = "synthetic"
+_DEFAULT_LOOKBACK_HOURS = 48.0
 
 
 def _sanitize_label_value(value: str) -> str:
@@ -637,9 +742,23 @@ def _cron_workflow_name(tenant_id: str, job_id: str) -> str:
 
 
 def _build_optimization_workflow_manifest(
-    tenant_id: str, mode: str, namespace: str
+    tenant_id: str,
+    mode: str,
+    namespace: str,
+    *,
+    lookback_hours: float = _DEFAULT_LOOKBACK_HOURS,
+    agents: Optional[List[str]] = None,
 ) -> dict:
-    """Build a one-off Argo Workflow that runs ``optimization_cli --mode``."""
+    """Build a one-off Argo Workflow that runs ``optimization_cli --mode``;
+    ``agents`` becomes its ``--agents`` (the synthetic mode's optimizer
+    types)."""
+    parameters = [
+        {"name": "mode", "value": mode},
+        {"name": "tenant-id", "value": tenant_id},
+        {"name": "lookback-hours", "value": f"{lookback_hours:g}"},
+    ]
+    if agents:
+        parameters.append({"name": "agents", "value": ",".join(agents)})
     if not get_workflow_settings().optimization_template:
         raise HTTPException(
             status_code=503,
@@ -674,13 +793,7 @@ def _build_optimization_workflow_manifest(
             "workflowTemplateRef": {
                 "name": get_workflow_settings().optimization_template,
             },
-            "arguments": {
-                "parameters": [
-                    {"name": "mode", "value": mode},
-                    {"name": "tenant-id", "value": tenant_id},
-                    {"name": "lookback-hours", "value": "48"},
-                ],
-            },
+            "arguments": {"parameters": parameters},
         },
     }
 
@@ -712,6 +825,19 @@ async def _submit_workflow(manifest: dict) -> dict:
 
 class ManualOptimizeRequest(BaseModel):
     mode: str
+    lookback_hours: float = Field(
+        _DEFAULT_LOOKBACK_HOURS,
+        gt=0,
+        le=8760,
+        description="Hours of span history the run reads",
+    )
+    optimizers: Optional[List[str]] = Field(
+        None,
+        description=(
+            "The synthetic mode's optimizer types to generate training data "
+            "for; required for it and refused for every other mode"
+        ),
+    )
 
 
 class ManualOptimizeResponse(BaseModel):
@@ -789,6 +915,45 @@ def _extract_blocked_reason(status_block: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+class OptimizeModes(BaseModel):
+    modes: List[str]
+    synthetic_optimizers: List[str]
+
+
+@router.get("/optimize-modes", response_model=OptimizeModes)
+async def list_optimization_modes():
+    """The modes ``POST /{tenant_id}/optimize`` accepts and the optimizer
+    types its synthetic mode generates data for, sorted."""
+    return OptimizeModes(
+        modes=sorted(_MANUAL_OPTIMIZE_MODES),
+        synthetic_optimizers=sorted(APPROVED_TRAINING_AGENT_BY_OPTIMIZER),
+    )
+
+
+def _synthetic_optimizers(body: ManualOptimizeRequest) -> Optional[List[str]]:
+    """The request's optimizer types, validated against its mode."""
+    supported = sorted(APPROVED_TRAINING_AGENT_BY_OPTIMIZER)
+    if body.mode != _SYNTHETIC_MODE:
+        if body.optimizers is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="optimizers apply only to the synthetic mode",
+            )
+        return None
+    if not body.optimizers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The synthetic mode needs optimizers, from: {supported}",
+        )
+    unknown = sorted(set(body.optimizers) - set(supported))
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown optimizers {unknown}; supported: {supported}",
+        )
+    return sorted(set(body.optimizers))
+
+
 @router.post("/{tenant_id}/optimize", response_model=ManualOptimizeResponse)
 async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
     """Manually trigger an optimization run for a tenant via Argo.
@@ -811,8 +976,13 @@ async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
             ),
         )
 
+    optimizers = _synthetic_optimizers(body)
     manifest = _build_optimization_workflow_manifest(
-        tenant_id, body.mode, get_workflow_settings().namespace
+        tenant_id,
+        body.mode,
+        get_workflow_settings().namespace,
+        lookback_hours=body.lookback_hours,
+        agents=optimizers,
     )
     response = await _submit_workflow(manifest)
 

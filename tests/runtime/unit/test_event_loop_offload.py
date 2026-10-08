@@ -480,7 +480,9 @@ async def test_tenant_clear_memories_offloaded(monkeypatch):
     monkeypatch.setattr(tenant, "_get_memory_manager", lambda tid: mgr)
 
     ticks = await _ticks_during(
-        lambda: tenant.clear_memories("acme:acme", category=None)
+        lambda: tenant.clear_memories(
+            "acme:acme", category=None, agent_name=tenant._USER_MEMORY_AGENT
+        )
     )
     assert ticks >= 10, f"only {ticks} ticks — clear_agent_memory ran on the loop"
 

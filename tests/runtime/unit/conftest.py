@@ -77,13 +77,15 @@ class InProcessClusterEvents:
 
 @pytest.fixture
 def in_process_cluster_events(monkeypatch):
-    """Wire tenant deletes and session closes to an in-process channel."""
+    """Wire tenant deletes, tier sets and session closes to an in-process
+    channel."""
     from cogniverse_runtime.admin import tenant_manager
     from cogniverse_runtime.routers import admin
 
     events = InProcessClusterEvents(
         {
             "tenant_deleted": tenant_manager.release_deleted_tenant,
+            "tenant_tier_set": tenant_manager.release_tenant_tier,
             "session_closed": admin.sweep_closed_session,
         }
     )

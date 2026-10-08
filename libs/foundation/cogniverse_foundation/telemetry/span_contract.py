@@ -125,6 +125,65 @@ RESULT_ID_META_KEY = "result_id"
 RELEVANCE_POSITIVE_THRESHOLD = 0.7
 PREFERENCE_CHOSEN_THRESHOLD = 0.5
 
+# A reviewer's relevance label and the score it is stored with. Only "Highly
+# Relevant" clears RELEVANCE_POSITIVE_THRESHOLD, so it is the label the triplet
+# miner counts as a positive.
+RELEVANCE_SCORES = {
+    "Highly Relevant": 1.0,
+    "Somewhat Relevant": 0.5,
+    "Not Relevant": 0.0,
+}
+
+
+class SpanNotInProjectError(LookupError):
+    """The span to annotate is not a span of the project being written."""
+
+
+async def persist_result_relevance(
+    provider: Any,
+    project: str,
+    span_id: Optional[str],
+    result_id: str,
+    relevance_label: str,
+) -> float:
+    """Write a ``result_relevance`` annotation on search span ``span_id`` of
+    ``project`` and return its score. Each result keeps its own annotation;
+    rating a result again replaces its earlier rating.
+
+    The span is read back from ``project`` first: the backend keys
+    annotations by span id alone, so writing without that check would let a
+    caller annotate another project's span. Raises ``ValueError`` on a missing
+    span id or an unknown label and ``SpanNotInProjectError`` when the project
+    holds no such span.
+    """
+    if not span_id:
+        raise ValueError(
+            "no search span_id — cannot annotate this result "
+            "(telemetry disabled or span not captured)"
+        )
+    if relevance_label not in RELEVANCE_SCORES:
+        raise ValueError(f"unknown relevance label: {relevance_label!r}")
+    spans = await provider.traces.get_spans(
+        project=project,
+        filters={"span_id": [span_id]},
+        limit=1,
+    )
+    if spans.empty or span_id not in set(spans["context.span_id"]):
+        raise SpanNotInProjectError(f"span {span_id} is not in project {project}")
+
+    score = RELEVANCE_SCORES[relevance_label]
+    await provider.annotations.add_annotation(
+        span_id=span_id,
+        name=RESULT_RELEVANCE,
+        label=relevance_label,
+        score=score,
+        metadata={RESULT_ID_META_KEY: str(result_id)},
+        project=project,
+        identifier=str(result_id),
+    )
+    return score
+
+
 _ATTR_PREFIX = "attributes."
 
 

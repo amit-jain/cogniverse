@@ -350,6 +350,7 @@ class TestMemorySystemCompleteE2E:
         assert stats == {
             "enabled": True,
             "total_memories": len(contents),
+            "archived_memories": 0,
             "tenant_id": "e2e_test_tenant",
             "agent_name": "stats_test",
         }
@@ -436,6 +437,7 @@ class TestMemorySystemCompleteE2E:
         assert stats == {
             "enabled": True,
             "total_memories": 3,
+            "archived_memories": 0,
             "tenant_id": "test_tenant",
             "agent_name": "mixin_e2e_test",
         }

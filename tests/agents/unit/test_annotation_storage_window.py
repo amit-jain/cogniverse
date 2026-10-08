@@ -79,14 +79,29 @@ async def test_written_annotation_timestamps_are_utc_aware():
         reasoning="the request required document search",
         annotator_id="reviewer-7",
     )
+    storage.project_name = "cogniverse-acme"
+    storage.annotation_name = "routing_annotation"
+    storage.provider = MagicMock()
+    storage.provider.annotations.get_annotations = AsyncMock(
+        return_value=pd.DataFrame(
+            {
+                "result.label": ["correct"],
+                "result.score": [0.9],
+                "metadata": [{"annotator": "llm", "reasoning": "fits"}],
+            },
+            index=["approval-span"],
+        )
+    )
+    storage.provider.annotations.add_annotation = AsyncMock()
     await storage.approve_llm_annotation("approval-span", annotator_id="reviewer-8")
+    approval = storage.provider.annotations.add_annotation.await_args.kwargs
 
     timestamp_fields = [
         writes[0][1]["annotation.timestamp"],
         writes[1][1]["annotation.timestamp"],
-        writes[2][1]["annotation.approval_timestamp"],
+        approval["metadata"]["approval_timestamp"],
     ]
-    assert [span_id for span_id, _ in writes] == [
+    assert [span_id for span_id, _ in writes] + [approval["span_id"]] == [
         "llm-span",
         "human-span",
         "approval-span",

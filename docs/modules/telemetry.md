@@ -32,6 +32,7 @@ libs/foundation/cogniverse_foundation/telemetry/
 ├── config.py                # TelemetryConfig and BatchExportConfig
 ├── context.py               # Span context helpers
 ├── span_contract.py         # Canonical span I/O contract (record_span_io / read_span_io)
+├── span_metrics.py          # Aggregates over span frames for the operations views
 ├── registry.py              # Provider registry for auto-discovery
 └── providers/               # Provider interfaces
     ├── __init__.py
@@ -46,7 +47,21 @@ libs/foundation/cogniverse_foundation/telemetry/
 - `TelemetryConfig`: Configuration for telemetry systems with BatchExportConfig
 - `TelemetryManager`: Singleton manager for multi-tenant tracer providers
 - Context helpers for common operations (search, encode, backend)
-- `span_contract`: the one span I/O shape every operation uses.
+- `span_metrics`: aggregates over a `TraceStore` span frame.
+  `trace_rows(spans)` turns root spans into trace rows newest first,
+  `trace_statistics(rows)` gives their counts, latency percentiles, outlier
+  bounds (`outlier_bounds(durations)`) and per-operation figures.
+  `profile_selection_metrics(spans)` gives per-modality count, p50/p95/p99
+  latency in ms and success rate, most-used first; `aggregate_ab_compare(spans)`
+  gives the `ABCompareAggregate` of `rlm.ab_compare` spans (`AB_COMPARE_SPAN_NAME`),
+  with averages, `per_dataset` and `per_row` (newest first) frames. `span_succeeded(status)` is
+  false only for `ERROR`, so a span that finished without setting a status
+  (`UNSET`) counts as a success.
+- `span_contract`: the one span I/O shape every operation uses, and the
+  result annotation contract: `RESULT_RELEVANCE`, `RELEVANCE_SCORES` and
+  `persist_result_relevance(provider, project, span_id, result_id, label)`,
+  which checks the span is in `project` (`SpanNotInProjectError` otherwise)
+  and stores the rating under the result's own identifier.
   `record_span_io(span, input_value=, output=, operation=, modality=)` writes the
   input on `input.value`, the output as JSON on `output.value`, and the type on
   `operation`; `read_span_io(row)` reads `{input, output, operation, modality}` back and
@@ -434,6 +449,9 @@ callers never interpret a partial history as the complete project. Its
 `start_time` and `end_time` columns are normalized to timezone-aware UTC
 datetimes; an invalid timestamp raises with project and column context before
 the frame is returned.
+`iter_spans` and `get_all_spans` take `filters={"name": ..., "roots_only": True}`:
+`name` keeps spans of one name or several, `roots_only` keeps spans without a
+parent (one per trace); any other key raises `ValueError`.
 
 ### AnnotationStore Interface
 
@@ -450,8 +468,10 @@ class AnnotationStore(ABC):
         score: float,        # 0.0-1.0
         metadata: Dict[str, Any],
         project: str,
+        identifier: Optional[str] = None,  # several annotations of one name per span
     ) -> str:
-        """Add annotation to a span."""
+        """Add annotation to a span; replaces the span's annotation of the
+        same name and identifier."""
         pass
 
     @abstractmethod
@@ -535,6 +555,12 @@ class DatasetStore(ABC):
 `DatasetNotFoundError` (`cogniverse_foundation.telemetry.providers.base`) subclasses
 `ValueError` so existing `except ValueError` callers keep working, while letting
 callers distinguish a genuinely missing dataset from a backend outage.
+
+`PhoenixDatasetStore` uploads each row through `upload_dataset_rows`
+(`cogniverse_telemetry_phoenix.provider`), storing every value as the string the
+frame's CSV rendering holds for it (an empty cell is `""`). A value has no size
+limit: optimizer versions whose content or ledger exceeds 128 KiB (a week of
+consumed span ids) round-trip byte-for-byte.
 
 The telemetry provider exposes these store interfaces. `replace_dataset` is the
 safe helper for stable-name overwrites: same-name writers are serialized only

@@ -122,6 +122,12 @@ class MockSearchBackend(SearchBackend):
     def health_check(self) -> bool:
         return True
 
+    def export_embeddings(
+        self, schema=None, max_documents=None, filters=None, include_embeddings=True
+    ):
+
+        return []
+
     def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
         """Mock implementation of get_embedding_requirements"""
         return {
@@ -210,6 +216,12 @@ class MockFullBackend(Backend):
 
     def health_check(self) -> bool:
         return True
+
+    def export_embeddings(
+        self, schema=None, max_documents=None, filters=None, include_embeddings=True
+    ):
+
+        return []
 
     def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
         """Mock implementation of get_embedding_requirements"""

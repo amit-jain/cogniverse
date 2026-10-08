@@ -281,6 +281,7 @@ class TestProfilesAcrossWorkers:
                     "schema_name": "video_colpali_smol500_mv_frame",
                     "embedding_model": "vidore/colsmol-500m",
                     "embedding_type": "multi_vector",
+                    "model_loader": "colpali",
                     "deploy_schema": False,
                 },
             )
@@ -553,6 +554,7 @@ class TestProfileRecreateAcrossWorkers:
             "schema_name": "video_colpali_smol500_mv_frame",
             "embedding_model": "vidore/colsmol-500m",
             "embedding_type": "multi_vector",
+            "model_loader": "colpali",
             "deploy_schema": False,
         }
         pinned = _pinned(runtime, 1)
@@ -598,6 +600,7 @@ def _profile_body(tenant: str, name: str) -> dict:
         "schema_name": "video_colpali_smol500_mv_frame",
         "embedding_model": "vidore/colsmol-500m",
         "embedding_type": "multi_vector",
+        "model_loader": "colpali",
         "deploy_schema": False,
     }
 

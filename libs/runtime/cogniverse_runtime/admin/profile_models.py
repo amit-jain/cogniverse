@@ -58,6 +58,28 @@ class ProfileCreateRequest(BaseModel):
     model_specific: Optional[Dict[str, Any]] = Field(
         default=None, description="Model-specific parameters"
     )
+    model_loader: str = Field(
+        default="",
+        description=(
+            "Loader ingestion embeds with (colbert, colpali, colqwen, xclip); "
+            "required for the profile types whose content is embedded"
+        ),
+    )
+    process_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "Ingestion processing type (direct_video, frame_based, "
+            "video_chunks); inferred from the profile when unset"
+        ),
+    )
+    extra_config: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Further profile keys stored beside the named fields, such as "
+            "inference_services, model_config, result_granularity or "
+            "semantic_model"
+        ),
+    )
     deploy_schema: bool = Field(
         default=False, description="Deploy schema to Vespa immediately after creation"
     )
@@ -88,6 +110,8 @@ class ProfileCreateRequest(BaseModel):
                     },
                 },
                 "embedding_type": "multi_vector",
+                "model_loader": "colpali",
+                "extra_config": {"inference_services": {"embedding": "vllm_colpali"}},
                 "schema_config": {
                     "schema_name": "video_colpali_smol500_mv_frame",
                     "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
@@ -148,12 +172,37 @@ class ProfileDetail(BaseModel):
     embedding_type: str
     schema_config: Dict[str, Any]
     model_specific: Optional[Dict[str, Any]] = None
+    model_loader: str = Field(..., description="Loader ingestion embeds with")
+    process_type: Optional[str] = Field(
+        ..., description="Ingestion processing type; unset when inferred"
+    )
+    extra_config: Dict[str, Any] = Field(
+        ..., description="Profile keys stored beside the named fields"
+    )
     schema_deployed: bool = Field(..., description="Whether schema is deployed")
     tenant_schema_name: Optional[str] = Field(
         None, description="Tenant-specific schema name (if deployed)"
     )
     created_at: str = Field(..., description="Creation timestamp (ISO 8601)")
     version: int = Field(..., description="Config version number")
+
+
+class ProfileTemplate(BaseModel):
+    """A shipped profile a new one can start from."""
+
+    profile_name: str = Field(..., description="Shipped profile name")
+    config: Dict[str, Any] = Field(
+        ..., description="The profile's configuration as ingestion reads it"
+    )
+
+
+class ProfileTemplateListResponse(BaseModel):
+    """Response model for listing the shipped profiles."""
+
+    tenant_id: str = Field(..., description="Tenant identifier")
+    templates: List[ProfileTemplate] = Field(
+        ..., description="Shipped profiles, by name"
+    )
 
 
 class ProfileUpdateRequest(BaseModel):

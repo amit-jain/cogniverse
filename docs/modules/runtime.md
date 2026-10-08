@@ -95,10 +95,13 @@ cogniverse_runtime/
 │   ├── agents.py                    # Agent orchestration + inbound messaging
 │   ├── events.py                    # SSE streaming for real-time updates
 │   ├── admin.py                     # Admin / tenant management
+│   ├── ag_ui.py                     # AG-UI /ag-ui surface for web clients
 │   ├── debug.py                     # Debug + diagnostic endpoints
 │   ├── graph.py                     # Graph traversal API
 │   ├── knowledge.py                 # Knowledge-graph query API
 │   ├── openai_compat.py             # OpenAI-dialect /v1 surface for harness clients
+│   ├── routing_decisions.py         # A tenant's routing decisions, their quality and review
+│   ├── telemetry_metrics.py         # Per-tenant span metrics for the operations views
 │   ├── tenant.py                    # Per-tenant admin endpoints
 │   └── wiki.py                      # Wiki API endpoints
 ├── admin/                           # Admin domain models + tenant tooling
@@ -349,7 +352,7 @@ uvicorn.run(app, host="0.0.0.0", port=8000)
 9. Wire tenant manager and the wiki/graph manager factories; affirm the system's wiki and memory backend profiles through the same `write_startup_config` wait, where a failure after it is logged as a WARNING rather than failing startup
 10. Configure DSPy LM and the synthetic data service; then import, on a worker thread, the modules a worker's first LM call would otherwise import mid-request (`preload_lm_client_modules`: LiteLLM, which DSPy loads lazily, and the OpenAI client's resource modules). They build hundreds of pydantic models, about 1.5 s per worker; done during a request, the serving loop waited for the interpreter at every socket read and write, and liveness and every other request on the worker stalled with it. The same step imports the telemetry provider's span-export stack (`TelemetryManager.preload_span_export`: Phoenix's OTel registration and the gRPC exporter), which a tenant's first span otherwise imported on the loop, holding it for about 0.3 s
 11. Start the `GatewayHealthProbe` and the OpenShell mTLS cert rotator (when sandboxing is enabled)
-12. Subscribe this worker to the cluster-events channel on the same Redis (`cogniverse_runtime.cluster_events.ClusterEvents`, worker id `host:pid:suffix`): tenant deletes and session closes are published there, every worker process and replica runs its handler for the event and acknowledges it, and the publisher waits for every acknowledgement. Startup fails when the channel cannot be subscribed. Build the shared Redis A2A task store (`cogniverse_runtime/a2a_task_store.py`) on that Redis, then mount the JSON-RPC server at `/a2a` with an `AgentCard` built from the loaded agents. Startup fails rather than falling back to process-local task storage, and refuses a Redis older than 7.4, which lacks the hash-field expiry (`HPEXPIRE`) the store's lease bookkeeping needs, as well as a read-only replica or a Redis user not permitted `HPEXPIRE`. The store retains at most `A2A_MAX_TASKS` (default 10000), evicts the least-recently-used inactive task that no live lease holds, and refuses admission when every retained task is active or leased. Per-task renewable leases serialize continuations before their snapshot read, and a generation drawn from one monotonic sequence is the fencing token: a write is rejected once a newer owner has taken a later generation or the task was evicted or deleted, so the last write of a finished execution still lands after its lease is released; a save never replaces a stored terminal state with a different one. Cancelling an executing task is delivered to the owning replica and acknowledged through Redis; an idle non-terminal task — every turn paused in `input_required` — has no owner and is cancelled locally, as the stock handler does. Owner liveness on the cancel path is judged against Redis' own clock (`has_live_owner`), never the replica's wall clock, so a pod whose clock runs ahead cannot declare a live owner expired. A lease record whose interruption the store declines is not an interruption: the task is treated as the idle task it is and cancelled locally rather than routed to a replica that will never acknowledge. A cancel that loses the ownership race answers with the same retryable conflict `message/send` reports, not a generic internal error; so does any other cancel that could not run — a store outage, a routed cancel the owner does not acknowledge or refuses, or one a shutdown cuts short. Active resubscriptions consume the owner's bounded Redis event relay. Only the generation that owns the task publishes to, marks gaps on or closes that relay, each checked in the script that writes it, so a replica that lost the task keeps its events on its local queue and the new owner's resubscribers keep reading; a superseded close still gives the relay its drain window once no live lease remains, and a publish keeps an expiring relay only for a live owner of an unfinished task. A send on a task that has ended is refused without taking a generation. While a cancel takes its generation the relay holds at most 1000 producer events, and a producer emitting more waits for the cancel to commit or abort. If releasing held events after an aborted cancel fails to publish, the rest reach local consumers only and the relay records how many were missed, so a resubscription reading past the gap fails instead of skipping them. Evicting or deleting a task drops its lease, generation and event relay with it. Every Redis command, connect and wait for one of at most `A2A_REDIS_MAX_CONNECTIONS` pooled connections is bounded by `A2A_REDIS_TIMEOUT_SECONDS`, with TCP keepalive and a health check on idle connections; blocking reads wait at most one second at a time, so a Redis that stops answering fails the call as a store outage instead of hanging it. A replica serves at most `A2A_MAX_CONCURRENT_RESUBSCRIPTIONS` resubscriptions at once and refuses more with a retryable conflict; startup refuses a pool smaller than that cap plus two and a Redis timeout of one second or less. A lease renewal Redis cannot complete is retried until the lease would expire; the execution is cancelled only then, or when another owner took the task, and its local consumers get a final `failed` event, so a blocking `message/send` ends instead of waiting on its client; saving that event is fenced like any write, so a replica that lost the task records nothing and the send answers with the error. Shutdown gives served executions and running cancels `A2A_DRAIN_TIMEOUT_SECONDS` to finish, cancels what outlives it and gives that at most as long again to stop, so it ends within twice the budget, and then closes the Redis client it owns; an execution cancelled at its deadline is saved `failed` (interrupted) through the fenced save while this replica still owns it, unless it had already emitted its final event, and its lease is released, so `tasks/get` reads it terminal right after shutdown and a blocking send on it answers with that task; a task another owner took meanwhile is left to it. `tasks/get` reads a task and its owner's liveness in one round trip; one still recorded executing under an expired lease, as after a crash, records the same interruption a peer's `message/send` or `tasks/cancel` does, atomically and once however many readers race; a task whose owner holds or renews its lease is never touched. The chart derives the runtime's `terminationGracePeriodSeconds` from `runtime.shutdown`: uvicorn's graceful shutdown (`uvicornGracefulSeconds`, rendered as `UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN`, 15 s), the 40 s conversation-save drain, twice `a2aDrainSeconds` (rendered as `A2A_DRAIN_TIMEOUT_SECONDS`, 30 s), the 30 s background memory-write drain and `teardownSeconds` (15 s): 160 s by default. Setting either variable through `runtime.env` fails the render.
+12. Subscribe this worker to the cluster-events channel on the same Redis (`cogniverse_runtime.cluster_events.ClusterEvents`, worker id `host:pid:suffix`): tenant deletes, tier sets and session closes are published there, every worker process and replica runs its handler for the event and acknowledges it, and the publisher waits for every acknowledgement. Startup fails when the channel cannot be subscribed. Build the shared Redis A2A task store (`cogniverse_runtime/a2a_task_store.py`) on that Redis, then mount the JSON-RPC server at `/a2a` with an `AgentCard` built from the loaded agents. Startup fails rather than falling back to process-local task storage, and refuses a Redis older than 7.4, which lacks the hash-field expiry (`HPEXPIRE`) the store's lease bookkeeping needs, as well as a read-only replica or a Redis user not permitted `HPEXPIRE`. The store retains at most `A2A_MAX_TASKS` (default 10000), evicts the least-recently-used inactive task that no live lease holds, and refuses admission when every retained task is active or leased. Per-task renewable leases serialize continuations before their snapshot read, and a generation drawn from one monotonic sequence is the fencing token: a write is rejected once a newer owner has taken a later generation or the task was evicted or deleted, so the last write of a finished execution still lands after its lease is released; a save never replaces a stored terminal state with a different one. Cancelling an executing task is delivered to the owning replica and acknowledged through Redis; an idle non-terminal task — every turn paused in `input_required` — has no owner and is cancelled locally, as the stock handler does. Owner liveness on the cancel path is judged against Redis' own clock (`has_live_owner`), never the replica's wall clock, so a pod whose clock runs ahead cannot declare a live owner expired. A lease record whose interruption the store declines is not an interruption: the task is treated as the idle task it is and cancelled locally rather than routed to a replica that will never acknowledge. A cancel that loses the ownership race answers with the same retryable conflict `message/send` reports, not a generic internal error; so does any other cancel that could not run — a store outage, a routed cancel the owner does not acknowledge or refuses, or one a shutdown cuts short. Active resubscriptions consume the owner's bounded Redis event relay. Only the generation that owns the task publishes to, marks gaps on or closes that relay, each checked in the script that writes it, so a replica that lost the task keeps its events on its local queue and the new owner's resubscribers keep reading; a superseded close still gives the relay its drain window once no live lease remains, and a publish keeps an expiring relay only for a live owner of an unfinished task. A send on a task that has ended is refused without taking a generation. While a cancel takes its generation the relay holds at most 1000 producer events, and a producer emitting more waits for the cancel to commit or abort. If releasing held events after an aborted cancel fails to publish, the rest reach local consumers only and the relay records how many were missed, so a resubscription reading past the gap fails instead of skipping them. Evicting or deleting a task drops its lease, generation and event relay with it. Every Redis command, connect and wait for one of at most `A2A_REDIS_MAX_CONNECTIONS` pooled connections is bounded by `A2A_REDIS_TIMEOUT_SECONDS`, with TCP keepalive and a health check on idle connections; blocking reads wait at most one second at a time, so a Redis that stops answering fails the call as a store outage instead of hanging it. A replica serves at most `A2A_MAX_CONCURRENT_RESUBSCRIPTIONS` resubscriptions at once and refuses more with a retryable conflict; startup refuses a pool smaller than that cap plus two and a Redis timeout of one second or less. A lease renewal Redis cannot complete is retried until the lease would expire; the execution is cancelled only then, or when another owner took the task, and its local consumers get a final `failed` event, so a blocking `message/send` ends instead of waiting on its client; saving that event is fenced like any write, so a replica that lost the task records nothing and the send answers with the error. Shutdown gives served executions and running cancels `A2A_DRAIN_TIMEOUT_SECONDS` to finish, cancels what outlives it and gives that at most as long again to stop, so it ends within twice the budget, and then closes the Redis client it owns; an execution cancelled at its deadline is saved `failed` (interrupted) through the fenced save while this replica still owns it, unless it had already emitted its final event, and its lease is released, so `tasks/get` reads it terminal right after shutdown and a blocking send on it answers with that task; a task another owner took meanwhile is left to it. `tasks/get` reads a task and its owner's liveness in one round trip; one still recorded executing under an expired lease, as after a crash, records the same interruption a peer's `message/send` or `tasks/cancel` does, atomically and once however many readers race; a task whose owner holds or renews its lease is never touched. The chart derives the runtime's `terminationGracePeriodSeconds` from `runtime.shutdown`: uvicorn's graceful shutdown (`uvicornGracefulSeconds`, rendered as `UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN`, 15 s), the 40 s conversation-save drain, twice `a2aDrainSeconds` (rendered as `A2A_DRAIN_TIMEOUT_SECONDS`, 30 s), the 30 s background memory-write drain and `teardownSeconds` (15 s): 160 s by default. Setting either variable through `runtime.env` fails the render.
 13. Build every included router's routes (`build_included_routes`), which fastapi otherwise builds on the first request that matches
 14. Collect and freeze the heap startup built (`freeze_startup_heap`: `gc.collect()` then `gc.freeze()`). A worker holds about half a million long-lived objects; a full collection that scanned them held the interpreter for 0.3 to 0.5 s, stalling the serving loop whichever thread's allocation triggered it. Later full collections scan only objects made after startup
 15. Once startup completes, a background task redeploys every tenant schema whose registered definition differs from the one `configs/schemas/` ships (`SchemaRegistry.redeploy_drifted_schemas`, see [Schema drift migration](core.md#schema-drift-migration)): one package per drifted tenant, under the deployment lease from the decision through the registration, so runtimes starting together redeploy each tenant once. A run that does not complete — the deployment lease held by a peer for the whole wait, the config server or config store unreachable, a peer's registration racing a redeploy — is logged at WARNING and run again every `SCHEMA_MIGRATION_RETRY_SECONDS` (30 s) until one does; it never fails startup. A change Vespa refuses without a validation override (a field type or indexing change that needs a refeed) is never applied: the schema keeps its live and registered definition and its documents, is logged at ERROR by tenant and schema with Vespa's reason, and is listed with that reason by `GET /admin/schemas/drift`. A tenant marked deleted whose delete has not completed is not redeployed; its drifted schemas are logged and left as they are. A run that completes removes every recorded refusal whose schema has since migrated or been deleted. Shutdown stops it before its next run or tenant and before the drains; a tenant redeploy already running finishes. A pod still running the previous release redeploys its own shipped definition when a request first ensures a schema, so each new pod's startup runs the migration again; a run that finds nothing drifted deploys nothing.
@@ -466,6 +469,10 @@ The server uses modular routers for different functionality:
 | `wiki` | `/wiki` | Per-tenant wiki knowledge page storage and search |
 | `graph` | `/graph` | Knowledge graph upsert, search, neighbors, and path queries |
 | `tenant` | `/admin/tenant` | Per-tenant self-service: instructions, memories, scheduled jobs, optimization |
+| `approvals` | `/admin/tenant` | Human review of a tenant's synthetic examples |
+| `orchestration_annotations` | `/admin/tenant` | Human review of a tenant's orchestration workflows |
+| `telemetry_metrics` | `/admin/tenant` | Trace analytics, profile-selection and RLM A/B metrics over a tenant's spans, and its searches scored against its golden set |
+| `routing_decisions` | `/admin/tenant` | A tenant's routing decisions with their outcomes, labels and per-agent quality; approving and correcting their labels |
 | `debug` | `/admin/debug` | Runtime diagnostics (gated behind `COGNIVERSE_DEBUG_MEM`) |
 
 ### Tenant administration
@@ -480,6 +487,7 @@ tenant's semantic-router tier.
 | `DELETE /admin/tenants/{tenant_id}` | Delete the tenant, its schemas and its data |
 | `GET /admin/tenants/{tenant_id}/tier` | The tenant's semantic-router tier |
 | `PUT /admin/tenants/{tenant_id}/tier` | Set it |
+| `GET /admin/router-tiers` | The tiers a tenant can be set to, and the default |
 
 **Router tier.** The tier rides on the semantic router's group header and
 selects which routing decisions a tenant's LLM calls can match. It is a
@@ -492,7 +500,14 @@ The vocabulary is `ROUTER_TIERS`
 (`cogniverse_foundation.config.unified_config`), currently `default`, `free`
 and `pro`, and each value names a Group the router's chart binds. `PUT`
 refuses anything outside it with 422 and the valid set in the message; an
-unknown tenant is 404; a registry or store outage is 503.
+unknown tenant is 404; a registry or store outage is 503. After storing the
+tier, `PUT` publishes a `tenant_tier_set` cluster event and answers once every
+worker process and replica has dropped the tier it held for the tenant
+(`release_tenant_tier`), so the tenant's next request on any of them is routed
+on the stored tier. A worker that does not confirm within
+`TENANT_TIER_ACK_TIMEOUT_S` (15 s), or a Redis that cannot carry the event,
+answers 503 naming the stored tier; the tier stays stored and the set can be
+retried.
 
 Requests read the tier through `resolve_tenant_tier`, whose per-manager reader
 holds it per canonical tenant in a `RefreshingCache`. A held tier answers with
@@ -500,9 +515,10 @@ no store read for `TENANT_TIER_REFRESH_S` (15 s); until
 `TENANT_TIER_MAX_STALENESS_S` (30 s) it still answers while one background
 thread (`router-tier-refresh`) re-reads it, so a request never waits on that
 read. Only a tenant with nothing held, or a tier 30 s old, is read on the
-request thread. `PUT` drops the tenant from every reader in its own process
-immediately, so 30 s bounds how long another replica keeps serving the tier it
-read before the write, and a tenant served continuously sees it after about
+request thread. A tier written to the store other than through `PUT` (the
+provisioning script's tier step) drops the tenant only in the writing
+process, so 30 s bounds how long a runtime worker keeps serving the tier it
+read before that write, and a tenant served continuously sees it after about
 15 s plus one read. A failed background read is logged at ERROR and the held
 tier answers until 30 s. A store failure on the request thread routes the
 tenant as `default` and logs a WARNING naming the tenant and the error: a
@@ -524,6 +540,7 @@ app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])
+app.include_router(ag_ui.router, prefix="/ag-ui", tags=["ag-ui"])
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 ```
 
@@ -998,6 +1015,8 @@ curl -X POST http://localhost:8000/agents/annotations/queue/span-123/complete \
 ```
 The request is claimed before its label is written to telemetry, so of concurrent completions on any processes exactly one writes the label; the others answer 409. A failed telemetry write releases the claim and answers 502 with the request still open. When the queue's Redis fails after the label is written, the route answers 503 and the request stays claimed; a claim lapses after 300 seconds, and a completion after that writes the label again, replacing the span's annotation of the same name.
 
+**GET /agents/annotations/labels** - The labels a reviewer completes an annotation with, from `llm_auto_annotator.REVIEW_LABELS`: `{"labels": ["correct", "wrong", "ambiguous", "insufficient_info"]}`. The `correct_routing`/`wrong_routing` values are read from stored annotations but not offered.
+
 **GET /agents/by-capability/{capability}** - Find agents by capability
 ```bash
 curl http://localhost:8000/agents/by-capability/video_search
@@ -1220,9 +1239,10 @@ Multi-pod delivery is Redis-backed like the inbound queue: when `SystemConfig.re
 ### Admin Endpoints
 
 **GET /admin/system/stats** - Get system statistics
+**GET /admin/profile-templates** - The shipped profiles a tenant's new profile can start from, each with its whole configuration; a shipped name the tenant created its own profile under is left out
 **GET /admin/profiles** - List processing profiles
 **GET /admin/profiles/{profile_name}** - Get profile details
-**POST /admin/profiles** - Create profile; `version` is the tenant's backend config version the create produced
+**POST /admin/profiles** - Create profile; `model_loader`, `process_type` and `extra_config` carry the keys ingestion reads beside the named fields; `version` is the tenant's backend config version the create produced
 **PUT /admin/profiles/{profile_name}** - Update profile; `version` is the backend config version the update produced, even when other writes land right after it
 **DELETE /admin/profiles/{profile_name}** - Delete profile
 **POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile; 410 `tenant_deleted` when the tenant has been deleted. Without `force`, `already_deployed` is answered only when the tenant's stored registry row says the schema is deployed, read on this request, so a schema another process dropped is deployed again.
@@ -1236,9 +1256,32 @@ run off the serving loop. A profile deleted between the update's or delete's
 read and its write answers 404.
 **GET /admin/schemas/drift** - Tenant schemas registered with a definition other than the one this runtime ships, from `drifted_schemas`: `{"drifted": [{tenant_id, base_schema_name, schema_name, refusal}]}`, ordered by tenant and schema. `refusal` is `{error, refused_at}` when the startup migration's redeploy to this definition was refused by Vespa, and `null` when the migration has not redeployed the schema yet. A refusal is removed once its schema no longer drifts or is deleted (see [Schema drift migration](core.md#schema-drift-migration)). 503 `schema_drift_unavailable` when the registry or the recorded refusals cannot be read; `failure` is `SchemaRegistryInitializationError` for the registry and `RegistryStorageError` for the refusals.
 
+**Configuration** (`libs/runtime/cogniverse_runtime/routers/config_entries.py`)
+
+The editable configs are the sections of `cogniverse_foundation.config.sections`
+(see [Foundation Module](./foundation.md)): `system`, and per tenant `routing`,
+`telemetry`, `agent` (one per agent, named by `service`) and
+`durable_execution`. A tenant id is canonicalized; system configs are stored
+under the tenant `_system` and take no `tenant_id`.
+
+**GET /admin/config/sections** - Each section's `name`, `title`, `tenant_scoped`, fixed `service` (null for `agent`) and `schema`: its dataclass's JSON schema without the fields the location sets (`tenant_id`), secrets marked `writeOnly`
+**GET /admin/config/sections/{section}?tenant_id=&service=** - The stored config as its form edits it: `value`, `version` (0 with the section's defaults when nothing is stored), `updated_at`, and `secrets` saying which secrets hold a value; a secret's value is always null. 400 when a tenant section has no `tenant_id`, a system one has one, or `agent` has no `service`; 404 for an unknown section
+**PUT /admin/config/sections/{section}** - `{tenant_id, service, value, version}`: applies `value`'s fields to the `version` the editor read and stores the result as the next version. A field left out keeps its stored value; a secret left null keeps its value and `""` clears it. 409 `config_version_conflict` with `current_version` when another write replaced that version (nothing written); 422 `config_value_invalid` with `errors` naming each unknown field and each value the dataclass refuses
+**GET /admin/config/entries?tenant_id=** - The tenant's (absent: the system's) stored configs, latest versions, with the `section` that edits each (null for configs edited elsewhere, such as backend profiles); schema rows are left out
+**GET /admin/config/history?scope=&service=&config_key=&tenant_id=** - A config's versions, newest first, at most 100; values of a section are shown through its form, secrets withheld. 404 when the config has no versions
+**POST /admin/config/rollback** - `{tenant_id, scope, service, config_key, version, expected_version}`: stores version `version`'s value as the next version when `expected_version` is still the latest. 409 when it is not; 404 when `version` is no longer kept
+**GET /admin/config/export?tenant_id=&include_history=** - The tenant's configs as the store exports them, secrets included: a backup that the import restores whole
+**POST /admin/config/import** - `{tenant_id, configs}`: writes an export into the tenant, whole or not at all, ignoring tenant ids inside it; 400 `config_import_refused` for schema-scope rows
+**GET /admin/config/stats** - The store's `total_configs`, `total_versions`, `total_tenants` and `configs_per_scope`
+
+A store that does not answer gives 503 `config_store_unavailable` on every
+route, never defaults or an empty list. Writes go through
+`ConfigManager.compare_and_set_entry`, so the serving process reads the new
+version at once and other processes within the manager's staleness bound.
+
 **Cluster events** (`libs/runtime/cogniverse_runtime/cluster_events.py`)
 
-Admin events every worker process and replica acts on. Each worker's lifespan subscribes a `ClusterEvents` to the Redis channel `cogniverse:runtime:events` with handlers by event kind (`tenant_deleted`, `session_closed`). `publish(kind, payload, timeout_s=...)` publishes the event; every subscribed worker runs its handler on a thread and pushes an acknowledgement onto the event's reply list, and the publisher returns each worker's result only once every receiver acknowledged success. Redis unreachable, no subscribed worker, a handler that raised and a worker that did not answer within the timeout raise `ClusterEventUnavailable` or `ClusterEventIncomplete` (both `ClusterEventError`), naming what is missing. A worker whose subscription is down when an event is published is not one of its receivers; it logs the loss and resubscribes with backoff.
+Admin events every worker process and replica acts on. Each worker's lifespan subscribes a `ClusterEvents` to the Redis channel `cogniverse:runtime:events` with handlers by event kind (`tenant_deleted`, `tenant_tier_set`, `session_closed`). `publish(kind, payload, timeout_s=...)` publishes the event; every subscribed worker runs its handler on a thread and pushes an acknowledgement onto the event's reply list, and the publisher returns each worker's result only once every receiver acknowledged success. Redis unreachable, no subscribed worker, a handler that raised and a worker that did not answer within the timeout raise `ClusterEventUnavailable` or `ClusterEventIncomplete` (both `ClusterEventError`), naming what is missing. A worker whose subscription is down when an event is published is not one of its receivers; it logs the loss and resubscribes with backoff.
 
 **Tenant lifecycle** (`libs/runtime/cogniverse_runtime/admin/tenant_manager.py`)
 
@@ -1324,13 +1367,17 @@ Response: `{source_tenant_id, source_memory_id, promoted_memory_id, org_trunk_te
 
 **Tenant self-service memory management** (`libs/runtime/cogniverse_runtime/routers/tenant.py`, mounted at `/admin/tenant` — see [Router Architecture](#router-architecture)). The `tenant_id` path param on the memory routes is canonicalized at route entry, so simple and colon forms address the same mem0 partition.
 
-**POST /admin/tenant/{tenant_id}/memories** — Save a user-defined memory. Body: `{text: str, category?: str, kind?: str, metadata?: dict}` (`metadata` merges on top of the derived `category`/`kind` fields). Response: `{status: "saved", id, type: "preference", category, kind}`.
+The tenant memory routes below change only writable namespaces: `_user_memories` and an agent's own (its name, the mem0 `agent_id`). Other `_`-prefixed namespaces (`_strategy_store`, `_conversation`, `_pinning`, …) belong to the runtime and answer 403; the `/admin/memories` routes above manage them.
 
-**GET /admin/tenant/{tenant_id}/memories** — List or search a tenant's memories. Query params: `q` (semantic search when set, else list all), `type` (`preference` → `_user_memories`, `strategy` → `_strategy_store`; 400 on unknown), `agent_name` (scope to one agent's mem0 store, i.e. `agent_id=agent_name` — agents store their learned memories under their own name, so this surfaces what a specific agent has remembered), `category` (post-filter on the memory's category tag), `limit` (1–200, default 20). Selection precedence: `agent_name` → `type` → both default namespaces.
+**POST /admin/tenant/{tenant_id}/memories** — Save a memory. Body: `{text: str, category?: str, kind?: str, metadata?: dict, agent_name?: str}` (`metadata` merges on top of the derived `category`/`kind` fields; `agent_name` defaults to `_user_memories`). Response: `{status: "saved", id, type, agent_name, category, kind}`, `type` being `preference`, `strategy` or `interaction` by namespace.
 
-**DELETE /admin/tenant/{tenant_id}/memories/{memory_id}** — Delete a single user-owned memory by id. 404 if not found.
+**GET /admin/tenant/{tenant_id}/memories** — List or search a tenant's memories. Query params: `q` (semantic search when set, else list all), `type` (`preference` → `_user_memories`, `strategy` → `_strategy_store`; 400 on unknown), `agent_name` (scope to one agent's mem0 store, i.e. `agent_id=agent_name` — agents store their learned memories under their own name, so this surfaces what a specific agent has remembered), `category` (post-filter on the memory's category tag), `limit` (1–200, default 20). Selection precedence: `agent_name` → `type` → both default namespaces. A read the store does not answer is 503 `memory_unavailable`, never an empty list.
 
-**DELETE /admin/tenant/{tenant_id}/memories?category=...** — Clear user-owned memories (system/strategy namespaces are untouched). Omitted `category` clears all user memories and returns `{status: "cleared"}`; a `category` value scopes the delete and the response reports the count: `{status: "cleared", category, deleted}`. Both branches walk the whole partition, archived rows included. The messaging-gateway `/memories clear` command calls this route with `category` — not `agent_name`, which the route does not accept.
+**GET /admin/tenant/{tenant_id}/memories/stats?agent_name=...** — Count a namespace (default `_user_memories`) over its whole partition: `{agent_name, total, archived, writable}`, `total` counting live rows. A read the store does not answer is 503 `memory_unavailable`, never a zero count.
+
+**DELETE /admin/tenant/{tenant_id}/memories/{memory_id}?agent_name=...** — Delete one memory of a writable namespace (default `_user_memories`). 404 unless the memory is this tenant's and in that namespace.
+
+**DELETE /admin/tenant/{tenant_id}/memories?category=...&agent_name=...** — Clear a writable namespace (default `_user_memories`). Omitted `category` clears the namespace and returns `{status: "cleared", agent_name}`; a `category` value scopes the delete and the response reports the count: `{status: "cleared", agent_name, category, deleted}`. Both branches walk the whole partition, archived rows included. The messaging-gateway `/memories clear` command calls this route with `category` only.
 
 **GET /admin/tenants/{tenant_id}/signature_variants** — List per-agent variant selections for a tenant, read from the config store. Response: `{tenant_id, selections: {agent_type: variant_id}}`.
 
@@ -1346,6 +1393,10 @@ Response: `{tenant_id, agent_type, state: {active, canary, retired}}`. Backed by
 
 ### Tenant Optimization Runs
 
+**GET /admin/tenant/optimize-modes** — The modes `POST /admin/tenant/{tenant_id}/optimize` accepts and the optimizer types its `synthetic` mode generates training data for, sorted: `{modes: [...], synthetic_optimizers: [...]}`.
+
+**POST /admin/tenant/{tenant_id}/optimize** — `{mode, lookback_hours, optimizers}` submits a one-off Workflow running `optimization_cli --mode <mode>` for the tenant. `lookback_hours` (above 0, at most 8760, default 48) is the run's `lookback-hours`. `optimizers` is required for `synthetic`, whose generated examples land as approval batches for review, and becomes its `agents` argument; it is refused for every other mode. 400 for an unknown mode or optimizer.
+
 **GET /admin/tenant/{tenant_id}/optimize/runs** — List the tenant's optimization Workflows from Argo, newest first. Query param `limit` (1–100, default 20) caps the response. Response: `{runs: [{workflow_name, mode, trigger, phase, started_at, finished_at}, ...]}`.
 
 Two label selectors feed it, because Argo does not copy a CronWorkflow's labels onto the Workflows it spawns: on-demand runs from `POST /admin/tenant/{tenant_id}/optimize` carry `cogniverse.ai/tenant`, and scheduled runs are found by the `workflows.argoproj.io/cron-workflow` label the controller stamps. Both lists are then narrowed to Workflows whose raw `tenant-id` argument is this tenant and whose spec references the optimization `WorkflowTemplate` — scheduled tenant *jobs* carry a `tenant-id` argument too, so the tenant tag alone cannot tell them apart.
@@ -1353,6 +1404,50 @@ Two label selectors feed it, because Argo does not copy a CronWorkflow's labels 
 `trigger` is `manual` for a dashboard submit and `scheduled` for a CronWorkflow-spawned run. `mode` is the `cogniverse.ai/mode` label on a manual run; a scheduled pipeline run passes a mode per step rather than per Workflow, so its `mode` is `null`. An Argo outage — unreachable, or any non-200 — answers **503** with the reason; it never answers an empty list, which would read as "this tenant has never optimized". Argo not configured on the deployment also answers 503.
 
 The dashboard's Optimization Overview reads this route for its run-count tile, its last-run tile and its Recent Optimization History table.
+
+### Tenant Approvals
+
+Generated examples the confidence extractor did not auto-approve wait in the tenant's approval store (`ApprovalStorageImpl.from_system_config`: Phoenix spans and annotations, Redis electing each decision).
+
+**GET /admin/tenant/{tenant_id}/approvals** — The items awaiting review (`pending_review` or `regenerated`). Response: `{items: [{item_id, batch_id, status, confidence, data, metadata, created_at, schema_name, correction_template, corrections_required, reasoning}, ...]}`. `schema_name` and `correction_template` (the correctable fields with their current values) are `null` for data no synthetic example schema describes; such an item can be approved or rejected but not corrected. A store read failure answers **502** `approval_store_unavailable`; a store the system config cannot build answers **503** with the same code.
+
+**POST /admin/tenant/{tenant_id}/approvals/{batch_id}/{item_id}** — Body `{approved, reviewer, feedback?, corrections?}`. Response: `{status, item}`.
+
+- An approval appends the item to the tenant's approved training dataset and answers `approved`.
+- A rejection needs `feedback` (**400** otherwise). For an item of a synthetic example schema it regenerates with the tenant's primary LM and answers `regenerated` with the replacement awaiting review; any other item answers `rejected`. No LM for the tenant answers **503** `regeneration_unavailable`.
+- `corrections` must name fields the item's schema lets a reviewer change (**400** with the field names otherwise). An item with `corrections_required` (a `WorkflowExecutionSchema` record) is not regenerated: its rejection merges the corrections into a replacement, so a rejection without one answers **400**.
+- An item that is not awaiting review answers **404**. A reviewer who loses the election to another reviewer's decision on the same item answers **409** `approval_decision_conflict`; nothing is written for the losing decision.
+- A store or LM failure answers **502** `approval_decision_failed`; a decision still running after 900 seconds answers **504** `approval_decision_timed_out`.
+
+### Tenant Orchestration Reviews
+
+The orchestrator records each workflow as a `cogniverse.orchestration` span in the tenant's project: the query in `input.value`, the workflow in `output.value`. A review is stored as the span's `orchestration_quality` annotation.
+
+**GET /admin/tenant/{tenant_id}/orchestration-workflows** — Workflows of the last `lookback_hours` (1–720, default 24), newest first, at most `limit` (1–500, default 50). Response: `{workflows: [{span_id, start_time, query, workflow_id, pattern, agent_sequence, execution_order, execution_time, tasks_completed, success, error_summary, review}, ...]}`, where `review` is the latest `{annotator, label, score, annotation_source, pattern_is_optimal, agents_are_correct, execution_order_is_optimal, improvement_notes}` or `null`. A telemetry read failure answers **502** `telemetry_unavailable`.
+
+**POST /admin/tenant/{tenant_id}/orchestration-workflows/{span_id}/annotation** — Body: `start_time` (the listed value, with its timezone), `annotator`, `quality_label` (`failed`, `poor`, `acceptable`, `good`, `excellent`), `quality_score` (0–1), `pattern_is_optimal`, `agents_are_correct`, `execution_order_is_optimal`, and optionally `suggested_pattern` (`parallel`, `sequential`, `conditional`, `mixed`), `pattern_feedback`, `missing_agents`, `unnecessary_agents`, `suggested_execution_order`, `execution_order_feedback`, `what_went_well`, `what_went_wrong`, `improvement_notes`. The workflow's recorded values are read from its span, not from the request; suggested agents are its agent sequence plus `missing_agents` minus `unnecessary_agents`. Response: the workflow with its new `review`. A span not found at `start_time` answers **404**; a failed annotation write answers **502** `annotation_not_stored`.
+
+**Telemetry metrics** (`libs/runtime/cogniverse_runtime/routers/telemetry_metrics.py`). Each route reads every span of one name (or every root span) in the tenant's telemetry project over the last `lookback_hours` (1–720, default 24, except where noted), not a first page of them, and aggregates with `cogniverse_foundation.telemetry.span_metrics`. A telemetry read failure answers **502** `telemetry_unavailable`, never an empty window.
+
+**GET /admin/tenant/{tenant_id}/telemetry/profile-selection** — Per modality of the `cogniverse.profile_selection` spans, most selections first: `{modalities: [{modality, count, p50_ms, p95_ms, p99_ms, success_rate}, ...]}`. A span counts as failed only when its status is `ERROR`.
+
+**GET /admin/tenant/{tenant_id}/telemetry/rlm-ab** — The `rlm.ab_compare` spans `cogniverse-optim --mode ab-compare` records: `{rows, avg_latency_delta_ms, avg_tokens_delta, avg_judge_delta, fallback_rate, per_dataset: [{queries_dataset, rows, avg_latency_delta_ms, avg_tokens_delta, avg_judge_delta}, ...], comparisons: [{ab_id, query, queries_dataset, latency_delta_ms, tokens_delta, judge_delta, with_rlm_was_fallback, start_time}, ...]}`, comparisons newest first. Averages are `null` when no row carries the value.
+
+**GET /admin/tenant/{tenant_id}/telemetry/traces** — The tenant's traces (its root spans), newest first: `{facets: {operations, profiles, strategies}, statistics: {requests, succeeded, failed, success_rate, latency_ms: {mean, min, p50, p75, p90, p95, p99, max}, outlier_bounds_ms: {lower, upper}, by_operation: [{operation, count, mean_ms, p95_ms, error_rate}, ...]}, traces: [{trace_id, span_id, start_time, duration_ms, operation, succeeded, profile, strategy, error}, ...]}`. `operation` keeps traces whose name contains it (any case); repeatable `profile` and `strategy` keep traces with one of the given values; statistics cover the kept traces and `facets` the whole window. A trace's profile is its `profile` or `metadata.profile` attribute, its strategy its `strategy`, `ranking_strategy` or `metadata.strategy`. Outlier bounds are Tukey's fences (`Q1 - 1.5 IQR`, `Q3 + 1.5 IQR`), `null` below four traces; latency figures are `null` without traces.
+
+**GET /admin/tenant/{tenant_id}/telemetry/root-causes** — `cogniverse_evaluation.analysis.root_cause_analysis.RootCauseAnalyzer` over the traces `/telemetry/traces` keeps for the same `lookback_hours`, `operation`, `profile` and `strategy`: the failed ones, and with `include_slow` (default true) the successful ones slower than `slow_percentile` (50–99, default 95) of the successful durations. `{traces, failed, slow, failure_rate, slow_threshold_ms, root_causes: [{hypothesis, confidence, category, evidence, affected_traces, suggested_action}], recommendations: [{priority, category, recommendation, details, affected_components}]}`, hypotheses most confident first; `slow_threshold_ms` is null when no slow trace was sought or found. A telemetry outage answers **502** `telemetry_unavailable`.
+
+**GET /admin/tenant/{tenant_id}/evaluation/golden** — The tenant's `search_service.search` spans over the last `lookback_hours` (1–2160, default 168), scored against the tenant's golden set (the blob `PUT /admin/tenants/{tenant_id}/golden_set_ground_truth` stores) by `cogniverse_evaluation.recorded_searches.score_recorded_searches`: `{golden_queries, strategies: [{profile, strategy, queries, mrr, ndcg, recall_at_1, recall_at_5, precision_at_5, success_rate}, ...], queries: [{profile, strategy, query, expected, retrieved, searched_at, trace_id, mrr, ndcg, recall_at_1, recall_at_5, precision_at_5}, ...], unsearched_queries, failed_searches, unscored_searches}`. The latest successful search per profile, strategy and query is scored. A tenant without a golden set answers **404** `golden_set_missing` naming the upload route; a golden set that cannot be canonicalized **409** `golden_set_invalid`; a store that does not answer **502** `golden_set_store_unavailable`.
+
+**GET /admin/tenant/{tenant_id}/embeddings/atlas?profile=&limit=** — A 2D map of up to `limit` (1–2000, default 500) of the tenant's documents under `profile`, in Vespa's visit order (`routers/embedding_atlas.py`): each document's stored embedding (the schema's first float tensor field; a multi-vector one pooled to the mean of its vectors) placed on the set's first two principal axes, each axis oriented so its largest loading is positive. `{tenant_id, profile, schema_name, embedding_field, dimensions, explained_variance: [across, up], without_embedding, points: [{id, x, y, title, text}]}`, with `text` cut to 280 characters. **404** for an unknown profile or a schema not deployed for the tenant; **422** for a schema with no float embedding field; **502** `embedding_export_failed` when Vespa cannot be read and `embedding_unreadable` for a tensor the route does not read.
+
+**Routing decisions** (`libs/runtime/cogniverse_runtime/routers/routing_decisions.py`). A decision is a `cogniverse.routing` span in the tenant's telemetry project; its label is the span's `routing_annotation`.
+
+**GET /admin/tenant/{tenant_id}/routing-decisions** — Every routing decision of the last `lookback_hours` (1–720, default 24), summarized by `cogniverse_evaluation.evaluators.routing_evaluator.summarize_routing_decisions`, each decision carrying its latest `label` (`{label, confidence, reasoning, suggested_agent, annotator, human_reviewed, requires_review, approved_by}`, or `null`). A telemetry read failure answers **502** `telemetry_unavailable`.
+
+**POST /admin/tenant/{tenant_id}/routing-decisions/{span_id}/approve** — Body `{start_time, reviewer}`, where `start_time` is the decision's start time as the list serves it (with a timezone, else **422**). Approves the LLM's label of the decision (`AnnotationStorage.approve_llm_annotation`) and answers the decision with it. **404** when the tenant has no such decision at that time or it has no LLM label; **409** when a reviewer labelled it; **502** `telemetry_unavailable` when it cannot be read and `annotation_not_stored` when the label is not written.
+
+**PUT /admin/tenant/{tenant_id}/routing-decisions/{span_id}/label** — Body `{start_time, reviewer, label (correct | wrong | ambiguous | insufficient_info), reasoning, suggested_agent}`. Stores the reviewer's label, replacing any LLM label, and answers the decision with it; the same 404, 422 and 502 answers.
 
 ### Knowledge Endpoints
 
@@ -1514,6 +1609,69 @@ re-derives from the replayed transcript. A store that does not answer fails
 the turn: 503 with `error.code="service_unavailable"` and
 `error_type="SessionStateUnavailable"`, or an SSE error frame with the same
 code.
+
+### AG-UI Endpoints (`/ag-ui`)
+
+`routers/ag_ui.py` serves the [AG-UI](https://docs.ag-ui.com) protocol so a
+web client (CopilotKit's `HttpAgent`) runs cogniverse agents directly. It uses
+the `/v1` surface's bearer keys, dispatcher and continuation store, so one key
+serves both surfaces for the same tenant.
+
+**POST /ag-ui/{agent_name}** — one run of a registered agent. The body is an
+AG-UI `RunAgentInput`; the client holds the conversation and sends all of it,
+so a run is a self-contained turn exactly as a `/v1` request is. Messages map
+onto the `/v1` transcript: developer messages become system messages, image
+parts (a URL or base64 data) become attachments, and activity and reasoning
+messages are left out. The run's `tools` reach the agent as its external
+tools. The response is SSE, one AG-UI event per `data:` line:
+
+| Event | When |
+|---|---|
+| `RUN_STARTED` | first, with the client's `threadId` and `runId` |
+| `STEP_STARTED` / `STEP_FINISHED` | around each agent phase |
+| `CUSTOM` `cogniverse.status` | each progress event, `value: {phase, message}` |
+| `TEXT_MESSAGE_START` / `_CONTENT` / `_END` | the reply, one message per run |
+| `TOOL_CALL_START` / `_ARGS` / `_END` | one sequence per frontend tool the agent suspends on |
+| `STATE_SNAPSHOT` | the final payload, `snapshot: {agent, result}` |
+| `RUN_FINISHED` | last; `outcome.pendingToolCallIds` lists a suspended run's calls |
+| `RUN_ERROR` | last, in place of `RUN_FINISHED`, when the turn failed |
+
+Token streaming, the answer-field filter and the reconciliation with the final
+payload are the `/v1` live-token path (`openai_compat.answer_token_events`); an
+agent without `streams_answer_tokens`, or a run resuming a tool exchange, runs
+on the dispatch path and its reply arrives as one content event. A suspended
+run stores its `continuation_state` in the shared store; the client runs the
+tools and starts a new run with the tool messages appended, which resumes the
+turn on whichever replica receives it.
+
+Status contract: an unknown key is 401, a key-store outage 503, an unregistered
+agent 404, a body that is not a `RunAgentInput` or a content part other than
+text or an image 400 naming the field or the message and part index, an unwired
+dispatcher or an unreachable agent registry 503. A failure inside the run ends
+it on `RUN_ERROR` with a server-authored message naming the agent and the
+exception type (`code` `internal_error`, `service_unavailable` for an
+unanswering continuation store, `run_cancelled` for a cancelled run). A client
+that hangs up cancels the turn behind its run.
+
+A search run's `result` carries `span_id`, the id of the search's
+`SearchAgent.process` span, which records the query and the results (`null`
+when telemetry is off).
+
+**POST /ag-ui/results/relevance** — stores a reviewer's rating of one result
+of a search as a `result_relevance` annotation on its span, in the key's
+tenant. Body `{span_id, result_id, relevance}`: `span_id` is 16 hex digits,
+`result_id` the id the span records the result under, `relevance` one of
+`Highly Relevant` (score 1.0), `Somewhat Relevant` (0.5) or `Not Relevant`
+(0.0). Each result keeps its own rating, and rating it again replaces it. The
+answer is `{span_id, result_id, relevance, score}`. An unknown key is 401, a
+key-store outage 503, an invalid body 400 naming the field, a span that is not
+in the tenant's telemetry project 404 `span_not_found`, and a telemetry
+backend that fails the read or the write 502 `annotation_not_stored`. The
+triplet miner (`TripletExtractor`) counts a `Highly Relevant` result as a
+positive for the search's query.
+
+The browser UI in `clients/web` drives this surface through a CopilotKit
+runtime that holds the harness key; see its [README](../../clients/web/README.md).
 
 ### Events Endpoints (SSE Streaming)
 
@@ -2297,7 +2455,7 @@ and config version count explicitly; its file reports include the resolved root,
 scanned and deleted counts, and deletion errors. Memory retention follows each
 registered kind's schema TTL.
 
-**Modes:** the full `--mode` choice set is `cleanup`, `triggered`, `simba`, `workflow`, `gateway-thresholds`, `online-routing-eval`, `online-eval`, `profile`, `entity-extraction`, `synthetic`, `rollback`, `ab-compare`, `egress-netpol`, `monthly-reports`. `--tenant-id` is required for every mode except `cleanup`, `egress-netpol`, and `monthly-reports`, which run globally.
+**Modes:** the full `--mode` choice set is `cleanup`, `triggered`, `simba`, `workflow`, `gateway-thresholds`, `online-routing-eval`, `llm-annotate`, `online-eval`, `profile`, `entity-extraction`, `synthetic`, `rollback`, `ab-compare`, `egress-netpol`, `monthly-reports`. `--tenant-id` is required for every mode except `cleanup`, `egress-netpol`, and `monthly-reports`, which run globally.
 
 ```bash
 python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id acme:production
@@ -2313,6 +2471,9 @@ python -m cogniverse_runtime.optimization_cli --mode triggered \
 # Rollback: restore a previously active artefact version
 python -m cogniverse_runtime.optimization_cli --mode rollback \
     --tenant-id acme:production --agent search_agent --prompts-version 2
+# Label the routing decisions that need review with the LLM (see routing.md)
+python -m cogniverse_runtime.optimization_cli --mode llm-annotate \
+    --tenant-id acme:production --lookback-hours 24
 # Score recent routing spans (routing_outcome + confidence_calibration) for drift
 python -m cogniverse_runtime.optimization_cli --mode online-routing-eval \
     --tenant-id acme:production --lookback-hours 24

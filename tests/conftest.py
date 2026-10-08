@@ -534,6 +534,8 @@ def phoenix_container():
                 f"{grpc_port}:4317",  # gRPC port
                 "-e",
                 "PHOENIX_WORKING_DIR=/phoenix",
+                "-e",
+                "PHOENIX_ALLOW_EXTERNAL_RESOURCES=false",
                 "arizephoenix/phoenix:20.16.0@sha256:d55a4ffac8c670e2d0bf72e44e81e32a73e832b7ce449e6e4567487adfa9d8d6",
             ],
             check=True,
@@ -1444,6 +1446,30 @@ def _reset_request_contextvars():
     _m._DISPATCHED_ARTEFACT.set(None)
     _m._MEMORY_SESSION_ID.set(None)
     _m._MEMORY_TENANT_ID.set(None)
+
+
+@pytest.fixture(autouse=True)
+def _restore_telemetry_endpoint_overrides():
+    """Keep the process's telemetry endpoint overrides to the test that set
+    them.
+
+    ``configure_telemetry_endpoints`` records process-wide endpoints that every
+    later ``get_telemetry_manager`` build applies over its own config. The
+    dashboard sets them on import, so without this a manager a later test
+    builds from its own config exports to the dashboard's endpoints instead.
+    """
+    import sys
+
+    manager = sys.modules.get("cogniverse_foundation.telemetry.manager")
+    saved = dict(manager._endpoint_overrides) if manager is not None else None
+    yield
+    manager = sys.modules.get("cogniverse_foundation.telemetry.manager")
+    if manager is not None:
+        with manager._telemetry_manager_lock:
+            manager._endpoint_overrides.clear()
+            manager._endpoint_overrides.update(
+                saved or {"otlp_endpoint": None, "http_endpoint": None}
+            )
 
 
 @pytest.fixture(autouse=True)

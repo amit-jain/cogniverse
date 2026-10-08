@@ -499,6 +499,7 @@ class TestTenantMemories:
                 "status": "saved",
                 "id": memory_id,
                 "type": "preference",
+                "agent_name": USER_MEMORY_AGENT,
                 "category": "search_preferences",
                 "kind": None,
             }, data
@@ -601,7 +602,10 @@ class TestTenantMemories:
 
             resp = client.delete(f"/admin/tenant/{owned_tenant}/memories")
             assert resp.status_code == 200
-            assert resp.json() == {"status": "cleared"}, resp.json()
+            assert resp.json() == {
+                "status": "cleared",
+                "agent_name": USER_MEMORY_AGENT,
+            }, resp.json()
 
             time.sleep(2)
 
@@ -680,7 +684,10 @@ class TestTenantMemories:
 
             if route == "tenant":
                 cleared = client.delete(f"/admin/tenant/{tenant_id}/memories")
-                assert cleared.json() == {"status": "cleared"}, cleared.json()
+                assert cleared.json() == {
+                    "status": "cleared",
+                    "agent_name": USER_MEMORY_AGENT,
+                }, cleared.json()
             else:
                 cleared = client.delete(
                     f"/admin/memories/{tenant_id}", params={"type": "preference"}

@@ -823,6 +823,23 @@ class VespaBackend(Backend):
         # ValueError if missing.
         return self._initialize_search_backend().search(query_dict)
 
+    def export_embeddings(
+        self,
+        schema: Optional[str] = None,
+        max_documents: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        include_embeddings: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Delegates to VespaSearchBackend with this instance checked out."""
+        with BackendRegistry.lease_instance(self):
+            self._require_open()
+            return self._initialize_search_backend().export_embeddings(
+                schema=schema,
+                max_documents=max_documents,
+                filters=filters,
+                include_embeddings=include_embeddings,
+            )
+
     def _initialize_search_backend(self) -> VespaSearchBackend:
         """Return the owned VespaSearchBackend, building it on first use.
 

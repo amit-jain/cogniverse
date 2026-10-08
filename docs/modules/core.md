@@ -706,7 +706,13 @@ passed; a change Vespa refuses raises
 Vespa's reason, and the row keeps the definition that is live. Empty and
 duplicate name lists are rejected. Intents become complete only after every
 registration succeeds, so a partial registration leaves the whole new batch
-reserved for recovery. `deploy_schema()` delegates to this path with one name.
+reserved for recovery. Registration runs under the backend's
+`deployment_lease()`, the lease a tenant delete reads the registry and drops
+the tenant's schemas under, and first re-reads the tenant's deletion marker: a
+tenant marked deleted after activation gets no row (`TenantDeletedError`), its
+intents stay pending and the delete drops the live schema with the tenant's
+others. A lease a peer holds for the whole wait raises its `LeaseWaitTimeout`
+with nothing registered. `deploy_schema()` delegates to this path with one name.
 `SchemaDeploymentIntents(store)` in
 `cogniverse_core/registries/schema_deployment_intents.py` reserves the full
 schema name under the system tenant's `SCHEMA` scope and
@@ -1224,6 +1230,12 @@ memory.delete_memory(
     tenant_id="acme",
     agent_name="search_agent"
 )
+
+# Count live and archived memories over the whole partition; a backend
+# failure raises rather than counting zero
+memory.get_memory_stats(tenant_id="acme", agent_name="search_agent")
+# {"total_memories": 12, "archived_memories": 2, "enabled": True,
+#  "tenant_id": "acme", "agent_name": "search_agent"}
 ```
 
 `Mem0MemoryManager.tenant_partition_schema_exists(tenant_id)` reports
@@ -2400,9 +2412,15 @@ validator = ProfileValidator(config_manager, schema_templates_dir=Path("configs/
 errors = validator.validate_profile(profile, tenant_id="acme", is_update=False)
 ```
 
-`VALID_EMBEDDING_TYPES = ["multi_vector", "single_vector"]` and
-`VALID_PROFILE_TYPES = ["video", "image", "audio", "document", "code"]` are
-the only values accepted for the corresponding profile fields.
+`VALID_EMBEDDING_TYPES = ["multi_vector", "single_vector"]` are the accepted
+embedding types. Profile types are the types of the shipped profiles in
+`configs/config.json` `backend.profiles`. `model_loader` must be one of
+`model_loaders.EMBEDDING_MODEL_LOADERS` (`colbert`, `colpali`, `colqwen`,
+`xclip`), and is required for every type whose shipped profiles all name one,
+so a profile ingestion cannot embed with is refused at creation.
+`process_type`, when set, must be one of `unified_config.PROCESS_TYPES`
+(`direct_video`, `frame_based`, `video_chunks`), and `extra_config` keys may
+not name a profile field.
 
 ### FilesystemSchemaLoader (schemas/filesystem_loader.py)
 

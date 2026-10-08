@@ -32,6 +32,10 @@ def _strict_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+class ReviewDecisionConflictError(RuntimeError):
+    """Another review decision on the same item was elected first."""
+
+
 @dataclass(frozen=True)
 class CanonicalReplacementRecord:
     """Strict JSON bytes and digest for one selected replacement payload."""
@@ -436,7 +440,7 @@ class RedisReplacementRecordStore:
             stored=True,
         )
         if selected_intent != candidate_intent:
-            raise RuntimeError(
+            raise ReviewDecisionConflictError(
                 f"Review decision conflicts with canonical review decision for {operation}"
             )
         return selected

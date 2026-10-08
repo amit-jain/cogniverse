@@ -11,6 +11,7 @@ from typing import Any, Dict
 import httpx
 import streamlit as st
 
+from cogniverse_core.common.models.model_loaders import EMBEDDING_MODEL_LOADERS
 from cogniverse_dashboard.tabs.tenant_management import get_runtime_api_url
 from cogniverse_dashboard.utils.runtime_client import runtime_error_message
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -258,6 +259,13 @@ def render_create_profile_form(manager, tenant_id: str):
             placeholder="e.g., TomoroAI/tomoro-colqwen3-embed-4b",
         )
 
+        model_loader = st.selectbox(
+            "Model Loader",
+            options=["", *sorted(EMBEDDING_MODEL_LOADERS)],
+            index=sorted(EMBEDDING_MODEL_LOADERS).index("colpali") + 1,
+            help="Loader ingestion embeds with; required for embedded content types",
+        )
+
         # Pipeline configuration (JSON)
         st.markdown("##### Pipeline Configuration")
         pipeline_config_str = st.text_area(
@@ -394,6 +402,7 @@ def render_create_profile_form(manager, tenant_id: str):
                     "embedding_type": profile_data["embedding_type"],
                     "schema_config": profile_data["schema_config"],
                     "model_specific": profile_data.get("model_specific") or {},
+                    "model_loader": model_loader,
                     "deploy_schema": bool(deploy_schema),
                 }
                 with httpx.Client(timeout=60.0) as client:

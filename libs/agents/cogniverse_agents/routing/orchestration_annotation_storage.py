@@ -6,7 +6,7 @@ Stores human annotations for orchestration workflow quality and corrections.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
+
+# The annotation a reviewer's verdict is stored under on the workflow span.
+ORCHESTRATION_ANNOTATION_NAME = "orchestration_quality"
 
 
 @dataclass
@@ -71,7 +74,9 @@ class OrchestrationAnnotation:
     improvement_notes: Optional[str] = None
     what_went_well: Optional[str] = None
     what_went_wrong: Optional[str] = None
-    annotation_timestamp: datetime = field(default_factory=datetime.now)
+    annotation_timestamp: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     annotation_source: str = "human"  # human, llm_auto, hybrid
     workflow_succeeded: bool = True
     error_details: Optional[str] = None
@@ -117,62 +122,57 @@ class OrchestrationAnnotationStorage:
             annotation: Orchestration annotation to store
 
         Returns:
-            True if stored successfully, False otherwise
+            True once stored. A backend failure raises.
         """
-        try:
-            # Build metadata with all annotation details
-            metadata = {
-                # Pattern feedback
-                "workflow_id": annotation.workflow_id,
-                "query": annotation.query,
-                "pattern_is_optimal": annotation.pattern_is_optimal,
-                "suggested_pattern": annotation.suggested_pattern,
-                "pattern_feedback": annotation.pattern_feedback,
-                # Agent selection feedback
-                "agents_are_correct": annotation.agents_are_correct,
-                "missing_agents": ",".join(annotation.missing_agents),
-                "unnecessary_agents": ",".join(annotation.unnecessary_agents),
-                "suggested_agents": ",".join(annotation.suggested_agents),
-                # Execution order feedback
-                "execution_order_is_optimal": annotation.execution_order_is_optimal,
-                "suggested_execution_order": ",".join(
-                    annotation.suggested_execution_order or []
-                ),
-                "execution_order_feedback": annotation.execution_order_feedback,
-                # Improvement notes
-                "improvement_notes": annotation.improvement_notes,
-                "what_went_well": annotation.what_went_well,
-                "what_went_wrong": annotation.what_went_wrong,
-                # Original workflow data
-                "actual_pattern": annotation.orchestration_pattern,
-                "actual_agents": ",".join(annotation.agents_used),
-                "actual_execution_order": ",".join(annotation.execution_order),
-                "execution_time": annotation.execution_time,
-                "workflow_succeeded": annotation.workflow_succeeded,
-                # Annotator
-                "annotator_id": annotation.annotator_id,
-                "annotation_source": annotation.annotation_source,
-                "annotation_timestamp": annotation.annotation_timestamp.isoformat(),
-            }
+        # Build metadata with all annotation details
+        metadata = {
+            # Pattern feedback
+            "workflow_id": annotation.workflow_id,
+            "query": annotation.query,
+            "pattern_is_optimal": annotation.pattern_is_optimal,
+            "suggested_pattern": annotation.suggested_pattern,
+            "pattern_feedback": annotation.pattern_feedback,
+            # Agent selection feedback
+            "agents_are_correct": annotation.agents_are_correct,
+            "missing_agents": ",".join(annotation.missing_agents),
+            "unnecessary_agents": ",".join(annotation.unnecessary_agents),
+            "suggested_agents": ",".join(annotation.suggested_agents),
+            # Execution order feedback
+            "execution_order_is_optimal": annotation.execution_order_is_optimal,
+            "suggested_execution_order": ",".join(
+                annotation.suggested_execution_order or []
+            ),
+            "execution_order_feedback": annotation.execution_order_feedback,
+            # Improvement notes
+            "improvement_notes": annotation.improvement_notes,
+            "what_went_well": annotation.what_went_well,
+            "what_went_wrong": annotation.what_went_wrong,
+            # Original workflow data
+            "actual_pattern": annotation.orchestration_pattern,
+            "actual_agents": ",".join(annotation.agents_used),
+            "actual_execution_order": ",".join(annotation.execution_order),
+            "execution_time": annotation.execution_time,
+            "workflow_succeeded": annotation.workflow_succeeded,
+            # Annotator
+            "annotator_id": annotation.annotator_id,
+            "annotation_source": annotation.annotation_source,
+            "annotation_timestamp": annotation.annotation_timestamp.isoformat(),
+        }
 
-            # Use provider's annotation API
-            await self.provider.annotations.add_annotation(
-                span_id=annotation.span_id,
-                name="orchestration_quality",
-                label=annotation.workflow_quality_label,
-                score=annotation.quality_score,
-                metadata=metadata,
-                project=self.project_name,
-            )
+        # Use provider's annotation API
+        await self.provider.annotations.add_annotation(
+            span_id=annotation.span_id,
+            name=ORCHESTRATION_ANNOTATION_NAME,
+            label=annotation.workflow_quality_label,
+            score=annotation.quality_score,
+            metadata=metadata,
+            project=self.project_name,
+        )
 
-            logger.info(
-                f"✅ Stored orchestration annotation for workflow {annotation.workflow_id}"
-            )
-            return True
-
-        except Exception as e:
-            logger.error(f"❌ Error storing annotation: {e}")
-            return False
+        logger.info(
+            f"✅ Stored orchestration annotation for workflow {annotation.workflow_id}"
+        )
+        return True
 
     async def query_annotated_spans(
         self,
@@ -223,7 +223,7 @@ class OrchestrationAnnotationStorage:
         annotations_df = await self.provider.annotations.get_annotations(
             spans_df=spans_df,
             project=self.project_name,
-            annotation_names=["orchestration_quality"],
+            annotation_names=[ORCHESTRATION_ANNOTATION_NAME],
         )
         annotations_by_span: Dict[str, Any] = {}
         if annotations_df is not None and not annotations_df.empty:

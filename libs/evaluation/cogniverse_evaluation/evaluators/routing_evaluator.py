@@ -48,7 +48,7 @@ def classify_routing_outcome(
     without constructing a ``RoutingEvaluator``.
     """
     parent_span_id = span_data.get("parent_id")
-    if not parent_span_id:
+    if not isinstance(parent_span_id, str) or not parent_span_id:
         return RoutingOutcome.AMBIGUOUS, "no_parent_span"
 
     status_code = span_data.get("status_code", "OK")
@@ -68,10 +68,108 @@ def classify_routing_outcome(
     if "error" in span_data.get("events", []):
         return RoutingOutcome.FAILURE, "downstream_error"
 
-    if status_code == "OK" and chosen_agent:
+    # A span that ends without setting a status is UNSET; only ERROR fails.
+    if chosen_agent:
         return RoutingOutcome.SUCCESS, "completed_successfully"
 
     return RoutingOutcome.AMBIGUOUS, "unclear_outcome"
+
+
+def evaluate_routing_span(
+    span_data: Dict[str, Any],
+) -> Tuple[RoutingOutcome, Dict[str, Any]]:
+    """Extract and evaluate one routing decision from a routing span's data.
+
+    Returns ``(outcome, metrics)``; ``metrics`` holds ``chosen_agent``,
+    ``confidence``, ``latency_ms`` (the decision's recorded
+    ``processing_time``), ``success`` and ``downstream_status``. Raises
+    ``ValueError`` when the span is not a routing span or records no chosen
+    agent or confidence.
+    """
+    # Validate this is a routing span
+    span_name = span_data.get("name", "")
+    if span_name != "cogniverse.routing":
+        raise ValueError(f"Expected cogniverse.routing span, got: {span_name}")
+
+    # Extract routing decision details - handle both Phoenix flattened and nested formats
+    # Phoenix format: attributes.routing = {"chosen_agent": ..., "confidence": ...}
+    # Unit test format: attributes = {"routing.chosen_agent": ..., "routing.confidence": ...}
+
+    chosen_agent = None
+    confidence = None
+    latency_ms = 0.0
+
+    # Canonical span contract: the routing decision is on output.value.
+    from cogniverse_foundation.telemetry.span_contract import read_span_io
+
+    output = read_span_io(span_data)["output"]
+    if isinstance(output, dict):
+        chosen_agent = output.get("chosen_agent") or output.get("recommended_agent")
+        confidence = output.get("confidence")
+        latency_ms = output.get("processing_time", 0.0)
+
+    # Try Phoenix flattened format first (attributes.routing.*)
+    if (
+        (not chosen_agent or confidence is None)
+        and "attributes.routing" in span_data
+        and isinstance(span_data["attributes.routing"], dict)
+    ):
+        routing_attrs = span_data["attributes.routing"]
+        chosen_agent = routing_attrs.get("chosen_agent") or routing_attrs.get(
+            "recommended_agent"
+        )
+        confidence = routing_attrs.get("confidence")
+        latency_ms = routing_attrs.get("processing_time", 0.0)
+
+    # Try nested format (attributes with routing.* keys)
+    if not chosen_agent or confidence is None:
+        attributes = span_data.get("attributes", {})
+        chosen_agent = (
+            chosen_agent
+            or attributes.get("routing.chosen_agent")
+            or attributes.get("routing.recommended_agent")
+        )
+        confidence = (
+            confidence
+            if confidence is not None
+            else attributes.get("routing.confidence")
+        )
+        latency_ms = latency_ms or attributes.get("routing.processing_time", 0.0)
+
+    if not chosen_agent or confidence is None:
+        raise ValueError(
+            "Routing span missing required attributes: routing.chosen_agent or routing.confidence"
+        )
+
+    # Determine outcome by looking at downstream agent spans
+    outcome, downstream_status = classify_routing_outcome(span_data)
+
+    metrics = {
+        "chosen_agent": chosen_agent,
+        # Routers emit floats, labels ("high") or percents ("85%") —
+        # parse_confidence maps them all into [0, 1].
+        "confidence": parse_confidence(confidence),
+        # Coerce defensively: a None/list processing_time must not raise a
+        # TypeError that aborts the whole calculate_metrics batch.
+        "latency_ms": _coerce_latency(latency_ms),
+        "success": outcome == RoutingOutcome.SUCCESS,
+        "downstream_status": downstream_status,
+    }
+
+    return outcome, metrics
+
+
+def _confidence_success_correlation(
+    confidences: List[float], successes: List[bool]
+) -> Optional[float]:
+    """Pearson correlation of confidence with success; ``None`` when it is
+    undefined (fewer than two decisions, or either side constant)."""
+    if len(set(confidences)) < 2 or len(set(successes)) < 2:
+        return None
+    correlation = pd.Series(confidences).corr(
+        pd.Series([1.0 if success else 0.0 for success in successes])
+    )
+    return None if pd.isna(correlation) else float(correlation)
 
 
 @dataclass
@@ -136,77 +234,7 @@ class RoutingEvaluator:
         Raises:
             ValueError: If span_data doesn't contain required routing information
         """
-        # Validate this is a routing span
-        span_name = span_data.get("name", "")
-        if span_name != "cogniverse.routing":
-            raise ValueError(f"Expected cogniverse.routing span, got: {span_name}")
-
-        # Extract routing decision details - handle both Phoenix flattened and nested formats
-        # Phoenix format: attributes.routing = {"chosen_agent": ..., "confidence": ...}
-        # Unit test format: attributes = {"routing.chosen_agent": ..., "routing.confidence": ...}
-
-        chosen_agent = None
-        confidence = None
-        latency_ms = 0.0
-
-        # Canonical span contract: the routing decision is on output.value.
-        from cogniverse_foundation.telemetry.span_contract import read_span_io
-
-        output = read_span_io(span_data)["output"]
-        if isinstance(output, dict):
-            chosen_agent = output.get("chosen_agent") or output.get("recommended_agent")
-            confidence = output.get("confidence")
-            latency_ms = output.get("processing_time", 0.0)
-
-        # Try Phoenix flattened format first (attributes.routing.*)
-        if (
-            (not chosen_agent or confidence is None)
-            and "attributes.routing" in span_data
-            and isinstance(span_data["attributes.routing"], dict)
-        ):
-            routing_attrs = span_data["attributes.routing"]
-            chosen_agent = routing_attrs.get("chosen_agent") or routing_attrs.get(
-                "recommended_agent"
-            )
-            confidence = routing_attrs.get("confidence")
-            latency_ms = routing_attrs.get("processing_time", 0.0)
-
-        # Try nested format (attributes with routing.* keys)
-        if not chosen_agent or confidence is None:
-            attributes = span_data.get("attributes", {})
-            chosen_agent = (
-                chosen_agent
-                or attributes.get("routing.chosen_agent")
-                or attributes.get("routing.recommended_agent")
-            )
-            confidence = (
-                confidence
-                if confidence is not None
-                else attributes.get("routing.confidence")
-            )
-            latency_ms = latency_ms or attributes.get("routing.processing_time", 0.0)
-
-        if not chosen_agent or confidence is None:
-            raise ValueError(
-                "Routing span missing required attributes: routing.chosen_agent or routing.confidence"
-            )
-
-        # Determine outcome by looking at downstream agent spans
-        outcome, downstream_status = self._classify_routing_outcome(span_data)
-
-        metrics = {
-            "chosen_agent": chosen_agent,
-            # Routers emit floats, labels ("high") or percents ("85%") —
-            # parse_confidence maps them all into [0, 1].
-            "confidence": parse_confidence(confidence),
-            # Coerce defensively: a None/list processing_time must not raise a
-            # TypeError that aborts the whole calculate_metrics batch.
-            "latency_ms": _coerce_latency(latency_ms),
-            "success": outcome == RoutingOutcome.SUCCESS,
-            "downstream_status": downstream_status,
-        }
-
-        return outcome, metrics
+        return evaluate_routing_span(span_data)
 
     def _classify_routing_outcome(
         self, span_data: Dict[str, Any]
@@ -302,17 +330,11 @@ class RoutingEvaluator:
         if len(evaluations) < 2:
             return 0.0
 
-        confidences = [metrics["confidence"] for _, metrics in evaluations]
-        successes = [
-            1.0 if outcome == RoutingOutcome.SUCCESS else 0.0
-            for outcome, _ in evaluations
-        ]
-
-        # Calculate Pearson correlation
-        df = pd.DataFrame({"confidence": confidences, "success": successes})
-        correlation = df["confidence"].corr(df["success"])
-
-        return float(correlation) if not pd.isna(correlation) else 0.0
+        correlation = _confidence_success_correlation(
+            [metrics["confidence"] for _, metrics in evaluations],
+            [outcome == RoutingOutcome.SUCCESS for outcome, _ in evaluations],
+        )
+        return 0.0 if correlation is None else correlation
 
     def _calculate_per_agent_metrics(
         self, evaluations: List[Tuple[RoutingOutcome, Dict[str, Any]]]
@@ -419,3 +441,91 @@ class RoutingEvaluator:
             raise RuntimeError(
                 f"Failed to query routing spans from telemetry provider: {e}"
             ) from e
+
+
+def summarize_routing_decisions(spans: pd.DataFrame) -> Dict[str, Any]:
+    """The routing decisions in ``spans`` (a frame of ``cogniverse.routing``
+    spans) and their aggregate quality.
+
+    Each decision is read with ``evaluate_routing_span``; a span it cannot
+    read counts in ``unreadable``. Returns ``decisions`` (newest first:
+    ``span_id``, ``trace_id``, ``start_time``, ``query``, ``chosen_agent``,
+    ``confidence``, ``outcome``, ``reason``, ``latency_ms`` (the span's
+    duration) and ``entity_extraction_failed``), the outcome counts,
+    ``accuracy`` (the share that succeeded), ``confidence_calibration`` (the
+    correlation of confidence with success, ``None`` when undefined),
+    ``latency_ms`` (``mean``, ``p50``, ``p95``) and ``per_agent`` (most
+    decisions first).
+    """
+    from cogniverse_foundation.telemetry.span_contract import read_span_io
+
+    decisions = []
+    unreadable = 0
+    for span in spans.to_dict("records"):
+        try:
+            outcome, metrics = evaluate_routing_span(span)
+        except ValueError:
+            unreadable += 1
+            continue
+        io = read_span_io(span)
+        output = io["output"] if isinstance(io["output"], dict) else {}
+        start = pd.Timestamp(span["start_time"])
+        start = start.tz_localize("UTC") if start.tzinfo is None else start
+        duration = pd.Timestamp(span["end_time"]) - pd.Timestamp(span["start_time"])
+        decisions.append(
+            {
+                "span_id": span.get("context.span_id"),
+                "trace_id": span.get("context.trace_id"),
+                "start_time": start.tz_convert("UTC").isoformat(),
+                "query": io["input"],
+                "chosen_agent": str(metrics["chosen_agent"]),
+                "confidence": metrics["confidence"],
+                "outcome": outcome.value,
+                "reason": metrics["downstream_status"],
+                "latency_ms": duration.total_seconds() * 1000,
+                "entity_extraction_failed": output.get("entity_extraction_failed")
+                is True,
+            }
+        )
+    decisions.sort(key=lambda row: row["start_time"], reverse=True)
+
+    def count(rows, outcome):
+        return sum(row["outcome"] == outcome.value for row in rows)
+
+    latencies = pd.Series([row["latency_ms"] for row in decisions], dtype=float)
+    per_agent = []
+    for agent in {row["chosen_agent"] for row in decisions}:
+        rows = [row for row in decisions if row["chosen_agent"] == agent]
+        per_agent.append(
+            {
+                "agent": agent,
+                "decisions": len(rows),
+                "successes": count(rows, RoutingOutcome.SUCCESS),
+                "failures": count(rows, RoutingOutcome.FAILURE),
+                "ambiguous": count(rows, RoutingOutcome.AMBIGUOUS),
+                "success_rate": count(rows, RoutingOutcome.SUCCESS) / len(rows),
+                "mean_confidence": sum(row["confidence"] for row in rows) / len(rows),
+                "mean_latency_ms": sum(row["latency_ms"] for row in rows) / len(rows),
+            }
+        )
+    per_agent.sort(key=lambda row: (-row["decisions"], row["agent"]))
+    successes = count(decisions, RoutingOutcome.SUCCESS)
+    return {
+        "decisions": decisions,
+        "total": len(decisions),
+        "successes": successes,
+        "failures": count(decisions, RoutingOutcome.FAILURE),
+        "ambiguous": count(decisions, RoutingOutcome.AMBIGUOUS),
+        "unreadable": unreadable,
+        "accuracy": successes / len(decisions) if decisions else None,
+        "confidence_calibration": _confidence_success_correlation(
+            [row["confidence"] for row in decisions],
+            [row["outcome"] == RoutingOutcome.SUCCESS.value for row in decisions],
+        ),
+        "latency_ms": {
+            "mean": float(latencies.mean()) if decisions else None,
+            "p50": float(latencies.quantile(0.5)) if decisions else None,
+            "p95": float(latencies.quantile(0.95)) if decisions else None,
+        },
+        "per_agent": per_agent,
+    }

@@ -17,6 +17,7 @@ on:
       - 'tests/conftest.py'
       - 'tests/fixtures/**'
       - 'clients/pi-cogniverse/package-lock.json'
+      - 'clients/web/**'
       - 'tests/utils/**'
       - 'pytest.ini'
       - 'pyproject.toml'
@@ -53,6 +54,7 @@ on:
       - 'tests/conftest.py'
       - 'tests/fixtures/**'
       - 'clients/pi-cogniverse/package-lock.json'
+      - 'clients/web/**'
       - 'tests/utils/**'
       - 'pytest.ini'
       - 'pyproject.toml'
@@ -211,17 +213,25 @@ jobs:
 
     # tests/runtime/integration/test_pi_agent_loop.py installs the pinned Pi
     # packages from clients/pi-cogniverse/package-lock.json, which declare
-    # engines.node >= 22.19.0.
+    # engines.node >= 22.19.0; test_web_client_ag_ui.py installs clients/web
+    # from its lockfile and runs its server from source.
     - name: Set up Node.js 22
       uses: actions/setup-node@v4
       with:
         node-version: '22'
         cache: npm
-        cache-dependency-path: clients/pi-cogniverse/package-lock.json
+        cache-dependency-path: |
+          clients/pi-cogniverse/package-lock.json
+          clients/web/package-lock.json
 
     - name: Install dependencies
       run: |
         uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    # The web client's operations views are driven in Chromium
+    # (tests/runtime/integration/test_web_ops_*.py).
+    - name: Install Playwright Chromium
+      run: uv run --no-sync playwright install --with-deps chromium
 
     - name: Free up disk space for Vespa
       run: |

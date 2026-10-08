@@ -375,16 +375,36 @@ def _create_in_process(port, config_port, tenant, connection, pause):
     backend = _connect(port, config_port)
     tenant_manager.set_backend(backend)
     registry = backend.schema_registry
-    register = registry.register_schema
     if pause:
+        from cogniverse_core.registries.schema_deployment_intents import (
+            SchemaDeploymentIntents,
+        )
+        from cogniverse_vespa.backend import VespaBackend
 
-        def gated_register(**kwargs):
-            connection.send(("activated", kwargs))
+        # Activated and converged, stalled before it registers; the message
+        # carries the registration it will write.
+        converge = VespaBackend._wait_for_schema_convergence
+        intents = SchemaDeploymentIntents(registry._config_manager.store)
+        schema = f"wiki_pages_{tenant.replace(':', '_')}"
+
+        def converged_then_stalled(self, generation, names, timeout):
+            converge(self, generation, names, timeout=timeout)
+            if schema not in names:
+                return
+            [intent] = intents.pending_for_tenant(tenant)
+            connection.send(
+                (
+                    "activated",
+                    {
+                        **intent["registration"],
+                        "expected_version": intent["registry_version"],
+                    },
+                )
+            )
             if connection.recv() != "register":
                 raise RuntimeError("creator barrier was not released")
-            register(**kwargs)
 
-        registry.register_schema = gated_register
+        VespaBackend._wait_for_schema_convergence = converged_then_stalled
     try:
         result = asyncio.run(
             tenant_manager.create_tenant(

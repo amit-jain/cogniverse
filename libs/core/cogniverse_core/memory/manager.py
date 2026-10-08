@@ -2118,29 +2118,23 @@ class Mem0MemoryManager:
         tenant_id: str,
         agent_name: str,
     ) -> Dict[str, Any]:
-        """
-        Get memory statistics for an agent.
+        """Count an agent's memories across its whole partition.
 
-        Args:
-            tenant_id: Tenant identifier
-            agent_name: Agent name
-
-        Returns:
-            Memory statistics
+        ``total_memories`` counts live rows and ``archived_memories`` the
+        soft-deleted ones. A backend failure propagates rather than reading
+        as an empty store.
         """
         if not self.memory:
             return {"total_memories": 0, "enabled": False}
 
-        try:
-            memories = self.get_all_memories(tenant_id, agent_name)
-
-            return {
-                "total_memories": len(memories),
-                "enabled": True,
-                "tenant_id": tenant_id,
-                "agent_name": agent_name,
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to get memory stats: {e}")
-            return {"total_memories": 0, "enabled": True, "error": str(e)}
+        rows = self.get_all_memories(
+            tenant_id, agent_name, include_archived=True, limit=None
+        )
+        archived = sum(1 for row in rows if self._read_metadata(row).get("archived"))
+        return {
+            "total_memories": len(rows) - archived,
+            "archived_memories": archived,
+            "enabled": True,
+            "tenant_id": tenant_id,
+            "agent_name": agent_name,
+        }
