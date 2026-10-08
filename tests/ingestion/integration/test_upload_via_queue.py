@@ -1850,6 +1850,7 @@ class TestUploadRealStack:
             real_stack["redis"],
             task_events=TaskEventStore(real_stack["redis"]),
             source_url=source_url,
+            filename=UPLOAD_FILENAME,
             profile=PROFILE,
             tenant_id=require_tenant_id(TENANT_ID, source="test"),
         )

@@ -37,12 +37,17 @@ from cogniverse_runtime.ingestion_worker.submit_api import (
     BackpressureError,
     enqueue_ingestion,
 )
-from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
+from cogniverse_runtime.ingestion_worker.worker import (
+    WorkerConfig,
+    _claim_loop,
+    _without_local_paths,
+)
 from cogniverse_runtime.task_events import TaskEventStore
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
 CONTAINER_NAME = "redis-ingestion-v2-e2e"
+UPLOAD_NAME = "Zephyr Kangaroo.mp4"
 
 
 def _free_port() -> int:
@@ -176,6 +181,55 @@ async def _explicit_embedding_error_processor(job: IngestJob) -> dict:
     }
 
 
+# Where the worker's media locator caches a localised upload.
+LOCAL_COPY = (
+    "/tmp/cogniverse-media-cache/acme/main/media/ee/"
+    "92b0110dcf3b0b826163ab466348cdba72fc24f1fc162672bec1fe97091d408f.txt"
+)
+LOCAL_NAME = LOCAL_COPY.rsplit("/", 1)[1]
+
+
+async def _local_path_failure_processor(job: IngestJob) -> dict:
+    """The pipeline's own failure envelope for a file ffmpeg cannot read,
+    which names the localised copy on the worker's disk."""
+    return {
+        "video_id": job.ingest_id,
+        "status": "failed",
+        "error": (
+            "Required transcription failed: [Errno 1094995529] Invalid data "
+            f"found when processing input: '{LOCAL_COPY}' (Context: "
+            f"content_path={LOCAL_COPY}, stage=transcription, "
+            "profile=video_colpali_smol500_mv_frame)"
+        ),
+        "errors": [f"ffmpeg could not open {LOCAL_COPY}"],
+        "results": {},
+    }
+
+
+@pytest.mark.parametrize(
+    ("error", "shown"),
+    [
+        (
+            "ffmpeg: /var/lib/cogniverse/scratch/job-7/audio.wav: No such file",
+            "ffmpeg: audio.wav: No such file",
+        ),
+        ("open('/tmp/x/frame_0001.jpg') failed", "open('frame_0001.jpg') failed"),
+        (
+            "GET http://asr.cogniverse:9000/v1/audio/transcriptions -> 503",
+            "GET http://asr.cogniverse:9000/v1/audio/transcriptions -> 503",
+        ),
+        (
+            "object s3://media/acme:main/clip.mp4 missing",
+            "object s3://media/acme:main/clip.mp4 missing",
+        ),
+        ("ratio 3/4 of segments failed", "ratio 3/4 of segments failed"),
+        ("/healthz answered 500", "/healthz answered 500"),
+    ],
+)
+def test_an_error_loses_local_paths_and_keeps_urls(error, shown):
+    assert _without_local_paths(error) == shown
+
+
 async def _spawn_worker(
     redis_url: str, processor
 ) -> tuple[asyncio.Task, asyncio.Event]:
@@ -218,6 +272,7 @@ class TestEnqueueAndWorker:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/fake.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
             )
@@ -244,6 +299,7 @@ class TestEnqueueAndWorker:
         worker_task, stop = await _spawn_worker(redis_container, _stub_processor)
         try:
             kwargs = dict(
+                filename=UPLOAD_NAME,
                 source_url="s3://bucket/idem.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -275,6 +331,7 @@ class TestEnqueueAndWorker:
         worker_task, stop = await _spawn_worker(redis_container, _stub_processor)
         try:
             kwargs = dict(
+                filename=UPLOAD_NAME,
                 source_url="s3://bucket/force.mp4",
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
@@ -303,6 +360,7 @@ class TestEnqueueAndWorker:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/bad.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
             )
@@ -338,6 +396,7 @@ class TestEnqueueAndWorker:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/oom.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
             )
@@ -365,6 +424,7 @@ class TestEnqueueAndWorker:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/oom.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
             )
@@ -385,6 +445,7 @@ class TestEnqueueAndWorker:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/missing-generator.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
                 wait=True,
@@ -422,6 +483,74 @@ class TestEnqueueAndWorker:
             await asyncio.wait_for(worker_task, timeout=30)
 
     @pytest.mark.asyncio
+    async def test_a_failure_naming_a_local_path_names_only_the_file(
+        self, env_redis, redis_container
+    ):
+        """The failed event a client reads names the file the pipeline could
+        not read, never where the worker keeps it."""
+        worker_task, stop = await _spawn_worker(
+            redis_container, _local_path_failure_processor
+        )
+        try:
+            submission = await enqueue_ingestion(
+                env_redis,
+                task_events=TaskEventStore(env_redis),
+                source_url=f"s3://bucket/acme:main/{LOCAL_NAME}",
+                filename=UPLOAD_NAME,
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme:main",
+                wait=True,
+                wait_timeout=10,
+            )
+
+            assert submission.final_event == {
+                "state": "failed",
+                "ingest_id": submission.ingest_id,
+                "error": (
+                    "Required transcription failed: [Errno 1094995529] Invalid "
+                    f"data found when processing input: '{LOCAL_NAME}' (Context: "
+                    f"content_path={LOCAL_NAME}, stage=transcription, "
+                    "profile=video_colpali_smol500_mv_frame) "
+                    f"[ffmpeg could not open {LOCAL_NAME}]"
+                ),
+                "error_type": "IngestPipelineError",
+            }
+            stored = await queue.read_status_since(env_redis, submission.ingest_id)
+            assert "/tmp/" not in json.dumps([event for _, event in stored])
+        finally:
+            stop.set()
+            await asyncio.wait_for(worker_task, timeout=30)
+
+    @pytest.mark.asyncio
+    async def test_the_uploaded_name_rides_on_the_first_status_event(
+        self, client, env_redis
+    ):
+        """A client following an ingest by its id reads the name the content
+        was uploaded under, not the content-addressed object key."""
+        submission = await enqueue_ingestion(
+            env_redis,
+            task_events=TaskEventStore(env_redis),
+            source_url=f"s3://bucket/acme:main/{LOCAL_NAME}",
+            filename=UPLOAD_NAME,
+            profile="video_colpali_smol500_mv_frame",
+            tenant_id="acme:main",
+        )
+
+        response = await client.get(f"/ingestion/{submission.ingest_id}/status")
+
+        assert response.status_code == 200
+        assert response.json()["history"] == [
+            {
+                "state": "queued",
+                "ingest_id": submission.ingest_id,
+                "source_url": f"s3://bucket/acme:main/{LOCAL_NAME}",
+                "filename": UPLOAD_NAME,
+                "profile": "video_colpali_smol500_mv_frame",
+                "tenant_id": "acme:main",
+            }
+        ]
+
+    @pytest.mark.asyncio
     async def test_wait_returns_terminal_event_synchronously(
         self, env_redis, redis_container
     ):
@@ -431,6 +560,7 @@ class TestEnqueueAndWorker:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/sync.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
                 wait=True,
@@ -458,6 +588,7 @@ class TestBackpressure:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url=f"s3://bucket/{i}.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
             )
@@ -467,6 +598,7 @@ class TestBackpressure:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/over.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
             )
@@ -479,6 +611,7 @@ class TestBackpressure:
             env_redis,
             task_events=TaskEventStore(env_redis),
             source_url="s3://bucket/other.mp4",
+            filename=UPLOAD_NAME,
             profile="video_colpali_smol500_mv_frame",
             tenant_id="other",
         )
@@ -492,6 +625,7 @@ class TestBackpressure:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url=f"s3://bucket/{i}.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id=f"t{i}",
             )
@@ -501,6 +635,7 @@ class TestBackpressure:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/over.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="t4",
             )
@@ -687,6 +822,7 @@ class TestWaitTimeoutRendering:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/graph-stalls.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
                 wait=True,
@@ -735,6 +871,7 @@ class TestWaitTimeoutRendering:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/slow.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
                 wait=True,
@@ -765,6 +902,7 @@ class TestWaitTimeoutRendering:
                 env_redis,
                 task_events=TaskEventStore(env_redis),
                 source_url="s3://bucket/fast.mp4",
+                filename=UPLOAD_NAME,
                 profile="video_colpali_smol500_mv_frame",
                 tenant_id="acme",
                 wait=True,

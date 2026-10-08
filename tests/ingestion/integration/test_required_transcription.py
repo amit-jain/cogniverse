@@ -109,6 +109,7 @@ def failing_asr():
 
 
 LOOP = " I'm gonna do it!" * 40
+UPLOAD_NAME = "gonna-do-it.mp4"
 
 
 @pytest.fixture(params=["", LOOP], ids=["empty", "loop"])
@@ -198,6 +199,7 @@ async def run_job(redis, pipeline, video):
         redis,
         task_events=TaskEventStore(redis),
         source_url=video.as_uri(),
+        filename=UPLOAD_NAME,
         profile="transcription",
         tenant_id=pipeline.tenant_id,
     )
@@ -230,6 +232,7 @@ async def test_asr_failure_fails_job_and_allows_plain_resubmission(
         job_redis,
         task_events=TaskEventStore(job_redis),
         source_url=video.as_uri(),
+        filename=UPLOAD_NAME,
         profile="transcription",
         tenant_id=pipeline.tenant_id,
     )

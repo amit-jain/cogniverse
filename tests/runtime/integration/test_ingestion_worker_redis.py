@@ -32,6 +32,7 @@ from cogniverse_runtime.task_events import TaskEventStore
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
 CONTAINER_NAME = "redis-ingestion-v2-tests"
+UPLOAD_NAME = "upload.md"
 
 
 @pytest.fixture(autouse=True)
@@ -485,6 +486,7 @@ class TestEnqueueCompensation:
                 redis,
                 task_events=TaskEventStore(redis),
                 source_url=src,
+                filename=UPLOAD_NAME,
                 profile=profile,
                 tenant_id=tenant,
             )
@@ -498,6 +500,7 @@ class TestEnqueueCompensation:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -539,6 +542,7 @@ class TestEnqueueCompensation:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -563,6 +567,7 @@ class TestEnqueueCompensation:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -602,6 +607,7 @@ class TestEnqueueCompensation:
                 redis,
                 task_events=TaskEventStore(redis),
                 source_url=src,
+                filename=UPLOAD_NAME,
                 profile=profile,
                 tenant_id=tenant,
             )
@@ -618,6 +624,7 @@ class TestEnqueueCompensation:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -637,6 +644,7 @@ class TestEnqueueCompensation:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -670,6 +678,7 @@ class TestEnqueueCompensation:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -683,6 +692,7 @@ class TestEnqueueCompensation:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -716,6 +726,7 @@ class TestEnqueueCompensation:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -750,6 +761,7 @@ class TestEnqueueCompensation:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -789,6 +801,7 @@ class TestEnqueueCompensation:
                 redis,
                 task_events=TaskEventStore(redis),
                 source_url=src,
+                filename=UPLOAD_NAME,
                 profile=profile,
                 tenant_id=tenant,
             )
@@ -825,6 +838,7 @@ class TestEnqueueCompensation:
                 redis,
                 task_events=TaskEventStore(redis),
                 source_url=src,
+                filename=UPLOAD_NAME,
                 profile=profile,
                 tenant_id=tenant,
             )
@@ -863,6 +877,7 @@ class TestDedupeStatusSurface:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -879,6 +894,7 @@ class TestDedupeStatusSurface:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -892,6 +908,7 @@ class TestDedupeStatusSurface:
                 "state": "complete",
                 "ingest_id": first.ingest_id,
                 "source_url": src,
+                "filename": UPLOAD_NAME,
                 "profile": profile,
                 "tenant_id": tenant,
                 "existing": True,
@@ -915,6 +932,7 @@ class TestDedupeStatusSurface:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -927,6 +945,7 @@ class TestDedupeStatusSurface:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -938,6 +957,7 @@ class TestDedupeStatusSurface:
                 "state": "queued",
                 "ingest_id": first.ingest_id,
                 "source_url": src,
+                "filename": UPLOAD_NAME,
                 "profile": profile,
                 "tenant_id": tenant,
             }
@@ -961,6 +981,7 @@ class TestDedupeStatusSurface:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -980,6 +1001,7 @@ class TestDedupeStatusSurface:
                 redis,
                 task_events=TaskEventStore(redis),
                 source_url=src,
+                filename=UPLOAD_NAME,
                 profile=profile,
                 tenant_id=tenant,
             )
@@ -996,6 +1018,7 @@ class TestDedupeStatusSurface:
                 "state": "complete",
                 "ingest_id": first.ingest_id,
                 "source_url": src,
+                "filename": UPLOAD_NAME,
                 "profile": profile,
                 "tenant_id": tenant,
                 "existing": True,
@@ -1020,6 +1043,7 @@ class TestDedupeStatusSurface:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -1038,6 +1062,7 @@ class TestDedupeStatusSurface:
                 redis,
                 task_events=TaskEventStore(redis),
                 source_url=src,
+                filename=UPLOAD_NAME,
                 profile=profile,
                 tenant_id=tenant,
             )
@@ -1073,6 +1098,7 @@ class TestSubmitActiveCounterOrdering:
             redis,
             task_events=TaskEventStore(redis),
             source_url="s3://b/v.mp4",
+            filename=UPLOAD_NAME,
             profile="video",
             tenant_id=tenant,
         )
@@ -1100,6 +1126,7 @@ class TestSubmitActiveCounterOrdering:
                 redis,
                 task_events=TaskEventStore(redis),
                 source_url=src,
+                filename=UPLOAD_NAME,
                 profile=profile,
                 tenant_id=tenant,
             )
@@ -1120,6 +1147,7 @@ class TestSubmitActiveCounterOrdering:
             redis,
             task_events=TaskEventStore(redis),
             source_url="s3://b/v.mp4",
+            filename=UPLOAD_NAME,
             profile="video",
             tenant_id=tenant,
         )
@@ -1294,6 +1322,7 @@ class TestCancellation:
             redis,
             task_events=TaskEventStore(redis),
             source_url=src,
+            filename=UPLOAD_NAME,
             profile=profile,
             tenant_id=tenant,
         )
@@ -1322,6 +1351,7 @@ class TestCancellation:
                 "state": "queued",
                 "ingest_id": job.ingest_id,
                 "source_url": src,
+                "filename": UPLOAD_NAME,
                 "profile": profile,
                 "tenant_id": tenant,
             },
@@ -1352,6 +1382,7 @@ class TestCancellation:
             redis,
             task_events=TaskEventStore(redis),
             source_url="s3://bucket/running.mp4",
+            filename=UPLOAD_NAME,
             profile="video",
             tenant_id="acme:acme",
         )
@@ -1498,6 +1529,7 @@ class TestSubmitIdempotencyRace:
                     redis,
                     task_events=TaskEventStore(redis),
                     source_url="s3://b/dup.mp4",
+                    filename=UPLOAD_NAME,
                     profile="video",
                     tenant_id="acme:acme",
                 )
@@ -2160,6 +2192,7 @@ class TestEnqueueDedupWait:
             redis,
             task_events=TaskEventStore(redis),
             source_url="s3://b/dedup.mp4",
+            filename=UPLOAD_NAME,
             profile="video",
             tenant_id="acme",
         )
@@ -2184,6 +2217,7 @@ class TestEnqueueDedupWait:
             redis,
             task_events=TaskEventStore(redis),
             source_url="s3://b/dedup.mp4",
+            filename=UPLOAD_NAME,
             profile="video",
             tenant_id="acme",
             wait=True,
@@ -2208,6 +2242,7 @@ class TestEnqueueDedupWait:
             redis,
             task_events=TaskEventStore(redis),
             source_url="s3://b/fast.mp4",
+            filename=UPLOAD_NAME,
             profile="video",
             tenant_id="acme",
         )
@@ -2219,6 +2254,7 @@ class TestEnqueueDedupWait:
             redis,
             task_events=TaskEventStore(redis),
             source_url="s3://b/fast.mp4",
+            filename=UPLOAD_NAME,
             profile="video",
             tenant_id="acme",
         )
