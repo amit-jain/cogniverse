@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { agentLabel } from './api';
 import { messageOf } from './ops/common';
 import { errorMessage, runtimeJson, seg } from './ops/http';
+import { TENANT_HEADER } from './tenant';
 import { parseSse } from './ops/sse';
 import {
   MAX_TOP_K,
@@ -101,9 +102,11 @@ interface SummaryRun {
   running: boolean;
 }
 
-/** One summarizer run over ``hits`` on the runtime's AG-UI surface; ``onUpdate``
- * sees the reply grow, each status, the key points and a failure. */
+/** One summarizer run for ``tenant`` over ``hits`` on the runtime's AG-UI
+ * surface; ``onUpdate`` sees the reply grow, each status, the key points and
+ * a failure. */
 export async function summarize(
+  tenant: string,
   query: string,
   hits: Record<string, unknown>[],
   onUpdate: (update: Partial<SummaryRun>) => void,
@@ -111,7 +114,7 @@ export async function summarize(
 ): Promise<void> {
   const response = await fetch(`/ui-api/runtime/ag-ui/${SUMMARIZER}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+    headers: { 'content-type': 'application/json', accept: 'text/event-stream', [TENANT_HEADER]: tenant },
     signal,
     body: JSON.stringify({
       threadId: `summary-${crypto.randomUUID()}`,
@@ -158,7 +161,15 @@ export async function summarize(
 
 /** "Summarize results": the summarizer's streamed summary of the hits on
  * screen and its key points. */
-export function SummarizeResults({ query, hits }: { query: string; hits: Record<string, unknown>[] }) {
+export function SummarizeResults({
+  tenant,
+  query,
+  hits,
+}: {
+  tenant: string;
+  query: string;
+  hits: Record<string, unknown>[];
+}) {
   const [run, setRun] = useState<SummaryRun>();
   const start = () => {
     let current: SummaryRun = { text: '', status: '', keyPoints: [], error: '', running: true };
@@ -167,7 +178,7 @@ export function SummarizeResults({ query, hits }: { query: string; hits: Record<
       current = { ...current, ...change };
       setRun(current);
     };
-    summarize(query, hits, update)
+    summarize(tenant, query, hits, update)
       .catch((e: unknown) => update({ error: messageOf(e) }))
       .finally(() => update({ running: false, status: '' }));
   };
@@ -199,11 +210,13 @@ export function SummarizeResults({ query, hits }: { query: string; hits: Record<
 
 /** The ratings stored in this conversation, and a download of them. */
 export function Annotations({
+  tenant,
   threadId,
   agent,
   turns,
   annotations,
 }: {
+  tenant: string;
   threadId: string;
   agent: string;
   turns: TurnRecord[];
@@ -212,7 +225,7 @@ export function Annotations({
   if (!annotations.length) return null;
   const download = () => {
     const now = new Date().toISOString();
-    const blob = new Blob([JSON.stringify(annotationExport(threadId, agent, turns, annotations, now), null, 2)], {
+    const blob = new Blob([JSON.stringify(annotationExport(tenant, threadId, agent, turns, annotations, now), null, 2)], {
       type: 'application/json',
     });
     const link = document.createElement('a');
@@ -238,7 +251,15 @@ const OUTCOMES = [
 ] as const;
 
 /** A reviewer's verdict on the whole conversation, stored on its searches. */
-export function SessionEvaluation({ threadId, spanIds }: { threadId: string; spanIds: string[] }) {
+export function SessionEvaluation({
+  tenant,
+  threadId,
+  spanIds,
+}: {
+  tenant: string;
+  threadId: string;
+  spanIds: string[];
+}) {
   const [outcome, setOutcome] = useState('');
   const [score, setScore] = useState(0.5);
   const [saved, setSaved] = useState('');
@@ -252,7 +273,7 @@ export function SessionEvaluation({ threadId, spanIds }: { threadId: string; spa
     try {
       const stored = await runtimeJson<{ outcome: string; score: number; span_ids: string[] }>(
         `/ag-ui/threads/${seg(threadId)}/evaluation`,
-        { method: 'POST', body: { outcome, score, span_ids: spanIds } },
+        { method: 'POST', body: { outcome, score, span_ids: spanIds }, tenant },
       );
       const label = OUTCOMES.find(([value]) => value === stored.outcome)?.[1] ?? stored.outcome;
       const searches = stored.span_ids.length;

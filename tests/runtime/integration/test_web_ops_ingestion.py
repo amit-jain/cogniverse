@@ -33,7 +33,7 @@ from tests.utils.web_client import (
     recording_telemetry_sink,
     serve_web,
 )
-from tests.utils.web_ops import serve_ops_runtime
+from tests.utils.web_ops import register_tenant, serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
 
@@ -643,6 +643,36 @@ class TestUploadChoices:
             page.get_by_role("region", name="Ingests").get_by_role("table")
         ).to_have_count(0)
         expect(page.get_by_role("region", name="Batches")).to_have_count(0)
+
+    def test_each_tenant_shows_only_the_ingests_followed_for_it(
+        self, page, web_url, runtime_url, tenant, tmp_path
+    ):
+        other = register_tenant(f"webingestother{uuid.uuid4().hex[:8]}:main")
+        clip = tmp_path / f"own-{uuid.uuid4().hex[:6]}.mp4"
+        clip.write_text(f"frame {uuid.uuid4().hex}\n")
+        _ingestion_view(page, web_url, tenant)
+        _upload(page, clip)
+        ingest_id = _ingest_id_from_notice(page, clip.name)
+        expect(_row(page, ingest_id).get_by_role("cell").nth(3)).to_have_text(
+            "complete"
+        )
+        ingests = page.get_by_role("region", name="Ingests")
+
+        chooser = page.get_by_role("form", name="Choose tenant")
+        chooser.get_by_label("Tenant ID").fill(other)
+        chooser.get_by_role("button", name="Use tenant").click()
+        expect(page.get_by_role("region", name=f"Upload to {other}")).to_be_visible()
+        expect(ingests).to_contain_text(
+            "No ingests followed yet. Upload a file or follow an ingest by its ID."
+        )
+        expect(ingests.get_by_role("table")).to_have_count(0)
+        expect(page.get_by_role("region", name="Batches")).to_have_count(0)
+
+        chooser.get_by_label("Tenant ID").fill(tenant)
+        chooser.get_by_role("button", name="Use tenant").click()
+        expect(page.get_by_role("region", name=f"Upload to {tenant}")).to_be_visible()
+        expect(ingests.locator("tbody tr")).to_have_count(1)
+        expect(_row(page, ingest_id).get_by_role("cell").nth(1)).to_have_text(clip.name)
 
 
 class TestConcurrency:

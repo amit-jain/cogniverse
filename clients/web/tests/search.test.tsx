@@ -4,7 +4,17 @@ import { DEFAULT_AGENT, chosenAgent } from '../src/client/App';
 import { turnRecord } from '../src/client/AgentWorkspace';
 import { ResultPanel, foundLine, keyPointsOf, orchestrationSummaryOf } from '../src/client/ResultCards';
 import { summarize } from '../src/client/SearchSession';
-import { annotationExport, loadSettings, messageText, spanIdsOf, withAnnotation } from '../src/client/session';
+import {
+  annotationExport,
+  loadAnnotations,
+  loadSettings,
+  loadTurns,
+  messageText,
+  saveAnnotations,
+  saveTurns,
+  spanIdsOf,
+  withAnnotation,
+} from '../src/client/session';
 
 const HIT_A = {
   id: 'v1_seg_0',
@@ -152,14 +162,15 @@ describe('session records', () => {
     ]);
   });
 
-  it('exports the ratings with the conversation they were made in', () => {
+  it('exports the ratings with the tenant and conversation they were made in', () => {
     const turns = [
       { query: 'tower', at: 't0', results: 2, spanIds: ['00000000000000ab'], profile: 'p1' },
       { query: 'tower at night', at: 't1', results: 1, spanIds: ['00000000000000cd', '00000000000000ab'], profile: 'p2' },
     ];
     expect(spanIdsOf(turns)).toEqual(['00000000000000ab', '00000000000000cd']);
-    expect(annotationExport('thread-1', 'search_agent', turns, [rating], '2026-10-08T10:00:00.000Z')).toEqual({
+    expect(annotationExport('acme:prod', 'thread-1', 'search_agent', turns, [rating], '2026-10-08T10:00:00.000Z')).toEqual({
       search_session: {
+        tenant_id: 'acme:prod',
         thread_id: 'thread-1',
         agent: 'search_agent',
         query: 'tower at night',
@@ -170,6 +181,29 @@ describe('session records', () => {
         { query: 'q', span_id: '00000000000000ab', result_id: 'doc_1', relevance: 'Not Relevant', score: 0, rated_at: 't1' },
       ],
     });
+  });
+
+  it("keeps each tenant's records of a thread apart", () => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value),
+    });
+    try {
+      const turn = { query: 'tower', at: 't0', results: 1, spanIds: ['00000000000000ab'] };
+      saveTurns('acme:prod', 'thread-1', [turn]);
+      saveAnnotations('acme:prod', 'thread-1', [rating]);
+      expect(loadTurns('acme:prod', 'thread-1')).toEqual([turn]);
+      expect(loadAnnotations('acme:prod', 'thread-1')).toEqual([rating]);
+      expect(loadTurns('beta:dev', 'thread-1')).toEqual([]);
+      expect(loadAnnotations('beta:dev', 'thread-1')).toEqual([]);
+      expect([...stored.keys()].sort()).toEqual([
+        'cogniverse.annotations.acme:prod/thread-1',
+        'cogniverse.turns.acme:prod/thread-1',
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("reads a message's text from a string or its text parts", () => {
@@ -231,7 +265,7 @@ describe('summarize', () => {
     );
     vi.stubGlobal('fetch', fetchFn);
     const updates: object[] = [];
-    await summarize('tower', [HIT_A, HIT_B], (update) => updates.push(update));
+    await summarize('acme:prod', 'tower', [HIT_A, HIT_B], (update) => updates.push(update));
 
     expect(updates).toEqual([
       { status: 'Generating summary...' },
@@ -241,6 +275,11 @@ describe('summarize', () => {
     ]);
     const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('/ui-api/runtime/ag-ui/summarizer_agent');
+    expect(init.headers).toEqual({
+      'content-type': 'application/json',
+      accept: 'text/event-stream',
+      'x-cogniverse-tenant': 'acme:prod',
+    });
     const body = JSON.parse(init.body as string);
     expect(body.messages.map((m: { role: string; content: string }) => [m.role, m.content])).toEqual([
       ['user', "Summarize the search results for 'tower'"],
@@ -252,7 +291,7 @@ describe('summarize', () => {
     vi.stubGlobal('fetch', async () =>
       sse([{ type: 'RUN_ERROR', message: "Agent 'summarizer_agent' failed with ValueError.", code: 'internal_error' }]),
     );
-    await expect(summarize('tower', [HIT_A], () => undefined)).rejects.toThrow(
+    await expect(summarize('acme:prod', 'tower', [HIT_A], () => undefined)).rejects.toThrow(
       "Agent 'summarizer_agent' failed with ValueError.",
     );
     vi.stubGlobal(
@@ -262,7 +301,7 @@ describe('summarize', () => {
           status: 404,
         }),
     );
-    await expect(summarize('tower', [HIT_A], () => undefined)).rejects.toThrow(
+    await expect(summarize('acme:prod', 'tower', [HIT_A], () => undefined)).rejects.toThrow(
       "Agent 'summarizer_agent' is not registered.",
     );
   });

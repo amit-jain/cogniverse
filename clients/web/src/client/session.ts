@@ -1,4 +1,4 @@
-/** What this browser remembers about one conversation (thread): each run's
+/** What this browser remembers about one conversation (a tenant's thread): each run's
  * question, when it finished, how many hits it found and the search spans
  * they were recorded under, and the relevance ratings stored for its hits.
  * The turns themselves are the runtime's (``GET /ag-ui/threads/{id}``). */
@@ -55,11 +55,14 @@ function write(key: string, value: unknown) {
   }
 }
 
-export const loadTurns = (thread: string) => read<TurnRecord[]>(TURNS_KEY + thread, []);
-export const saveTurns = (thread: string, turns: TurnRecord[]) => write(TURNS_KEY + thread, turns);
-export const loadAnnotations = (thread: string) => read<AnnotationRecord[]>(ANNOTATIONS_KEY + thread, []);
-export const saveAnnotations = (thread: string, annotations: AnnotationRecord[]) =>
-  write(ANNOTATIONS_KEY + thread, annotations);
+export const loadTurns = (tenant: string, thread: string) =>
+  read<TurnRecord[]>(`${TURNS_KEY}${tenant}/${thread}`, []);
+export const saveTurns = (tenant: string, thread: string, turns: TurnRecord[]) =>
+  write(`${TURNS_KEY}${tenant}/${thread}`, turns);
+export const loadAnnotations = (tenant: string, thread: string) =>
+  read<AnnotationRecord[]>(`${ANNOTATIONS_KEY}${tenant}/${thread}`, []);
+export const saveAnnotations = (tenant: string, thread: string, annotations: AnnotationRecord[]) =>
+  write(`${ANNOTATIONS_KEY}${tenant}/${thread}`, annotations);
 
 /** The stored settings, each kept only when it is a valid value. */
 export function loadSettings(): SearchSettings {
@@ -91,8 +94,9 @@ export function spanIdsOf(turns: TurnRecord[]): string[] {
   return [...new Set(turns.flatMap((turn) => turn.spanIds))];
 }
 
-/** The ratings of a conversation as the file "Export annotations" saves. */
+/** The ratings of a tenant's conversation as the file "Export annotations" saves. */
 export function annotationExport(
+  tenant: string,
   thread: string,
   agent: string,
   turns: TurnRecord[],
@@ -102,6 +106,7 @@ export function annotationExport(
   const last = turns[turns.length - 1];
   return {
     search_session: {
+      tenant_id: tenant,
       thread_id: thread,
       agent,
       query: last?.query ?? null,

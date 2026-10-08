@@ -229,9 +229,10 @@ interface Remembered {
   batches: Batch[];
 }
 
-function remembered(): Remembered {
+/** The ingests and batches this browser follows for ``tenant``. */
+function remembered(tenant: string): Remembered {
   try {
-    const raw = localStorage.getItem(FOLLOWED_KEY);
+    const raw = localStorage.getItem(`${FOLLOWED_KEY}.${tenant}`);
     const value = raw ? (JSON.parse(raw) as Partial<Remembered>) : {};
     return { ingests: value.ingests ?? [], batches: value.batches ?? [] };
   } catch {
@@ -239,9 +240,9 @@ function remembered(): Remembered {
   }
 }
 
-function remember(value: Remembered) {
+function remember(tenant: string, value: Remembered) {
   try {
-    localStorage.setItem(FOLLOWED_KEY, JSON.stringify(value));
+    localStorage.setItem(`${FOLLOWED_KEY}.${tenant}`, JSON.stringify(value));
   } catch {
     // Without storage the list lasts as long as the page.
   }
@@ -249,13 +250,23 @@ function remember(value: Remembered) {
 
 export function IngestionView() {
   const [tenant, setTenant] = useState('');
-  const [followed, setFollowed] = useState<Remembered>(remembered);
+  return (
+    <div className="ops-view">
+      <TenantChooser action="Use tenant" onChoose={setTenant} />
+      {tenant && <TenantIngestion key={tenant} tenant={tenant} />}
+    </div>
+  );
+}
+
+/** The active tenant's uploads and the ingests this browser follows for it. */
+function TenantIngestion({ tenant }: { tenant: string }) {
+  const [followed, setFollowed] = useState<Remembered>(() => remembered(tenant));
   const [outcomes, setOutcomes] = useState<Record<string, { failed: boolean }>>({});
   const [notice, setNotice] = useState('');
   const update = (change: (previous: Remembered) => Remembered) =>
     setFollowed((previous) => {
       const next = change(previous);
-      remember(next);
+      remember(tenant, next);
       return next;
     });
   const follow = (ingests: Followed[], batch?: Batch) =>
@@ -275,45 +286,35 @@ export function IngestionView() {
   );
 
   return (
-    <div className="ops-view">
-      <TenantChooser
-        action="Use tenant"
-        onChoose={(chosen) => {
-          setTenant(chosen);
-          setNotice('');
+    <>
+      {notice && <Alert tone="ok">{notice}</Alert>}
+      <UploadContent
+        tenant={tenant}
+        onUploaded={(batch, uploads) => {
+          const several = batch.entries.length > 1;
+          if (!uploads.length) {
+            follow([], batch);
+            return;
+          }
+          setNotice(
+            uploads
+              .map(({ profile, upload }) =>
+                upload.existing
+                  ? `${upload.filename} matches ingest ${upload.ingest_id} (${upload.state}); following it.`
+                  : `Queued ${upload.filename} as ingest ${upload.ingest_id}${several ? ` (${profile})` : ''}.`,
+              )
+              .join(' '),
+          );
+          follow(
+            uploads.map(({ upload }) => ({
+              ingestId: upload.ingest_id!,
+              filename: upload.filename,
+              existing: upload.existing,
+            })),
+            batch,
+          );
         }}
       />
-      {notice && <Alert tone="ok">{notice}</Alert>}
-      {tenant && (
-        <UploadContent
-          key={tenant}
-          tenant={tenant}
-          onUploaded={(batch, uploads) => {
-            const several = batch.entries.length > 1;
-            if (!uploads.length) {
-              follow([], batch);
-              return;
-            }
-            setNotice(
-              uploads
-                .map(({ profile, upload }) =>
-                  upload.existing
-                    ? `${upload.filename} matches ingest ${upload.ingest_id} (${upload.state}); following it.`
-                    : `Queued ${upload.filename} as ingest ${upload.ingest_id}${several ? ` (${profile})` : ''}.`,
-                )
-                .join(' '),
-            );
-            follow(
-              uploads.map(({ upload }) => ({
-                ingestId: upload.ingest_id!,
-                filename: upload.filename,
-                existing: upload.existing,
-              })),
-              batch,
-            );
-          }}
-        />
-      )}
       <FollowIngest onFound={(ingestId) => follow([{ ingestId }])} />
       {followed.batches.length > 0 && (
         <Panel title="Batches">
@@ -355,7 +356,7 @@ export function IngestionView() {
           </table>
         )}
       </Panel>
-    </div>
+    </>
   );
 }
 

@@ -97,8 +97,8 @@ export function AgentWorkspace({
   const { agent } = useAgent({ agentId: agentName });
   const { copilotkit } = useCopilotKit();
   const [progress, setProgress] = useState<Progress>(NO_PROGRESS);
-  const [turns, setTurns] = useState<TurnRecord[]>(() => loadTurns(threadId));
-  const [annotations, setAnnotations] = useState<AnnotationRecord[]>(() => loadAnnotations(threadId));
+  const [turns, setTurns] = useState<TurnRecord[]>(() => loadTurns(tenant, threadId));
+  const [annotations, setAnnotations] = useState<AnnotationRecord[]>(() => loadAnnotations(tenant, threadId));
   const [latencyMs, setLatencyMs] = useState<number>();
   const failure = useRef<{ message?: string; code?: string }>(undefined);
   const stopped = useRef(false);
@@ -148,7 +148,7 @@ export function AgentWorkspace({
           const record = turnRecord(lastQuery(messages), snapshot.current, new Date().toISOString());
           setTurns((previous) => {
             const next = [...previous, record];
-            saveTurns(threadId, next);
+            saveTurns(tenant, threadId, next);
             return next;
           });
         }
@@ -161,7 +161,7 @@ export function AgentWorkspace({
       },
     });
     return () => subscription.unsubscribe();
-  }, [agent, threadId]);
+  }, [agent, tenant, threadId]);
 
   const stop = () => {
     stopped.current = true;
@@ -175,7 +175,7 @@ export function AgentWorkspace({
         query: lastQuery(agent.messages),
         at: new Date().toISOString(),
       });
-      saveAnnotations(threadId, next);
+      saveAnnotations(tenant, threadId, next);
       return next;
     });
 
@@ -223,10 +223,10 @@ export function AgentWorkspace({
           onRated={rated}
         >
           {hits.length > 0 && agents.includes(SUMMARIZER) && agentName !== SUMMARIZER && (
-            <SummarizeResults key={`${threadId}-${turns.length}`} query={query} hits={hits} />
+            <SummarizeResults key={`${threadId}-${turns.length}`} tenant={tenant} query={query} hits={hits} />
           )}
-          <Annotations threadId={threadId} agent={agentName} turns={turns} annotations={annotations} />
-          <SessionEvaluation threadId={threadId} spanIds={spanIdsOf(turns)} />
+          <Annotations tenant={tenant} threadId={threadId} agent={agentName} turns={turns} annotations={annotations} />
+          <SessionEvaluation tenant={tenant} threadId={threadId} spanIds={spanIdsOf(turns)} />
           <History turns={turns} />
         </ResultPanel>
       </div>
