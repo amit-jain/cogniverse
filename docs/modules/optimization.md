@@ -984,10 +984,20 @@ Result dict shape: `{log_retention_days, memory_retention_days, memory_cleanup: 
 
 ### 18. **`--mode synthetic` (Synthetic Data Generation)**
 
-`run_synthetic_generation(tenant_id, optimizer_types=None, count=50)` generates training data for one or
-more optimizer types (default `["query_enhancement", "profile", "workflow"]`) via
-`SyntheticDataService`. Non-empty output is persisted as an `ApprovalBatch` of
-pending `ReviewItem` records through `ApprovalStorageImpl`.
+`run_synthetic_generation(tenant_id, optimizer_types=None, options=None)` generates training data for one or
+more optimizer types (default: every type in `APPROVED_TRAINING_AGENT_BY_OPTIMIZER`) via
+`SyntheticDataService`. `options` is a `SyntheticRunOptions`
+(`cogniverse_runtime.optimization_options`, the CLI's `--options` JSON): `count`
+(default 50), `vespa_sample_size`, `strategy`, `max_profiles` and `human_review`
+(default true). `submit_synthetic_outcome` turns each type's non-empty output into an
+`ApprovalBatch` and hands it to `HumanApprovalAgent.submit_for_review` over
+`ApprovalStorageImpl`: items at or above `ApprovalConfig.confidence_threshold` are
+approved into the tenant's approved synthetic dataset at once, the rest stay pending
+review; without human review every item is approved. Each type's result carries
+`batch_id`, `examples_generated`, `auto_approved`, `pending_review`,
+`avg_confidence`, `schema_name`, `selected_profiles`, `profile_selection_reasoning`
+and `generation_time_ms`, which `GET /admin/tenant/{tenant_id}/optimize/runs/{name}/synthetic`
+reads back from the run.
 
 The result retains one entry per requested optimizer. Its aggregate status is
 `failed` when any entry is `failed` or `error`, including a partial run where
@@ -1020,6 +1030,25 @@ uv run python -m cogniverse_runtime.optimization_cli \
 
 **File:** `libs/runtime/cogniverse_runtime/optimization_cli.py::run_synthetic_generation`,
 `libs/synthetic/cogniverse_synthetic/api.py`
+
+---
+
+### 18a. **`--mode routing` / `--mode unified` (module optimization)**
+
+`run_module_optimization(module, tenant_id, lookback_hours, options)` runs a
+module's steps in one pod (`optimization_options.MODULE_STEPS`): `routing` runs
+`gateway-thresholds`, `entity-extraction` and `profile`; `unified` runs those, then
+`workflow`. `options` is a `ModuleRunOptions`: `max_iterations` caps each DSPy
+compile's bootstrap rounds (`_create_teleprompter(max_rounds=...)`) and the workflow
+optimizer's 50-span evaluation batches (`run_workflow_optimization(max_batches=...)`,
+also what `--mode workflow --options` sets); `use_synthetic_data=false` keeps
+approved synthetic examples out of the entity-extraction and profile compiles; and
+`dataset_name` (only without synthetic data) names a telemetry dataset of the
+tenant (`<name>-<tenant>`, `query`/`expected_videos` rows) that is the profile
+step's ground truth in place of the uploaded one. The result is
+`{status, module, failed_steps, results: {step: result}}`; any failed step fails it.
+
+**File:** `libs/runtime/cogniverse_runtime/optimization_cli.py::run_module_optimization`
 
 ---
 

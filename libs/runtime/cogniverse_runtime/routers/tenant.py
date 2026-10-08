@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from cogniverse_core.common.tenant_utils import (
     canonical_tenant_id,
@@ -27,6 +27,7 @@ from cogniverse_foundation.common.argo_client import build_argo_async_client
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import get_workflow_settings
 from cogniverse_runtime.http_errors import failure_response, upstream_rejection
+from cogniverse_runtime.optimization_options import options_model
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
@@ -705,6 +706,8 @@ _MANUAL_OPTIMIZE_MODES = {
     "entity-extraction",
     "llm-annotate",
     "synthetic",
+    "routing",
+    "unified",
 }
 _SYNTHETIC_MODE = "synthetic"
 _DEFAULT_LOOKBACK_HOURS = 48.0
@@ -748,10 +751,12 @@ def _build_optimization_workflow_manifest(
     *,
     lookback_hours: float = _DEFAULT_LOOKBACK_HOURS,
     agents: Optional[List[str]] = None,
+    options: Optional[str] = None,
 ) -> dict:
     """Build a one-off Argo Workflow that runs ``optimization_cli --mode``;
     ``agents`` becomes its ``--agents`` (the synthetic mode's optimizer
-    types)."""
+    types) and ``options`` its ``--options`` (the mode's run options as
+    JSON)."""
     parameters = [
         {"name": "mode", "value": mode},
         {"name": "tenant-id", "value": tenant_id},
@@ -759,6 +764,8 @@ def _build_optimization_workflow_manifest(
     ]
     if agents:
         parameters.append({"name": "agents", "value": ",".join(agents)})
+    if options is not None:
+        parameters.append({"name": "options", "value": options})
     if not get_workflow_settings().optimization_template:
         raise HTTPException(
             status_code=503,
@@ -836,6 +843,14 @@ class ManualOptimizeRequest(BaseModel):
         description=(
             "The synthetic mode's optimizer types to generate training data "
             "for; required for it and refused for every other mode"
+        ),
+    )
+    options: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "Run options of the synthetic, routing, workflow and unified "
+            "modes (cogniverse_runtime.optimization_options); refused for "
+            "every other mode"
         ),
     )
 
@@ -954,6 +969,38 @@ def _synthetic_optimizers(body: ManualOptimizeRequest) -> Optional[List[str]]:
     return sorted(set(body.optimizers))
 
 
+def _run_options(tenant_id: str, body: ManualOptimizeRequest) -> Optional[str]:
+    """The request's options validated against its mode, as the JSON the
+    run receives; ``None`` when it carries none."""
+    if body.options is None:
+        return None
+    model = options_model(body.mode)
+    if model is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {body.mode} mode takes no options.",
+        )
+    try:
+        options = model.model_validate(body.options)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {**error, "loc": ["body", "options", *error["loc"]]}
+                for error in exc.errors(include_url=False, include_context=False)
+            ],
+        ) from exc
+    dataset = getattr(options, "dataset_name", None)
+    if dataset is not None and not dataset.endswith(
+        f"-{canonical_tenant_id(tenant_id)}"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset {dataset} is not a dataset of tenant {tenant_id}.",
+        )
+    return options.model_dump_json()
+
+
 @router.post("/{tenant_id}/optimize", response_model=ManualOptimizeResponse)
 async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
     """Manually trigger an optimization run for a tenant via Argo.
@@ -983,6 +1030,7 @@ async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
         get_workflow_settings().namespace,
         lookback_hours=body.lookback_hours,
         agents=optimizers,
+        options=_run_options(tenant_id, body),
     )
     response = await _submit_workflow(manifest)
 

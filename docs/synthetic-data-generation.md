@@ -861,8 +861,11 @@ to use the selected optimizer's registered strategy.
 
 `cogniverse_runtime.optimization_cli` exposes a `synthetic` mode that wraps
 `SyntheticDataService` directly (`run_synthetic_generation` in
-`optimization_cli.py`), then persists the generated examples as pending review
-batches. Approved examples become input to the matching optimizer:
+`optimization_cli.py`), then submits each optimizer's examples for review:
+examples at or above the auto-approval threshold are approved at once, the rest
+wait for a reviewer (`--options '{"human_review": false}'` approves them all).
+`--options` also sets `count` (default 50), `vespa_sample_size`, `strategy` and
+`max_profiles`. Approved examples become input to the matching optimizer:
 
 ```bash
 uv run python -m cogniverse_runtime.optimization_cli \
