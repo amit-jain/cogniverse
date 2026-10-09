@@ -113,6 +113,7 @@ def _prune_closed_loops() -> None:
 _DATASET_OP_TIMEOUT_S = 120
 # Listing and deleting projects: a project delete removes all of its spans.
 _PROJECT_OP_TIMEOUT_S = 60
+_SPAN_LOOKUP_TIMEOUT_S = 10
 _SPAN_QUERY_WINDOW_MIN_STEP = timedelta(microseconds=1)
 
 # A projected span row carries only the requested columns: 82 bytes per row for
@@ -619,6 +620,36 @@ class PhoenixTraceStore(TraceStore):
         except Exception as e:
             logger.error(f"Failed to get span {span_id}: {e}")
             raise
+
+    async def span_project(self, span_id: str) -> Optional[str]:
+        """The project holding ``span_id``, from Phoenix's span lookup by
+        OTel id across every project; None when Phoenix holds no such span.
+        Raises on an unreachable Phoenix or a lookup it refuses."""
+
+        async def lookup() -> Optional[str]:
+            async with httpx.AsyncClient(
+                base_url=self.http_endpoint, timeout=_SPAN_LOOKUP_TIMEOUT_S
+            ) as client:
+                response = await client.post(
+                    "/graphql",
+                    json={
+                        "query": (
+                            "query($spanId: String!) { getSpanByOtelId("
+                            "spanId: $spanId) { project { name } } }"
+                        ),
+                        "variables": {"spanId": span_id},
+                    },
+                )
+            response.raise_for_status()
+            body = response.json()
+            if body.get("errors"):
+                raise RuntimeError(
+                    f"Phoenix refused the lookup of span {span_id}: {body['errors']}"
+                )
+            span = body["data"]["getSpanByOtelId"]
+            return None if span is None else span["project"]["name"]
+
+        return await self._breaker.acall(lookup)
 
     async def iter_spans(
         self,

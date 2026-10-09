@@ -104,6 +104,12 @@ class TraceStore(ABC):
         """
         pass
 
+    @abstractmethod
+    async def span_project(self, span_id: str) -> Optional[str]:
+        """The name of the project that holds span ``span_id``, whichever
+        project that is, or None when the backend holds no such span."""
+        pass
+
 
 class AnnotationStore(ABC):
     """

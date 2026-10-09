@@ -98,6 +98,7 @@ from cogniverse_foundation.telemetry.span_contract import (
     SpanNotInProjectError,
     persist_result_relevance,
     persist_session_evaluation,
+    span_readable_within_s,
 )
 from cogniverse_runtime.routers.openai_compat import (
     UNAUTHORIZED,
@@ -790,6 +791,7 @@ async def rate_result(
             request.span_id,
             request.result_id,
             request.relevance,
+            readable_within_s=span_readable_within_s(manager.config.batch_config),
         )
     except SpanNotInProjectError:
         return error_response(

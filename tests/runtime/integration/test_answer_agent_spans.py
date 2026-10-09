@@ -29,6 +29,7 @@ from cogniverse_foundation.telemetry.span_contract import (
     RESULT_RELEVANCE,
     persist_result_relevance,
     read_span_io,
+    span_readable_within_s,
 )
 from cogniverse_runtime.admin import tenant_manager
 from cogniverse_runtime.agent_dispatcher import GROUNDING_THREADED, AgentDispatcher
@@ -207,7 +208,14 @@ class TestDocumentHitsCarryTheirSearchSpan:
         provider, project = _provider(real_telemetry, TENANT)
 
         score = await persist_result_relevance(
-            provider, project, result["span_id"], top, "Highly Relevant"
+            provider,
+            project,
+            result["span_id"],
+            top,
+            "Highly Relevant",
+            readable_within_s=span_readable_within_s(
+                real_telemetry.config.batch_config
+            ),
         )
 
         assert (top, score) == ("winter_beekeeping", 1.0)

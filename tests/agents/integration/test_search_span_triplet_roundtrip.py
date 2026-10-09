@@ -31,6 +31,7 @@ from cogniverse_foundation.telemetry.span_contract import (
     RESULT_RELEVANCE,
     SpanNotInProjectError,
     persist_result_relevance,
+    span_readable_within_s,
 )
 from tests.utils.stub_search import build_stub_search_agent
 
@@ -105,12 +106,23 @@ async def test_real_search_span_carries_io_and_yields_triplet(real_telemetry):
     # 2. Write the relevance annotation through the shared writer.
     #    Each result keeps its own rating: rating the negative afterwards
     #    must not replace the positive's.
+    readable_within_s = span_readable_within_s(real_telemetry.config.batch_config)
     scores = [
         await persist_result_relevance(
-            provider, project, out.span_id, "vid_pos", "Highly Relevant"
+            provider,
+            project,
+            out.span_id,
+            "vid_pos",
+            "Highly Relevant",
+            readable_within_s=readable_within_s,
         ),
         await persist_result_relevance(
-            provider, project, out.span_id, "vid_neg", "Not Relevant"
+            provider,
+            project,
+            out.span_id,
+            "vid_neg",
+            "Not Relevant",
+            readable_within_s=readable_within_s,
         ),
     ]
     assert scores == [1.0, 0.0]
@@ -123,7 +135,12 @@ async def test_real_search_span_carries_io_and_yields_triplet(real_telemetry):
         match=f"^span {out.span_id} is not in project {other_project}$",
     ):
         await persist_result_relevance(
-            provider, other_project, out.span_id, "vid_neg", "Highly Relevant"
+            provider,
+            other_project,
+            out.span_id,
+            "vid_neg",
+            "Highly Relevant",
+            readable_within_s=readable_within_s,
         )
 
     # 3. The real extractor must mine exactly the triplet those two rows imply.

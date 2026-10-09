@@ -14,6 +14,7 @@ every operation type instead of a bespoke read path per span kind.
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 import logging
 from typing import Any, Mapping, Optional
@@ -149,22 +150,69 @@ class SpanNotInProjectError(LookupError):
     """The span to annotate is not a span of the project being written."""
 
 
+# Seconds a span takes to become readable beyond its exporter's schedule
+# delay: the export itself and the backend's ingestion.
+SPAN_INGEST_MARGIN_S = 5.0
+_SPAN_POLL_FIRST_S = 0.1
+_SPAN_POLL_MAX_S = 1.0
+
+
+def span_readable_within_s(batch_config: Any) -> float:
+    """Seconds after a span ends by which it is readable from its project:
+    the exporter's ``schedule_delay_millis`` plus ``SPAN_INGEST_MARGIN_S``."""
+    return batch_config.schedule_delay_millis / 1000 + SPAN_INGEST_MARGIN_S
+
+
+async def _await_span_in_project(
+    provider: Any, project: str, span_id: str, readable_within_s: float
+) -> None:
+    """Return once span ``span_id`` is readable from ``project``.
+
+    A client holds a span's id as soon as the span ends, before the exporter
+    has sent it, so a span no project holds yet is looked up again, with
+    backoff, for ``readable_within_s``. Raises ``SpanNotInProjectError`` at
+    once when another project holds the span, or when no project does by
+    then; a failed lookup raises as it is.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + readable_within_s
+    pause = _SPAN_POLL_FIRST_S
+    while True:
+        holder = await provider.traces.span_project(span_id)
+        if holder == project:
+            return
+        if holder is not None:
+            raise SpanNotInProjectError(f"span {span_id} is not in project {project}")
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise SpanNotInProjectError(
+                f"span {span_id} is not in project {project} "
+                f"after {readable_within_s:g}s"
+            )
+        await asyncio.sleep(min(pause, remaining))
+        pause = min(pause * 2, _SPAN_POLL_MAX_S)
+
+
 async def persist_result_relevance(
     provider: Any,
     project: str,
     span_id: Optional[str],
     result_id: str,
     relevance_label: str,
+    *,
+    readable_within_s: float,
 ) -> float:
     """Write a ``result_relevance`` annotation on search span ``span_id`` of
     ``project`` and return its score. Each result keeps its own annotation;
     rating a result again replaces its earlier rating.
 
-    The span is read back from ``project`` first: the backend keys
-    annotations by span id alone, so writing without that check would let a
-    caller annotate another project's span. Raises ``ValueError`` on a missing
-    span id or an unknown label and ``SpanNotInProjectError`` when the project
-    holds no such span.
+    The span is looked up first: the backend keys annotations by span id
+    alone, so writing without that check would let a caller annotate another
+    project's span. A span no project holds yet is waited for up to
+    ``readable_within_s`` (see ``span_readable_within_s``), since a search
+    hands out its span id before the span is exported. Raises ``ValueError``
+    on a missing span id or an unknown label and ``SpanNotInProjectError``
+    when the span is another project's or still nowhere after the wait.
     """
     if not span_id:
         raise ValueError(
@@ -173,13 +221,7 @@ async def persist_result_relevance(
         )
     if relevance_label not in RELEVANCE_SCORES:
         raise ValueError(f"unknown relevance label: {relevance_label!r}")
-    spans = await provider.traces.get_spans(
-        project=project,
-        filters={"span_id": [span_id]},
-        limit=1,
-    )
-    if spans.empty or span_id not in set(spans["context.span_id"]):
-        raise SpanNotInProjectError(f"span {span_id} is not in project {project}")
+    await _await_span_in_project(provider, project, span_id, readable_within_s)
 
     score = RELEVANCE_SCORES[relevance_label]
     await provider.annotations.add_annotation(

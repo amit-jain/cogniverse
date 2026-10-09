@@ -1800,10 +1800,13 @@ tenant. Body `{span_id, result_id, relevance}`: `span_id` is 16 hex digits,
 `result_id` the id the span records the result under, `relevance` one of
 `Highly Relevant` (score 1.0), `Somewhat Relevant` (0.5) or `Not Relevant`
 (0.0). Each result keeps its own rating, and rating it again replaces it. The
-answer is `{span_id, result_id, relevance, score}`. An unknown key is 401, a
-key-store outage 503, an invalid body 400 naming the field, a span that is not
-in the tenant's telemetry project 404 `span_not_found`, and a telemetry
-backend that fails the read or the write 502 `annotation_not_stored`. The
+answer is `{span_id, result_id, relevance, score}`. A search hands out its
+span id before the span is exported, so a span no project holds yet is waited
+for: up to the exporter's `schedule_delay_millis` plus 5 s. An unknown key is
+401, a key-store outage 503, an invalid body 400 naming the field, a span of
+another tenant's project (at once) or of none after that wait 404
+`span_not_found`, and a telemetry backend that fails the lookup or the write,
+waiting included, 502 `annotation_not_stored`. The
 triplet miner (`TripletExtractor`) counts a `Highly Relevant` result as a
 positive for the search's query.
 
