@@ -1815,14 +1815,16 @@ on a whole conversation as a `session_evaluation` annotation (the name the
 trajectory converter reads) on each search span of it, in the key's tenant.
 Body `{outcome, score, span_ids}`: `outcome` one of `success`, `partial`,
 `failure` (the annotation's label), `score` 0-1, `span_ids` 1-200 span ids
-of the conversation's searches. Every span is read back from the tenant's
-project before any is written; the annotation's metadata carries
+of the conversation's searches. Every span is looked up before any is
+written, and spans no project holds yet are waited for as a rating's span is;
+the annotation's metadata carries
 `session_id` (the thread) and `num_spans`, and evaluating the thread again
 replaces its verdict on each span. The answer is `{thread_id, outcome, score,
 span_ids}` with the spans sorted. An unknown key is 401, a key-store outage
-503, an invalid body or a malformed span id 400, a span not in the tenant's
-project 404 `span_not_found` naming it (nothing is written), and a telemetry
-backend that fails a read or write 502 `annotation_not_stored`
+503, an invalid body or a malformed span id 400, spans of another tenant's
+project (at once) or of none after the wait 404 `span_not_found` naming them
+(nothing is written), and a telemetry backend that fails a lookup or write,
+waiting included, 502 `annotation_not_stored`
 (`span_contract.persist_session_evaluation`).
 
 The browser UI in `clients/web` drives this surface through a CopilotKit

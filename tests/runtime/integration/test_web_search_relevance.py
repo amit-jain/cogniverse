@@ -49,6 +49,12 @@ from cogniverse_runtime.session_state import ContinuationStore, ConversationLedg
 from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.approval_review import run_in_own_loop
 from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.span_export import (
+    answers,
+    await_span_lookups,
+    held_span_export,
+    span_lookups,
+)
 from tests.utils.stub_search import (
     REPO_ROOT,
     answer_with,
@@ -318,37 +324,6 @@ def _annotation_writes(proxy, since):
     ]
 
 
-def _span_lookups(proxy, span_id):
-    """How many lookups of ``span_id``'s project the proxy forwarded."""
-    return sum(
-        1
-        for method, path, body in proxy.requests
-        if method == "POST" and path == "/graphql" and span_id.encode() in body
-    )
-
-
-def _answers(pending):
-    """The answers among ``pending`` rating futures that already returned."""
-    return [
-        (rating.result().status_code, rating.result().json())
-        for rating in pending
-        if rating.done()
-    ]
-
-
-def _await_span_lookups(proxy, span_id, count, answered=list, timeout=30.0):
-    """Return once the proxy has seen ``count`` lookups of ``span_id``, while
-    ``answered()`` (the ratings already answered) stays empty."""
-    deadline = time.monotonic() + timeout
-    while _span_lookups(proxy, span_id) < count:
-        assert answered() == [], "answered before the span was exported"
-        assert time.monotonic() < deadline, (
-            f"{_span_lookups(proxy, span_id)} lookups of {span_id}, not {count}"
-        )
-        time.sleep(0.05)
-    assert answered() == [], "answered before the span was exported"
-
-
 def _span_is_exported(telemetry, tenant_id, span_id):
     provider, project = _provider(telemetry, tenant_id)
     spans = run_in_own_loop(
@@ -359,23 +334,10 @@ def _span_is_exported(telemetry, tenant_id, span_id):
     return list(spans["context.span_id"]) == [span_id]
 
 
-# Long enough that no span of a test is exported before the test flushes it.
-HELD_EXPORT_MS = 60_000
-
-
 @pytest.fixture()
 def held_export(telemetry, tenants):
-    """Spans of this test's tenants wait in a batch exporter that sends them
-    only when the test flushes it, as a deployed runtime's exporter holds a
-    span for its schedule delay; the relevance route waits by the same
-    configuration."""
-    shipped = telemetry.config.batch_config
-    telemetry.config.batch_config = BatchExportConfig(
-        use_sync_export=False, schedule_delay_millis=HELD_EXPORT_MS
-    )
-    yield telemetry.config.batch_config
-    telemetry.force_flush(timeout_millis=10000)
-    telemetry.config.batch_config = shipped
+    with held_span_export(telemetry) as batch_config:
+        yield batch_config
 
 
 def _run_search_in_browser(page: Page, web_url: str):
@@ -447,7 +409,7 @@ def test_a_rating_clicked_before_the_search_span_is_exported_is_stored(
         positive.get_by_role("button", name="Somewhat Relevant").click()
     span_id = sent.value.post_data_json["span_id"]
     assert _span_is_exported(telemetry, tenant, span_id) is False
-    _await_span_lookups(
+    await_span_lookups(
         phoenix_proxy,
         span_id,
         2,
@@ -510,7 +472,7 @@ def test_a_span_of_another_tenant_is_not_rated(
     )
     assert _annotation_writes(phoenix_proxy, requests_before) == []
     # Another project holds the span, so one lookup settles it: no wait.
-    assert _span_lookups(phoenix_proxy, span_id) == 1
+    assert span_lookups(phoenix_proxy, span_id) == 1
     assert _ratings(telemetry, other, span_id, 1, timeout=6) == {}
     # The same rating with the span's own tenant's key is stored.
     stored = _rate(runtime_url, OTHER_KEY, span_id, POS_ID, "Highly Relevant")
@@ -640,12 +602,12 @@ def test_a_rating_sent_before_its_span_is_exported_is_stored(
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         rating = pool.submit(_rate, runtime_url, KEY, span_id, POS_ID, "Not Relevant")
-        _await_span_lookups(phoenix_proxy, span_id, 2, lambda: _answers([rating]))
+        await_span_lookups(phoenix_proxy, span_id, 2, lambda: answers([rating]))
         # The waiting rating holds no worker: the route answers meanwhile.
         started = time.monotonic()
         refused = _rate(runtime_url, KEY, span_id, POS_ID, "Meh")
         assert (refused.status_code, time.monotonic() - started < 2) == (400, True)
-        assert _answers([rating]) == []
+        assert answers([rating]) == []
         telemetry.force_flush(timeout_millis=10000)
         response = rating.result(timeout=held_export.schedule_delay_millis / 1000)
 
@@ -693,11 +655,11 @@ def test_ratings_of_a_span_not_yet_exported_each_land_once(
         ]
         deadline = time.monotonic() + 60
         while not all_waiting.is_set():
-            assert _answers(pending) == [], "answered before the span was exported"
+            assert answers(pending) == [], "answered before the span was exported"
             assert time.monotonic() < deadline, "the ratings never all waited"
             time.sleep(0.05)
-        _await_span_lookups(
-            phoenix_proxy, span_id, len(ratings) + 1, lambda: _answers(pending)
+        await_span_lookups(
+            phoenix_proxy, span_id, len(ratings) + 1, lambda: answers(pending)
         )
         telemetry.force_flush(timeout_millis=10000)
         responses = [
@@ -760,7 +722,7 @@ def test_a_telemetry_backend_failing_during_the_wait_stores_nothing(
         rating = pool.submit(
             _rate, runtime_url, KEY, span_id, POS_ID, "Highly Relevant"
         )
-        _await_span_lookups(phoenix_proxy, span_id, 2, lambda: _answers([rating]))
+        await_span_lookups(phoenix_proxy, span_id, 2, lambda: answers([rating]))
         phoenix_proxy.intercept = fault
         response = rating.result(timeout=30)
     phoenix_proxy.intercept = None
@@ -791,7 +753,7 @@ def test_a_span_another_tenant_exports_late_is_not_rated(
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         rating = pool.submit(_rate, runtime_url, KEY, span_id, POS_ID, "Not Relevant")
-        _await_span_lookups(phoenix_proxy, span_id, 2, lambda: _answers([rating]))
+        await_span_lookups(phoenix_proxy, span_id, 2, lambda: answers([rating]))
         flushed = time.monotonic()
         telemetry.force_flush(timeout_millis=10000)
         response = rating.result(timeout=30)

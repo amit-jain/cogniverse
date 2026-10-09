@@ -68,9 +68,10 @@ libs/foundation/cogniverse_foundation/telemetry/
   hands out its span id before the span is exported; a span another project
   holds, or none by then, raises `SpanNotInProjectError`.
   `persist_session_evaluation(provider, project, session_id, span_ids,
-  outcome, score)` stores a conversation's verdict (`SESSION_OUTCOMES`) as a
-  `SESSION_EVALUATION` annotation on each of its spans, after reading every
-  one back from `project`, keyed by the session so a new verdict replaces it.
+  outcome, score, readable_within_s=)` stores a conversation's verdict
+  (`SESSION_OUTCOMES`) as a `SESSION_EVALUATION` annotation on each of its
+  spans, after finding every one in `project` the same way, keyed by the
+  session so a new verdict replaces it.
   `record_span_io(span, input_value=, output=, operation=, modality=)` writes the
   input on `input.value`, the output as JSON on `output.value`, and the type on
   `operation`; `read_span_io(row)` reads `{input, output, operation, modality}` back and
@@ -361,7 +362,7 @@ The telemetry system uses a **provider abstraction** that defines interfaces for
 flowchart TB
     subgraph Abstraction["<span style='color:#000'>Foundation Layer - Provider Interfaces</span>"]
         TelemetryProvider["<span style='color:#000'>TelemetryProvider<br/><br/>• initialize(config)<br/>• configure_span_export()<br/>• session_context()</span>"]
-        TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• iter_spans()<br/>• get_all_spans()<br/>• get_span_by_id()<br/>• span_project()</span>"]
+        TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• iter_spans()<br/>• get_all_spans()<br/>• get_span_by_id()<br/>• span_projects()</span>"]
         AnnotationStore["<span style='color:#000'>AnnotationStore<br/><br/>• add_annotation()<br/>• get_annotations()<br/>• log_evaluations()</span>"]
         DatasetStore["<span style='color:#000'>DatasetStore<br/><br/>• create_dataset()<br/>• get_dataset()<br/>• append_to_dataset()<br/>• list_datasets()<br/>• delete_dataset()</span>"]
     end
@@ -451,8 +452,8 @@ class TraceStore(ABC):
         pass
 
     @abstractmethod
-    async def span_project(self, span_id: str) -> Optional[str]:
-        """The project holding the span, or None when no project does."""
+    async def span_projects(self, span_ids: Sequence[str]) -> Dict[str, Optional[str]]:
+        """The project holding each span, or None for one no project holds."""
         pass
 ```
 

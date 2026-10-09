@@ -105,9 +105,9 @@ class TraceStore(ABC):
         pass
 
     @abstractmethod
-    async def span_project(self, span_id: str) -> Optional[str]:
-        """The name of the project that holds span ``span_id``, whichever
-        project that is, or None when the backend holds no such span."""
+    async def span_projects(self, span_ids: Sequence[str]) -> Dict[str, Optional[str]]:
+        """The name of the project that holds each of ``span_ids``, whichever
+        project that is, or None for a span the backend does not hold."""
         pass
 
 

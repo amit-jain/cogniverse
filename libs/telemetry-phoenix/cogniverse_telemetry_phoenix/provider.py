@@ -621,33 +621,45 @@ class PhoenixTraceStore(TraceStore):
             logger.error(f"Failed to get span {span_id}: {e}")
             raise
 
-    async def span_project(self, span_id: str) -> Optional[str]:
-        """The project holding ``span_id``, from Phoenix's span lookup by
-        OTel id across every project; None when Phoenix holds no such span.
-        Raises on an unreachable Phoenix or a lookup it refuses."""
+    async def span_projects(self, span_ids: Sequence[str]) -> Dict[str, Optional[str]]:
+        """The project holding each of ``span_ids``, from Phoenix's span
+        lookup by OTel id across every project, in one request; None for a
+        span Phoenix does not hold. Raises on an unreachable Phoenix or a
+        lookup it refuses."""
+        wanted = list(dict.fromkeys(span_ids))
+        if not wanted:
+            return {}
+        parameters = ", ".join(f"$s{i}: String!" for i in range(len(wanted)))
+        fields = " ".join(
+            f"s{i}: getSpanByOtelId(spanId: $s{i}) {{ project {{ name }} }}"
+            for i in range(len(wanted))
+        )
 
-        async def lookup() -> Optional[str]:
+        async def lookup() -> Dict[str, Optional[str]]:
             async with httpx.AsyncClient(
                 base_url=self.http_endpoint, timeout=_SPAN_LOOKUP_TIMEOUT_S
             ) as client:
                 response = await client.post(
                     "/graphql",
                     json={
-                        "query": (
-                            "query($spanId: String!) { getSpanByOtelId("
-                            "spanId: $spanId) { project { name } } }"
-                        ),
-                        "variables": {"spanId": span_id},
+                        "query": f"query({parameters}) {{ {fields} }}",
+                        "variables": {f"s{i}": span for i, span in enumerate(wanted)},
                     },
                 )
             response.raise_for_status()
             body = response.json()
             if body.get("errors"):
                 raise RuntimeError(
-                    f"Phoenix refused the lookup of span {span_id}: {body['errors']}"
+                    f"Phoenix refused the lookup of spans {wanted}: {body['errors']}"
                 )
-            span = body["data"]["getSpanByOtelId"]
-            return None if span is None else span["project"]["name"]
+            return {
+                span: (
+                    None
+                    if body["data"][f"s{i}"] is None
+                    else body["data"][f"s{i}"]["project"]["name"]
+                )
+                for i, span in enumerate(wanted)
+            }
 
         return await self._breaker.acall(lookup)
 

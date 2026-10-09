@@ -17,7 +17,7 @@ import ast
 import asyncio
 import json
 import logging
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -163,31 +163,37 @@ def span_readable_within_s(batch_config: Any) -> float:
     return batch_config.schedule_delay_millis / 1000 + SPAN_INGEST_MARGIN_S
 
 
-async def _await_span_in_project(
-    provider: Any, project: str, span_id: str, readable_within_s: float
+async def _await_spans_in_project(
+    provider: Any,
+    project: str,
+    span_ids: list,
+    readable_within_s: float,
+    refusal: Callable[[list], str],
 ) -> None:
-    """Return once span ``span_id`` is readable from ``project``.
+    """Return once every one of ``span_ids`` is readable from ``project``.
 
     A client holds a span's id as soon as the span ends, before the exporter
-    has sent it, so a span no project holds yet is looked up again, with
-    backoff, for ``readable_within_s``. Raises ``SpanNotInProjectError`` at
-    once when another project holds the span, or when no project does by
-    then; a failed lookup raises as it is.
+    has sent it, so spans no project holds yet are looked up again, with
+    backoff, for ``readable_within_s``. Raises ``SpanNotInProjectError`` with
+    ``refusal(spans)`` at once when another project holds any of them, or
+    naming those no project holds by then; a failed lookup raises as it is.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + readable_within_s
     pause = _SPAN_POLL_FIRST_S
+    pending = list(span_ids)
     while True:
-        holder = await provider.traces.span_project(span_id)
-        if holder == project:
+        holders = await provider.traces.span_projects(pending)
+        foreign = [span for span in pending if holders[span] not in (None, project)]
+        if foreign:
+            raise SpanNotInProjectError(refusal(foreign))
+        pending = [span for span in pending if holders[span] is None]
+        if not pending:
             return
-        if holder is not None:
-            raise SpanNotInProjectError(f"span {span_id} is not in project {project}")
         remaining = deadline - loop.time()
         if remaining <= 0:
             raise SpanNotInProjectError(
-                f"span {span_id} is not in project {project} "
-                f"after {readable_within_s:g}s"
+                f"{refusal(pending)} after {readable_within_s:g}s"
             )
         await asyncio.sleep(min(pause, remaining))
         pause = min(pause * 2, _SPAN_POLL_MAX_S)
@@ -221,7 +227,13 @@ async def persist_result_relevance(
         )
     if relevance_label not in RELEVANCE_SCORES:
         raise ValueError(f"unknown relevance label: {relevance_label!r}")
-    await _await_span_in_project(provider, project, span_id, readable_within_s)
+    await _await_spans_in_project(
+        provider,
+        project,
+        [span_id],
+        readable_within_s,
+        lambda spans: f"span {spans[0]} is not in project {project}",
+    )
 
     score = RELEVANCE_SCORES[relevance_label]
     await provider.annotations.add_annotation(
@@ -243,16 +255,19 @@ async def persist_session_evaluation(
     span_ids: list,
     outcome: str,
     score: float,
+    *,
+    readable_within_s: float,
 ) -> list:
     """Write a ``session_evaluation`` annotation (``outcome`` as its label,
     ``score`` in 0-1) on each of ``span_ids``, the spans of one conversation,
     in ``project`` and return the span ids written, sorted. Evaluating the
     conversation again replaces its earlier verdict on each span.
 
-    Every span is read back from ``project`` before any is written, for the
-    reason ``persist_result_relevance`` gives. Raises ``ValueError`` on an
-    unknown outcome, a score outside 0-1 or no span ids, and
-    ``SpanNotInProjectError`` naming the spans the project does not hold.
+    Every span is looked up before any is written, and waited for, as
+    ``persist_result_relevance`` does. Raises ``ValueError`` on an unknown
+    outcome, a score outside 0-1 or no span ids, and ``SpanNotInProjectError``
+    naming the spans another project holds, or no project holds after the
+    wait.
     """
     if outcome not in SESSION_OUTCOMES:
         raise ValueError(f"unknown session outcome: {outcome!r}")
@@ -261,17 +276,13 @@ async def persist_session_evaluation(
     wanted = sorted(set(span_ids))
     if not wanted:
         raise ValueError("no spans name the conversation to evaluate")
-    spans = await provider.traces.get_spans(
-        project=project,
-        filters={"span_id": wanted},
-        limit=len(wanted),
+    await _await_spans_in_project(
+        provider,
+        project,
+        wanted,
+        readable_within_s,
+        lambda spans: f"spans {', '.join(spans)} are not in project {project}",
     )
-    found = set() if spans.empty else set(spans["context.span_id"])
-    missing = [span_id for span_id in wanted if span_id not in found]
-    if missing:
-        raise SpanNotInProjectError(
-            f"spans {', '.join(missing)} are not in project {project}"
-        )
     for span_id in wanted:
         await provider.annotations.add_annotation(
             span_id=span_id,

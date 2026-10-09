@@ -876,6 +876,7 @@ async def evaluate_thread(
             request.span_ids,
             request.outcome,
             request.score,
+            readable_within_s=span_readable_within_s(manager.config.batch_config),
         )
     except SpanNotInProjectError as exc:
         return error_response(
