@@ -117,3 +117,61 @@ def test_preserves_intent(enhancement_module):
         f"expansion_terms={result.expansion_terms!r}, "
         f"synonyms={result.synonyms!r}"
     )
+
+
+@skip_if_no_lm
+def test_holdout_scoring_sends_one_request_per_distinct_input(
+    enhancement_module, dspy_lm, monkeypatch
+):
+    """A served holdout repeats the same call; scoring it reaches the LM once
+    per distinct input, as many times as scoring the distinct inputs alone."""
+    from cogniverse_runtime.optimization_cli import (
+        _query_enhancement_example,
+        _query_enhancement_scores,
+    )
+
+    def _row(query: str, source_text: str) -> dict:
+        return {
+            "query": query,
+            "source_text": source_text,
+            "grounding_context": "",
+            "enhanced_query": "",
+            "expansion_terms": [],
+            "synonyms": [],
+            "context": [],
+            "confidence": 0.0,
+        }
+
+    robots = _query_enhancement_example(
+        _row(
+            "find robots",
+            "A humanoid robot assembles car parts on a factory floor while "
+            "an engineer calibrates its servo motors.",
+        )
+    )
+    reefs = _query_enhancement_example(
+        _row(
+            "coral reef footage",
+            "Divers film bleached coral reefs and schools of parrotfish near "
+            "the Great Barrier Reef.",
+        )
+    )
+    requests = []
+    send = dspy_lm.forward
+
+    def _counted(*args, **kwargs):
+        live_turn = kwargs["messages"][-1]["content"]
+        requests.append(live_turn.split("\n")[1])
+        return send(*args, **kwargs)
+
+    monkeypatch.setattr(dspy_lm, "forward", _counted)
+
+    _, distinct_rows = _query_enhancement_scores(enhancement_module, [robots, reefs])
+    distinct_requests = list(requests)
+    requests.clear()
+    _, repeated_rows = _query_enhancement_scores(
+        enhancement_module, [robots] * 4 + [reefs] * 2
+    )
+
+    assert (distinct_rows, repeated_rows) == (2, 6)
+    assert requests == distinct_requests == ["find robots", "coral reef footage"]

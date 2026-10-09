@@ -2707,6 +2707,74 @@ class TestSimbaQueryEnhancement:
             [ex],
         ) == (0.0, 0)
 
+    def test_scores_run_each_distinct_input_once_and_weigh_it_per_row(self):
+        """Served holdouts repeat one call hundreds of times: the module runs
+        once per distinct (query, source_text, grounding_context) and the mean
+        stays the per-row mean."""
+        from cogniverse_runtime.optimization_cli import _query_enhancement_scores
+
+        grounded = _example(query="cats", source_text="cats playing piano")
+        ungrounded = _example(query="dogs", source_text="cats playing piano")
+        same_query_other_source = _example(
+            query="cats", source_text="dogs chasing frisbees"
+        )
+        unscoreable = _example(query="birds")
+        answers = {
+            ("cats", "cats playing piano"): _pred("cats playing piano", "piano"),
+            ("dogs", "cats playing piano"): _pred("dogs barking", "barking"),
+            ("cats", "dogs chasing frisbees"): _pred("cats and frisbees", "frisbees"),
+            ("birds", ""): _pred("birds singing", "singing"),
+        }
+
+        class _Module:
+            def __init__(self):
+                self.calls = []
+
+            def __call__(self, **kwargs):
+                self.calls.append(
+                    (
+                        kwargs["query"],
+                        kwargs["source_text"],
+                        kwargs["grounding_context"],
+                    )
+                )
+                return answers[(kwargs["query"], kwargs["source_text"])]
+
+        module = _Module()
+        holdout = (
+            [grounded] * 3
+            + [ungrounded] * 2
+            + [same_query_other_source]
+            + [unscoreable] * 4
+        )
+
+        assert _query_enhancement_scores(module, holdout) == (4 / 6, 6)
+        assert module.calls == [
+            ("cats", "cats playing piano", ""),
+            ("dogs", "cats playing piano", ""),
+            ("cats", "dogs chasing frisbees", ""),
+            ("birds", "", ""),
+        ]
+
+    def test_scores_propagate_a_module_failure_on_a_repeated_input(self):
+        from cogniverse_runtime.optimization_cli import _query_enhancement_scores
+
+        class _Failing:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(self, **kwargs):
+                self.calls += 1
+                raise RuntimeError(f"student endpoint down for {kwargs['query']}")
+
+        module = _Failing()
+        holdout = [_example(query="cats", source_text="cats playing piano")] * 5
+
+        with pytest.raises(RuntimeError) as raised:
+            _query_enhancement_scores(module, holdout)
+        assert str(raised.value) == "student endpoint down for cats"
+        assert module.calls == 1
+
     @pytest.mark.parametrize(
         ("baseline", "current", "candidate", "min_improvement", "expected"),
         [

@@ -3914,18 +3914,32 @@ def _profile_selection_example(record: Dict[str, Any]):
 
 
 def _query_enhancement_scores(module, holdout) -> tuple[float, int]:
-    """Mean ``_query_enhancement_quality`` over scoreable holdout inputs."""
-    scores = []
+    """Mean ``_query_enhancement_quality`` over scoreable holdout rows.
+
+    Served traffic repeats the same call, so a holdout can carry one input
+    hundreds of times. The quality reads only the inputs and the module's
+    output, so each distinct input is run once and its score counts once per
+    row that carries it: the mean and the count are per row, the module calls
+    are per distinct input.
+    """
+    rows_by_input: dict[tuple[str, ...], list] = {}
     for example in holdout:
+        key = tuple(
+            str(getattr(example, k, "") or "") for k in _QUERY_ENHANCEMENT_INPUTS
+        )
+        rows_by_input.setdefault(key, [example, 0])[1] += 1
+    total = 0.0
+    scored_count = 0
+    for example, rows in rows_by_input.values():
         score = _query_enhancement_quality(
             module(**{k: getattr(example, k) for k in _QUERY_ENHANCEMENT_INPUTS}),
             example,
         )
         if score is None:
             continue
-        scores.append(score)
-    scored_count = len(scores)
-    return (sum(scores) / scored_count if scored_count else 0.0, scored_count)
+        total += score * rows
+        scored_count += rows
+    return (total / scored_count if scored_count else 0.0, scored_count)
 
 
 async def run_simba_optimization(
