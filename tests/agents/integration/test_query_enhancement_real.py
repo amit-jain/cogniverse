@@ -175,3 +175,153 @@ def test_holdout_scoring_sends_one_request_per_distinct_input(
 
     assert (distinct_rows, repeated_rows) == (2, 6)
     assert requests == distinct_requests == ["find robots", "coral reef footage"]
+
+
+_TOPICS = (
+    "A humanoid robot assembles car doors on a factory floor while an "
+    "engineer calibrates the servo motors in its wrist and records torque "
+    "readings for the maintenance log. ",
+    "Divers film bleached coral reefs and schools of parrotfish near the "
+    "outer reef, measuring water temperature at each dive site. ",
+    "A pastry chef laminates croissant dough, folding cold butter into the "
+    "layers and resting the dough between turns in a walk-in fridge. ",
+    "Volunteers restore a medieval stone bridge, replacing eroded mortar "
+    "and photographing every arch before the river floods in spring. ",
+)
+
+
+def _long_record(index: int) -> dict:
+    topic = _TOPICS[index % len(_TOPICS)]
+    return {
+        "query": f"clip {index} about {topic.split()[1]}",
+        "source_text": f"Segment {index}. " + topic * 18,
+        "grounding_context": "",
+        "enhanced_query": f"clip {index} {topic.split()[1]} footage",
+        "expansion_terms": [topic.split()[1], "footage"],
+        "synonyms": ["video"],
+        "context": ["documentary"],
+        "confidence": 0.8,
+        "reasoning": "The source text names the subject.",
+    }
+
+
+@pytest.fixture
+def student_endpoint(dspy_lm):
+    """The session's primary endpoint with the shipped primary reservation."""
+    import json
+    import os
+    from pathlib import Path
+
+    primary = json.loads(Path(os.environ["COGNIVERSE_CONFIG"]).read_text())[
+        "llm_config"
+    ]["primary"]
+    shipped = json.loads(
+        (Path(__file__).resolve().parents[3] / "configs" / "config.json").read_text()
+    )["llm_config"]["primary"]
+    return LLMEndpointConfig(
+        model=primary["model"],
+        api_base=primary["api_base"],
+        temperature=0.0,
+        max_tokens=shipped["max_tokens"],
+    )
+
+
+@skip_if_no_lm
+def test_a_bounded_candidate_answers_where_sixteen_demos_overflow_the_student(
+    dspy_lm, student_endpoint, caplog
+):
+    """Sixteen demonstrations with whole source texts, as BootstrapFewShot
+    compiles them, overflow the served student's window: every call is
+    refused and falls back. Bounded to the window the student publishes, the
+    candidate keeps the longest prefix that fits and every call is answered
+    by the LM under both the scoring and the serving adapter, inside the
+    input budget by the student's own count."""
+    from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+    from cogniverse_foundation.dspy import LenientJSONAdapter
+    from cogniverse_runtime.optimization_cli import (
+        _QUERY_ENHANCEMENT_INPUTS,
+        _bound_candidate_demos,
+        _query_enhancement_example,
+        _student_demo_budget,
+    )
+
+    lm = create_dspy_lm(student_endpoint)
+    demos = [_query_enhancement_example(_long_record(i)) for i in range(16)]
+    calls = [
+        {
+            "query": "robot wrist calibration",
+            "source_text": _TOPICS[0] * 6,
+            "grounding_context": "",
+        },
+        {
+            "query": "coral reef dives",
+            "source_text": _TOPICS[1] * 3,
+            "grounding_context": "",
+        },
+    ]
+    unbounded = QueryEnhancementModule()
+    unbounded.enhancer.predict.demos = list(demos)
+    with (
+        caplog.at_level(
+            logging.WARNING, logger="cogniverse_agents.query_enhancement_agent"
+        ),
+        dspy.context(lm=lm, adapter=dspy.ChatAdapter()),
+    ):
+        refused = unbounded(**calls[0])
+    assert refused.path_used == "heuristic_fallback"
+    assert [
+        record.getMessage().split(": ")[1]
+        for record in caplog.records
+        if "reason=DSPy failure" in record.getMessage()
+    ] == ["ContextWindowExceededError"]
+    caplog.clear()
+
+    budget, count_tokens = _student_demo_budget(student_endpoint)
+    assert (budget.context_window, budget.reserved_output) == (8192, 1000)
+    bounded = QueryEnhancementModule()
+    bounded.enhancer.predict.demos = list(demos)
+    [(kept, compiled)] = _bound_candidate_demos(
+        bounded, budget=budget, count_tokens=count_tokens, inputs=calls
+    ).values()
+    assert (compiled, bounded.enhancer.predict.demos) == (16, demos[:kept])
+    signature = bounded.enhancer.predict.signature
+    adapters = (dspy.ChatAdapter(), LenientJSONAdapter())
+    longest = [
+        max(count_tokens(adapter.format(signature, demos[:n], call)) for call in calls)
+        for adapter in adapters
+        for n in (kept, kept + 1)
+    ]
+    # The kept prefix fits under both adapters; one more does not under at
+    # least one of them.
+    assert (
+        longest[0] <= budget.input_budget,
+        longest[2] <= budget.input_budget,
+        max(longest[1], longest[3]) > budget.input_budget,
+    ) == (True, True, True)
+
+    answered = []
+    with caplog.at_level(
+        logging.WARNING, logger="cogniverse_agents.query_enhancement_agent"
+    ):
+        for adapter in adapters:
+            with dspy.context(lm=lm, adapter=adapter):
+                for call in calls:
+                    before = len(lm.history)
+                    result = bounded(
+                        **{key: call[key] for key in _QUERY_ENHANCEMENT_INPUTS}
+                    )
+                    prompt_tokens = [
+                        entry["usage"]["prompt_tokens"] for entry in lm.history[before:]
+                    ]
+                    answered.append(
+                        (
+                            result.path_used,
+                            all(t <= budget.input_budget for t in prompt_tokens),
+                        )
+                    )
+    assert answered == [("lm", True)] * 4
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "reason=DSPy failure" in record.getMessage()
+    ] == []

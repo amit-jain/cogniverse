@@ -22,6 +22,7 @@ from cogniverse_foundation.config.token_budget import (
     extract_context_window,
     fetch_context_window,
     fit_messages,
+    fitting_demonstrations,
     litellm_message_counter,
     resolve_context_window,
     split_demonstrations,
@@ -211,6 +212,92 @@ class TestFitMessagesToTheServedWindow:
         assert exc.value.reserved_output == 2048
         assert exc.value.input_tokens == 2100
         assert exc.value.dropped_demos == 2
+
+
+@pytest.mark.unit
+class TestFittingDemonstrations:
+    """A compiled program keeps the longest prefix of its demonstrations that
+    fits the student's window with every input it will be called with."""
+
+    # The served student: gemma behind --max-model-len 8192 with the
+    # primary endpoint's max_tokens=1000 reservation.
+    BUDGET = TokenBudget(
+        model="openai/google/gemma-4-e4b-it",
+        context_window=8192,
+        reserved_output=1000,
+    )
+
+    @staticmethod
+    def _render(demos, call):
+        # A 300-word preamble, each demonstration as a user/assistant pair,
+        # then the live turn of ``call`` words.
+        return [
+            {"role": "system", "content": _words(300)},
+            *[
+                message
+                for size in demos
+                for message in (
+                    {"role": "user", "content": _words(size)},
+                    {"role": "assistant", "content": _words(50)},
+                )
+            ],
+            {"role": "user", "content": _words(call)},
+        ]
+
+    def test_demonstrations_are_kept_from_the_front_while_they_fit(self):
+        # 300 + 4 x (1500 + 50) + 200 = 6700 fits the 7192 input budget;
+        # five make 8250.
+        kept = fitting_demonstrations(
+            [1500] * 16,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=_count_words,
+            calls=[200],
+        )
+        assert kept == 4
+
+    def test_the_longest_call_decides(self):
+        # With a 2000-word live turn: 300 + 2 x 1550 + 2000 = 5400, three
+        # demonstrations 6950, four 8500 > 7192.
+        kept = fitting_demonstrations(
+            [1500] * 16,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=_count_words,
+            calls=[200, 2000, 50],
+        )
+        assert kept == 3
+
+    def test_every_demonstration_is_kept_when_all_fit(self):
+        kept = fitting_demonstrations(
+            [100] * 16,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=_count_words,
+            calls=[200],
+        )
+        assert kept == 16
+
+    def test_a_call_that_overflows_alone_keeps_no_demonstrations(self):
+        kept = fitting_demonstrations(
+            [10] * 4,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=_count_words,
+            calls=[200, 7000],
+        )
+        assert kept == 0
+
+    def test_no_calls_is_refused(self):
+        with pytest.raises(ValueError) as exc:
+            fitting_demonstrations(
+                [10],
+                budget=self.BUDGET,
+                render=self._render,
+                count_tokens=_count_words,
+                calls=[],
+            )
+        assert str(exc.value) == "fitting demonstrations needs at least one call"
 
 
 @pytest.mark.unit

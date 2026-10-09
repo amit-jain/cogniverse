@@ -414,7 +414,13 @@ not the SIMBA algorithm.
 `_create_teleprompter(len(trainset), metric=_query_enhancement_metric)`; records the metric cannot score
 (no source text and no grounding context) are ordered after every scoreable record so the bootstrap walk
 reaches them only when the scoreable records did not fill the demos, and their count is reported as
-`unscoreable_examples`. Every holdout record is an evaluation probe. `_query_enhancement_quality` scores a module's own output for the probe inputs (1.0 when
+`unscoreable_examples`. The compiled candidate is then cut to fit the student before it is scored:
+`_student_demo_budget` reads the optimization endpoint's served window (`max_model_len`, else its declared
+`context_window`) less its `max_tokens`, and `_bound_candidate_demos` keeps each predictor's longest
+prefix of demonstrations whose request fits that allowance with every distinct served input of the
+trainset and holdout, under both the chat adapter the run scores with and the `LenientJSONAdapter` the
+runtime serves with. The cut program is what is scored, saved and served; a window that cannot be read
+fails the run with nothing persisted. Every holdout record is an evaluation probe. `_query_enhancement_quality` scores a module's own output for the probe inputs (1.0 when
 the enhanced query differs from the query, has expansion terms and, given a grounding context, names one
 of its entities; else 0.0). `_query_enhancement_scores` runs a module once per distinct
 (`query`, `source_text`, `grounding_context`) and counts that score once per holdout record carrying it,

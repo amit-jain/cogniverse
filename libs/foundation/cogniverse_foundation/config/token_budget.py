@@ -7,7 +7,8 @@ the endpoint reports for the model it serves, derives that remainder, and
 fits the assembled messages into it by dropping whole few-shot
 demonstrations. A request that still overflows with no demonstrations left
 raises with the window, the reservation, the measured input and the number
-of demonstrations dropped.
+of demonstrations dropped. ``fitting_demonstrations`` sizes a compiled
+program's demonstrations to the window before the program is sent at all.
 """
 
 from __future__ import annotations
@@ -336,3 +337,43 @@ def _read_context_window(
         served,
     )
     return ResolvedContextWindow(tokens=served, source="served")
+
+
+def fitting_demonstrations(
+    demos: Sequence[Any],
+    *,
+    budget: TokenBudget,
+    render: Callable[[Sequence[Any], Any], Messages],
+    count_tokens: TokenCounter,
+    calls: Sequence[Any],
+) -> int:
+    """How many of ``demos``, kept from the front, fit ``budget`` in every
+    one of ``calls``.
+
+    ``render(demos, call)`` assembles the chat request ``call`` sends with
+    those demonstrations. The largest prefix that fits every call is found
+    by bisection, since a longer prefix never costs fewer tokens. Zero when
+    a call overflows with no demonstrations: none is then the only prefix
+    that can be sent.
+    """
+
+    if not calls:
+        raise ValueError("fitting demonstrations needs at least one call")
+    # The calls that cost most alone are tried first, so a prefix that
+    # overflows is usually refused on its first render.
+    ranked = sorted(calls, key=lambda call: -count_tokens(render([], call)))
+
+    def fits(kept: int) -> bool:
+        return all(
+            count_tokens(render(demos[:kept], call)) <= budget.input_budget
+            for call in ranked
+        )
+
+    low, high = 0, len(demos)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if fits(middle):
+            low = middle
+        else:
+            high = middle - 1
+    return low

@@ -2840,9 +2840,12 @@ class TestSimbaQueryEnhancement:
         scorer=None,
         floor=(1, 1),
         config_manager=None,
+        demo_budget=None,
     ):
         from cogniverse_runtime.optimization_cli import run_simba_optimization
 
+        if demo_budget is None:
+            demo_budget = self._unbounded_demo_budget
         mgr = FakeTelemetryManager(provider)
         p1, p2 = _patch_infra(mgr, config_manager=config_manager)
         llm_config = SimpleNamespace(
@@ -2876,10 +2879,23 @@ class TestSimbaQueryEnhancement:
                 "cogniverse_runtime.optimization_cli._population_floor_from_config",
                 return_value=floor,
             ),
+            patch(
+                "cogniverse_runtime.optimization_cli._student_demo_budget",
+                side_effect=demo_budget,
+            ),
         ):
             return asyncio.run(
                 run_simba_optimization(tenant_id="test:unit", lookback_hours=1)
             )
+
+    @staticmethod
+    def _unbounded_demo_budget(endpoint):
+        from cogniverse_foundation.config.token_budget import TokenBudget
+
+        assert endpoint == "student-endpoint"
+        return TokenBudget(
+            model="student", context_window=10**9, reserved_output=1
+        ), len
 
     @staticmethod
     def _persisted_state(provider) -> dict:
@@ -3664,6 +3680,178 @@ class TestSimbaQueryEnhancement:
             "grounded 3",
             "plain 0",
             "plain 1",
+        ]
+
+    def test_the_saved_candidate_keeps_only_the_demos_the_student_window_fits(self):
+        """The compiled candidate is cut to the demonstrations whose request
+        fits the student's window before it is scored, and that cut program
+        is what is saved and what a restarted runtime loads."""
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+        from cogniverse_foundation.config.token_budget import TokenBudget
+
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"expanded query {i}",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+        budgets = []
+
+        def demo_budget(endpoint):
+            budgets.append(endpoint)
+            # Counted in messages: a system turn, a user/assistant pair per
+            # demonstration and the live turn, so 6 holds two demonstrations.
+            return (
+                TokenBudget(model="student", context_window=7, reserved_output=1),
+                len,
+            )
+
+        scored = []
+
+        def scorer(module, holdout):
+            scored.append(
+                [demo["query"] for demo in module.enhancer.predict.demos]
+                if getattr(module, "_compiled_marker", False)
+                else None
+            )
+            return self._score_by_module(module, holdout)
+
+        result = self._run(
+            provider, min_improvement=0.0, scorer=scorer, demo_budget=demo_budget
+        )
+
+        assert (budgets, result["decision"], result["candidate_score"]) == (
+            ["student-endpoint"],
+            "promote",
+            1.0,
+        )
+        assert scored == [None, ["query 0", "query 1"]]
+        state = self._persisted_state(provider)
+        assert [d["query"] for d in state["enhancer.predict"]["demos"]] == [
+            "query 0",
+            "query 1",
+        ]
+        restarted = QueryEnhancementModule()
+        restarted.load_state(state)
+        assert [d["query"] for d in restarted.enhancer.predict.demos] == [
+            "query 0",
+            "query 1",
+        ]
+
+    def test_an_unknown_student_window_fails_the_run_and_saves_nothing(self):
+        from cogniverse_foundation.config.token_budget import (
+            ContextWindowUnavailableError,
+        )
+
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"expanded query {i}",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+
+        def demo_budget(endpoint):
+            raise ContextWindowUnavailableError(
+                "student-endpoint publishes no context window and declares none"
+            )
+
+        result = self._run(provider, min_improvement=0.0, demo_budget=demo_budget)
+
+        assert result == {
+            "status": "failed",
+            "error": "student-endpoint publishes no context window and declares none",
+            **_selection_block(3, 3),
+        }
+        assert self._lineage(provider) == []
+
+    @staticmethod
+    def _long_demo_module(count: int):
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+        from cogniverse_runtime.optimization_cli import _query_enhancement_example
+
+        module = QueryEnhancementModule()
+        module.enhancer.predict.demos = [
+            _query_enhancement_example(
+                {
+                    "query": f"query {i}",
+                    "source_text": " ".join(["alpha"] * 1000),
+                    "grounding_context": "",
+                    "enhanced_query": f"expanded query {i}",
+                    "expansion_terms": ["alpha"],
+                    "synonyms": ["a"],
+                    "context": ["c"],
+                    "confidence": 0.8,
+                    "reasoning": "because",
+                }
+            )
+            for i in range(count)
+        ]
+        return module
+
+    @staticmethod
+    def _words(messages) -> int:
+        return sum(len(str(message["content"]).split()) for message in messages)
+
+    def test_demos_are_bounded_under_the_scoring_and_serving_adapters(self):
+        """Six 1000-word demonstrations against a 3600-word input budget:
+        three fit under both the chat adapter the optimizer scores with and
+        the JSON adapter the runtime serves with (3450 and 3323 words), four
+        fit under neither (4510 and 4356)."""
+        from cogniverse_foundation.config.token_budget import TokenBudget
+        from cogniverse_runtime.optimization_cli import _bound_candidate_demos
+
+        module = self._long_demo_module(6)
+        compiled = list(module.enhancer.predict.demos)
+        bounded = _bound_candidate_demos(
+            module,
+            budget=TokenBudget(
+                model="student", context_window=4600, reserved_output=1000
+            ),
+            count_tokens=self._words,
+            inputs=[{"query": "q", "source_text": "", "grounding_context": ""}],
+        )
+        assert bounded == {"enhancer.predict": (3, 6)}
+        assert module.enhancer.predict.demos == compiled[:3]
+
+    def test_the_longest_served_input_decides_how_many_demos_fit(self):
+        """A 500-word source text in one input leaves room for two."""
+        from cogniverse_foundation.config.token_budget import TokenBudget
+        from cogniverse_runtime.optimization_cli import _bound_candidate_demos
+
+        module = self._long_demo_module(6)
+        bounded = _bound_candidate_demos(
+            module,
+            budget=TokenBudget(
+                model="student", context_window=4600, reserved_output=1000
+            ),
+            count_tokens=self._words,
+            inputs=[
+                {"query": "q", "source_text": "", "grounding_context": ""},
+                {
+                    "query": "q",
+                    "source_text": " ".join(["beta"] * 500),
+                    "grounding_context": "",
+                },
+            ],
+        )
+        assert bounded == {"enhancer.predict": (2, 6)}
+        assert [d.query for d in module.enhancer.predict.demos] == [
+            "query 0",
+            "query 1",
         ]
 
     def test_scoreable_first_keeps_relative_order(self):

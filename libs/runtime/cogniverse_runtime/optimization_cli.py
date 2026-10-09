@@ -543,6 +543,82 @@ def teacher_lm_or_raise(
     return create_budgeted_dspy_lm(endpoint)
 
 
+def _student_demo_budget(endpoint):
+    """The student's input allowance and token counter: its served (else
+    declared) context window less the completion it reserves."""
+    from cogniverse_foundation.config.token_budget import (
+        TokenBudget,
+        litellm_message_counter,
+        resolve_context_window,
+    )
+
+    if not endpoint.api_base:
+        raise ValueError(
+            f"{endpoint.model} declares no api_base, so its context window is "
+            "unknown and no candidate can be sized to it"
+        )
+    window = resolve_context_window(
+        endpoint.api_base,
+        declared=endpoint.context_window,
+        model=endpoint.model,
+    )
+    budget = TokenBudget(
+        model=endpoint.model,
+        context_window=window.tokens,
+        reserved_output=endpoint.max_tokens,
+    )
+    return budget, litellm_message_counter(endpoint.model)
+
+
+def _bound_candidate_demos(
+    program, *, budget, count_tokens, inputs: List[Dict[str, Any]]
+) -> Dict[str, tuple[int, int]]:
+    """Cut each predictor's demonstrations to the longest prefix whose
+    request fits ``budget`` with every one of ``inputs``, under the adapter
+    the optimizer scores with and the one the runtime serves with.
+
+    BootstrapFewShot fills up to ``max_labeled_demos`` demonstrations
+    whatever they cost, and served inputs carry whole source texts, so an
+    unbounded candidate can exceed the student's window on every call and
+    be scored on its fallback. Returns ``{predictor: (kept, compiled)}``.
+    """
+    import dspy
+
+    from cogniverse_foundation.config.token_budget import fitting_demonstrations
+    from cogniverse_foundation.dspy import LenientJSONAdapter
+
+    adapters = [dspy.settings.adapter or dspy.ChatAdapter(), LenientJSONAdapter()]
+    bounded: Dict[str, tuple[int, int]] = {}
+    for name, predictor in program.named_predictors():
+        compiled = list(predictor.demos)
+
+        def render(demos, call, signature=predictor.signature):
+            adapter, values = call
+            return adapter.format(signature, list(demos), values)
+
+        kept = fitting_demonstrations(
+            compiled,
+            budget=budget,
+            render=render,
+            count_tokens=count_tokens,
+            calls=[(adapter, values) for adapter in adapters for values in inputs],
+        )
+        predictor.demos = compiled[:kept]
+        bounded[name] = (kept, len(compiled))
+        if kept < len(compiled):
+            logger.warning(
+                "Kept %d of %d demonstrations of %s to fit %s's "
+                "context_window=%d reserved_output=%d",
+                kept,
+                len(compiled),
+                name,
+                budget.model,
+                budget.context_window,
+                budget.reserved_output,
+            )
+    return bounded
+
+
 def _query_enhancement_metric(example, prediction, trace=None) -> bool:
     """BootstrapFewShot metric: keep a teacher trace only when it is usable."""
     del trace
@@ -3913,6 +3989,15 @@ def _profile_selection_example(record: Dict[str, Any]):
     return dspy.Example(**fields).with_inputs(*_PROFILE_SELECTION_INPUTS)
 
 
+def _distinct_inputs(examples, keys) -> List[Dict[str, Any]]:
+    """Each distinct ``keys`` input among ``examples``, in first-seen order."""
+    seen: Dict[tuple, Dict[str, Any]] = {}
+    for example in examples:
+        values = {key: getattr(example, key) for key in keys}
+        seen.setdefault(tuple(str(values[key]) for key in keys), values)
+    return list(seen.values())
+
+
 def _query_enhancement_scores(module, holdout) -> tuple[float, int]:
     """Mean ``_query_enhancement_quality`` over scoreable holdout rows.
 
@@ -4122,7 +4207,8 @@ async def run_simba_optimization(
 
     config = get_config(tenant_id=tenant_id, config_manager=config_manager)
     llm_config = config.get_llm_config()
-    dspy.configure(lm=create_dspy_lm(llm_config.resolve("optimization")))
+    student_endpoint = llm_config.resolve("optimization")
+    dspy.configure(lm=create_dspy_lm(student_endpoint))
 
     try:
         baseline_score, scored_count = _query_enhancement_scores(
@@ -4165,6 +4251,15 @@ async def run_simba_optimization(
                 metric=_query_enhancement_metric,
             )
             compiled = teleprompter.compile(QueryEnhancementModule(), trainset=trainset)
+            budget, count_tokens = _student_demo_budget(student_endpoint)
+            _bound_candidate_demos(
+                compiled,
+                budget=budget,
+                count_tokens=count_tokens,
+                inputs=_distinct_inputs(
+                    [*trainset, *holdout], _QUERY_ENHANCEMENT_INPUTS
+                ),
+            )
 
         current_score = _current_score(
             current_module,
