@@ -32,6 +32,7 @@ from cogniverse_foundation.config.utils import get_config
 from cogniverse_runtime import atlas_projection
 from cogniverse_runtime.atlas_projection import (
     MIN_DOCUMENTS,
+    AtlasCacheUnavailableError,
     DocumentMap,
     TooFewDocumentsError,
 )
@@ -400,6 +401,7 @@ async def umap_atlas(
             than ``MIN_DOCUMENTS`` documents carry one, or the queries encode
             to vectors of another length than the documents'
         HTTPException 502: Vespa or the query encoder failed
+        HTTPException 503: The atlas cache (Redis) is unavailable
     """
     tenant = canonical_tenant_or_400(tenant_id)
     profile = request.profile
@@ -407,14 +409,7 @@ async def umap_atlas(
     try:
         generation = await cache.generation(tenant, profile)
     except Exception as exc:
-        logger.warning(
-            "Embedding atlas cache unavailable; laying out %s/%s without it: %s: %s",
-            tenant,
-            profile,
-            type(exc).__name__,
-            exc,
-        )
-        generation = None
+        raise _cache_unavailable(exc, tenant, profile) from exc
 
     def _build() -> DocumentMap:
         documents = _read_documents(
@@ -423,7 +418,11 @@ async def umap_atlas(
         document_map = atlas_projection.build_map(
             documents.documents, documents.vectors
         )
-        document_map.source = documents
+        document_map.source = {
+            "schema_name": documents.schema_name,
+            "embedding_field": documents.embedding_field,
+            "without_embedding": documents.without_embedding,
+        }
         return document_map
 
     try:
@@ -432,6 +431,8 @@ async def umap_atlas(
         )
     except HTTPException:
         raise
+    except AtlasCacheUnavailableError as exc:
+        raise _cache_unavailable(exc.__cause__, tenant, profile) from exc
     except TooFewDocumentsError as exc:
         raise HTTPException(
             status_code=422,
@@ -487,14 +488,14 @@ async def umap_atlas(
                 )
             )
 
-    facts: _Documents = document_map.source
+    facts = document_map.source
     return UmapAtlas(
         tenant_id=tenant,
         profile=profile,
-        schema_name=facts.schema_name,
-        embedding_field=facts.embedding_field,
+        schema_name=facts["schema_name"],
+        embedding_field=facts["embedding_field"],
         dimensions=int(document_map.vectors.shape[1]),
-        without_embedding=facts.without_embedding,
+        without_embedding=facts["without_embedding"],
         computed_at=document_map.computed_at.isoformat(),
         generation=document_map.generation,
         **_map_figures(document_map),
@@ -534,6 +535,17 @@ def _map_figures(document_map: DocumentMap) -> Dict[str, Any]:
     }
 
 
+def _cache_unavailable(exc: BaseException, tenant: str, profile: str) -> HTTPException:
+    return failure_response(
+        503,
+        "atlas_cache_unavailable",
+        "The embedding atlas cache could not be reached.",
+        exc,
+        tenant_id=tenant,
+        profile=profile,
+    )
+
+
 @router.delete("/{tenant_id}/embeddings/atlas/umap", response_model=Invalidated)
 async def invalidate_umap_atlas(tenant_id: str, profile: str) -> Invalidated:
     """Retire every cached UMAP map of the tenant's ``profile`` on every
@@ -543,14 +555,7 @@ async def invalidate_umap_atlas(tenant_id: str, profile: str) -> Invalidated:
     try:
         generation = await cache.invalidate(tenant, profile)
     except Exception as exc:
-        raise failure_response(
-            503,
-            "atlas_cache_unavailable",
-            "The embedding atlas cache could not be reached.",
-            exc,
-            tenant_id=tenant,
-            profile=profile,
-        ) from exc
+        raise _cache_unavailable(exc, tenant, profile) from exc
     return Invalidated(tenant_id=tenant, profile=profile, generation=generation)
 
 

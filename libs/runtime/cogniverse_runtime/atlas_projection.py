@@ -11,20 +11,23 @@ its generation is current, so ``invalidate`` on any replica makes every
 replica rebuild on its next read. A built map is stored in Redis under its
 generation, so every worker process and replica serves the one layout; one
 process builds it while the others wait for it, and concurrent reads within
-a process share one build. A Redis that does not answer leaves the map to be
-built without the cache.
+a process share one build. A stored map is a compressed numpy archive read
+without pickle: arrays for the layout and the fitted reducer's state, and
+JSON for the rest; an entry that does not read as one is discarded and the
+map built again. A Redis that does not answer raises
+``AtlasCacheUnavailableError``; no map is built without the cache.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import io
+import json
 import logging
-import pickle
 import re
 import threading
 import uuid
-import zlib
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -81,25 +84,169 @@ class DocumentMap:
     cluster_names: Dict[int, str]
     computed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     generation: int = 0
-    # What the caller read the documents from, kept with the map.
+    # JSON facts about what the caller read the documents from, kept with
+    # the map.
     source: Any = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def __getstate__(self) -> Dict[str, Any]:
-        state = dict(self.__dict__)
-        del state["lock"]
-        return state
 
-    def __setstate__(self, state: Dict[str, Any]) -> None:
-        self.__dict__.update(state, lock=threading.Lock())
+class AtlasCacheUnavailableError(RuntimeError):
+    """The shared-state Redis holding the maps did not answer."""
+
+
+class UnreadableLayoutError(ValueError):
+    """A stored map is not an archive this module writes."""
+
+
+# Fitted UMAP functions, chosen by the reducer's metric names when it is read.
+_REDUCER_FUNCTIONS = (
+    "_input_distance_func",
+    "_inverse_distance_func",
+    "_output_distance_func",
+)
+_REDUCER_ARRAY = "reducer/"
+_REDUCER_SPARSE = ("data", "indices", "indptr")
+
+
+def _reducer_state(reducer: Any) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+    """A fitted reducer's attributes as arrays and JSON, its numba distance
+    functions left out. An attribute of any other kind raises: a reducer
+    that cannot be read back is not stored."""
+    import scipy.sparse
+
+    arrays: Dict[str, np.ndarray] = {}
+    values: Dict[str, Any] = {}
+    sparse: Dict[str, List[int]] = {}
+    tuples: List[str] = []
+    for name, value in vars(reducer).items():
+        if name in _REDUCER_FUNCTIONS:
+            continue
+        if isinstance(value, np.ndarray):
+            arrays[f"{_REDUCER_ARRAY}{name}"] = value
+        elif scipy.sparse.issparse(value):
+            matrix = value.tocsr()
+            for part in _REDUCER_SPARSE:
+                arrays[f"{_REDUCER_ARRAY}{name}.{part}"] = getattr(matrix, part)
+            sparse[name] = list(matrix.shape)
+        elif isinstance(value, np.generic):
+            values[name] = value.item()
+        else:
+            if isinstance(value, tuple):
+                tuples.append(name)
+            try:
+                json.dumps(value)
+            except TypeError as exc:
+                raise TypeError(
+                    f"UMAP reducer attribute {name} ({type(value).__name__}) "
+                    "cannot be stored"
+                ) from exc
+            values[name] = value
+    return arrays, {"values": values, "sparse": sparse, "tuples": tuples}
+
+
+def _restored_reducer(arrays: Dict[str, np.ndarray], state: Dict[str, Any]) -> Any:
+    """The reducer ``_reducer_state`` stored, its distance functions chosen
+    by its metric names as fitting chose them."""
+    import scipy.sparse
+    from umap import UMAP
+    from umap import distances as umap_distances
+
+    reducer = UMAP.__new__(UMAP)
+    attributes: Dict[str, Any] = dict(state["values"])
+    for name in state["tuples"]:
+        attributes[name] = tuple(attributes[name])
+    for name, value in arrays.items():
+        if name.startswith(_REDUCER_ARRAY) and "." not in name:
+            attributes[name[len(_REDUCER_ARRAY) :]] = value
+    for name, shape in state["sparse"].items():
+        data, indices, indptr = (
+            arrays[f"{_REDUCER_ARRAY}{name}.{part}"] for part in _REDUCER_SPARSE
+        )
+        attributes[name] = scipy.sparse.csr_matrix(
+            (data, indices, indptr), shape=tuple(shape)
+        )
+    metric, output_metric = attributes["metric"], attributes["output_metric"]
+    if attributes["_sparse_data"]:
+        raise UnreadableLayoutError("a reducer fitted on sparse data is not read")
+    attributes["_input_distance_func"] = umap_distances.named_distances[metric]
+    attributes["_inverse_distance_func"] = (
+        umap_distances.named_distances_with_gradients.get(metric)
+    )
+    attributes["_output_distance_func"] = umap_distances.named_distances_with_gradients[
+        output_metric
+    ]
+    reducer.__dict__.update(attributes)
+    return reducer
 
 
 def _encoded(document_map: DocumentMap) -> str:
-    return base64.b64encode(zlib.compress(pickle.dumps(document_map))).decode()
+    """``document_map`` as a base64 compressed numpy archive."""
+    arrays: Dict[str, np.ndarray] = {
+        "coords": document_map.coords,
+        "clusters": np.asarray(document_map.clusters),
+    }
+    if document_map.vectors is not None:
+        arrays["vectors"] = document_map.vectors
+    reducer = None
+    if document_map.reducer is not None:
+        reducer_arrays, reducer = _reducer_state(document_map.reducer)
+        arrays.update(reducer_arrays)
+    meta = {
+        "documents": document_map.documents,
+        "cluster_names": [
+            [int(cluster), name] for cluster, name in document_map.cluster_names.items()
+        ],
+        "computed_at": document_map.computed_at.isoformat(),
+        "generation": document_map.generation,
+        "source": document_map.source,
+        "reducer": reducer,
+    }
+    arrays["meta"] = np.frombuffer(json.dumps(meta).encode(), dtype=np.uint8)
+    buffer = io.BytesIO()
+    np.savez_compressed(buffer, **arrays)
+    return base64.b64encode(buffer.getvalue()).decode()
 
 
 def _decoded(payload: str) -> DocumentMap:
-    return pickle.loads(zlib.decompress(base64.b64decode(payload)))
+    """The map ``_encoded`` wrote; ``UnreadableLayoutError`` for anything
+    else. Object arrays are refused, so nothing in the payload is unpickled."""
+    try:
+        with np.load(
+            io.BytesIO(base64.b64decode(payload, validate=True)), allow_pickle=False
+        ) as archive:
+            arrays = {name: archive[name] for name in archive.files}
+        meta = json.loads(arrays.pop("meta").tobytes())
+        reducer = (
+            None
+            if meta["reducer"] is None
+            else _restored_reducer(arrays, meta["reducer"])
+        )
+        coords, clusters = arrays["coords"], arrays["clusters"]
+        documents = meta["documents"]
+        if coords.shape != (len(documents), 2) or clusters.shape != (len(documents),):
+            raise UnreadableLayoutError(
+                f"{len(documents)} documents with coords {coords.shape} and "
+                f"clusters {clusters.shape}"
+            )
+        return DocumentMap(
+            documents=documents,
+            vectors=arrays.get("vectors"),
+            reducer=reducer,
+            coords=coords,
+            clusters=clusters,
+            cluster_names={
+                int(cluster): name for cluster, name in meta["cluster_names"]
+            },
+            computed_at=datetime.fromisoformat(meta["computed_at"]),
+            generation=meta["generation"],
+            source=meta["source"],
+        )
+    except UnreadableLayoutError:
+        raise
+    except Exception as exc:
+        raise UnreadableLayoutError(
+            f"not a stored embedding atlas map: {type(exc).__name__}: {exc}"
+        ) from exc
 
 
 def unit_rows(vectors: np.ndarray) -> np.ndarray:
@@ -284,22 +431,18 @@ class ProjectionCache:
         tenant_id: str,
         profile: str,
         limit: int,
-        generation: Optional[int],
+        generation: int,
         build: Callable[[], DocumentMap],
     ) -> DocumentMap:
         """The map of ``generation`` (the current one, read with
         ``generation``): this process's copy, else the one stored in Redis,
         else built with ``build`` in a worker thread and stored for every
-        process. A ``generation`` of None (the generation could not be read)
-        builds the map without the cache. A build that fails is not kept,
-        and every reader waiting on it receives its error."""
+        process. A build that fails is not kept, and every reader waiting on
+        it receives its error; a Redis that stops answering raises
+        ``AtlasCacheUnavailableError``."""
         key = (tenant_id, profile, limit)
         cached = self._maps.get(key)
-        if (
-            generation is not None
-            and cached is not None
-            and cached.generation == generation
-        ):
+        if cached is not None and cached.generation == generation:
             self._maps.move_to_end(key)
             return cached
         flight = (key, generation)
@@ -320,13 +463,9 @@ class ProjectionCache:
     async def _build(
         self,
         key: Tuple[str, str, int],
-        generation: Optional[int],
+        generation: int,
         build: Callable[[], DocumentMap],
     ) -> DocumentMap:
-        if generation is None:
-            document_map = await asyncio.to_thread(build)
-            document_map.generation = 0
-            return document_map
         document_map = await self._shared(key, generation, build)
         document_map.generation = generation
         current = self._maps.get(key)
@@ -337,6 +476,23 @@ class ProjectionCache:
                 self._maps.popitem(last=False)
         return document_map
 
+    async def _stored(self, layout_key: str) -> Optional[DocumentMap]:
+        """The map stored under ``layout_key``; None when there is none or
+        the entry does not read as a map, which is then deleted."""
+        stored = await self._redis.get(layout_key)
+        if stored is None:
+            return None
+        try:
+            return await asyncio.to_thread(_decoded, stored)
+        except UnreadableLayoutError as exc:
+            logger.warning(
+                "Discarding the unreadable embedding atlas map %s: %s",
+                layout_key,
+                exc,
+            )
+            await self._redis.delete(layout_key)
+            return None
+
     async def _shared(
         self,
         key: Tuple[str, str, int],
@@ -345,8 +501,7 @@ class ProjectionCache:
     ) -> DocumentMap:
         """The map every process serves for ``key`` and ``generation``: the
         one stored in Redis, else one this process builds holding the
-        build lease and stores, waiting while another process holds it.
-        When Redis stops answering the map is built here and not stored."""
+        build lease and stores, waiting while another process holds it."""
         tenant, profile, limit = key
         names = {
             "tenant": tenant,
@@ -358,23 +513,17 @@ class ProjectionCache:
         token = uuid.uuid4().hex
         try:
             while True:
-                stored = await self._redis.get(layout_key)
+                stored = await self._stored(layout_key)
                 if stored is not None:
-                    return await asyncio.to_thread(_decoded, stored)
+                    return stored
                 if await self._redis.set(build_key, token, nx=True, ex=BUILD_LEASE_S):
                     break
                 await asyncio.sleep(BUILD_POLL_S)
         except (RedisError, OSError) as exc:
-            logger.warning(
-                "Embedding atlas cache unavailable; laying out %s/%s (limit %d) "
-                "without it: %s: %s",
-                tenant,
-                profile,
-                limit,
-                type(exc).__name__,
-                exc,
-            )
-            return await asyncio.to_thread(build)
+            raise AtlasCacheUnavailableError(
+                f"the embedding atlas cache did not answer for {tenant}/{profile} "
+                f"(limit {limit}): {type(exc).__name__}: {exc}"
+            ) from exc
         try:
             document_map = await asyncio.to_thread(build)
             payload = await asyncio.to_thread(_encoded, document_map)
@@ -383,19 +532,15 @@ class ProjectionCache:
                     layout_key, payload, nx=True, ex=LAYOUT_TTL_S
                 ):
                     # A process that took over the lease stored its map first.
-                    stored = await self._redis.get(layout_key)
+                    stored = await self._stored(layout_key)
                     if stored is not None:
-                        return await asyncio.to_thread(_decoded, stored)
+                        return stored
             except (RedisError, OSError) as exc:
-                logger.warning(
-                    "Embedding atlas cache unavailable; the layout of %s/%s "
-                    "(limit %d) is served without being stored: %s: %s",
-                    tenant,
-                    profile,
-                    limit,
-                    type(exc).__name__,
-                    exc,
-                )
+                raise AtlasCacheUnavailableError(
+                    f"the embedding atlas cache did not store the map of "
+                    f"{tenant}/{profile} (limit {limit}): {type(exc).__name__}: "
+                    f"{exc}"
+                ) from exc
             return document_map
         finally:
             try:

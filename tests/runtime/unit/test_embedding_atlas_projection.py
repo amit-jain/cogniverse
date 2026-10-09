@@ -1,14 +1,24 @@
 """The Embedding Atlas routes' tensor reading, projections and clusters."""
 
+import base64
+import io
+import pickle
+import zlib
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from cogniverse_runtime.atlas_projection import (
     TooFewDocumentsError,
+    UnreadableLayoutError,
+    _decoded,
+    _encoded,
     automatic_clusters,
     build_map,
     label_text,
     most_similar,
+    place_queries,
     unit_rows,
 )
 from cogniverse_runtime.routers.embedding_atlas import (
@@ -228,3 +238,114 @@ def test_a_colliding_name_takes_the_clusters_next_terms_first():
         (5, "canyons, carve, rivers, valleys"),
         (10, "build, islands, volcanoes"),
     ]
+
+
+def _built_map():
+    rng = np.random.default_rng(7)
+    documents = [
+        {"id": f"d{i}", "title": f"title {i}", "text": None} for i in range(12)
+    ]
+    document_map = build_map(documents, rng.normal(size=(12, 6)))
+    document_map.source = {
+        "schema_name": "notes_acme",
+        "embedding_field": "embedding",
+        "without_embedding": 2,
+    }
+    document_map.generation = 4
+    return document_map
+
+
+def test_a_stored_map_reads_back_as_the_map_it_was():
+    """Every field reads back equal, and the read reducer places queries
+    exactly where the fitted one does."""
+    original = _built_map()
+    queries = np.random.default_rng(11).normal(size=(3, 6))
+    read = _decoded(_encoded(original))
+    assert (
+        read.documents,
+        read.coords.tolist(),
+        read.clusters.tolist(),
+        read.cluster_names,
+        read.computed_at,
+        read.generation,
+        read.source,
+        read.vectors.tolist(),
+    ) == (
+        original.documents,
+        original.coords.tolist(),
+        original.clusters.tolist(),
+        original.cluster_names,
+        original.computed_at,
+        4,
+        original.source,
+        original.vectors.tolist(),
+    )
+    assert place_queries(read, queries).tolist() == (
+        place_queries(original, queries).tolist()
+    )
+
+
+def test_a_map_laid_out_at_given_places_reads_back_without_a_reducer():
+    documents = [{"id": str(i), "title": None, "text": None} for i in range(4)]
+    coords = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+    read = _decoded(_encoded(build_map(documents, None, coords)))
+    assert (read.reducer, read.vectors, read.coords.tolist()) == (
+        None,
+        None,
+        coords.tolist(),
+    )
+
+
+class _Planted:
+    def __init__(self, marker):
+        self.marker = marker
+
+    def __reduce__(self):
+        return (Path.touch, (Path(self.marker),))
+
+
+def _archive(**arrays) -> str:
+    buffer = io.BytesIO()
+    np.savez_compressed(buffer, **arrays)
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+def test_unreadable_entries_are_refused_and_nothing_is_unpickled(tmp_path):
+    marker = tmp_path / "unpickled"
+    stored = _encoded(_built_map())
+    with np.load(io.BytesIO(base64.b64decode(stored))) as archive:
+        valid = {name: archive[name] for name in archive.files}
+    entries = {
+        "pickle": base64.b64encode(
+            zlib.compress(pickle.dumps(_Planted(str(marker))))
+        ).decode(),
+        "object array": _archive(
+            **{**valid, "coords": np.array([_Planted(str(marker))], dtype=object)}
+        ),
+        "not base64": "%%%",
+        "no meta": _archive(**{k: v for k, v in valid.items() if k != "meta"}),
+        "short coords": _archive(**{**valid, "coords": valid["coords"][:3]}),
+    }
+    refused = {}
+    for name, entry in entries.items():
+        with pytest.raises(UnreadableLayoutError) as raised:
+            _decoded(entry)
+        refused[name] = str(raised.value).split(":", 1)[0]
+    assert refused == {
+        "pickle": "not a stored embedding atlas map",
+        "object array": "not a stored embedding atlas map",
+        "not base64": "not a stored embedding atlas map",
+        "no meta": "not a stored embedding atlas map",
+        "short coords": "12 documents with coords (3, 2) and clusters (12,)",
+    }
+    assert marker.exists() is False
+
+
+def test_a_reducer_attribute_that_cannot_be_stored_refuses_the_store():
+    document_map = _built_map()
+    document_map.reducer.unexpected = object()
+    with pytest.raises(TypeError) as raised:
+        _encoded(document_map)
+    assert str(raised.value) == (
+        "UMAP reducer attribute unexpected (object) cannot be stored"
+    )
