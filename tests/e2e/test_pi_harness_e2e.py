@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from cogniverse_runtime.harness_turn import HIT_SNIPPET_CHARS
 from tests.e2e.cluster import RUNTIME, TENANT_DEPLOY_TIMEOUT_S, runtime_available
 from tests.e2e.conftest import (
     _CAPTION_CORPUS_DIR,
@@ -318,23 +319,35 @@ def test_a_chat_completion_answers_from_the_seeded_documents(harness_tenant):
     assert set(usage) == {"prompt_tokens", "completion_tokens", "total_tokens"}
     assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
 
-    # The answer is the rendered hit list, so grounding is pinned by identity:
-    # the tenant's own content ids and caption titles, in rank order, and
-    # nothing else.
-    lines = choice["message"]["content"].split("\n")
+    # The answer is the rendered hit list a person reads: each hit by its
+    # title in rank order, then the first line of its text cut under the
+    # snippet cap; no backend document id appears anywhere.
+    content = choice["message"]["content"]
+    lines = content.split("\n")
     assert lines[0] == (
         f"Found {len(EXPECTED_TITLE_ORDER)} documents for '{DOCUMENT_QUERY}'"
-    ), choice["message"]["content"]
-    assert len(lines) == len(EXPECTED_TITLE_ORDER) + 1, choice["message"]["content"]
-    rendered = [line.split(" · score ", 1) for line in lines[1:]]
+    ), content
+    assert len(lines) == len(EXPECTED_TITLE_ORDER) + 1, content
+    rendered = [line.split(": ", 1) for line in lines[1:]]
     assert [part[0] for part in rendered] == [
-        f"- {seeded[title]}" for title in EXPECTED_TITLE_ORDER
-    ]
-    assert [part[1].split(": ", 1)[1] for part in rendered] == list(
-        EXPECTED_TITLE_ORDER
-    )
-    scores = [float(part[1].split(": ", 1)[0]) for part in rendered]
-    assert scores == sorted(scores, reverse=True)
+        f"- {title}" for title in EXPECTED_TITLE_ORDER
+    ], content
+    for (_, snippet), title in zip(rendered, EXPECTED_TITLE_ORDER, strict=True):
+        first_line = next(
+            line.strip()
+            for line in (_CAPTION_CORPUS_DIR / title)
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        )
+        # The hit's text is its first indexed window of the caption, so the
+        # snippet is the caption's opening, at most the cap plus an ellipsis.
+        opening = snippet.removesuffix("\u2026")
+        assert len(snippet) <= HIT_SNIPPET_CHARS + 1, snippet
+        assert len(opening) >= 40, snippet
+        assert first_line.startswith(opening), (snippet, first_line)
+    for content_id in seeded.values():
+        assert content_id not in content, content
 
 
 def test_the_summarizer_grounds_in_this_tenants_document_profile(harness_tenant):
