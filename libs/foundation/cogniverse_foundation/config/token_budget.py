@@ -13,6 +13,7 @@ program's demonstrations to the window before the program is sent at all.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ Messages = list[dict[str, Any]]
 TokenCounter = Callable[[Messages], int]
 
 CONTEXT_WINDOW_TIMEOUT_SECONDS = 5.0
+TOKENIZE_TIMEOUT_SECONDS = 30.0
 
 # A window is a property of a deployment, so it is read once per
 # (endpoint, model) and held for the process. Ingestion builds a fresh LM per
@@ -49,6 +51,10 @@ def clear_context_window_memo() -> None:
 
 class ContextWindowUnavailableError(RuntimeError):
     """The endpoint does not report a context window for the model it serves."""
+
+
+class TokenCountUnavailableError(RuntimeError):
+    """The endpoint cannot count a request with the tokenizer it serves."""
 
 
 class PromptBudgetExceededError(RuntimeError):
@@ -196,6 +202,59 @@ def litellm_message_counter(model: str) -> TokenCounter:
 
     def count(messages: Messages) -> int:
         return int(litellm.token_counter(model=model, messages=messages))
+
+    return count
+
+
+def served_message_counter(
+    api_base: str,
+    model: str,
+    *,
+    timeout_seconds: float = TOKENIZE_TIMEOUT_SECONDS,
+) -> TokenCounter:
+    """Count chat messages with the tokenizer and chat template ``model`` is
+    served with, through the endpoint's ``POST /tokenize``.
+
+    litellm counts a model it has no tokenizer for with OpenAI's
+    ``cl100k_base``. For the gemma student that undercounts transcript text
+    by about a quarter, so a request sized to the window by litellm's count is
+    refused. vLLM's ``/tokenize`` renders the messages with the served chat
+    template and counts them with the served tokenizer: its ``count`` is the
+    ``prompt_tokens`` the completion reports. Raises
+    ``TokenCountUnavailableError`` when the endpoint cannot answer; a count
+    by another tokenizer is the defect this counter exists to close.
+    """
+
+    from cogniverse_foundation.dspy.model_format import bare_model_name
+
+    root = endpoint_root(api_base)
+    url = f"{root}/tokenize"
+    served = bare_model_name(model)
+    unavailable = (
+        f"so the request cannot be counted with the tokenizer {model} is served with"
+    )
+    http = httpx.Client(headers=dict(inference_headers(root)), timeout=timeout_seconds)
+
+    def count(messages: Messages) -> int:
+        try:
+            response = http.post(url, json={"model": served, "messages": messages})
+        except httpx.HTTPError as exc:
+            raise TokenCountUnavailableError(
+                f"{url} is unreachable, {unavailable}"
+            ) from exc
+        if response.status_code != 200:
+            raise TokenCountUnavailableError(
+                f"{url} answered HTTP {response.status_code}, {unavailable}"
+            )
+        try:
+            tokens = response.json().get("count")
+        except (ValueError, AttributeError):
+            tokens = None
+        if isinstance(tokens, bool) or not isinstance(tokens, int):
+            raise TokenCountUnavailableError(
+                f"{url} answered without an integer count, {unavailable}"
+            )
+        return tokens
 
     return count
 
@@ -351,29 +410,33 @@ def fitting_demonstrations(
     one of ``calls``.
 
     ``render(demos, call)`` assembles the chat request ``call`` sends with
-    those demonstrations. The largest prefix that fits every call is found
-    by bisection, since a longer prefix never costs fewer tokens. Zero when
-    a call overflows with no demonstrations: none is then the only prefix
-    that can be sent.
+    those demonstrations. A longer prefix never costs fewer tokens, so the
+    prefix only shrinks: each call is counted once at the longest prefix every
+    earlier call fit, and a call that overflows it bisects below it. Calls
+    are taken longest request first, so the prefix usually settles on the
+    first. Zero when a call overflows with no demonstrations: none is then the
+    only prefix that can be sent.
     """
 
     if not calls:
         raise ValueError("fitting demonstrations needs at least one call")
-    # The calls that cost most alone are tried first, so a prefix that
-    # overflows is usually refused on its first render.
-    ranked = sorted(calls, key=lambda call: -count_tokens(render([], call)))
+    ranked = sorted(
+        calls, key=lambda call: -len(json.dumps(render([], call), default=str))
+    )
 
-    def fits(kept: int) -> bool:
-        return all(
-            count_tokens(render(demos[:kept], call)) <= budget.input_budget
-            for call in ranked
-        )
+    def fits(kept: int, call: Any) -> bool:
+        return count_tokens(render(demos[:kept], call)) <= budget.input_budget
 
-    low, high = 0, len(demos)
-    while low < high:
-        middle = (low + high + 1) // 2
-        if fits(middle):
-            low = middle
-        else:
-            high = middle - 1
-    return low
+    longest = len(demos)
+    for call in ranked:
+        if fits(longest, call):
+            continue
+        low, high = 0, longest - 1
+        while low < high:
+            middle = (low + high + 1) // 2
+            if fits(middle, call):
+                low = middle
+            else:
+                high = middle - 1
+        longest = low
+    return longest

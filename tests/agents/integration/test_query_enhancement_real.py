@@ -325,3 +325,92 @@ def test_a_bounded_candidate_answers_where_sixteen_demos_overflow_the_student(
         for record in caplog.records
         if "reason=DSPy failure" in record.getMessage()
     ] == []
+
+
+# Transcript lines as video sources carry them. The student's own tokenizer
+# counts this text about a quarter higher than OpenAI's cl100k_base, which is
+# what litellm counts a model it has no tokenizer for with.
+_TRANSCRIPT = (
+    "[00:01:23.456 --> 00:01:27.012] SPEAKER_01: the servo's torque reading "
+    "was 4.37 N·m at 1,250 rpm, so we re-torqued it. "
+)
+
+
+def _transcript_record(index: int) -> dict:
+    return {
+        "query": f"servo torque clip {index}",
+        "source_text": f"Segment {index}. " + _TRANSCRIPT * 18,
+        "grounding_context": "",
+        "enhanced_query": f"servo torque re-torque clip {index}",
+        "expansion_terms": ["servo", "torque"],
+        "synonyms": ["motor"],
+        "context": ["maintenance"],
+        "confidence": 0.8,
+        "reasoning": "The transcript names the servo and its torque.",
+    }
+
+
+@skip_if_no_lm
+def test_a_bounded_candidate_fits_the_student_by_the_student_s_own_count(
+    dspy_lm, student_endpoint, caplog
+):
+    """Demonstrations whose source texts are transcripts, which the student's
+    tokenizer counts well above cl100k_base. Bounded to the student's window,
+    every call under the scoring and the serving adapter is answered by the
+    LM, and the bound's count of each request sent is the prompt_tokens the
+    student reports for it."""
+    from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+    from cogniverse_foundation.dspy import LenientJSONAdapter
+    from cogniverse_runtime.optimization_cli import (
+        _QUERY_ENHANCEMENT_INPUTS,
+        _bound_candidate_demos,
+        _query_enhancement_example,
+        _student_demo_budget,
+    )
+
+    lm = create_dspy_lm(student_endpoint)
+    demos = [_query_enhancement_example(_transcript_record(i)) for i in range(16)]
+    calls = [
+        {
+            "query": "servo re-torque",
+            "source_text": _TRANSCRIPT * 6,
+            "grounding_context": "",
+        },
+        {
+            "query": "torque readings",
+            "source_text": _TRANSCRIPT * 3,
+            "grounding_context": "",
+        },
+    ]
+    budget, count_tokens = _student_demo_budget(student_endpoint)
+    assert (budget.context_window, budget.reserved_output) == (8192, 1000)
+    bounded = QueryEnhancementModule()
+    bounded.enhancer.predict.demos = list(demos)
+    [(kept, compiled)] = _bound_candidate_demos(
+        bounded, budget=budget, count_tokens=count_tokens, inputs=calls
+    ).values()
+    assert compiled == 16
+    assert 0 < kept < 16
+
+    sent = []
+    with caplog.at_level(
+        logging.WARNING, logger="cogniverse_agents.query_enhancement_agent"
+    ):
+        for adapter in (dspy.ChatAdapter(), LenientJSONAdapter()):
+            with dspy.context(lm=lm, adapter=adapter):
+                for call in calls:
+                    before = len(lm.history)
+                    result = bounded(
+                        **{key: call[key] for key in _QUERY_ENHANCEMENT_INPUTS}
+                    )
+                    sent.append(result.path_used)
+                    for entry in lm.history[before:]:
+                        prompt_tokens = entry["usage"]["prompt_tokens"]
+                        assert count_tokens(entry["messages"]) == prompt_tokens
+                        assert prompt_tokens <= budget.input_budget
+    assert sent == ["lm"] * 4
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "reason=DSPy failure" in record.getMessage()
+    ] == []

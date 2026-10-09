@@ -545,11 +545,12 @@ def teacher_lm_or_raise(
 
 def _student_demo_budget(endpoint):
     """The student's input allowance and token counter: its served (else
-    declared) context window less the completion it reserves."""
+    declared) context window less the completion it reserves, counted with
+    the tokenizer and chat template the endpoint serves."""
     from cogniverse_foundation.config.token_budget import (
         TokenBudget,
-        litellm_message_counter,
         resolve_context_window,
+        served_message_counter,
     )
 
     if not endpoint.api_base:
@@ -567,7 +568,7 @@ def _student_demo_budget(endpoint):
         context_window=window.tokens,
         reserved_output=endpoint.max_tokens,
     )
-    return budget, litellm_message_counter(endpoint.model)
+    return budget, served_message_counter(endpoint.api_base, endpoint.model)
 
 
 def _bound_candidate_demos(

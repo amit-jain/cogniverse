@@ -19,12 +19,14 @@ from cogniverse_foundation.config.token_budget import (
     PromptBudgetExceededError,
     ResolvedContextWindow,
     TokenBudget,
+    TokenCountUnavailableError,
     extract_context_window,
     fetch_context_window,
     fit_messages,
     fitting_demonstrations,
     litellm_message_counter,
     resolve_context_window,
+    served_message_counter,
     split_demonstrations,
 )
 
@@ -298,6 +300,45 @@ class TestFittingDemonstrations:
                 calls=[],
             )
         assert str(exc.value) == "fitting demonstrations needs at least one call"
+
+    def test_each_call_is_counted_once_when_every_demonstration_fits(self):
+        """A served counter pays a round-trip per count, so a prefix that
+        every call fits is confirmed with one count per call."""
+        counted = []
+
+        def count(messages):
+            counted.append(len(messages))
+            return _count_words(messages)
+
+        kept = fitting_demonstrations(
+            [100] * 16,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=count,
+            calls=list(range(10, 310)),
+        )
+        assert kept == 16
+        assert len(counted) == 300
+
+    def test_a_call_that_lowers_the_prefix_does_not_raise_it_for_later_calls(self):
+        # 300 + n x 1550 + call: the 2000-word call keeps three, the
+        # 200-word call alone would keep four.
+        counted = []
+
+        def count(messages):
+            counted.append(len(messages))
+            return _count_words(messages)
+
+        kept = fitting_demonstrations(
+            [1500] * 16,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=count,
+            calls=[200, 2000],
+        )
+        assert kept == 3
+        # 2000 first (longest request): 16, 8, 4, 2, 3 -> 3; then 200 at 3.
+        assert counted == [34, 18, 10, 6, 8, 8]
 
 
 @pytest.mark.unit
@@ -676,3 +717,137 @@ def _serve_openai(models_body: dict):
     received: dict = {}
     server, base_url = _start({"models_body": models_body, "received": received})
     return server, base_url, received
+
+
+class _TokenizeHandler(BaseHTTPRequestHandler):
+    """A ``POST /tokenize`` that counts one token per whitespace-separated
+    word of every message, plus four per message for the chat template."""
+
+    status: int = 200
+    body: dict | None = None
+    received: list = []
+
+    def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler contract
+        length = int(self.headers.get("Content-Length") or 0)
+        request = json.loads(self.rfile.read(length))
+        type(self).received.append((self.path, request))
+        payload = type(self).body
+        if payload is None:
+            count = sum(
+                4 + len(str(message["content"]).split())
+                for message in request["messages"]
+            )
+            payload = {"count": count, "max_model_len": 8192, "tokens": []}
+        encoded = json.dumps(payload).encode()
+        self.send_response(type(self).status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def log_message(self, *args):
+        return
+
+
+def _serve_tokenize(status: int = 200, body: dict | None = None):
+    received: list = []
+    handler = type(
+        "Handler",
+        (_TokenizeHandler,),
+        {"status": status, "body": body, "received": received},
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}/v1", received
+
+
+@pytest.mark.unit
+class TestServedMessageCounter:
+    """The student is counted by the tokenizer and chat template it serves."""
+
+    MESSAGES = [
+        {"role": "system", "content": "Enhance the query."},
+        {"role": "user", "content": "servo torque at 1,250 rpm"},
+    ]
+
+    def test_counts_through_the_endpoint_s_tokenize_route(self):
+        server, api_base, received = _serve_tokenize()
+        try:
+            count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+            assert count(self.MESSAGES) == 4 + 3 + 4 + 5
+        finally:
+            server.shutdown()
+        assert received == [
+            (
+                "/tokenize",
+                {"model": "google/gemma-4-e4b-it", "messages": self.MESSAGES},
+            )
+        ]
+
+    def test_an_unreachable_endpoint_refuses_to_count(self):
+        server, api_base, _ = _serve_tokenize()
+        server.shutdown()
+        server.server_close()
+        count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+        with pytest.raises(TokenCountUnavailableError) as exc:
+            count(self.MESSAGES)
+        root = api_base.removesuffix("/v1")
+        assert str(exc.value) == (
+            f"{root}/tokenize is unreachable, so the request cannot be counted "
+            "with the tokenizer openai/google/gemma-4-e4b-it is served with"
+        )
+
+    def test_an_endpoint_without_the_route_refuses_to_count(self):
+        server, api_base, _ = _serve_tokenize(status=404, body={"detail": "Not Found"})
+        try:
+            count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+            with pytest.raises(TokenCountUnavailableError) as exc:
+                count(self.MESSAGES)
+        finally:
+            server.shutdown()
+        root = api_base.removesuffix("/v1")
+        assert str(exc.value) == (
+            f"{root}/tokenize answered HTTP 404, so the request cannot be "
+            "counted with the tokenizer openai/google/gemma-4-e4b-it is served with"
+        )
+
+    def test_an_answer_without_a_count_refuses_to_count(self):
+        server, api_base, _ = _serve_tokenize(body={"tokens": [1, 2, 3]})
+        try:
+            count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+            with pytest.raises(TokenCountUnavailableError) as exc:
+                count(self.MESSAGES)
+        finally:
+            server.shutdown()
+        root = api_base.removesuffix("/v1")
+        assert str(exc.value) == (
+            f"{root}/tokenize answered without an integer count, so the request "
+            "cannot be counted with the tokenizer openai/google/gemma-4-e4b-it "
+            "is served with"
+        )
+
+    def test_concurrent_counts_each_get_their_own_request_s_count(self):
+        server, api_base, received = _serve_tokenize()
+        count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+        threads = 16
+        barrier = threading.Barrier(threads)
+        results: dict[int, int] = {}
+
+        def worker(index: int) -> None:
+            messages = [{"role": "user", "content": _words(index + 1)}]
+            barrier.wait()
+            results[index] = count(messages)
+
+        try:
+            pool = [
+                threading.Thread(target=worker, args=(index,))
+                for index in range(threads)
+            ]
+            for thread in pool:
+                thread.start()
+            for thread in pool:
+                thread.join()
+        finally:
+            server.shutdown()
+        assert results == {index: 4 + index + 1 for index in range(threads)}
+        assert len(received) == threads
