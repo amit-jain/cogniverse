@@ -24,7 +24,6 @@ E2E_HOST_PORTS = {
     33071: 19071,  # vespa config
     33000: 28000,  # runtime
     33400: 28400,  # web
-    33501: 28501,  # dashboard
     33006: 26006,  # phoenix ui
     33317: 4317,  # otel grpc
     33434: 11434,  # llm (ollama-compat)

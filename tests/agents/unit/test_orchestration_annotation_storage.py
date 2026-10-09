@@ -173,7 +173,7 @@ async def test_only_human_reviewed_excludes_llm_auto_by_annotation_source():
 def test_ctor_canonicalizes_tenant_and_resolves_canonical_project():
     """The runtime persists orchestration annotations under the canonical
     tenant provider AND emits spans to the canonical per-tenant project; a
-    storage built with a raw id (e.g. a dashboard tab's current_tenant) must
+    storage built with a raw id (e.g. a UI request's tenant) must
     resolve the SAME provider scope and query the canonical project, never a
     literal "cogniverse"."""
     from unittest.mock import patch

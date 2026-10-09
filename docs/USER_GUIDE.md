@@ -133,7 +133,7 @@ The `cogniverse` CLI manages the full stack:
 | `cogniverse down` | Stop all services |
 | `cogniverse down --keep-data` | Stop services but preserve volumes |
 | `cogniverse status` | Show health of all services |
-| `cogniverse logs <service>` | View logs (`runtime`, `web`, `dashboard`, `vespa`, `phoenix`, `llm`, `argo`) |
+| `cogniverse logs <service>` | View logs (`runtime`, `web`, `vespa`, `phoenix`, `llm`, `argo`) |
 | `cogniverse logs <service> --follow` | Stream logs in real-time |
 | `cogniverse code` | Interactive coding agent REPL |
 | `cogniverse index <path> --type code` | Build a knowledge graph from code |

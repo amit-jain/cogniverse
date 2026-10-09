@@ -19,7 +19,7 @@ DIST_DIR="$PROJECT_ROOT/dist"
 MANIFEST_NAME="BUILD_MANIFEST.json"
 
 # Release set in dependency order: the published packages (core, agents, vespa,
-# runtime, dashboard) plus every internal package they require.
+# runtime) plus every internal package they require.
 PACKAGES=(
     "sdk"
     "foundation"
@@ -30,7 +30,6 @@ PACKAGES=(
     "agents"
     "telemetry-phoenix"
     "runtime"
-    "dashboard"
 )
 
 # Build options

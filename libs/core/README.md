@@ -366,7 +366,6 @@ Implementation Layer:
     ↓
 Application Layer:
   cogniverse-runtime (FastAPI runtime)
-  cogniverse-dashboard (Streamlit UI)
 ```
 
 ## Design Principles

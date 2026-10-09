@@ -65,8 +65,8 @@ flowchart TB
     end
 
     subgraph "Review Interface"
-        Dashboard["<span style='color:#000'>Web client Approvals view<br/>(runtime approval routes)</span>"]
-        Dashboard --> ApprovalAgent
+        WebClient["<span style='color:#000'>Web client Approvals view<br/>(runtime approval routes)</span>"]
+        WebClient --> ApprovalAgent
     end
 
     subgraph "Training Pipeline"
@@ -83,7 +83,7 @@ flowchart TB
     style Annotations fill:#a5d6a7,stroke:#388e3c,color:#000
     style Datasets fill:#a5d6a7,stroke:#388e3c,color:#000
     style Redis fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#b0bec5,stroke:#546e7a,color:#000
+    style WebClient fill:#b0bec5,stroke:#546e7a,color:#000
     style Optimizer fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
@@ -1028,7 +1028,7 @@ stateDiagram-v2
 
 ### Integration Tests
 
-The real-boundary suite covers Phoenix, Redis, dashboard regeneration,
+The real-boundary suite covers Phoenix, Redis, regeneration,
 orchestrator resume, fine-tuning consumption, runtime compilation, and optimizer
 consumption:
 
@@ -1039,7 +1039,6 @@ JAX_PLATFORM_NAME=cpu timeout 3600 uv run pytest \
     tests/agents/integration/test_approval_dataset_lock_real_redis.py \
     tests/agents/integration/test_replacement_record_store_real_redis.py \
     tests/agents/integration/test_decision_orchestrator_approval_roundtrip_real.py \
-    tests/dashboard/integration/test_approval_queue_regeneration_real.py \
     tests/finetuning/integration/test_approved_dataset_roundtrip_real.py \
     tests/runtime/integration/test_approved_synthetic_compile_real.py \
     tests/runtime/integration/test_optimization_cli_approved_data_real.py \
@@ -1069,7 +1068,6 @@ JAX_PLATFORM_NAME=cpu timeout 3600 uv run pytest \
 # - Duplicate, conflicting, malformed, naive-timestamp, and non-finite records fail
 # - Redis failure propagation without fabricated success
 # - Regenerated items resume the same workflow without re-running generation
-# - Dashboard approve/reject handlers reload the exact persisted Phoenix item
 # - Fine-tuning and runtime consumers reject malformed canonical records
 # - Approved examples compile into real DSPy modules and feed optimizer input
 ```
@@ -1090,7 +1088,7 @@ wait_for_telemetry_processing(delay=2.0, description="annotation indexing")
 ### Unit Tests
 
 The focused suite covers interfaces, storage failures, confidence extraction,
-workflow state, dashboard behavior, and the optimizer submission mapping:
+workflow state, and the optimizer submission mapping:
 
 ```bash
 # Run approval unit tests
@@ -1098,17 +1096,14 @@ uv run pytest \
     tests/routing/unit/synthetic/test_approval_system.py \
     tests/agents/unit/test_approval_storage_outage.py \
     tests/agents/unit/test_decision_orchestrator.py \
-    tests/dashboard/unit/test_approval_queue.py \
-    tests/dashboard/unit/test_optimization_forms.py \
     tests/synthetic/unit/test_confidence_extractor.py \
     -v --tb=long > /tmp/approval_workflow_unit.log 2>&1
 ```
 
 ## Configuration
 
-The dashboard approval queue requires `REDIS_URL`. `app.py` reads it at application startup
-and stores it in `st.session_state["redis_url"]`; `_initialize_approval_agent()` consumes only
-that injected value.
+The runtime's approval routes require `REDIS_URL`. The runtime lays it over `SystemConfig.redis_url`
+at startup; `ApprovalStorageImpl.from_system_config()` raises `ValueError` without it.
 
 ```bash
 export REDIS_URL="redis://redis:6379/0"
@@ -1116,7 +1111,7 @@ export REDIS_URL="redis://redis:6379/0"
 
 ### Telemetry Endpoints
 
-The dashboard resolves both endpoints from the current `SystemConfig` rather
+`ApprovalStorageImpl.from_system_config()` resolves both endpoints from the current `SystemConfig` rather
 than from a separate telemetry configuration block:
 
 ```python
@@ -1255,5 +1250,3 @@ See source files for detailed docstrings:
 
 - `libs/synthetic/cogniverse_synthetic/dspy_modules.py` —
   `ValidatedSyntheticExampleRegenerator`
-
-- `libs/dashboard/cogniverse_dashboard/tabs/approval_queue.py` — `render_approval_queue_tab`

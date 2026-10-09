@@ -1,7 +1,7 @@
 """Round-trip tests for DatasetManager against a real Phoenix dataset store.
 
-DatasetManager is the sync facade used by the eval CLI, the dashboard
-optimization tab, and scripts/manage_datasets.py. These tests pin its
+DatasetManager is the sync facade used by the eval CLI and
+scripts/manage_datasets.py. These tests pin its
 contract at the real boundary: datasets created through the manager are
 readable back from Phoenix with the exact example shape, missing datasets
 map to None, and a dead backend raises instead of masquerading as no-data.

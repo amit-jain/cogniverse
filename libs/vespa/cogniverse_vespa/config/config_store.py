@@ -1442,7 +1442,7 @@ class VespaConfigStore(ImmutableConfigStore):
 
         except Exception as e:
             # An outage or degraded read must raise, not report zero configs /
-            # zero tenants — a dashboard keyed off these counts would show an
+            # zero tenants — a reader keyed off these counts would show an
             # empty store during a Vespa blip. Matches the raising sibling reads.
             logger.error(f"Failed to get stats from Vespa: {e}")
             raise

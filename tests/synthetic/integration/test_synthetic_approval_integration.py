@@ -2390,7 +2390,7 @@ class TestSyntheticApprovalIntegration:
     async def test_record_decision_persists_approval_span(self, approval_storage):
         """record_decision must emit an ``approval_decision`` span to Phoenix.
 
-        This is what the dashboard approval handlers now call to persist a
+        This is what the approval handlers now call to persist a
         human decision; previously they discarded the ReviewDecision. Verify
         the span lands with the decision's attributes against real Phoenix.
         """

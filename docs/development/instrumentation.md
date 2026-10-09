@@ -15,7 +15,7 @@ The Instrumentation module provides production-grade observability through:
 
 - **Phoenix Backend**: Arize Phoenix for trace collection and analysis
 
-- **Per-Modality Observability**: `cogniverse.profile_selection` spans aggregated by modality in the Profile Routing Metrics dashboard tab
+- **Per-Modality Observability**: `cogniverse.profile_selection` spans aggregated by modality in the web client's Profile metrics view
 
 - **Analytics**: Trace analysis and visualization
 
@@ -23,7 +23,7 @@ The Instrumentation module provides production-grade observability through:
 - Lazy initialization with LRU caching for tracer providers
 - Batch vs synchronous span export modes
 - Graceful degradation when telemetry unavailable
-- Per-modality observability via `cogniverse.profile_selection` spans and the Profile Routing Metrics dashboard tab
+- Per-modality observability via `cogniverse.profile_selection` spans and the web client's Profile metrics view
 - Phoenix analytics with Plotly visualizations
 - **Session Tracking**: Multi-turn conversation tracking with `session_span()` method
 - **Phoenix Sessions View**: Grouped trace visualization for conversation trajectories
@@ -363,7 +363,7 @@ The shipped `TelemetryProvider` implementation, registered under the `phoenix` e
 - `PhoenixProvider(name="phoenix")` — `initialize(config)` requires `tenant_id`, `http_endpoint`, `grpc_endpoint`; `configure_span_export(...)` builds a `TracerProvider` via `phoenix.otel.register()`, swapping in a `BatchSpanProcessor` sized from `BatchExportConfig` when `use_batch_export=True`
 - `PhoenixTraceStore.get_spans(...)` — pushes `filters={"name": ..., "span_id": ...}` down to a server-side `SpanQuery` predicate (`name` a single name or list, `span_id` a list of span ids) instead of pulling the whole project window and filtering client-side, and raises `ValueError` on any other filter key or a `span_id` given as one string; always passes `timeout=120` (the client method's own default is 5s)
 - `PhoenixAnnotationStore`, `PhoenixDatasetStore` — remaining store implementations
-- AsyncClient instances are memoized per `(running event loop, endpoint)` in a `WeakKeyDictionary`, since a client's connection pool binds to the loop that created it (Streamlit runs a fresh loop per interaction)
+- AsyncClient instances are memoized per `(running event loop, endpoint)` in a `WeakKeyDictionary`, since a client's connection pool binds to the loop that created it
 
 ### 6. PhoenixAnalytics
 
@@ -444,11 +444,9 @@ Phoenix implementation of the generic `EvaluationProvider` / `EvaluatorFramework
 - **`PhoenixEvaluatorFramework`** — `get_evaluator_base_class()` returns Phoenix's `BaseEvaluator`; `get_evaluation_result_type()` returns `EvaluationResult`
 - **`EvaluationResult`** — `dict` subclass with attribute access (`result.score`, `result.label`), bridging Phoenix v14's `TypedDict`-based `ExperimentEvaluation` with code that expects attribute access
 
-### 8. Profile Routing Metrics Dashboard Tab
+### 8. Profile Metrics View
 
-**File:** `libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`
-
-**Package:** `cogniverse-dashboard` (application layer)
+**File:** `clients/web/src/client/ops/ProfileMetricsView.tsx`, served by `GET /admin/tenant/{tenant_id}/telemetry/profile-selection` (`libs/runtime/cogniverse_runtime/routers/telemetry_metrics.py`, aggregation in `cogniverse_foundation.telemetry.span_metrics.profile_selection_metrics`)
 
 Provides per-modality runtime observability by querying `cogniverse.profile_selection` spans from Phoenix and aggregating them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch.
 
@@ -717,7 +715,7 @@ print(f"Failed initializations: {stats['failed_initializations']}")
 print(f"Active tenants: {stats['cached_tenants']}")
 
 # Per-modality metrics: aggregated live from cogniverse.profile_selection
-# spans (see libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py) —
+# spans (see cogniverse_foundation.telemetry.span_metrics.profile_selection_metrics) —
 # there is no in-process tracker; Phoenix is the source of truth.
 async def fetch_profile_selection_spans(tenant_id: str, project_name: str):
     provider = telemetry.get_provider(tenant_id=tenant_id)
@@ -878,8 +876,8 @@ def test_real_phoenix_multi_tenant_isolation(self, phoenix_container):
 - `libs/evaluation/cogniverse_evaluation/core/experiment_tracker.py` - `ExperimentTracker`
 - `libs/evaluation/cogniverse_evaluation/providers/base.py` - Provider-agnostic `TraceMetrics` dataclass
 
-### Dashboard Layer - Per-Modality Observability
-- `libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py` - Profile Routing Metrics tab (aggregates `cogniverse.profile_selection` spans by modality)
+### Web Client - Per-Modality Observability
+- `libs/foundation/cogniverse_foundation/telemetry/span_metrics.py` - `profile_selection_metrics` (aggregates `cogniverse.profile_selection` spans by modality) for the web client's Profile metrics view
 
 ### Tests
 - `tests/telemetry/unit/` - Session tracking, span-export config, telemetry-level filtering, tracer-cache eviction, provider-project caching, analytics timestamp handling

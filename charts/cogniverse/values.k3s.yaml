@@ -258,32 +258,6 @@ web:
   service:
     type: NodePort
 
-dashboard:
-  replicaCount: 1
-  backend: cpu
-  imagesByBackend:
-    cpu:
-      repository: cogniverse/dashboard-cpu
-      tag: "0.1.0-dev"
-      pullPolicy: Never
-    cuda:
-      repository: cogniverse/dashboard-cuda
-      tag: "0.1.0-dev"
-      pullPolicy: Never
-    rocm:
-      repository: cogniverse/dashboard-rocm
-      tag: "0.1.0-dev"
-      pullPolicy: Never
-  service:
-    type: NodePort
-  resources:
-    requests:
-      cpu: "500m"
-      memory: "4Gi"
-    limits:
-      cpu: "2"
-      memory: "4Gi"
-
 phoenix:
   replicaCount: 1
   service:

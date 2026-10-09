@@ -1,6 +1,6 @@
 """The per-loop Phoenix client memo must not leak loops or sockets under the
-asyncio.run-per-call pattern (TelemetryStorage health check, the dashboard's
-run-per-interaction sync facades).
+asyncio.run-per-call pattern (TelemetryStorage health check, the
+run-per-call sync facades).
 
 The remote boundary is the only thing stubbed — a local keep-alive HTTP server
 stands in for Phoenix so the real PhoenixTraceStore + memo run unchanged.

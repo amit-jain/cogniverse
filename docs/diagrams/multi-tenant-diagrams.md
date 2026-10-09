@@ -1064,7 +1064,7 @@ This diagram collection provides comprehensive visual documentation of multi-ten
 
 - **Implementation Layer**: Vespa backend applies tenant suffixes; 9 knowledge agents (MultiDocumentSynthesis, KGTraversal, CrossTenantComparison, ContradictionReconciliation, CitationTracing, TemporalReasoning, FederatedQuery, KnowledgeSummarization, AuditExplanation)
 
-- **Application Layer**: Runtime and dashboard respect tenant boundaries; SandboxPolicy governs coding agent + orchestrator execution
+- **Application Layer**: Runtime and web client respect tenant boundaries; SandboxPolicy governs coding agent + orchestrator execution
 
 **Related Documentation:**
 

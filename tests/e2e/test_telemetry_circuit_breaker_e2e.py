@@ -27,9 +27,8 @@ from tests.e2e.cluster import TENANT_ID
 from tests.e2e.conftest import PHOENIX_URL, run_async
 
 PHOENIX_GRPC = "localhost:33317"
-# The dashboard cancels its recovery probe at this deadline; the value itself is
-# the dashboard's, and what matters here is that a cancellation concludes the
-# trial whatever the deadline was.
+# A caller cancels its recovery probe at this deadline; what matters here is
+# that a cancellation concludes the trial whatever the deadline was.
 PROBE_ROUNDS = 3
 
 

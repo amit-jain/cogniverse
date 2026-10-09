@@ -637,82 +637,6 @@ web:
   affinity: {}
 
 # ===========================================
-# Dashboard Configuration
-# ===========================================
-dashboard:
-  enabled: false
-  # Same backend → image selection as runtime (one image per torch
-  # variant). Dashboard is Streamlit and never runs inference itself,
-  # but the venv transitively imports torch via cogniverse_agents /
-  # cogniverse_evaluation, so the wheel choice still matters for image
-  # size and ABI compatibility.
-  backend: cuda
-  # Fallback only — imagesByBackend below is what actually renders. Kept in
-  # sync with the tag the `cogniverse images` CLI builds (dev).
-  image:
-    repository: cogniverse/dashboard-cuda
-    tag: "0.1.0"
-    pullPolicy: IfNotPresent
-  imagesByBackend:
-    cpu:
-      repository: cogniverse/dashboard-cpu
-      tag: "0.1.0"
-      pullPolicy: IfNotPresent
-    cuda:
-      repository: cogniverse/dashboard-cuda
-      tag: "0.1.0"
-      pullPolicy: IfNotPresent
-    rocm:
-      repository: cogniverse/dashboard-rocm
-      tag: "0.1.0"
-      pullPolicy: IfNotPresent
-
-  replicaCount: 1
-
-  resources:
-    limits:
-      cpu: "2"
-      memory: "2Gi"
-    requests:
-      cpu: "1"
-      memory: "2Gi"
-
-  service:
-    type: ClusterIP
-    port: 8501
-    nodePort: 28501
-    annotations: {}
-
-  env:
-    STREAMLIT_SERVER_PORT: "8501"
-    STREAMLIT_SERVER_ADDRESS: "0.0.0.0"
-    STREAMLIT_SERVER_ENABLE_CORS: "false"
-    STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION: "true"
-
-  # Health checks
-  livenessProbe:
-    httpGet:
-      path: /_stcore/health
-      port: 8501
-    initialDelaySeconds: 60
-    periodSeconds: 30
-    timeoutSeconds: 10
-    failureThreshold: 3
-
-  readinessProbe:
-    httpGet:
-      path: /_stcore/health
-      port: 8501
-    initialDelaySeconds: 30
-    periodSeconds: 20
-    timeoutSeconds: 5
-    failureThreshold: 3
-
-  nodeSelector: {}
-  tolerations: []
-  affinity: {}
-
-# ===========================================
 # Phoenix Configuration
 # ===========================================
 phoenix:
@@ -1866,7 +1790,7 @@ initJobs:
 # Security contexts are set per-component in templates:
 # Vespa: runAsUser 0 (needs root for JVM)
 # LLM builtin: runAsUser 0 (needs root for model storage)
-# Runtime, Dashboard, Phoenix: runAsUser 1000
+# Runtime, Phoenix: runAsUser 1000
 securityContext: {}
 podSecurityContext: {}
 
@@ -1957,8 +1881,8 @@ multiTenant:
 # ===========================================
 # Redis — queues, task state and session state
 # ===========================================
-# The one instance every runtime replica and worker, the ingestors and the
-# dashboard share:
+# The one instance every runtime replica and worker and the ingestors
+# share:
 #   - Ingestion: POST /ingestion/upload XADDs to ``ingest:queue``; ingestor
 #     pods XREADGROUP it through a consumer group for at-least-once delivery
 #     (dead letters in ``ingest:queue:dead``). Workers XADD per-event to

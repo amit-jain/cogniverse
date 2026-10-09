@@ -2341,7 +2341,7 @@ it:
 
 - **Live Progress**: `GET /events/ingestion/{job_id}` (task events) or
   `GET /ingestion/{job_id}/events` (status entries), from any process
-- **Multiple Subscribers**: Dashboard and CLI can watch the same job
+- **Multiple Subscribers**: the web client and CLI can watch the same job
 - **Graceful Cancellation**: `POST /events/ingestion/{job_id}/cancel` stops the
   pipeline before its next video
 - **Job Tracking**: the pipeline's `job_id` is its queue's task id

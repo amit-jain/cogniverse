@@ -122,7 +122,6 @@ _SERVICE_KUBECTL_RESOURCE: dict[str, str] = {
     "llm": "statefulset/cogniverse-llm",
     "runtime": "deployment/cogniverse-runtime",
     "web": "deployment/cogniverse-web",
-    "dashboard": "deployment/cogniverse-dashboard",
     "argo": "deployment/argo-server",
 }
 
@@ -510,7 +509,6 @@ def up(
     set_values["argo-workflows.crds.install"] = "false"
     if use_k3d:
         set_values["runtime.backend"] = host_backend
-        set_values["dashboard.backend"] = host_backend
     console.print("[cyan]Deploying Helm release...[/cyan]")
     helm_install(
         chart_path,
@@ -1208,9 +1206,7 @@ def index(
 @cli.command()
 @click.argument(
     "service",
-    type=click.Choice(
-        ["runtime", "web", "dashboard", "vespa", "phoenix", "llm", "argo"]
-    ),
+    type=click.Choice(["runtime", "web", "vespa", "phoenix", "llm", "argo"]),
 )
 @click.option("--follow", "-f", is_flag=True, help="Follow log output.")
 def logs(service: str, follow: bool) -> None:

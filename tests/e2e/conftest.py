@@ -1,6 +1,6 @@
 """Shared fixtures and helpers for E2E tests.
 
-Provides stack checks, artifact generation, and Streamlit interaction helpers
+Provides stack checks, artifact generation, and interaction helpers
 for both API (httpx) and web client (Playwright) E2E tests.
 
 Test artifact paths (real data used for ingestion tests):
@@ -2382,7 +2382,7 @@ def _ensure_playwright_browsers() -> None:
         FileNotFoundError,
         subprocess.TimeoutExpired,
     ):
-        # Let the individual dashboard tests surface the error; don't
+        # Let the individual browser tests surface the error; don't
         # abort the whole suite just because one optional install failed.
         pass
 

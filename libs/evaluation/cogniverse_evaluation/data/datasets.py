@@ -2,7 +2,7 @@
 Dataset management for evaluation framework.
 
 Sync facade over the telemetry provider's async :class:`DatasetStore`,
-used by the eval CLI, the dashboard optimization tab, and
+used by the eval CLI and
 ``scripts/manage_datasets.py``. Reads distinguish a genuinely missing
 dataset (``None``) from a backend outage (raises).
 """

@@ -49,7 +49,7 @@ Detection: for any test that constructs a stand-in of a type the production code
 
 ### Class B — Untested surface
 
-Detection: enumerate every entry point — REST routes, CLI commands, A2A endpoints, Streamlit tabs, Argo workflow steps, `__main__` blocks — and confirm at least one test exercises each. Untested surface is invisible to every other detection method, because every other method walks code that tests exist for.
+Detection: enumerate every entry point — REST routes, CLI commands, A2A endpoints, web client views, Argo workflow steps, `__main__` blocks — and confirm at least one test exercises each. Untested surface is invisible to every other detection method, because every other method walks code that tests exist for.
 
 ```bash
 # enumerate routes
@@ -58,16 +58,9 @@ grep -rn "@router.post\|@router.get\|@app.post\|@app.get" libs/ | awk -F: '{prin
 # enumerate CLI commands
 grep -rn "@click.command\|argparse.ArgumentParser\|sys.argv" scripts/ libs/
 
-# enumerate dashboard tabs
-grep -rn "def _render.*_tab\|st\.tabs\|register_tab" libs/dashboard/
-
 # standalone FastAPI apps inside agent packages — __main__-launchable but
 # bypassed by the unified runtime dispatcher; high risk of untested surface
 grep -rnP "^@app\.(post|get|put|delete)" libs/agents/
-
-# Streamlit render-tab entry points — confirm at least one streamlit-testing
-# test invokes each
-grep -rnP "^def render_.*_tab" libs/dashboard/
 
 # for each, grep tests/ for a test that hits it
 ```
@@ -131,10 +124,6 @@ grep -rnP "start_time\s*=\s*datetime\.now\(\)|end_time\s*=\s*datetime\.now\(\)" 
 # against a fromisoformat()-parsed aware value it raises TypeError; a
 # surrounding bare except then fail-closes. Use datetime.now(timezone.utc).
 grep -rnP "datetime\.utcnow\(\)" libs/ --include="*.py"
-
-# Streamlit date/time inputs are naive; combining them without attaching a tz
-# produces naive query windows
-grep -rn "st\.date_input\|st\.time_input\|datetime\.combine(" libs/dashboard/
 ```
 
 **Type / shape coercion at boundaries**
@@ -438,7 +427,7 @@ grep -rnPA6 'add_backend_profile\(|register_\w+_profile\(' libs/runtime/ --inclu
 # the reader's constructor entry.
 grep -rnP 'get_project_name\(|f"cogniverse-\{[^}]*tenant' libs/ --include="*.py"
 
-# Dashboard/CLI entrypoint feeding a raw tenant id into a per-tenant store —
+# Runtime route/CLI entrypoint feeding a raw tenant id into a per-tenant store —
 # confirm canonical_tenant_id() before the value reaches get_provider /
 # get_project_name / *Storage(tenant_id=...)
 grep -rnP 'session_state\[.?current_tenant|st\.session_state\.get\("current_tenant"' libs/ --include="*.py"
@@ -623,7 +612,7 @@ PHASE 0 — INVENTORY (do once at the start, don't bury inside phases)
   • enumerate entry points (routes, CLIs, tabs, A2A endpoints, __main__)
   • enumerate every test file and what entry point it tests
   • enumerate every system boundary the codebase talks to
-    (Phoenix, Vespa, MinIO, LM endpoint, Mem0, Redis, Argo, Streamlit)
+    (Phoenix, Vespa, MinIO, LM endpoint, Mem0, Redis, Argo)
   • record the inventory — every later phase consults it
 
 PHASE 1 — CLASS A SWEEP (test suspects)

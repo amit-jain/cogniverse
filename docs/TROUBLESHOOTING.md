@@ -122,8 +122,7 @@ Bind for 0.0.0.0:28000 failed: port is already allocated
 **Solution:**
 
 `cogniverse up` maps a fixed set of host ports through the k3d loadbalancer:
-`8080`/`19071` (Vespa), `28000` (runtime), `28400` (web client), `28501`
-(dashboard, when enabled), `26006`
+`8080`/`19071` (Vespa), `28000` (runtime), `28400` (web client), `26006`
 (Phoenix), `4317` (OTLP), `11434` (Ollama), `2746` (Argo), plus `29001`-`29011`
 for inference sidecars.
 
@@ -178,7 +177,7 @@ cogniverse status
 # List pods and their state directly
 kubectl get pods -n cogniverse
 
-# Tail logs for a specific service (runtime, web, dashboard, vespa, phoenix, llm, argo)
+# Tail logs for a specific service (runtime, web, vespa, phoenix, llm, argo)
 cogniverse logs runtime -f
 
 # Describe a pod for scheduling/image-pull failures
@@ -618,7 +617,7 @@ cat configs/config.json | jq '.backend.profiles'
 
 ```python
 # Get available profiles for a tenant. `service` defaults to "backend" --
-# the same config service the runtime admin API and dashboard read/write.
+# the same config service the runtime admin API and web client read/write.
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()

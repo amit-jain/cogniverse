@@ -135,25 +135,16 @@ cogniverse/
 │   │       ├── runtime_client.py # Async client for runtime API
 │   │       └── telegram_handler.py # Response formatting
 │   │
-│   ├── cli/                      # cogniverse-cli
-│   │   ├── pyproject.toml
-│   │   └── cogniverse_cli/
-│   │       └── main.py           # cogniverse CLI entry point (up, status, code, index, graph, etc.)
-│   │
-│   └── dashboard/                # cogniverse-dashboard
+│   └── cli/                      # cogniverse-cli
 │       ├── pyproject.toml
-│       ├── Dockerfile
-│       └── cogniverse_dashboard/
-│           ├── app.py            # Streamlit app
-│           ├── tabs/             # Dashboard tab modules
-│           └── utils/            # Utilities
+│       └── cogniverse_cli/
+│           └── main.py           # cogniverse CLI entry point (up, status, code, index, graph, etc.)
 │
 └── tests/                        # Test suite
     ├── admin/                    # Admin functionality tests
     ├── agents/                   # Agent tests
     ├── backends/                 # Backend integration tests
     ├── common/                   # Shared utility tests
-    ├── dashboard/                # Dashboard tests
     ├── evaluation/               # Evaluation framework tests
     ├── events/                   # EventQueue tests
     ├── finetuning/               # Finetuning tests
@@ -173,7 +164,6 @@ cogniverse/
 flowchart TB
     subgraph Application["<span style='color:#000'><b>Application Layer</b></span>"]
         direction LR
-        dashboard["<span style='color:#000'><b>dashboard</b><br/>Streamlit UI · Phoenix Analytics</span>"]
         runtime["<span style='color:#000'><b>runtime</b><br/>FastAPI · CORS · Quality Monitor</span>"]
         messaging["<span style='color:#000'><b>messaging</b><br/>Telegram Gateway · Invite Auth</span>"]
         cli["<span style='color:#000'><b>cli</b><br/>cogniverse CLI · deploy · manage</span>"]
@@ -200,8 +190,6 @@ flowchart TB
         sdk["<span style='color:#000'><b>sdk</b><br/>Backend Interfaces · Document Model</span>"]
     end
 
-    dashboard --> agents
-    dashboard --> evaluation
     runtime --> core
     messaging --> core
 
@@ -226,7 +214,6 @@ flowchart TB
     style Core fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Foundation fill:#a5d6a7,stroke:#388e3c,color:#000
 
-    style dashboard fill:#64b5f6,stroke:#1565c0,color:#000
     style runtime fill:#64b5f6,stroke:#1565c0,color:#000
     style messaging fill:#64b5f6,stroke:#1565c0,color:#000
 
@@ -258,7 +245,6 @@ flowchart TB
 | **Implementation** | **cogniverse_finetuning** | LLM fine-tuning infrastructure | • `training/` — SFT, DPO training loops<br>• `dataset/` — Trace-to-trajectory conversion<br>• `registry/` — Adapter storage and versioning<br>• `orchestrator.py` — End-to-end finetuning orchestrator | sdk, core, foundation, agents, synthetic |
 | **Application** | **cogniverse_runtime** | Production runtime, APIs, and operational CLIs | • `routers/` — FastAPI route handlers (search, ingestion, admin, wiki, including `POST /admin/messaging/invite`)<br>• `ingestion/` — Video processing pipeline and processors<br>• `admin/` — Organization/tenant models and `TenantManager`<br>• `optimization_cli.py` — Argo-triggered optimization (`--mode triggered`)<br>• `quality_monitor_cli.py` — Continuous evaluation loop | sdk, core, agents, synthetic, telemetry-phoenix (optional: vespa) |
 | **Application** | **cogniverse_messaging** | Telegram messaging gateway | • `gateway.py` — `MessagingGateway` (polling/webhook)<br>• `auth.py` — `InviteTokenManager`, `UserTenantMapper`<br>• `command_router.py` — Parses `/search`, `/summarize`, `/report`, `/research`, `/code`, `/wiki` (save/search/topic/index), plain text, media<br>• `conversation.py` — Conversation history via Mem0<br>• `runtime_client.py` — Async client for runtime API dispatch | core, sdk (HTTP-only to runtime; no declared workspace dependency) |
-| **Application** | **cogniverse_dashboard** | User interfaces and analytics | • `app.py` — Main Streamlit dashboard application<br>• `tabs/` — Dashboard tab modules | sdk, core, agents, evaluation, vespa, telemetry-phoenix |
 | **Application** | **cogniverse_cli** | Cluster deploy and operational CLI | • `main.py` — Click entry point for stack, client, and inference commands<br>• `deploy.py`, `cluster.py`, `argo.py`, `images.py` — Helm/k3d/Argo deployment helpers<br>• `health.py`, `streaming.py` — Runtime health polling and log streaming | None (HTTP-only client to `cogniverse_runtime`, no workspace dependency) |
 
 ---

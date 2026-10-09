@@ -54,8 +54,8 @@ class OrchestrationEvaluator:
 
         self.workflow_intelligence = workflow_intelligence
         # The runtime writes orchestration spans under the canonical tenant
-        # project; a caller passing a raw id (e.g. a dashboard tab's
-        # current_tenant) must resolve the SAME provider + project scope, or the
+        # project; a caller passing a raw id (e.g. a UI request's
+        # tenant) must resolve the SAME provider + project scope, or the
         # evaluator queries an empty project and reports no orchestration spans.
         self.tenant_id = canonical_tenant_id(tenant_id)
 

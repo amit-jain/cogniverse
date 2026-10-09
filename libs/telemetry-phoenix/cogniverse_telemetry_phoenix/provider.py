@@ -87,8 +87,8 @@ class _CheckedSynchronousSpanProcessor(SpanProcessor):
 
 
 # AsyncClient connection pools bind to the event loop that uses them, so a
-# process-wide singleton breaks callers that run on fresh loops (Streamlit's
-# asyncio.run per interaction). Memoize per (running loop, endpoint) instead.
+# process-wide singleton breaks callers that run on fresh loops (an
+# asyncio.run per call). Memoize per (running loop, endpoint) instead.
 #
 # Keep-alive is DISABLED on the underlying httpx client: under the
 # asyncio.run-per-call pattern a kept-alive socket stays bound to the
@@ -96,7 +96,7 @@ class _CheckedSynchronousSpanProcessor(SpanProcessor):
 # it) and leaking a file descriptor per call until EMFILE. With keep-alive
 # off, each request's socket is released on the still-running loop before it
 # closes, so nothing survives the loop. Phoenix reads here are infrequent
-# (monitor cycles, dashboard interactions), so the per-request handshake cost
+# (monitor cycles, UI reads), so the per-request handshake cost
 # is negligible. Closed-loop entries are also pruned on access so the memo
 # stays bounded regardless of GC timing.
 _CLIENTS_BY_LOOP: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
@@ -477,7 +477,7 @@ class PhoenixTraceStore(TraceStore):
         # Telemetry is integral (auto-optimization, eval) but not on the user
         # request path, so its breaker uses a longer reset window — there is no
         # urgency to retry Phoenix fast. Read call sites choose whether to
-        # degrade (dashboard) or surface (checkpoint) the CircuitOpenError.
+        # degrade (UI reads) or surface (checkpoint) the CircuitOpenError.
         from cogniverse_core.common.utils.circuit_breaker import (
             BreakerConfig,
             CircuitBreaker,

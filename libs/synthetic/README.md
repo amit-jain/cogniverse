@@ -26,7 +26,7 @@ The `cogniverse-synthetic` package provides:
 
 ## Architecture
 
-### Position in the 13-Package Workspace
+### Position in the 12-Package Workspace
 
 ```mermaid
 flowchart TB
@@ -46,7 +46,6 @@ flowchart TB
     end
     subgraph ApplicationLayer["<span style='color:#000'>Application Layer</span>"]
         Runtime["<span style='color:#000'>cogniverse-runtime</span>"]
-        Dashboard["<span style='color:#000'>cogniverse-dashboard</span>"]
         CLI["<span style='color:#000'>cogniverse-cli</span>"]
         Finetuning["<span style='color:#000'>cogniverse-finetuning</span>"]
         Messaging["<span style='color:#000'>cogniverse-messaging</span>"]

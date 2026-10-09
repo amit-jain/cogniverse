@@ -45,13 +45,11 @@ flowchart TB
 
     subgraph ApplicationLayer["<span style='color:#000'>Application Layer</span>"]
         Runtime["<span style='color:#000'>cogniverse-runtime</span>"]
-        Dashboard["<span style='color:#000'>cogniverse-dashboard</span>"]
     end
 
     Core --> Foundation
     TelemetryPhoenix -->|declared dependency| Core
     TelemetryPhoenix -->|declared dependency| Evaluation
-    Dashboard -->|declared dependency| TelemetryPhoenix
     Runtime -.->|entry-point discovery, no declared dep| TelemetryPhoenix
 
     style FoundationLayer fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -659,5 +657,4 @@ MIT License - See [LICENSE](../../LICENSE) for details.
 
 - **cogniverse-foundation**: Defines `TelemetryProvider`/`TraceStore`/`AnnotationStore`/`DatasetStore` that this package implements (a transitive dependency of this package via `cogniverse-core`, not the reverse)
 - **cogniverse-evaluation**: Defines `EvaluationProvider`/`TraceMetrics` that `PhoenixEvaluationProvider`/`PhoenixAnalytics` implement (a direct dependency of this package)
-- **cogniverse-dashboard**: Declares a direct `pyproject.toml` dependency on this package for the Profile Routing Metrics tab and Phoenix analytics
 - **cogniverse-core**, **cogniverse-agents**, **cogniverse-runtime**: Consume the auto-discovered Phoenix provider at runtime via the `cogniverse.telemetry.providers` entry point — none declares a direct `pyproject.toml` dependency on this package; the workspace root installs it alongside them

@@ -1267,433 +1267,13 @@ curl -X POST http://localhost:8000/admin/tenants \
 
 ---
 
-## Layer 9: Dashboard Layer (cogniverse_dashboard)
+## Layer 9: End-to-End Integration Tests
 
-**Purpose**: Streamlit UI (application layer) for monitoring, configuration, and optimization
-
-### 9.1 Dashboard Startup
-
-**Start dashboard:**
-```bash
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
-
-# Open browser
-open http://localhost:8501
-```
-
-**Learning Points:**
-
-- Dashboard in application layer (one of 13 packages)
-
-- Integrates with evaluation, telemetry-phoenix, and core packages
-
-- 16 top-level tabs (`libs/dashboard/cogniverse_dashboard/app.py`): Analytics,
-  Evaluation, Embedding Atlas, Routing Evaluation, Orchestration Annotation,
-  Profile Routing Metrics, Optimization, Synthetic Data & Optimization,
-  Approval Queue, Ingestion Testing, Interactive Search, Chat,
-  Configuration, Tenant Management, Memory, RLM A/B Compare
-
-### 9.2 Analytics Tab
-
-**Test Analytics:**
-
-1. Navigate to "📊 Analytics" tab
-
-2. Select time range (1h, 24h, 7d)
-
-3. Select tenant: "default"
-
-4. Click "🔄 Refresh Metrics"
-
-**Verify metrics displayed:**
-
-- Total queries
-
-- Avg latency
-
-- Success rate
-
-- Query distribution chart
-
-- Latency trends
-
-**Learning Points:**
-
-- Analytics pulls from Phoenix spans
-
-- Real-time metrics
-
-- Filterable by tenant and time range
-
-### 9.3 Evaluation Tab
-
-**Test Evaluation:**
-
-1. Navigate to "📈 Evaluation" tab
-
-2. Select experiments to compare
-
-3. View metrics comparison
-
-**Verify evaluation data:**
-
-- MRR score
-
-- Recall@1 / Recall@5
-
-- Profile comparison
-
-- Query-level breakdown
-
-**Learning Points:**
-
-- Evaluation uses Phoenix experiments (`GET /v1/datasets/{id}/experiments`)
-
-- Per-query metrics are MRR, Recall@1, Recall@5 (`evaluation.py` computes
-  these directly; there is no NDCG in this tab)
-
-- Visualizes performance differences across profiles/strategies
-
-### 9.4 Embedding Atlas Tab
-
-**Test Embedding Atlas:**
-
-1. Navigate to "🗺️ Embedding Atlas" tab
-
-2. Provide a parquet file of embeddings (reads from `outputs/embeddings/`
-   by default, written by `scripts/export_backend_embeddings.py`; falls
-   back to a file-upload widget if none exist locally)
-
-3. View the UMAP projection
-
-**Learning Points:**
-
-- Lazy-imports `umap` + `embedding_atlas` (+ `sklearn`) so the dashboard
-  still starts if these optional deps are missing
-
-- Shows an install-instructions message instead of crashing when deps
-  are absent
-
-### 9.5 Routing Evaluation Tab
-
-**Test Routing Evaluation:**
-
-1. Navigate to "🎯 Routing Evaluation" tab
-
-2. Select a time range
-
-3. Review routing accuracy and confidence calibration
-
-**Learning Points:**
-
-- Sourced from `RoutingEvaluator`
-
-- Shows per-agent performance and temporal analysis of routing decisions
-
-- Distinct from the gateway/orchestrator routing decision itself — this
-  tab evaluates historical routing quality from spans
-
-### 9.6 Orchestration Annotation Tab
-
-**Test Orchestration Annotation:**
-
-1. Navigate to "🔄 Orchestration Annotation" tab
-
-2. Review a completed orchestration workflow span
-
-3. Annotate its quality (human-in-the-loop label)
-
-**Learning Points:**
-
-- Human-in-the-loop side of the optimization feedback path
-
-- Annotations feed back into workflow-optimizer training data
-
-### 9.7 Profile Routing Metrics Tab
-
-**Test Profile Routing Metrics:**
-
-1. Navigate to "📈 Profile Routing Metrics" tab
-
-2. Select a tenant and time range
-
-3. Review per-modality query counts and P95 latency
-
-**Learning Points:**
-
-- Reads `cogniverse.profile_selection` spans and aggregates by the
-  `profile_selection.modality` attribute the ProfileSelectionAgent emits
-  on every dispatch
-
-- Replaces the removed "Multi-Modal Performance" tab, whose backing
-  `ModalityMetricsTracker` was never populated by the runtime
-
-### 9.8 Optimization Tab (Upload Training Examples)
-
-**Test manual example upload:**
-
-1. Navigate to "🔧 Optimization" tab
-
-2. Upload a routing/search-relevance/agent-response examples JSON file
-   (or click "📋 Download Routing Examples Template" for a starting point)
-
-3. Verify the preview validates `good_routes` / `bad_routes` keys
-
-**Learning Points:**
-
-- This tab is distinct from "🔬 Synthetic Data & Optimization" (9.9) — it
-  is for manually curated training examples, not generated ones
-
-- Triggers/monitors optimization of routing, ingestion, and agent systems
-
-### 9.9 Configuration Tab
-
-This tab has 7 sub-tabs: System Config, Agent Configs, Routing Config,
-Telemetry Config, Backend Profiles, History, Import/Export.
-
-**Test Configuration:**
-
-1. Navigate to "⚙️ Configuration" tab
-
-2. Enter tenant ID (defaults to the sidebar's active tenant)
-
-3. Go to "🖥️ System Config" sub-tab
-
-4. Make a change (e.g., routing threshold)
-
-5. Click "💾 Save"
-
-6. Verify change persisted
-
-**Test import/export:**
-
-1. Navigate to "💾 Import/Export" sub-tab
-
-2. Click "💾 Download JSON"
-
-3. Modify JSON
-
-4. Upload modified JSON
-
-5. Verify imported
-
-**Learning Points:**
-
-- Full CRUD across System Config, Agent Configs, Routing Config, Telemetry
-  Config, and Backend Profiles
-
-- Import/Export for backup
-
-- "📜 History" sub-tab tracks version history
-
-- Storage backend type and store health are shown at the top of the tab
-
-### 9.10 Tenant Management Tab
-
-**Test Tenant Management:**
-
-1. Navigate to "👥 Tenant Management" tab
-
-2. Under "Create Organization", create an org
-
-3. Under "Create Tenant", create a tenant in that org
-
-4. Verify both appear in the "Organizations" / "Tenants" lists
-
-**Learning Points:**
-
-- Calls the runtime API's `/admin/organizations` and `/admin/tenants`
-  routes (same routes served by the standalone tenant manager, see 8.5)
-
-- Uses `st.session_state["runtime_url"]` to resolve the API base — in
-  k3d/production this points at the in-cluster runtime service
-
-### 9.11 Memory Tab
-
-**Test Memory:**
-
-1. Navigate to "🧠 Memory" tab
-
-2. Enter tenant: "default", agent: "orchestrator_agent"
-
-3. Click "📈 Refresh Stats"
-
-**Add a memory:**
-
-1. Navigate to "📝 Add Memory" sub-tab
-
-2. Enter memory content
-
-3. Add metadata
-
-4. Click "💾 Add Memory"
-
-**Search memories:**
-
-1. Navigate to "🔍 Search Memories" sub-tab
-
-2. Enter search query
-
-3. Click "🔍 Search"
-
-4. View results with scores
-
-**Other sub-tabs:** "📋 View All" (🔄 Load All Memories), "🗑️ Delete Memory",
-"⚠️ Clear All" (🗑️ CLEAR ALL MEMORIES)
-
-**Learning Points:**
-
-- UI for Mem0 operations (`libs/dashboard/cogniverse_dashboard/tabs/memory_management.py`)
-
-- Semantic search interface
-
-- Metadata management
-
-### 9.12 Synthetic Data & Optimization Tab
-
-This tab (header: "🔧 Optimization Framework") has 8 sub-tabs: Overview,
-Search Annotations, Golden Dataset, Synthetic Data, Module Optimization,
-Reranking Optimization, Profile Selection, Metrics Dashboard.
-
-**Test Synthetic Data Generation:**
-
-1. Navigate to "🔬 Synthetic Data & Optimization" tab
-
-2. Go to "🔬 Synthetic Data" sub-tab
-
-3. Select optimizer type: "profile" (valid values: `profile`, `routing`,
-   `workflow`, `unified`)
-
-4. Set count: 10
-
-5. Click "🚀 Generate Synthetic Data"
-
-6. View generated examples
-
-**Test Module Optimization:**
-
-1. Go to "🎯 Module Optimization" sub-tab
-
-2. Select module to optimize: "routing" (valid values: `routing`,
-   `workflow`, `unified`)
-
-3. Set max iterations: 100
-
-4. Check "Use Synthetic Data"
-
-5. Click "🚀 Submit Module Optimization Workflow"
-
-6. Verify Argo workflow submitted
-
-**Learning Points:**
-
-- UI integrates with Argo Workflows
-
-- The Synthetic Data optimizer list (`profile`/`routing`/`workflow`/`unified`)
-  omits `cross_modal`, even though `OPTIMIZER_REGISTRY` defines it (see 6.4)
-
-- Workflow submission from UI
-
-### 9.13 Approval Queue Tab
-
-**Test Approval Queue:**
-
-1. Navigate to "✅ Approval Queue" tab
-
-2. Review pending AI-generated outputs (synthetic data, annotations)
-
-3. Approve or reject an item
-
-**Learning Points:**
-
-- Human-in-the-loop review surface for synthetic data generation and
-  other AI outputs requiring approval before use in optimization
-
-### 9.14 Ingestion Testing Tab
-
-**Test Ingestion Pipeline Testing:**
-
-1. Navigate to "📥 Ingestion Testing" tab
-
-2. Upload a test video (mp4/mov/avi)
-
-3. Select processing profiles to test (multi-select, e.g.
-   `video_colpali_smol500_mv_frame`)
-
-4. Configure pipeline options (max frames, chunk duration, transcription,
-   frame descriptions, keyframe extraction method, embedding precision)
-
-**Learning Points:**
-
-- Interactive testing/configuration of ingestion pipelines without going
-  through `scripts/run_ingestion.py`
-
-- Lets you compare multiple profiles against the same uploaded video
-
-### 9.15 Interactive Search Tab
-
-**Test Interactive Search:**
-
-1. Navigate to "🔍 Interactive Search" tab
-
-2. Enter a query and run a search
-
-3. Review conversation history (session-scoped, shown in an expander)
-
-4. Click "🔄 New Session" to reset
-
-**Learning Points:**
-
-- Live search testing with multiple ranking strategies and real-time results
-
-- Tracks a session ID and per-turn conversation history in
-  `st.session_state`
-
-### 9.16 Chat Tab
-
-**Test Chat:**
-
-1. Navigate to "💬 Chat" tab
-
-2. Send a message
-
-3. Verify the routing layer dispatches it to the appropriate agent
-
-**Learning Points:**
-
-- Chats with agents via the routing layer (gateway/orchestrator), not a
-  direct single-agent call
-
-### 9.17 RLM A/B Compare Tab
-
-**Test RLM A/B Compare:**
-
-1. Navigate to "🅰️🅱️ RLM A/B Compare" tab
-
-2. Review per-row and aggregate latency/token/judge-score deltas
-
-**Learning Points:**
-
-- Reads `rlm.ab_compare` spans emitted by
-  `cogniverse-optim --mode ab-compare`
-
-- Each span carries `RLMABRunner.to_telemetry_dict()` as
-  `openinference.*` attributes, including a per-row `ab_id` that ties
-  paired arms together
-
-- Lazy-imported so the dashboard still loads without telemetry-phoenix
-
-**✅ Layer 9 Complete**: Dashboard functional (application layer), all 16 tabs working, UI integrations validated
-
----
-
-## Layer 10: End-to-End Integration Tests
-
-**All 13 Packages Working Together**
+**All 12 Packages Working Together**
 
 **Purpose**: Validate complete workflows across all layers
 
-### 10.1 Complete Search Workflow
+### 9.1 Complete Search Workflow
 
 **Test full search pipeline:**
 ```bash
@@ -1735,7 +1315,7 @@ print(f"Avg latency: {spans_df['latency_ms'].mean():.2f}ms")
 
 - End-to-end latency tracking
 
-### 10.2 Routing + Search Workflow
+### 9.2 Routing + Search Workflow
 
 **Test routing to search:**
 ```python
@@ -1773,7 +1353,7 @@ if decision.routed_to == "search_agent":
 
 - Results returned to user
 
-### 10.3 Optimization Workflow
+### 9.3 Optimization Workflow
 
 **Test complete optimization cycle:**
 ```bash
@@ -1799,7 +1379,7 @@ JAX_PLATFORM_NAME=cpu uv run python -m cogniverse_runtime.optimization_cli \
 
 - Results include improvement metrics
 
-### 10.4 Multi-Tenant Workflow
+### 9.4 Multi-Tenant Workflow
 
 **Test tenant isolation:**
 ```bash
@@ -1841,7 +1421,7 @@ curl -X POST http://localhost:8000/search/ \
 
 - Config/telemetry/memory isolated
 
-### 10.5 Argo Workflow Integration
+### 9.5 Argo Workflow Integration
 
 The scheduled optimization CronWorkflows are Helm templates
 (`charts/cogniverse/templates/optimization-workflows.yaml`), not a
@@ -1879,7 +1459,7 @@ argo get <workflow-name> -n cogniverse -o json | \
 
 - Kubernetes integration via the Argo Workflows CRDs
 
-**✅ Layer 10 Complete**: End-to-end workflows validated, multi-tenant isolation verified, all integrations working
+**✅ Layer 9 Complete**: End-to-end workflows validated, multi-tenant isolation verified, all integrations working
 
 ---
 
@@ -1901,7 +1481,7 @@ argo get <workflow-name> -n cogniverse -o json | \
 - [ ] Phoenix projects created per tenant
 - [ ] Spans collected for search/routing/orchestration
 - [ ] Span attributes populated correctly
-- [ ] Analytics dashboard showing metrics
+- [ ] Web client Analytics view showing metrics
 
 ### Configuration
 - [ ] System config loaded
@@ -1933,7 +1513,7 @@ argo get <workflow-name> -n cogniverse -o json | \
 - [ ] Cross-tenant data leakage prevented
 
 ### UI/UX
-- [ ] Dashboard loading all tabs
+- [ ] Web client loading all views
 - [ ] Analytics showing real data
 - [ ] Config management CRUD working
 - [ ] Optimization workflows submittable from UI
@@ -1985,7 +1565,7 @@ argo get <workflow-name> -n cogniverse -o json | \
   but with weaker few-shot demos)
 
 - Fix: Generate more examples first via `--mode synthetic`, or the
-  "🔬 Synthetic Data" sub-tab in the dashboard (see 9.12)
+  synthetic mode in the web client's Optimization runs view
 
 - Verify: check the CLI's logged `training_examples` count in the run output
 
@@ -2011,7 +1591,7 @@ After completing this testing plan, you will understand:
 6. **Deployment**: Argo Workflows for production automation
 7. **Observability**: Phoenix telemetry and analytics
 8. **APIs**: REST endpoints for all functionality
-9. **UI Integration**: Dashboard for all operations
+9. **UI Integration**: Web client for all operations
 10. **Troubleshooting**: Common issues and solutions
 
 ---

@@ -276,7 +276,7 @@ raises before either process installs graph or ingestion dependencies; an
 absent value clears stale in-memory endpoints.
 
 Only the final E2E run scales the stateful application stack (Vespa, Phoenix,
-Redis, MinIO, runtime, dashboard, and workers). The stack is intentionally left
+Redis, MinIO, runtime, and workers). The stack is intentionally left
 available across focused E2E invocations so a multi-session run can reuse its
 state. After the focused run has finished, shut it down explicitly:
 
@@ -1449,9 +1449,9 @@ Response: `{tenant_id, agent_type, state: {active, canary, retired}}`. Backed by
 
 Two label selectors feed it, because Argo does not copy a CronWorkflow's labels onto the Workflows it spawns: on-demand runs from `POST /admin/tenant/{tenant_id}/optimize` carry `cogniverse.ai/tenant`, and scheduled runs are found by the `workflows.argoproj.io/cron-workflow` label the controller stamps. Both lists are then narrowed to Workflows whose raw `tenant-id` argument is this tenant and whose spec references the optimization `WorkflowTemplate` — scheduled tenant *jobs* carry a `tenant-id` argument too, so the tenant tag alone cannot tell them apart.
 
-`trigger` is `manual` for a dashboard submit and `scheduled` for a CronWorkflow-spawned run. `mode` is the `cogniverse.ai/mode` label on a manual run; a scheduled pipeline run passes a mode per step rather than per Workflow, so its `mode` is `null`. An Argo outage — unreachable, or any non-200 — answers **503** with the reason; it never answers an empty list, which would read as "this tenant has never optimized". Argo not configured on the deployment also answers 503.
+`trigger` is `manual` for a web client submit and `scheduled` for a CronWorkflow-spawned run. `mode` is the `cogniverse.ai/mode` label on a manual run; a scheduled pipeline run passes a mode per step rather than per Workflow, so its `mode` is `null`. An Argo outage — unreachable, or any non-200 — answers **503** with the reason; it never answers an empty list, which would read as "this tenant has never optimized". Argo not configured on the deployment also answers 503.
 
-The dashboard's Optimization Overview reads this route for its run-count tile, its last-run tile and its Recent Optimization History table.
+The web client's Optimization framework Overview reads this route for its run count, its last run's age and phase and its recent history.
 
 **POST /admin/tenant/{tenant_id}/optimize/report** — Asks `detailed_report_agent` for the tenant's optimization performance report and streams the agent's events (`status`, `partial`, `final`, `error`) as server-sent events, one JSON event per `data` frame. A failure inside the stream ends it on an `error` event naming the exception type. **404** when `detailed_report_agent` is not registered; **503** `agent_registry_unavailable` when the registry cannot be read.
 
@@ -2105,7 +2105,7 @@ CMD ["python", "-m", "cogniverse_runtime.runtime_cli", \
 
 The shipped `libs/runtime/Dockerfile` runs `uv sync --package cogniverse-runtime --extra all --no-dev --frozen`, then `uv sync --only-group runtime-models --inexact --frozen` to install the pinned `en_core_web_sm` spaCy model from the lock.
 
-The runtime and dashboard images set `LITELLM_LOCAL_MODEL_COST_MAP=True`, so litellm loads its bundled model cost map instead of fetching it from raw.githubusercontent.com on a process's first LM call. Every chart workload that runs cogniverse code (runtime, ingestor, quality monitor, dashboard and the Argo workflow steps) runs one of these two images and leaves the value as the image sets it.
+The runtime image sets `LITELLM_LOCAL_MODEL_COST_MAP=True`, so litellm loads its bundled model cost map instead of fetching it from raw.githubusercontent.com on a process's first LM call. Every chart workload that runs cogniverse code (runtime, ingestor, quality monitor and the Argo workflow steps) runs that image and leaves the value as the image sets it.
 
 The runtime image also sets `MALLOC_ARENA_MAX=2`. With glibc's default of one malloc arena per thread, the memory a thread frees stays resident in its arena, and the long-lived ingestion worker grew by about 140 MiB with every 1280x720 frame-profile job until it reached its 2 GiB limit. No chart workload overrides it.
 
@@ -2149,7 +2149,6 @@ services:
 flowchart TB
     subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
         Runtime["<span style='color:#000'>cogniverse-runtime ◄─ YOU ARE HERE<br/>FastAPI server, ingestion pipeline, search API</span>"]
-        Dashboard["<span style='color:#000'>cogniverse-dashboard</span>"]
     end
 
     subgraph ImplLayer["<span style='color:#000'>Implementation Layer</span>"]
@@ -2175,7 +2174,6 @@ flowchart TB
 
     style AppLayer fill:#90caf9,stroke:#1565c0,color:#000
     style Runtime fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
     style ImplLayer fill:#ffcc80,stroke:#ef6c00,color:#000
     style Agents fill:#ffcc80,stroke:#ef6c00,color:#000
     style Vespa fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -2205,7 +2203,7 @@ flowchart TB
 
 **Dependents:**
 
-- `cogniverse-dashboard`: Uses runtime APIs
+- The web client (`clients/web`): Uses runtime APIs
 
 ---
 
@@ -2551,7 +2549,7 @@ Taking a task lease emits `sandbox.create_session` and `sandbox.wait_ready` Open
 
 **Location:** `libs/runtime/cogniverse_runtime/openshell_health.py`
 
-`GatewayHealthProbe` runs as a background asyncio task calling `SandboxClient.health()` every 30 s (configurable via `COGNIVERSE_SANDBOX_PROBE_INTERVAL`). Each probe emits an `openshell.gateway_health` span with `openshell.gateway_available` (0/1) and `openshell.gateway_latency_ms`. Availability reads the `HealthResponse.status` field, not merely whether `health()` raised: `SERVICE_STATUS_HEALTHY`, an empty response left at `SERVICE_STATUS_UNSPECIFIED`, or a response with no `status` attribute at all count as available, while `SERVICE_STATUS_UNHEALTHY`/`SERVICE_STATUS_DEGRADED` records `available=0` with the status name in `openshell.gateway_error`. A raised exception (including a probe timeout) is also recorded as `available=0`, with the exception's class name in `openshell.gateway_error`. The Phoenix dashboard reads these spans for the gateway-status tile.
+`GatewayHealthProbe` runs as a background asyncio task calling `SandboxClient.health()` every 30 s (configurable via `COGNIVERSE_SANDBOX_PROBE_INTERVAL`). Each probe emits an `openshell.gateway_health` span with `openshell.gateway_available` (0/1) and `openshell.gateway_latency_ms`. Availability reads the `HealthResponse.status` field, not merely whether `health()` raised: `SERVICE_STATUS_HEALTHY`, an empty response left at `SERVICE_STATUS_UNSPECIFIED`, or a response with no `status` attribute at all count as available, while `SERVICE_STATUS_UNHEALTHY`/`SERVICE_STATUS_DEGRADED` records `available=0` with the status name in `openshell.gateway_error`. A raised exception (including a probe timeout) is also recorded as `available=0`, with the exception's class name in `openshell.gateway_error`. Phoenix holds these spans as the gateway's status history.
 
 ```text
 from cogniverse_runtime.openshell_health import GatewayHealthProbe
@@ -2585,7 +2583,7 @@ startup and processing failures retain the tenant, endpoint or source text, and
 the original exception as their cause.
 
 The mode writes generated examples as pending `ApprovalBatch` records in
-Phoenix, where the dashboard can review them; it does not create a second
+Phoenix, where the web client's Approvals view reviews them; it does not create a second
 demonstrations dataset. The `simba`, `profile`, and `entity-extraction` modes
 merge synthetic examples from the `approved_synthetic_data` dataset written
 when `HumanApprovalAgent` applies approval. Rows are selected only when their

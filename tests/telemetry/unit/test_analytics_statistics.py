@@ -1,7 +1,7 @@
 """PhoenixAnalytics statistics, outlier, plot, and report assembly.
 
-Seven of its eight public methods render straight into the dashboard's
-Analytics tab yet none executed in any test — a wrong percentile, a broken
+Seven of its eight public methods feed analytics views yet none executed
+in any test — a wrong percentile, a broken
 group-by, or a crashing plot shipped green. These pin the math with exact
 values on a constructed trace set and prove every figure assembles.
 """

@@ -668,13 +668,13 @@ docker exec ollama ollama pull gemma3:4b
 ### Building Distribution Packages
 
 ```bash
-# Build all 13 SDK packages for distribution
+# Build all 12 SDK packages for distribution
 for dir in libs/*/; do
   echo "Building $(basename $dir)..."
   (cd "$dir" && uv build)
 done
 
-# Packages created in dist/ directory (all 13 packages):
+# Packages created in dist/ directory (all 12 packages):
 # Foundation Layer:
 # - cogniverse-sdk-0.1.0-py3-none-any.whl
 # - cogniverse-foundation-0.1.0-py3-none-any.whl
@@ -689,7 +689,6 @@ done
 # - cogniverse-finetuning-0.1.0-py3-none-any.whl
 # Application Layer:
 # - cogniverse-runtime-0.1.0-py3-none-any.whl
-# - cogniverse-dashboard-0.1.0-py3-none-any.whl
 # - cogniverse-cli-0.1.0-py3-none-any.whl
 # - cogniverse-messaging-0.1.0-py3-none-any.whl
 ```

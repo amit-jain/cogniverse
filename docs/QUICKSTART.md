@@ -288,7 +288,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
 
 ```text
 cogniverse/
-├── libs/                    # 13-package workspace
+├── libs/                    # 12-package workspace
 │   ├── sdk/                 # Pure interfaces
 │   ├── foundation/          # Config + telemetry
 │   ├── core/                # Agent base, orchestration, caching
@@ -300,8 +300,7 @@ cogniverse/
 │   ├── synthetic/           # Training data generation
 │   ├── runtime/             # FastAPI server + quality monitor CLI
 │   ├── messaging/           # Telegram messaging gateway
-│   ├── cli/                 # cogniverse CLI (deploy, manage)
-│   └── dashboard/           # Streamlit UI (disabled by default)
+│   └── cli/                 # cogniverse CLI (deploy, manage)
 ├── clients/
 │   └── web/                 # Web client (the Cogniverse UI)
 ├── configs/                 # Configuration files

@@ -580,7 +580,7 @@ result = await gateway._process_impl(
 
 ```mermaid
 flowchart TB
-    Dashboard["<span style='color:#000'>Dashboard / Client</span>"] -->|HTTP POST /tasks/send| Orchestrator["<span style='color:#000'>OrchestratorAgent<br/>(DSPy Planner)</span>"]
+    Client["<span style='color:#000'>Client</span>"] -->|HTTP POST /tasks/send| Orchestrator["<span style='color:#000'>OrchestratorAgent<br/>(DSPy Planner)</span>"]
 
     Orchestrator -->|A2A| QE["<span style='color:#000'>QueryEnhancementAgent</span>"]
     Orchestrator -->|A2A| EE["<span style='color:#000'>EntityExtractionAgent</span>"]
@@ -588,7 +588,7 @@ flowchart TB
     Orchestrator -->|A2A| SA["<span style='color:#000'>SearchAgent</span>"]
     Orchestrator -->|A2A| SU["<span style='color:#000'>SummarizerAgent</span>"]
 
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style Client fill:#90caf9,stroke:#1565c0,color:#000
     style Orchestrator fill:#ce93d8,stroke:#7b1fa2,color:#000
     style QE fill:#ffcc80,stroke:#ef6c00,color:#000
     style EE fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -4111,7 +4111,7 @@ endpoint through the gateway (task `rlm_inference`). Routing is resolved once
 and shared by both arms, so the gateway returns the same model for each — the
 comparison still isolates the RLM machinery, now measured against the
 production (routed) path. `optimization_cli.run_ab_compare` passes both, so the
-dashboard's A/B tile reflects what production actually runs.
+web client's RLM A/B view reflects what production actually runs.
 
 ### Deep synthesis workflow
 
@@ -5070,7 +5070,7 @@ An `OrchestratorAgent` run reports its progress as a workflow task on the
 runtime's shared task event store, so any runtime process streams, lists and
 cancels it:
 
-- **Multiple Subscribers**: Dashboard + CLI can watch the same workflow simultaneously
+- **Multiple Subscribers**: Web client + CLI can watch the same workflow simultaneously
 - **Phase Events**: Each phase boundary is a `StatusEvent`; the sufficiency-gate `InstrumentedRLM` adds Status/Progress events per REPL iteration
 - **Graceful Cancellation**: A cancelled workflow stops at its next phase boundary
 - **Reconnection with Replay**: Clients can resume from a specific event offset
@@ -5145,8 +5145,8 @@ flowchart TB
     end
 
     subgraph "Review Interface"
-        Dashboard["<span style='color:#000'>Streamlit Dashboard</span>"]
-        Dashboard --> ApprovalAgent
+        WebClient["<span style='color:#000'>Web Client</span>"]
+        WebClient --> ApprovalAgent
     end
 
     subgraph "Training Pipeline"
@@ -5158,7 +5158,7 @@ flowchart TB
     style Extractor fill:#ffcc80,stroke:#ef6c00,color:#000
     style ApprovalAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Storage fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#b0bec5,stroke:#546e7a,color:#000
+    style WebClient fill:#b0bec5,stroke:#546e7a,color:#000
     style Optimizer fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
@@ -5257,7 +5257,7 @@ See [Approval Workflow Module](./approval-workflow.md) for complete documentatio
 
 - ApprovalStorageImpl with Phoenix integration
 - ConfidenceExtractor implementations
-- Dashboard integration
+- Web client integration
 - Testing patterns
 
 ---

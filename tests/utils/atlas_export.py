@@ -3,7 +3,7 @@
 
 Eight video frames on two topics (rivers, volcanoes) whose multi-vector
 embeddings pool to points near one of two directions, and two query rows,
-one per topic, as the dashboard's query rows mark them (``is_query``).
+one per topic, marked as queries (``is_query``).
 """
 
 from __future__ import annotations

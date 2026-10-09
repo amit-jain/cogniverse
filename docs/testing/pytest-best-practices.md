@@ -1098,9 +1098,6 @@ graph TD
     core_unit["<span style='color:#000'>unit/</span>"]
     core_int["<span style='color:#000'>integration/</span>"]
 
-    dashboard["<span style='color:#000'><b>dashboard/</b><br/>UI integration tests</span>"]
-    dashboard_unit["<span style='color:#000'>unit/</span>"]
-
     e2e["<span style='color:#000'><b>e2e/</b><br/>cross-package end-to-end tests</span>"]
     e2e_deployment["<span style='color:#000'>deployment/</span>"]
 
@@ -1159,7 +1156,6 @@ graph TD
     root --> cli
     root --> common
     root --> core
-    root --> dashboard
     root --> e2e
     root --> evaluation
     root --> events
@@ -1177,8 +1173,6 @@ graph TD
     root --> utils
 
     admin --> admin_unit
-
-    dashboard --> dashboard_unit
 
     e2e --> e2e_deployment
 
@@ -1236,7 +1230,6 @@ graph TD
     style cli fill:#b0bec5,stroke:#546e7a,color:#000
     style common fill:#a5d6a7,stroke:#388e3c,color:#000
     style core fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style dashboard fill:#b0bec5,stroke:#546e7a,color:#000
     style e2e fill:#b0bec5,stroke:#546e7a,color:#000
     style evaluation fill:#ffcc80,stroke:#ef6c00,color:#000
     style events fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -1253,7 +1246,6 @@ graph TD
     style telemetry fill:#a5d6a7,stroke:#388e3c,color:#000
     style utils fill:#b0bec5,stroke:#546e7a,color:#000
     style admin_unit fill:#b0bec5,stroke:#546e7a,color:#000
-    style dashboard_unit fill:#b0bec5,stroke:#546e7a,color:#000
     style e2e_deployment fill:#b0bec5,stroke:#546e7a,color:#000
     style agents_unit fill:#ba68c8,stroke:#7b1fa2,color:#000
     style agents_int fill:#ba68c8,stroke:#7b1fa2,color:#000

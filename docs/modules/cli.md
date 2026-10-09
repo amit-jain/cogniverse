@@ -130,7 +130,7 @@ cogniverse status
 cogniverse logs runtime --follow
 ```
 
-`up` accepts `--llm {auto,builtin,external}` (default `auto`, which probes `localhost:11434` for a host LLM before falling back to the chart's builtin model) and `--image-source` to override the workspace directory used for image builds. `logs` targets one of `runtime`, `web`, `dashboard`, `vespa`, `phoenix`, `llm`, `argo`; `logs llm` checks for the `cogniverse-llm` statefulset first and prints a notice instead of erroring when the stack is running in external-LLM mode (no builtin pod).
+`up` accepts `--llm {auto,builtin,external}` (default `auto`, which probes `localhost:11434` for a host LLM before falling back to the chart's builtin model) and `--image-source` to override the workspace directory used for image builds. `logs` targets one of `runtime`, `web`, `vespa`, `phoenix`, `llm`, `argo`; `logs llm` checks for the `cogniverse-llm` statefulset first and prints a notice instead of erroring when the stack is running in external-LLM mode (no builtin pod).
 
 Services with no NodePort — currently the Argo server (it runs in its own namespace) reachable at `localhost:2746` — are bridged by detached, self-restarting `kubectl port-forward` daemons recorded in `/tmp/cogniverse-port-forwards.pids`. `up` and `start` establish them when the resolved cluster is the canonical dev cluster; each first reaps the daemons a prior run recorded, so repeated runs never orphan an earlier restart-loop still retrying its bind. `down` and `stop` reap them for that same cluster.
 
@@ -313,7 +313,6 @@ flowchart TB
     subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
         CLI["<span style='color:#000'>cogniverse-cli ◄─ YOU ARE HERE<br/>Deployment + operator client</span>"]
         Runtime["<span style='color:#000'>cogniverse-runtime</span>"]
-        Dashboard["<span style='color:#000'>cogniverse-dashboard</span>"]
     end
 
     CLI -->|helm/kubectl/k3d| K8s(("<span style='color:#000'>Kubernetes cluster</span>"))
@@ -322,7 +321,6 @@ flowchart TB
     style AppLayer fill:#90caf9,stroke:#1565c0,color:#000
     style CLI fill:#64b5f6,stroke:#1565c0,color:#000
     style Runtime fill:#64b5f6,stroke:#1565c0,color:#000
-    style Dashboard fill:#64b5f6,stroke:#1565c0,color:#000
 ```
 
 `cogniverse-cli` imports shared inference contracts from `cogniverse-foundation`.

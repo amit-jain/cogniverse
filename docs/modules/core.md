@@ -1858,7 +1858,6 @@ class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, Orchestr
 flowchart TB
     subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
         Runtime["<span style='color:#000'>cogniverse-runtime (FastAPI)</span>"]
-        Dashboard["<span style='color:#000'>cogniverse-dashboard (Streamlit)</span>"]
     end
 
     subgraph ImplLayer["<span style='color:#000'>Implementation Layer</span>"]
@@ -1884,7 +1883,6 @@ flowchart TB
 
     style AppLayer fill:#90caf9,stroke:#1565c0,color:#000
     style Runtime fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
     style ImplLayer fill:#ffcc80,stroke:#ef6c00,color:#000
     style Agents fill:#ffcc80,stroke:#ef6c00,color:#000
     style Vespa fill:#ffcc80,stroke:#ef6c00,color:#000

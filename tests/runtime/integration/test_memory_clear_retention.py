@@ -120,7 +120,7 @@ def memory_app(memory_store, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("entry", ["tenant", "admin", "mixin", "dashboard"])
+@pytest.mark.parametrize("entry", ["tenant", "admin", "mixin", "manager"])
 async def test_clear_all_removes_205_active_and_archived_rows(
     memory_store, memory_app, entry
 ):
@@ -153,7 +153,7 @@ async def test_clear_all_removes_205_active_and_archived_rows(
         mixin.set_tenant_for_context(target.tenant_id)
         assert await asyncio.to_thread(mixin.clear_memory) is True
     else:
-        # The dashboard's clear button calls this manager entrypoint directly.
+        # A caller holding a manager calls this entrypoint directly.
         assert (
             await asyncio.to_thread(
                 target.clear_agent_memory, target.tenant_id, "_user_memories"

@@ -254,7 +254,7 @@ class RerankerSearchResult:
 ```
 
 `QueryModality` is a closed taxonomy shared with the offline routing/optimization
-pipeline (`routing/modality_*` modules, `routing/xgboost_meta_models.py`, dashboards,
+pipeline (`routing/modality_*` modules, `routing/xgboost_meta_models.py`,
 `evaluation/quality_monitor.py`) — it doubles as a dict key for per-modality
 analytics buckets and XGBoost feature schemas, so adding or removing a value is a
 training-contract change for the offline optimization pipeline, not a local edit.

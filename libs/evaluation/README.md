@@ -286,7 +286,6 @@ Implementation Layer:
     ↓
 Application Layer:
   cogniverse-runtime (evaluation endpoints)
-  cogniverse-dashboard (evaluation visualization)
 ```
 
 ## Development

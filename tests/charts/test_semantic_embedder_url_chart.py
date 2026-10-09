@@ -3,7 +3,7 @@
 The semantic embedder has no in-process fallback: a process with neither
 ``COGNIVERSE_SEMANTIC_EMBED_URL`` nor a ``denseon`` entry in
 ``INFERENCE_SERVICE_URLS`` fails on its first embedding. Each container the
-chart renders on the runtime or dashboard image must therefore resolve the
+chart renders on the runtime image must therefore resolve the
 runtime's embedder URL, read from the same render.
 """
 
@@ -27,7 +27,6 @@ EXPECTED_APP_CONTAINERS = frozenset(
     {
         "Deployment:cogniverse-runtime/runtime",
         "Deployment:cogniverse-quality-monitor/quality-monitor",
-        "Deployment:cogniverse-dashboard/dashboard",
         "Deployment:cogniverse-ingestor/ingestor",
         "CronWorkflow:cogniverse-daily-cleanup/cleanup",
         "CronWorkflow:cogniverse-synthetic-generation/generate-synthetic",
@@ -40,7 +39,7 @@ EXPECTED_APP_CONTAINERS = frozenset(
         "WorkflowTemplate:cogniverse-optimization-runner/run-optimizer",
     }
 )
-APP_IMAGES = ("cogniverse/runtime", "cogniverse/dashboard")
+APP_IMAGES = ("cogniverse/runtime",)
 
 pytestmark = pytest.mark.skipif(
     shutil.which("helm") is None,
@@ -58,9 +57,6 @@ def _render(*set_args: str) -> list:
         "runtime.qualityMonitor.tenantId=test-tenant",
         "--set",
         "hostStorage.backup.enabled=true",
-        # Disabled by default; enabled so its container stays checked.
-        "--set",
-        "dashboard.enabled=true",
     ]
     for value in set_args:
         args += ["--set", value]

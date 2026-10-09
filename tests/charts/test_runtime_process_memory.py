@@ -39,9 +39,7 @@ def test_the_runtime_image_caps_malloc_arenas_at_two():
 
 @pytest.mark.parametrize("backend", ["cpu", "cuda", "rocm"])
 def test_no_workload_overrides_the_image_s_arena_cap(backend):
-    containers = _rendered_cogniverse_containers(
-        f"runtime.backend={backend}", f"dashboard.backend={backend}"
-    )
+    containers = _rendered_cogniverse_containers(f"runtime.backend={backend}")
 
     assert {
         "Deployment/cogniverse-runtime",

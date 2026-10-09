@@ -9,7 +9,7 @@ A hands-on companion to [Intelligent Query Routing](../architecture/intelligent-
 ### Environment Setup
 
 ```bash
-# Clone and install (UV workspace — resolves all 13 packages)
+# Clone and install (UV workspace — resolves all 12 packages)
 git clone <repo-url> && cd cogniverse
 uv sync
 

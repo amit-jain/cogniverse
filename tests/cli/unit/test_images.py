@@ -35,7 +35,6 @@ DEV_VERSION = "0.1.dev5+gabc1234"
 DEV_TAG = "0.1.dev5-gabc1234"
 DEV_VERSIONS = {
     "runtime": "0.1.dev11+gaaa111aaa",
-    "dashboard": "0.1.dev12+gbbb222bbb",
     "web": "0.1.dev19+giii999iii",
     "pylate": "0.1.dev13+gccc333ccc",
     "gliner": "0.1.dev14+gddd444ddd",
@@ -57,10 +56,9 @@ def _make_project_root(
     colbert_pylate: bool = False,
     code_colbert_pylate: bool = False,
     web: bool = True,
-    dashboard: bool = False,
 ) -> Path:
     """A project root with just the chart files images.py reads: Chart.yaml
-    (appVersion) and values.yaml (web/dashboard and inference.<svc> enabled
+    (appVersion) and values.yaml (web and inference.<svc> enabled
     flags → build set). The UI defaults match the shipped chart."""
     chart_dir = tmp_path / "charts" / "cogniverse"
     chart_dir.mkdir(parents=True)
@@ -69,7 +67,6 @@ def _make_project_root(
     )
     values = {
         "web": {"enabled": web},
-        "dashboard": {"enabled": dashboard},
         "inference": {
             "clap_embed": {"enabled": clap_embed},
             "face_embed": {"enabled": face_embed},
@@ -114,7 +111,6 @@ class TestPerImageDevVersion:
 
     ALL_IMAGE_FAMILIES = {
         "runtime",
-        "dashboard",
         "web",
         "pylate",
         "gliner",
@@ -134,69 +130,69 @@ class TestPerImageDevVersion:
             "pyproject.toml",
             "pyproject.toml",
             "[project]\nname = 'demo'\nversion = '0.1.0'\n# changed\n",
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
-        ("uv.lock", "uv.lock", "lock-version = 2\n", {"dashboard", "runtime"}),
+        ("uv.lock", "uv.lock", "lock-version = 2\n", {"runtime"}),
         (
             "libs/sdk",
             "libs/sdk/input.py",
             "VALUE = 'changed'\n",
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
         (
             "libs/foundation",
             "libs/foundation/input.py",
             "VALUE = 'changed'\n",
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
         (
             "libs/evaluation",
             "libs/evaluation/input.py",
             "VALUE = 'changed'\n",
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
         (
             "libs/core",
             "libs/core/input.py",
             "VALUE = 'changed'\n",
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
         (
             "libs/synthetic",
             "libs/synthetic/input.py",
             "VALUE = 'changed'\n",
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
         (
             "libs/vespa",
             "libs/vespa/input.py",
             "VALUE = 'changed'\n",
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
         (
             "libs/agents",
             "libs/agents/input.py",
             "VALUE = 'changed'\n",
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
         (
             "libs/telemetry-phoenix",
             "libs/telemetry-phoenix/input.py",
             "VALUE = 'changed'\n",
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
         ("libs/runtime", "libs/runtime/input.py", "VALUE = 'changed'\n", {"runtime"}),
         (
             "configs/schemas",
             "configs/schemas/input.json",
             "{}\n",
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
         (
             "configs/config.json",
             "configs/config.json",
             '{"changed": true}\n',
-            {"dashboard", "runtime"},
+            {"runtime"},
         ),
         (
             "configs/agent_policies",
@@ -210,19 +206,6 @@ class TestPerImageDevVersion:
             "tests/\nsrc/\nscripts/run_*.py\n*.md\n# changed\n",
             ALL_IMAGE_FAMILIES - {"web"},
         ),
-        (
-            "libs/dashboard/Dockerfile",
-            "libs/dashboard/Dockerfile",
-            "FROM scratch\n",
-            {"dashboard"},
-        ),
-        (
-            "libs/dashboard",
-            "libs/dashboard/input.py",
-            "VALUE = 'changed'\n",
-            {"dashboard"},
-        ),
-        ("scripts", "scripts/dashboard_tab.py", "VALUE = 'changed'\n", {"dashboard"}),
         (
             "clients/web/Dockerfile",
             "clients/web/Dockerfile",
@@ -342,8 +325,8 @@ class TestPerImageDevVersion:
             "clients/web/src/server/app.ts": "export const changed = false;\n",
             "clients/web/tests/server.test.ts": "export {};\n",
             "libs/core/module.py": "CORE = 'base'\n",
-            "libs/dashboard/module.py": "DASHBOARD = 'base'\n",
             "libs/runtime/module.py": "RUNTIME = 'base'\n",
+            "libs/runtime/NOTES.md": "base\n",
             "scripts/run_ignored.py": "VALUE = 'base'\n",
             "deploy/pylate/Dockerfile": "FROM scratch\n",
             "deploy/gliner/Dockerfile": "FROM scratch\n",
@@ -390,14 +373,14 @@ class TestPerImageDevVersion:
 
         assert self._versions(repo_root) == before
 
-    def test_dashboard_commit_changes_only_dashboard_tag(self, tmp_path: Path) -> None:
+    def test_runtime_commit_changes_only_runtime_tag(self, tmp_path: Path) -> None:
         repo_root = self._seed_git_repo(tmp_path)
         before = self._versions(repo_root)
 
-        self._commit(repo_root, "libs/dashboard/module.py", "DASHBOARD = 'changed'\n")
+        self._commit(repo_root, "libs/runtime/module.py", "RUNTIME = 'changed'\n")
         after = self._versions(repo_root)
 
-        assert self._changed_images(before, after) == {"dashboard"}
+        assert self._changed_images(before, after) == {"runtime"}
 
     def test_web_tag_follows_its_own_context_ignore_rules(self, tmp_path: Path) -> None:
         """The web image builds from clients/web, so its source counts even
@@ -426,18 +409,18 @@ class TestPerImageDevVersion:
         repo_root = self._seed_git_repo(tmp_path)
         before = self._versions(repo_root)
 
-        self._commit(repo_root, "scripts/run_ignored.py", "VALUE = 'ignored change'\n")
+        self._commit(repo_root, "libs/runtime/NOTES.md", "ignored change\n")
 
         assert self._versions(repo_root) == before
 
-    def test_core_commit_changes_both_app_image_tags(self, tmp_path: Path) -> None:
+    def test_core_commit_changes_the_runtime_tag(self, tmp_path: Path) -> None:
         repo_root = self._seed_git_repo(tmp_path)
         before = self._versions(repo_root)
 
         self._commit(repo_root, "libs/core/module.py", "CORE = 'changed'\n")
         after = self._versions(repo_root)
 
-        assert self._changed_images(before, after) == {"dashboard", "runtime"}
+        assert self._changed_images(before, after) == {"runtime"}
 
     def test_pylate_deploy_commit_changes_only_pylate_tag(self, tmp_path: Path) -> None:
         repo_root = self._seed_git_repo(tmp_path)
@@ -578,7 +561,7 @@ class TestDeploymentImageIdentity:
         values_file = root / "charts" / "cogniverse" / "values.yaml"
         set_overrides = {
             "runtime.backend": "rocm",
-            "dashboard.backend": "rocm",
+            "web.enabled": "true",
         }
 
         identity = images_mod.dev_deployment_identity(
@@ -594,7 +577,7 @@ class TestDeploymentImageIdentity:
             "values_files": ("charts/cogniverse/values.yaml",),
             "set_overrides": {
                 "runtime.backend": "rocm",
-                "dashboard.backend": "rocm",
+                "web.enabled": "true",
             },
             "image_tags": (
                 f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}",
@@ -604,7 +587,7 @@ class TestDeploymentImageIdentity:
                 f"cogniverse/pylate:{DEV_TAGS['pylate']}-rocm",
             ),
             "chart_digest": (
-                "sha256:d7bd3773fdbb4c2713ef1d2f6c422c45fa783a83dbdfdca464ec4d1fccc4232b"
+                "sha256:48bab51ad953b64eee4c6b595bb2e021f40a0ad68ca7e85c86e57abe206c2ad5"
             ),
         }
 
@@ -990,15 +973,12 @@ class TestBuildImages:
     def test_ui_images_follow_their_enabled_flags(
         self, mock_run: object, tmp_path: Path
     ) -> None:
-        """An overlay that turns the dashboard on and the web client off builds
-        the dashboard for the host backend, with the workspace build args, and
-        no web image."""
+        """An overlay that turns the web client off builds the runtime for the
+        host backend, with the workspace build args, and no web image."""
         _completed(mock_run)
         root = _make_project_root(tmp_path)
         overlay = tmp_path / "values.ui.yaml"
-        overlay.write_text(
-            yaml.safe_dump({"web": {"enabled": False}, "dashboard": {"enabled": True}})
-        )
+        overlay.write_text(yaml.safe_dump({"web": {"enabled": False}}))
 
         built = build_images(
             root, torch_backend="rocm", values_files=[overlay], versions=DEV_VERSIONS
@@ -1006,25 +986,24 @@ class TestBuildImages:
 
         assert built == [
             f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}",
-            f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}",
             f"cogniverse/gliner:{DEV_TAGS['gliner']}",
         ]
-        dashboard_cmd = next(
+        runtime_cmd = next(
             call[0][0]
             for call in mock_run.call_args_list  # type: ignore[attr-defined]
-            if f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}" in call[0][0]
+            if f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}" in call[0][0]
         )
-        assert dashboard_cmd == [
+        assert runtime_cmd == [
             "docker",
             "build",
             "-f",
-            "libs/dashboard/Dockerfile",
+            "libs/runtime/Dockerfile",
             "--build-arg",
             "TORCH_BACKEND=rocm",
             "--build-arg",
-            f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSIONS['dashboard']}",
+            f"SETUPTOOLS_SCM_PRETEND_VERSION={DEV_VERSIONS['runtime']}",
             "-t",
-            f"cogniverse/dashboard-rocm:{DEV_TAGS['dashboard']}",
+            f"cogniverse/runtime-rocm:{DEV_TAGS['runtime']}",
             ".",
         ]
 
@@ -1303,18 +1282,17 @@ class TestDevImageSetValues:
             "inference.gliner.image.tag": DEV_TAGS["gliner"],
         }
 
-    def test_enabled_dashboard_gets_its_backend_tag(self, tmp_path: Path) -> None:
-        root = _make_project_root(tmp_path, web=False, dashboard=True)
+    def test_disabled_web_gets_no_tag(self, tmp_path: Path) -> None:
+        root = _make_project_root(tmp_path, web=False)
         overrides = dev_image_set_values(
             root, torch_backend="rocm", versions=DEV_VERSIONS
         )
         assert overrides == {
             "runtime.imagesByBackend.rocm.tag": DEV_TAGS["runtime"],
-            "dashboard.imagesByBackend.rocm.tag": DEV_TAGS["dashboard"],
             "inference.gliner.image.tag": DEV_TAGS["gliner"],
         }
 
-    def test_backend_scopes_runtime_and_dashboard(self, tmp_path: Path) -> None:
+    def test_backend_scopes_the_runtime(self, tmp_path: Path) -> None:
         root = _make_project_root(tmp_path)
         overrides = dev_image_set_values(
             root, torch_backend="rocm", versions=DEV_VERSIONS
@@ -1616,8 +1594,8 @@ class TestPruneSupersededImages:
             "cogniverse/runtime-rocm:0.1.dev2420-g813e8e5c8\taaa1",
             "cogniverse/runtime-rocm:0.1.dev2418-g999492e27\taaa2",
             "cogniverse/runtime-rocm:0.1.dev2397-g0f2366466\taaa3",
-            "cogniverse/dashboard-rocm:0.1.dev2420-g813e8e5c8\tbbb1",
-            "cogniverse/dashboard-rocm:0.1.dev2397-g0f2366466\tbbb3",
+            "cogniverse/web:0.1.dev2420-g813e8e5c8\tbbb1",
+            "cogniverse/web:0.1.dev2397-g0f2366466\tbbb3",
             "cogniverse/gliner:0.1.dev2420-g813e8e5c8\tccc1",
             "vespaengine/vespa:8.668.5\tddd1",
         ]
@@ -1655,7 +1633,7 @@ class TestPruneSupersededImages:
 
     CURRENT_TAGS = [
         "cogniverse/runtime-rocm:0.1.dev2420-g813e8e5c8",
-        "cogniverse/dashboard-rocm:0.1.dev2420-g813e8e5c8",
+        "cogniverse/web:0.1.dev2420-g813e8e5c8",
         "cogniverse/gliner:0.1.dev2420-g813e8e5c8",
     ]
 
@@ -1713,7 +1691,7 @@ class TestPruneSupersededImages:
         calls: list = []
         current_tags = [
             "cogniverse/runtime-rocm:0.1.dev2420-g813e8e5c8",
-            "cogniverse/dashboard-rocm:0.1.dev2397-g0f2366466",
+            "cogniverse/web:0.1.dev2397-g0f2366466",
             "cogniverse/gliner:0.1.dev2420-g813e8e5c8",
         ]
 

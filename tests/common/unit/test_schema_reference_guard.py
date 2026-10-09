@@ -10,10 +10,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 SCHEMA_REFERENCE_FIXTURES = {
-    "libs/dashboard/cogniverse_dashboard/tabs/optimization.py": (
-        "Pydantic training example type identities",
-        "EntityExtractionExampleSchema ProfileSelectionExampleSchema QueryEnhancementExampleSchema RoutingExperienceSchema",
-    ),
     "libs/foundation/cogniverse_foundation/telemetry/context.py": (
         "Telemetry label when schema context is unavailable",
         "unknown",
@@ -169,18 +165,6 @@ SCHEMA_REFERENCE_FIXTURES = {
     "tests/core/unit/test_schema_registry_errors.py": (
         "Missing schema error propagation",
         "video_missing",
-    ),
-    "tests/dashboard/integration/test_approval_queue_regeneration_real.py": (
-        "Pydantic training example type identity",
-        "ProfileSelectionExampleSchema",
-    ),
-    "tests/dashboard/unit/test_chat_answer_format.py": (
-        "Synthetic tenant prefix in captured search results",
-        "video_colpali_smol500_mv_frame_flywheel_org_",
-    ),
-    "tests/dashboard/unit/test_optimization_forms.py": (
-        "Pydantic training example type identities",
-        "ProfileSelectionExampleSchema WorkflowExecutionSchema",
     ),
     "tests/evaluation/conftest.py": (
         "Injected evaluation strategy metadata",

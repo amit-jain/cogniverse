@@ -198,14 +198,16 @@ def test_disabling_the_web_client_removes_it():
 
 
 @pytest.mark.parametrize("values", [None, "values.k3s.yaml"])
-def test_the_dashboard_is_off_by_default_and_still_deployable(values):
+def test_the_web_client_is_the_only_ui_the_chart_renders(values):
+    """An overlay that still sets ``dashboard.enabled`` renders nothing beyond
+    the defaults: the web client is the chart's one UI."""
     default = _render(values=values)
-    enabled = _render("dashboard.enabled=true", values=values)
+    stale = _render("dashboard.enabled=true", values=values)
 
-    assert "cogniverse-dashboard" not in _names(default, "Deployment")
-    assert "cogniverse-dashboard" not in _names(default, "Service")
-    assert "cogniverse-dashboard" in _names(enabled, "Deployment")
-    assert "cogniverse-dashboard" in _names(enabled, "Service")
+    assert "cogniverse-web" in _names(default, "Deployment")
+    assert "cogniverse-web" in _names(default, "Service")
+    assert _names(stale, "Deployment") == _names(default, "Deployment")
+    assert _names(stale, "Service") == _names(default, "Service")
 
 
 @pytest.mark.parametrize(

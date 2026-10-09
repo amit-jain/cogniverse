@@ -1,6 +1,6 @@
 # Cogniverse
 
-Multi-agent platform for search and analysis over video, audio, image, and document content. Content is embedded with ColQwen3 (ColPali-style), X-CLIP, LateOn, DenseOn, and CLAP models and retrieved from Vespa. Agents use DSPy for reasoning and coordinate over the A2A protocol, with streaming responses and Phoenix tracing. 13-package uv workspace with multi-tenant isolation.
+Multi-agent platform for search and analysis over video, audio, image, and document content. Content is embedded with ColQwen3 (ColPali-style), X-CLIP, LateOn, DenseOn, and CLAP models and retrieved from Vespa. Agents use DSPy for reasoning and coordinate over the A2A protocol, with streaming responses and Phoenix tracing. 12-package uv workspace with multi-tenant isolation.
 
 ## Features
 
@@ -12,7 +12,7 @@ Multi-agent platform for search and analysis over video, audio, image, and docum
 - **Multi-tenant**: Schema-per-tenant Vespa isolation, per-tenant Phoenix projects, and per-tenant memory
 - **Observability**: Phoenix traces and experiments, plus the Cogniverse web client (chat with every agent and operations views)
 - **Evaluation**: Provider-agnostic reference-free, visual LLM, and classical retrieval metrics
-- **Layered workspace**: 13 packages (Foundation → Core → Implementation → Application)
+- **Layered workspace**: 12 packages (Foundation → Core → Implementation → Application)
 
 ## Use Cases
 
@@ -128,7 +128,7 @@ uv run python scripts/run_experiments_with_visualization.py \
 
 ```text
 cogniverse/
-├── libs/                         # SDK Packages (UV workspace - 13 packages)
+├── libs/                         # SDK Packages (UV workspace - 12 packages)
 │   ├── sdk/                      # cogniverse_sdk (Foundation Layer)
 │   │   └── cogniverse_sdk/
 │   │       ├── interfaces/       # Backend interfaces
@@ -176,10 +176,6 @@ cogniverse/
 │   │       ├── routers/          # API route modules
 │   │       ├── ingestion/        # Content ingestion pipeline
 │   │       └── ingestion_worker/ # Async ingestion worker
-│   ├── dashboard/                # cogniverse_dashboard (Application Layer)
-│   │   └── cogniverse_dashboard/
-│   │       ├── tabs/             # Per-tab Streamlit views
-│   │       └── app.py            # Streamlit entrypoint
 │   ├── cli/                      # cogniverse_cli (Application Layer)
 │   │   └── cogniverse_cli/
 │   │       └── main.py           # `cogniverse` CLI entrypoint
@@ -223,7 +219,6 @@ Implementation Layer:
 
 Application Layer:
   cogniverse_runtime (depends on sdk, foundation, core, synthetic, agents, telemetry_phoenix; vespa is an optional extra)
-  cogniverse_dashboard (depends on sdk, core, agents, evaluation, vespa, telemetry_phoenix)
   cogniverse_cli (depends on foundation)
   cogniverse_messaging (no internal package dependencies)
 ```
@@ -471,7 +466,7 @@ Published at https://amit-jain.github.io/cogniverse/.
 
 ### Architecture
 - [Architecture Overview](docs/architecture/overview.md) - System design and multi-tenant architecture
-- [SDK Architecture](docs/architecture/sdk-architecture.md) - UV workspace and 13-package layered architecture
+- [SDK Architecture](docs/architecture/sdk-architecture.md) - UV workspace and 12-package layered architecture
 - [Multi-Tenant Architecture](docs/architecture/multi-tenant.md) - Tenant isolation patterns
 - [System Flows](docs/architecture/system-flows.md) - 20+ architectural diagrams
 

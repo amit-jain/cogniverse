@@ -1,4 +1,4 @@
-"""The runtime and dashboard images provision the pinned spaCy model from the lock.
+"""The runtime image provisions the pinned spaCy model from the lock.
 
 The model is not an exported dependency of cogniverse-agents; the root
 ``runtime-models`` dependency group owns it. Each image's builder stage runs
@@ -35,10 +35,6 @@ MODEL_SYNC = "uv sync --only-group runtime-models --inexact --frozen"
 IMAGE_SYNCS = {
     "runtime": [
         "uv sync --package cogniverse-runtime --extra all --no-dev --frozen",
-        MODEL_SYNC,
-    ],
-    "dashboard": [
-        "uv sync --package cogniverse-dashboard --no-dev --frozen",
         MODEL_SYNC,
     ],
 }
@@ -181,28 +177,33 @@ def test_the_image_sync_installs_and_loads_the_pinned_model(image, tmp_path):
     assert _probe(env_dir) == EXPECTED_PROBE
 
 
+# Two builds of the same image at once, each into its own environment, share
+# the uv cache the way two image builds on one host do.
+CONCURRENT_BUILDS = ("runtime-a", "runtime-b")
+
+
 def test_concurrent_image_syncs_each_provision_the_model(tmp_path):
-    barrier = threading.Barrier(len(IMAGE_SYNCS))
+    barrier = threading.Barrier(len(CONCURRENT_BUILDS))
     outcomes: dict[str, tuple[float, float, set[str], set[str]]] = {}
     errors: list[BaseException] = []
 
-    def build(image: str) -> None:
+    def build(name: str) -> None:
         try:
             barrier.wait(timeout=60)
             start = time.monotonic()
-            after_package, after_model = _provision(image, tmp_path / image)
-            outcomes[image] = (start, time.monotonic(), after_package, after_model)
+            after_package, after_model = _provision("runtime", tmp_path / name)
+            outcomes[name] = (start, time.monotonic(), after_package, after_model)
         except BaseException as exc:  # recorded and re-raised on the main thread
             errors.append(exc)
 
-    threads = [threading.Thread(target=build, args=(i,)) for i in IMAGE_SYNCS]
+    threads = [threading.Thread(target=build, args=(i,)) for i in CONCURRENT_BUILDS]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join(timeout=1800)
 
     assert errors == []
-    assert set(outcomes) == set(IMAGE_SYNCS)
+    assert set(outcomes) == set(CONCURRENT_BUILDS)
     (s1, e1, *_), (s2, e2, *_) = outcomes.values()
     assert max(s1, s2) < min(e1, e2)
     for image, (_, _, after_package, after_model) in outcomes.items():

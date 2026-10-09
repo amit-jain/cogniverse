@@ -44,7 +44,6 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/ -m "not ci_safe" -v
 
 ### Application Layer
 - **cogniverse-runtime** (`tests/ingestion/`): Multi-modal pipeline, FastAPI server, tenant middleware
-- **cogniverse-dashboard** (`tests/dashboard/`): Streamlit analytics, Phoenix experiments, UMAP viz
 
 ## Test Organization
 
@@ -173,9 +172,6 @@ uv run python scripts/test_ingestion.py --integration --ci-safe
 
 # System integration tests
 uv run pytest tests/system/ -v
-
-# Dashboard tests
-uv run pytest tests/dashboard/ -v
 ```
 
 ## Running Tests by Modality

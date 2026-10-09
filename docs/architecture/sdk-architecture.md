@@ -23,13 +23,13 @@ Cogniverse is structured as a **UV workspace monorepo** with a layered architect
 - **Modular Design**: Clear separation of concerns across Foundation, Core, Implementation, and Application layers
 - **Dependency Management**: Explicit package boundaries with workspace-based dependency resolution
 - **Independent Testing**: Test packages in isolation or together for unit and integration testing
-- **Selective Deployment**: Deploy only what's needed (e.g., runtime without dashboard, Vespa without agents)
+- **Selective Deployment**: Deploy only what's needed (e.g., runtime without messaging, Vespa without agents)
 - **Faster Iteration**: Work on specific packages without full system overhead
 - **Multi-Modal Support**: Unified document model across video, audio, images, documents, text, and dataframes
 
 ### Key Statistics
 
-- **Total Packages**: 13 packages in layered architecture
+- **Total Packages**: 12 packages in layered architecture
 - **Workspace Location**: `libs/` directory
 - **Python Version**: >= 3.11 (sdk) or >= 3.12 (all others)
 - **Build System**: Hatchling for all packages
@@ -54,7 +54,6 @@ Implementation Layer:
 
 Application Layer:
 ├── runtime/       # FastAPI server and ingestion
-├── dashboard/     # Streamlit analytics UI
 ├── finetuning/    # LLM/embedding fine-tuning infrastructure
 ├── messaging/     # Telegram messaging gateway
 └── cli/           # cogniverse CLI (up, status, index, graph, etc.)
@@ -109,8 +108,7 @@ cogniverse/
 │   │       └── ...
 │   ├── agents/
 │   ├── vespa/
-│   ├── runtime/
-│   └── dashboard/
+│   └── runtime/
 ├── tests/                      # Workspace-level tests
 ├── scripts/                    # Development scripts
 └── docs/                       # Documentation
@@ -502,38 +500,7 @@ cogniverse_runtime/
 
 ---
 
-#### Package 10: cogniverse-dashboard
-
-**Purpose**: Streamlit analytics UI with Phoenix integration for experiment visualization.
-
-**Package Name**: `cogniverse-dashboard` (installable)
-**Import Name**: `cogniverse_dashboard` (Python import)
-**Layer**: Application
-
-#### Module Structure
-
-```text
-cogniverse_dashboard/
-├── __init__.py
-├── app.py     # Main Streamlit application
-├── tabs/      # Dashboard tabs
-└── utils/     # Phoenix launcher, data manager
-```
-
-> See `libs/dashboard/cogniverse_dashboard/` for complete structure
-> Dependencies: `libs/dashboard/pyproject.toml`
-
-#### Key Responsibilities
-
-- **Analytics Dashboard**: Streamlit application for experiment visualization and system metrics
-- **Phoenix Integration**: Phoenix server launcher and data management utilities
-- **Experiment Management**: Browse and compare evaluation experiments
-- **Embedding Visualization**: UMAP plots of multi-modal embeddings
-- **Multi-Tenant Analytics**: Per-tenant dashboards and experiment tracking
-
----
-
-#### Package 11: cogniverse-finetuning
+#### Package 10: cogniverse-finetuning
 
 **Purpose**: End-to-end fine-tuning infrastructure for LLM agents and embedding models.
 
@@ -594,7 +561,7 @@ print(f"Adapter saved to: {result.adapter_path}")
 
 ---
 
-#### Package 12: cogniverse-messaging
+#### Package 11: cogniverse-messaging
 
 **Purpose**: Telegram messaging gateway with invite-based authentication and multi-tenant routing.
 
@@ -628,7 +595,7 @@ cogniverse_messaging/
 
 ---
 
-#### Package 13: cogniverse-cli
+#### Package 12: cogniverse-cli
 
 **Purpose**: Command-line interface for managing Cogniverse deployments.
 
@@ -693,7 +660,6 @@ flowchart TD
 
     %% Application Layer
     runtime["<span style='color:#000'><b>cogniverse-runtime</b><br/>FastAPI server</span>"]
-    dashboard["<span style='color:#000'><b>cogniverse-dashboard</b><br/>Streamlit UI</span>"]
     finetuning["<span style='color:#000'><b>cogniverse-finetuning</b><br/>LLM/embedding training</span>"]
     messaging["<span style='color:#000'><b>cogniverse-messaging</b><br/>Telegram gateway</span>"]
     cli["<span style='color:#000'><b>cogniverse-cli</b><br/>Deployment CLI</span>"]
@@ -727,12 +693,6 @@ flowchart TD
     runtime -.-> vespa
     runtime --> agents
     runtime --> phoenix
-    dashboard --> sdk
-    dashboard --> core
-    dashboard --> agents
-    dashboard --> evaluation
-    dashboard --> vespa
-    dashboard --> phoenix
     finetuning --> sdk
     finetuning --> core
     finetuning --> foundation
@@ -748,7 +708,7 @@ flowchart TD
     class sdk,foundation foundationStyle
     class evaluation,core,phoenix,synthetic coreStyle
     class agents,vespa implStyle
-    class runtime,dashboard,finetuning,messaging,cli appStyle
+    class runtime,finetuning,messaging,cli appStyle
 ```
 
 **Key Principles**:
@@ -760,7 +720,7 @@ flowchart TD
 - **Telemetry-Phoenix is a Plugin**: Depends on Core + Evaluation, auto-discovered via entry points
 - **Synthetic depends on SDK + Foundation + Core**: consumed by agents (Implementation) and finetuning (Application) layers
 - **Implementation Layer depends on Core**: Agents and Vespa build on Core
-- **Application Layer depends on lower layers**: Runtime depends on SDK + Core + Agents + Synthetic + Telemetry-Phoenix (with optional Vespa); Dashboard depends on SDK + Core + Agents + Evaluation + Vespa + Telemetry-Phoenix; Finetuning depends on SDK + Core + Foundation + Agents + Synthetic
+- **Application Layer depends on lower layers**: Runtime depends on SDK + Core + Agents + Synthetic + Telemetry-Phoenix (with optional Vespa); Finetuning depends on SDK + Core + Foundation + Agents + Synthetic
 - **Messaging and CLI have no internal workspace dependencies**: `cogniverse-messaging` and `cogniverse-cli` declare zero `cogniverse-*` packages in `pyproject.toml` — they talk to `cogniverse-runtime` only over HTTP, not via direct import
 - **No Circular Dependencies**: Clean layered hierarchy with dependencies flowing upward
 - **Optional Dependencies**: Runtime can work without Vespa; agents is required because mounted routers import it when the application starts
@@ -874,7 +834,7 @@ uv run python scripts/run_ingestion.py \
     --video_dir data/videos \
     --backend vespa
 
-# Run experiments (uses agents + core + dashboard)
+# Run experiments (uses agents + core)
 uv run python scripts/run_experiments_with_visualization.py \
     --tenant-id acme:acme \
     --dataset-path data/queries.csv \
@@ -941,7 +901,6 @@ tests/
 │   └── integration/
 ├── synthetic/           # Synthetic data generation tests
 │   └── integration/
-├── dashboard/           # Dashboard tests (single file)
 ├── system/              # System integration tests
 ├── ui/                  # UI tests
 │   └── integration/
@@ -1192,17 +1151,6 @@ from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 from cogniverse_runtime.ingestion.pipeline_builder import VideoIngestionPipelineBuilder
 ```
 
-**Dashboard**:
-
-```python
-# Dashboard is a Streamlit app - run via:
-#   uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
-
-# Phoenix start + data management are CLI scripts (not dashboard imports):
-#   uv run python scripts/start_phoenix.py
-#   uv run python scripts/manage_phoenix_data.py backup
-```
-
 ### Cross-Package Imports
 
 **Agents using Core and Vespa**:
@@ -1304,16 +1252,16 @@ bump2version minor  # 0.1.0 -> 0.2.0
 
 ### Compatibility Matrix
 
-| Core Version | Agents | Vespa | Runtime | Dashboard |
-|-------------|--------|-------|---------|-----------|
-| 0.1.0       | 0.1.0  | 0.1.0 | 0.1.0   | 0.1.0     |
+| Core Version | Agents | Vespa | Runtime |
+|-------------|--------|-------|---------|
+| 0.1.0       | 0.1.0  | 0.1.0 | 0.1.0   |
 
 **Future independent versioning**:
 
-| Core Version | Agents | Vespa | Runtime | Dashboard |
-|-------------|--------|-------|---------|-----------|
-| 1.2.0       | 1.0.0  | 1.1.0 | 1.0.0   | 1.3.0     |
-| 1.3.0       | 1.1.0  | 1.1.0 | 1.1.0   | 1.4.0     |
+| Core Version | Agents | Vespa | Runtime |
+|-------------|--------|-------|---------|
+| 1.2.0       | 1.0.0  | 1.1.0 | 1.0.0   |
+| 1.3.0       | 1.1.0  | 1.1.0 | 1.1.0   |
 
 ---
 
@@ -1547,10 +1495,9 @@ Cogniverse SDK uses a **UV workspace** with a layered architecture for multi-mod
 **Application Layer:**
 
 9. **cogniverse-runtime**: FastAPI server (multi-modal ingestion, tenant management, per-request tenant validation)
-10. **cogniverse-dashboard**: Streamlit UI (analytics, Phoenix experiments, UMAP visualization)
-11. **cogniverse-finetuning**: LLM/embedding fine-tuning infrastructure (LoRA/PEFT, DPO, contrastive learning, Modal GPU integration)
-12. **cogniverse-messaging**: Telegram messaging gateway (invite auth, command routing, Mem0 conversation history)
-13. **cogniverse-cli**: cogniverse CLI (`up`, `status`, `index`, `graph`, `code` commands)
+10. **cogniverse-finetuning**: LLM/embedding fine-tuning infrastructure (LoRA/PEFT, DPO, contrastive learning, Modal GPU integration)
+11. **cogniverse-messaging**: Telegram messaging gateway (invite auth, command routing, Mem0 conversation history)
+12. **cogniverse-cli**: cogniverse CLI (`up`, `status`, `index`, `graph`, `code` commands)
 
 **Key Characteristics**:
 

@@ -126,7 +126,7 @@ gateway agent refreshes on a `GATEWAY_ARTIFACT_TTL_S` interval).
   `ExperimentMetrics` row.
 - **Canary Rollout + Rollback**: `ArtifactManager`'s three-slot (`active`/`canary`/`retired`) state machine and
   the `--mode rollback` CLI restore previously-snapshotted prompt/demo versions.
-- **On-Demand Workflows**: the dashboard (or any client) triggers `POST /admin/tenant/{id}/optimize`, which
+- **On-Demand Workflows**: the web client (or any client) triggers `POST /admin/tenant/{id}/optimize`, which
   submits an Argo Workflow referencing the `cogniverse-optimization-runner` `WorkflowTemplate`.
 - **Scheduled Workflows**: helm-chart `CronWorkflow`s run `gateway-thresholds`/`entity-extraction`/`simba`/
   `profile`/`workflow` weekly, `gateway-thresholds` daily, `cleanup` daily, `synthetic` weekly, a forced
@@ -153,11 +153,11 @@ from cogniverse_synthetic import OPTIMIZER_REGISTRY
 
 ```mermaid
 flowchart TB
-    Dashboard["<span style='color:#000'>Dashboard / any client<br/>POST /admin/tenant/{id}/optimize</span>"]
+    WebClient["<span style='color:#000'>Web client / any client<br/>POST /admin/tenant/{id}/optimize</span>"]
     QM["<span style='color:#000'>QualityMonitor<br/>quality_monitor_cli --once<br/>submits raw Argo Workflow on quality drop</span>"]
     Cron["<span style='color:#000'>Helm CronWorkflows<br/>agent-optimization (weekly) / daily-gateway /<br/>daily-cleanup / synthetic-generation / monthly-reports</span>"]
 
-    Dashboard --> OptCLI
+    WebClient --> OptCLI
     QM --> OptCLI
     Cron --> OptCLI
 
@@ -173,7 +173,7 @@ flowchart TB
     Meta --> AM
     Strategy --> Mem0["<span style='color:#000'>Mem0MemoryManager<br/>Vespa memory</span>"]
 
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style WebClient fill:#90caf9,stroke:#1565c0,color:#000
     style QM fill:#90caf9,stroke:#1565c0,color:#000
     style Cron fill:#90caf9,stroke:#1565c0,color:#000
     style OptCLI fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -259,7 +259,7 @@ def _compute_gateway_thresholds(spans_df) -> dict:
 
 **On-Demand Submission:**
 ```python
-# Dashboard or any client submits via runtime API:
+# Web client or any client submits via runtime API:
 # POST /admin/tenant/{tenant_id}/optimize
 # Body: {"mode": "gateway-thresholds", "lookback_hours": 48}
 # Synthetic training data for chosen optimizer types, queued for review:
@@ -583,7 +583,7 @@ confidence calibration), persisting scores as telemetry annotations for drift de
 
 **CLI mode:** `--mode triggered`
 
-Invoked by `QualityMonitor` (not the dashboard — `triggered` is excluded from `_MANUAL_OPTIMIZE_MODES`)
+Invoked by `QualityMonitor` (not an on-demand submission — `triggered` is excluded from `_MANUAL_OPTIMIZE_MODES`)
 when golden/live evaluation detects degradation. `QualityMonitor` builds and submits its own raw Argo
 `Workflow` manifest (not the shared `cogniverse-optimization-runner` `WorkflowTemplate`) running:
 
@@ -906,7 +906,7 @@ Returns `{summary: ..., backup_versions: {prompts: int?, demos: int?}}` — pass
 
 Runs `RLMABRunner` (`cogniverse_agents.inference.ab_harness`) over a Phoenix dataset of `(query, context)`
 rows, comparing a with-RLM and without-RLM arm per row, and emits a `rlm.ab_compare` Phoenix span per row
-with the harness's `to_telemetry_dict()` as attributes for a dashboard tile to aggregate.
+with the harness's `to_telemetry_dict()` as attributes for the web client's RLM A/B view to aggregate.
 
 ```bash
 uv run python -m cogniverse_runtime.optimization_cli \
@@ -1093,7 +1093,7 @@ Returns `{period, generated_at, output_dir, files_written: [usage_path, perf_pat
 ### Example 1: On-Demand Gateway Threshold Optimization
 
 ```bash
-# Submit gateway-threshold optimization via the runtime API (dashboard or CLI):
+# Submit gateway-threshold optimization via the runtime API (web client or CLI):
 curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize \
   -H "Content-Type: application/json" \
   -d '{"mode": "gateway-thresholds"}'
@@ -1136,7 +1136,7 @@ daily) use the same template, so the image/env/resource/mutex spec lives in
 one place (``charts/cogniverse/templates/optimization-workflow-template.yaml``).
 
 The WorkflowTemplate declares a **per-tenant mutex** so multiple submits
-for the same tenant serialise (prevents the dashboard Run button from
+for the same tenant serialise (prevents repeated on-demand submits from
 stacking pods); different tenants optimize independently.
 
 On-demand runs take the modes in `_MANUAL_OPTIMIZE_MODES`
@@ -1277,7 +1277,7 @@ uv run python -m cogniverse_runtime.quality_monitor_cli \
 **Optimization is on-demand, not a long-running service.**
 
 ```bash
-# Trigger via dashboard UI button or direct API call:
+# Trigger via the web client or direct API call:
 curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize \
   -d '{"mode": "gateway-thresholds"}'
 
@@ -1381,7 +1381,7 @@ reflective recompile of an all-failure agent (not by data size), never for the p
 
 #### Argo Workflows Integration
 
-**On-demand submission** (dashboard or any client):
+**On-demand submission** (web client or any client):
 
 ```bash
 curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize \
@@ -1428,13 +1428,13 @@ annotations and re-enable the affected CronWorkflows.
 `WorkflowTemplate`) running `--mode triggered` whenever golden/live evaluation detects a quality drop for
 one or more agents — see [Triggered Optimization](#8-triggered-optimization-quality-monitor-driven) above.
 
-#### UI Dashboard Integration
+#### Web Client Integration
 
-The optimization infrastructure integrates with the Streamlit dashboard:
+The optimization infrastructure integrates with the web client:
 
-**Module Optimization Tab:**
+**Optimization Runs View:**
 
-- Submit on-demand runs for the 6 dashboard-exposed modes (`gateway-thresholds`, `simba`, `workflow`, `profile`, `entity-extraction`, `llm-annotate`)
+- Submit on-demand runs in any mode the runtime accepts (`GET /admin/tenant/optimize-modes`)
 
 - Monitor workflow progress (phase, started/finished timestamps)
 
@@ -1446,9 +1446,9 @@ The optimization infrastructure integrates with the Streamlit dashboard:
 
 2. **Automatic (Quality-triggered)**: `QualityMonitor` submits `--mode triggered` on detected degradation
 
-3. **Manual (Dashboard-triggered)**: dashboard button calls `POST /admin/tenant/{id}/optimize` → submits an Argo Workflow on demand
+3. **Manual (on demand)**: the web client calls `POST /admin/tenant/{id}/optimize` → submits an Argo Workflow on demand
 
-See `docs/development/ui-dashboard.md` for full UI documentation.
+See [Web Client](web-client.md) for full UI documentation.
 
 ---
 
@@ -1527,7 +1527,7 @@ def test_compute_gateway_thresholds():
 
 - **Integration tests**: rollback round-trip, cleanup vacuum, monthly reports, triggered optimization + distillation, A/B comparison, artifact manager canary FSM
 
-- **End-to-end tests**: batch optimization, optimizer artifact persistence, signature variants, dashboard optimization tab
+- **End-to-end tests**: batch optimization, optimizer artifact persistence, signature variants
 
 ---
 
@@ -2000,6 +2000,6 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 
 - `libs/runtime/cogniverse_runtime/quality_monitor_cli.py` - Quality-triggered optimization driver
 
-- `libs/runtime/cogniverse_runtime/routers/tenant.py` - Dashboard-triggered optimization API endpoints
+- `libs/runtime/cogniverse_runtime/routers/tenant.py` - On-demand optimization API endpoints
 
 - `libs/synthetic/cogniverse_synthetic/` - Synthetic training data generation service + REST API

@@ -92,8 +92,7 @@ curl -sfX DELETE "$RUNTIME_URL/admin/tenants/acme:production"
 curl -sfX DELETE "$RUNTIME_URL/admin/organizations/acme"
 ```
 
-The dashboard's **Tenant Management** tab
-(`libs/dashboard/cogniverse_dashboard/tabs/tenant_management.py`)
+The web client's **Tenants** view
 wraps the same endpoints with a form-based UI for creating, listing,
 and deleting organizations and tenants without hand-writing curl.
 

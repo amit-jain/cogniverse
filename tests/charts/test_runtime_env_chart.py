@@ -354,7 +354,7 @@ class TestRuntimeSandboxHostMode:
         assert host_mounts == []
 
 
-def _render_with_values(*values_files: str, sets: tuple[str, ...] = ()) -> list:
+def _render_with_values(*values_files: str) -> list:
     args = [
         "helm",
         "template",
@@ -365,8 +365,6 @@ def _render_with_values(*values_files: str, sets: tuple[str, ...] = ()) -> list:
     ]
     for f in values_files:
         args += ["-f", str(CHART_PATH / f)]
-    for value in sets:
-        args += ["--set", value]
     result = subprocess.run(args, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise AssertionError(
@@ -401,16 +399,6 @@ class TestDeviceOverlaysKeepDevMode:
             "values.k3s.yaml", "values.cuda.yaml", "values.modal-llm.yaml"
         )
         assert _dev_mount_deployments(manifests) == [
-            "cogniverse-quality-monitor",
-            "cogniverse-runtime",
-        ]
-
-    def test_k3s_with_the_dashboard_enabled_mounts_its_dev_sources(self):
-        manifests = _render_with_values(
-            "values.k3s.yaml", "values.rocm.yaml", sets=("dashboard.enabled=true",)
-        )
-        assert _dev_mount_deployments(manifests) == [
-            "cogniverse-dashboard",
             "cogniverse-quality-monitor",
             "cogniverse-runtime",
         ]
@@ -583,14 +571,10 @@ def _cogniverse_app_containers(manifests: list) -> dict[str, dict]:
 def test_every_cogniverse_app_container_gets_redis_url():
     """REDIS_URL reaches every container running cogniverse application code.
 
-    The dashboard shipped without it. cogniverse_dashboard.tabs.approval_queue
-    raises ValueError("REDIS_URL is required for approval item replacement"),
-    which aborted the Synthetic Data tab's render partway through, so its
-    primary "Generate Synthetic Data" button never appeared -- measured live:
-    the button existed 0 times inside that panel while the panel's text ended
-    at the error.
+    Approval storage, the ingestion queue and task state all live in Redis;
+    a container without it fails on its first read of any of them.
     """
-    manifests = _render_chart("redis.enabled=true", "dashboard.enabled=true")
+    manifests = _render_chart("redis.enabled=true")
     containers = _cogniverse_app_containers(manifests)
     assert containers, "no cogniverse application containers found in the render"
     missing = sorted(n for n, env in containers.items() if "REDIS_URL" not in env)

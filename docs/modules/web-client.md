@@ -105,9 +105,6 @@ exist. The nginx ingress turns off proxy buffering so server-sent events
 k3d cluster edit cogniverse --port-add 28400:28400@loadbalancer
 ```
 
-The Streamlit [dashboard](dashboard.md) is deployed only when
-`dashboard.enabled: true` (default `false`).
-
 ## Local Development
 
 Node.js 22 is required.

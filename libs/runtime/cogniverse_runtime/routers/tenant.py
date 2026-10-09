@@ -845,7 +845,7 @@ def _build_optimization_workflow_manifest(
             # RBAC grants.
             "serviceAccountName": get_workflow_settings().service_account,
             # Auto-delete completed workflows after 1 hour so the
-            # namespace doesn't fill with dashboard-triggered runs.
+            # namespace doesn't fill with UI-triggered runs.
             "ttlStrategy": {
                 "secondsAfterCompletion": 3600,
                 "secondsAfterSuccess": 3600,
@@ -928,7 +928,7 @@ class OptimizeRunStatus(BaseModel):
     steps: Dict[str, str] = {}
     # ``blocked_reason`` is populated when phase is ``Pending`` specifically
     # because the per-tenant optimization mutex is held by another Workflow.
-    # The dashboard surfaces this so users don't confuse mutex-wait with
+    # The web client surfaces this so users don't confuse mutex-wait with
     # ordinary scheduler pending.
     blocked_reason: Optional[str] = None
 
@@ -1542,7 +1542,7 @@ async def list_optimization_runs(
     response_model=OptimizeRunStatus,
 )
 async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
-    """Return current phase + timestamps for a dashboard-triggered run."""
+    """Return current phase + timestamps for a UI-triggered run."""
     data = await _argo_get_workflow_data(workflow_name, tenant_id)
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(
@@ -1612,7 +1612,7 @@ async def cancel_manual_optimization(tenant_id: str, workflow_name: str):
     Argo's ``terminate`` verb stops the main container immediately; TTL
     still applies so the Workflow resource auto-deletes after the
     configured grace window. Returns the post-terminate status block so
-    the dashboard can surface the ``Failed`` phase without polling again.
+    the web client can surface the ``Failed`` phase without polling again.
     """
     await _argo_get_workflow_data(workflow_name, tenant_id)
     data = await _argo_workflow_action("cancel", workflow_name, "terminate")

@@ -22,7 +22,7 @@ from cogniverse_cli.main import (
 
 TEST_IMAGE_VERSIONS = {
     "runtime": "0.1.dev91+gaaa111aaa",
-    "dashboard": "0.1.dev92+gbbb222bbb",
+    "web": "0.1.dev92+gbbb222bbb",
     "pylate": "0.1.dev93+gccc333ccc",
     "gliner": "0.1.dev94+gddd444ddd",
     "clap_embed": "0.1.dev95+geee555eee",
@@ -163,7 +163,7 @@ class TestCli:
         runner = CliRunner()
         result = runner.invoke(cli, ["logs", "--help"])
         assert result.exit_code == 0
-        for svc in ("runtime", "web", "dashboard", "vespa", "phoenix", "llm", "argo"):
+        for svc in ("runtime", "web", "vespa", "phoenix", "llm", "argo"):
             assert svc in result.output
 
 
@@ -280,7 +280,9 @@ class TestUpCommand:
         set_vals = call_kwargs[1].get("set_values") or {}
         assert set_vals["argo-workflows.crds.install"] == "false"
         assert set_vals["runtime.backend"] in {"cpu", "cuda", "rocm"}
-        assert set_vals["dashboard.backend"] == set_vals["runtime.backend"]
+        assert [key for key in set_vals if key.endswith(".backend")] == [
+            "runtime.backend"
+        ]
         assert "llm.builtin.enabled" not in set_vals
         assert "llm.external.enabled" not in set_vals
 
@@ -738,7 +740,7 @@ class TestUpImagePrune:
             "dev_versions": TEST_IMAGE_VERSIONS,
             "build_images": [
                 "cogniverse/runtime-rocm:0.1.dev91-gaaa111aaa",
-                "cogniverse/dashboard-rocm:0.1.dev92-gbbb222bbb",
+                "cogniverse/web:0.1.dev92-gbbb222bbb",
             ],
             "dev_image_set_values": {},
             "_probe_host_llm": False,
@@ -809,7 +811,7 @@ class TestUpImagePrune:
         mock_prune.assert_called_once_with(
             [
                 "cogniverse/runtime-rocm:0.1.dev91-gaaa111aaa",
-                "cogniverse/dashboard-rocm:0.1.dev92-gbbb222bbb",
+                "cogniverse/web:0.1.dev92-gbbb222bbb",
             ],
             node_container="k3d-cogniverse-server-0",
         )
@@ -820,7 +822,7 @@ class TestUpImagePrune:
         mock_prune.assert_called_once_with(
             [
                 "cogniverse/runtime-rocm:0.1.dev91-gaaa111aaa",
-                "cogniverse/dashboard-rocm:0.1.dev92-gbbb222bbb",
+                "cogniverse/web:0.1.dev92-gbbb222bbb",
             ],
             node_container=None,
         )
@@ -1020,7 +1022,6 @@ class TestServiceConstants:
         expected_services = {
             "runtime",
             "web",
-            "dashboard",
             "vespa",
             "phoenix",
             "llm",
@@ -1030,7 +1031,7 @@ class TestServiceConstants:
 
     def test_the_web_client_is_the_ui_status_and_up_verify(self) -> None:
         """The web client's NodePort and health route are what ``status``
-        shows and ``up`` waits for; the disabled-by-default dashboard is not."""
+        shows and ``up`` waits for."""
         assert SERVICE_HEALTH_URLS == {
             "Vespa": "http://localhost:19071/state/v1/health",
             "Runtime": "http://localhost:28000/health",

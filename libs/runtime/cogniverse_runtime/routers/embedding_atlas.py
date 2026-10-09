@@ -57,7 +57,7 @@ TEXT_FIELDS = ("full_text", "transcript", "description", "frame_description", "t
 MAX_EXPORT_BYTES = 64 * 1024 * 1024
 _UPLOAD_CHUNK = 1024 * 1024
 # A query row's text: the first of these columns present wins; ``text`` loses
-# the prefix the dashboard's query rows carry.
+# a leading ``QUERY: `` marker.
 QUERY_TEXT_FIELDS = ("query", "query_text", "text")
 QUERY_TEXT_PREFIX = "QUERY: "
 # A document's similarity to the query row with index ``index``, when the

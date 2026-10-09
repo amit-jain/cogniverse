@@ -96,3 +96,33 @@ removed_symbols = [
     "tests/charts/test_web_chart.py:test_prod_requires_a_harness_key",
 ]
 reason = "Tests of the web server's chart-rendered harness key Secret, its existingSecret override, the runtime's copy of the key and the prod refusal without it, removed with web.harnessKey and web.existingSecret: the server mints a key per tenant."
+
+[[waiver]]
+file = "tests/backends/integration/test_config_store.py"
+max_net_loss = 5
+removed_symbols = [
+    "libs/dashboard/cogniverse_dashboard/tabs/config_management.py:render_import_export_ui",
+]
+reason = "The Streamlit dashboard's history-export download test, removed with the dashboard; the store's history export stays covered by the export tests beside it."
+
+[[waiver]]
+file = "tests/charts/test_litellm_bundled_cost_map.py"
+max_net_loss = 1
+removed_symbols = ["libs/cli/cogniverse_cli/images.py:DASHBOARD_REPOS_BY_BACKEND"]
+reason = "The check that the dashboard image sets the bundled cost map, removed with the dashboard image and its Dockerfile."
+
+[[waiver]]
+file = "tests/cli/integration/test_release_clean_install.py"
+max_net_loss = 4
+removed_symbols = [
+    "libs/dashboard/cogniverse_dashboard/__init__.py:configure_dashboard_logging",
+]
+reason = "The documented install commands and the torch-wheel check of the cogniverse-dashboard release root, removed with the package."
+
+[[waiver]]
+file = "tests/evaluation/integration/test_routing_span_status_code.py"
+max_net_loss = 2
+removed_symbols = [
+    "libs/dashboard/cogniverse_dashboard/tabs/routing_evaluation.py:_span_success",
+]
+reason = "The routing tab's success classification of the read-back spans, removed with the dashboard; the span status_code shape it read stays pinned."

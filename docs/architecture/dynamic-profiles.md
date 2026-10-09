@@ -17,7 +17,7 @@ The dynamic profile system replaces static `config.json` files with a database-b
 ```mermaid
 flowchart TB
     subgraph Client["<span style='color:#000'><b>Client Layer</b></span>"]
-        Dashboard["<span style='color:#000'>Dashboard UI</span>"]
+        WebClient["<span style='color:#000'>Web client</span>"]
         APIClients["<span style='color:#000'>REST API Clients</span>"]
     end
 
@@ -36,7 +36,7 @@ flowchart TB
         DB["<span style='color:#000'>Database</span>"]
     end
 
-    Dashboard -->|HTTP| AdminRouter
+    WebClient -->|HTTP| AdminRouter
     APIClients -->|HTTP| AdminRouter
     AdminRouter --> Validator
     AdminRouter --> ConfigMgr
@@ -49,7 +49,7 @@ flowchart TB
     style Config fill:#ffcc80,stroke:#ef6c00,color:#000
     style Persistence fill:#a5d6a7,stroke:#388e3c,color:#000
 
-    style Dashboard fill:#64b5f6,stroke:#1565c0,color:#000
+    style WebClient fill:#64b5f6,stroke:#1565c0,color:#000
     style APIClients fill:#64b5f6,stroke:#1565c0,color:#000
     style AdminRouter fill:#ba68c8,stroke:#7b1fa2,color:#000
     style Validator fill:#ba68c8,stroke:#7b1fa2,color:#000
@@ -366,90 +366,13 @@ class ProfileValidator:
 - Strategies: each entry must be a dict with a `class` field naming an importable class
 - Immutable on update: `schema_name`, `embedding_model`, `schema_config`, `type`, `model_loader`
 
-### 5. Dashboard UI Layer
-
-**Location:** `libs/dashboard/cogniverse_dashboard/tabs/backend_profile.py`
-
-**Streamlit-based UI for profile management:**
-
-```python
-def render_backend_profile_tab():
-    """Main entry point for backend profile management UI"""
-    st.subheader("Backend Profile Management")
-
-    if "current_tenant" not in st.session_state:
-        st.error("No tenant selected. Set an Active Tenant in the sidebar first.")
-        return
-
-    # Initialize ConfigManager
-    if "config_manager" not in st.session_state:
-        st.session_state.config_manager = create_default_config_manager()
-
-    manager = st.session_state.config_manager
-    tenant_id = st.session_state["current_tenant"]
-
-    # Profile list — read from the store, so a runtime write shows at once
-    profiles_dict = manager.get_stored_backend_config(
-        tenant_id, service="backend"
-    ).profiles
-    profile_names = sorted(profiles_dict.keys()) if profiles_dict else []
-
-    # Create new profile section
-    with st.expander("➕ Create New Profile", expanded=len(profile_names) == 0):
-        render_create_profile_form(manager, tenant_id)
-
-    # Existing profiles
-    if profile_names:
-        selected_profile = st.selectbox("Select Profile to Manage", options=profile_names)
-        if selected_profile:
-            render_profile_manager(manager, tenant_id, selected_profile)
-```
-
-Profile **creation** itself goes through the admin HTTP API (`POST /admin/profiles`) rather than a direct `ConfigManager.add_backend_profile()` call, so the same code path that serves REST clients also serves the dashboard's create form. Note the service-scope difference: the admin router reads/writes profiles under `service="backend"`, while this tab's own list/get calls (above) read under `service="video_processing"` — the two service scopes are stored as separate `ConfigStore` entries, so a profile is only visible through whichever service key it was written under.
-
-**API Integration:**
-
-Dashboard uses httpx to call FastAPI endpoints:
-
-```python
-def deploy_schema_via_api(profile_name: str, tenant_id: str, force: bool = False) -> Dict[str, Any]:
-    """Deploy schema via admin API"""
-    api_url = get_runtime_api_url()
-    endpoint = f"{api_url}/admin/profiles/{profile_name}/deploy"
-
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(endpoint, json={"tenant_id": tenant_id, "force": force})
-            if response.status_code == 200:
-                data = response.json()
-                deployment_status = data.get("deployment_status", "")
-                success = deployment_status not in ("failed",)
-                return {
-                    "success": success,
-                    "tenant_schema_name": data.get("tenant_schema_name", ""),
-                    "deployment_status": deployment_status,
-                    "error": data.get("error_message") if not success else None,
-                }
-            else:
-                error_detail = response.json().get("detail", response.text) if response.text else "Unknown error"
-                return {
-                    "success": False,
-                    "tenant_schema_name": None,
-                    "error": f"HTTP {response.status_code}: {error_detail}"
-                }
-    except httpx.TimeoutException:
-        return {"success": False, "tenant_schema_name": None, "error": "Request timed out (>30s)"}
-    except Exception as e:
-        return {"success": False, "tenant_schema_name": None, "error": f"Failed to connect to API: {e}"}
-```
-
 ## Data Flow
 
 ### Profile Creation Flow
 
 ```mermaid
 flowchart TB
-    User["<span style='color:#000'>1. User fills form - Dashboard</span>"]
+    User["<span style='color:#000'>1. User fills form - Web client</span>"]
     API["<span style='color:#000'>2. POST /admin/profiles</span>"]
     Router["<span style='color:#000'>3. Admin Router - Validate</span>"]
     ConfigMgr["<span style='color:#000'>4. ConfigManager - Compare-and-set Read/Modify/Write</span>"]
@@ -705,12 +628,6 @@ Test individual components:
 - Concurrent list operations
 - Concurrent delete operations
 
-**UI Tests** (`tests/dashboard/unit/test_profile_ui.py`):
-
-- Dashboard API helper functions (deploy/delete/status)
-- End-to-end workflow via dashboard functions against a running API
-- Timeout, connection-error, and HTTP-error handling
-
 ### Test Fixtures
 
 `tests/admin/test_profile_api.py` builds a minimal FastAPI app around the admin router with a real, isolated Vespa instance (no mocks at the storage boundary):
@@ -816,6 +733,6 @@ For high write concurrency:
 
 ## Related Documentation
 
-- [Profile Management Dashboard](../user/profile-management.md) - User guide
+- [Profile Management](../user/profile-management.md) - User guide
 - [Profile API Reference](../user/profile-api-reference.md) - API docs
 - [Configuration System](../CONFIGURATION_SYSTEM.md) - Overall config architecture

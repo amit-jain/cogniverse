@@ -224,20 +224,20 @@ class TestEventQueueMultipleSubscribers:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_dashboard_and_cli_both_receive_events(self):
-        """Simulate dashboard and CLI subscribing to same workflow."""
+    async def test_web_client_and_cli_both_receive_events(self):
+        """Simulate the web client and CLI subscribing to same workflow."""
         queue = InMemoryEventQueue(
             task_id="workflow_shared",
             tenant_id="test_tenant",
         )
 
-        dashboard_events = []
+        web_events = []
         cli_events = []
 
-        async def dashboard_subscriber():
+        async def web_subscriber():
             async for event in queue.subscribe():
-                dashboard_events.append(event)
-                if len(dashboard_events) >= 3:
+                web_events.append(event)
+                if len(web_events) >= 3:
                     break
 
         async def cli_subscriber():
@@ -247,7 +247,7 @@ class TestEventQueueMultipleSubscribers:
                     break
 
         # Start both subscribers
-        task1 = asyncio.create_task(dashboard_subscriber())
+        task1 = asyncio.create_task(web_subscriber())
         task2 = asyncio.create_task(cli_subscriber())
 
         await asyncio.sleep(0.1)  # Let subscribers start
@@ -266,12 +266,12 @@ class TestEventQueueMultipleSubscribers:
         await asyncio.gather(task1, task2)
 
         # Both should have received all events
-        assert len(dashboard_events) == 3
+        assert len(web_events) == 3
         assert len(cli_events) == 3
 
         # Same events in same order
         for i in range(3):
-            assert dashboard_events[i].phase == f"phase_{i}"
+            assert web_events[i].phase == f"phase_{i}"
             assert cli_events[i].phase == f"phase_{i}"
 
 

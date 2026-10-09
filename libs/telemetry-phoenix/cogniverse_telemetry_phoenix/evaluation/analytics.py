@@ -22,8 +22,7 @@ from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
 
 # Canonical TraceMetrics lives in the evaluation provider hierarchy —
 # Phoenix is one source, but the dataclass shape is provider-agnostic.
-# Re-exported below so dashboards that already import
-# ``TraceMetrics`` from this module keep working without churn.
+# Re-exported below because ``get_traces`` returns it.
 from cogniverse_evaluation.providers.base import TraceMetrics
 
 logger = logging.getLogger(__name__)
@@ -64,7 +63,7 @@ class PhoenixAnalytics:
         self.telemetry_url = telemetry_url
         self.client = _PhoenixSyncClient(base_url=telemetry_url)
         # Same per-endpoint Phoenix breaker as the trace store: repeated
-        # dashboard read failures trip it so the tab degrades fast instead of
+        # read failures trip it so the caller degrades fast instead of
         # blocking on a down Phoenix each refresh.
         from cogniverse_core.common.utils.circuit_breaker import (
             BreakerConfig,

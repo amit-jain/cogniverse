@@ -2,7 +2,7 @@
 
 The annotation store's ``add_annotation`` requires a ``project`` argument.
 The prior code omitted it, so the call raised TypeError inside a fire-and-forget
-task whose exception was swallowed — the dashboard reported "Evaluation saved"
+task whose exception was swallowed — the UI reported "Evaluation saved"
 while nothing persisted. This pins that ``project`` (resolved from the
 provider's configured project name) is passed through.
 """
@@ -31,7 +31,7 @@ def test_log_session_evaluation_passes_project_to_annotation_store():
     # awaits the annotation write before returning.
     provider.log_session_evaluation(
         session_id="span-123",
-        evaluation_name="dashboard_annotation",
+        evaluation_name="session_annotation",
         session_score=0.8,
         session_outcome="good",
     )
@@ -47,8 +47,8 @@ def test_log_session_evaluation_passes_project_to_annotation_store():
 class TestPerLoopClientMemoization:
     """Phoenix store clients must be reused within one event loop (the
     runtime / quality monitor keep a long-lived loop, so per-call clients
-    threw away the TCP pool every request) while fresh loops — Streamlit's
-    asyncio.run per interaction — still get their own client."""
+    threw away the TCP pool every request) while fresh loops — an
+    asyncio.run per call — still get their own client."""
 
     def test_same_loop_reuses_client_fresh_loop_does_not(self):
         import asyncio
@@ -234,7 +234,7 @@ def test_initialize_raises_when_telemetry_registry_fails():
 @pytest.mark.unit
 def test_sync_log_session_evaluation_propagates_annotation_failure():
     """On the sync path (no running loop) an annotation-store failure must
-    raise — the dashboard catches it and shows the failure instead of
+    raise — the caller catches it and shows the failure instead of
     reporting 'Evaluation saved'."""
     provider = PhoenixEvaluationProvider()
     provider._initialized = True
@@ -248,7 +248,7 @@ def test_sync_log_session_evaluation_propagates_annotation_failure():
     with pytest.raises(ConnectionError, match="annotation store down"):
         provider.log_session_evaluation(
             session_id="sess-1",
-            evaluation_name="dashboard_annotation",
+            evaluation_name="session_annotation",
             session_score=0.5,
             session_outcome="success",
         )
@@ -273,7 +273,7 @@ async def test_async_log_session_evaluation_logs_background_failure(caplog):
     with caplog.at_level(logging.ERROR):
         provider.log_session_evaluation(
             session_id="sess-2",
-            evaluation_name="dashboard_annotation",
+            evaluation_name="session_annotation",
             session_score=0.5,
             session_outcome="success",
         )

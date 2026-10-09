@@ -182,7 +182,7 @@ def test_one_runtime_process_serves_the_public_prefix_and_the_bare_path(
 ):
     """Both entry points resolve every router and every mounted sub-app.
 
-    The ingress forwards ``/api/...`` unrewritten while the dashboard, the CLI
+    The ingress forwards ``/api/...`` unrewritten while the web client, the CLI
     and the e2e suite reach the Service on the bare path, so the same process
     answers both shapes of every route.
     """

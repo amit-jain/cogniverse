@@ -238,7 +238,7 @@ pinned wheel before enabling the feature:
 pip install "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85"
 ```
 
-In the workspace and the runtime/dashboard images it comes from the root
+In the workspace and the runtime images it comes from the root
 `runtime-models` dependency group.
 
 **External (Tracking):**
@@ -425,7 +425,6 @@ Implementation Layer:
     ↓
 Application Layer:
   cogniverse-runtime (FastAPI runtime)
-  cogniverse-dashboard (Streamlit UI)
 ```
 
 ## Development

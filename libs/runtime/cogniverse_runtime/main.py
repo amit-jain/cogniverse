@@ -1290,7 +1290,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     system_config = config_manager.get_system_config()
 
     # Store SystemConfig with env var overrides so all components
-    # (search backend, agents, dashboard) read the correct service URLs.
+    # (search backend, agents) read the correct service URLs.
     # Env vars are set by the deployment layer (Helm template).
     updated = False
     if os.environ.get("BACKEND_URL"):
@@ -1712,7 +1712,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 12. Start the OpenShell gateway health probe (only when sandbox is not
     # disabled). Each probe records availability + latency as a Phoenix span
-    # (openshell.gateway_health) so the dashboard can surface gateway state.
+    # (openshell.gateway_health) so gateway state is visible in Phoenix.
     gateway_probe = None
     if sandbox_policy is not SandboxPolicy.DISABLED:
         from cogniverse_runtime.openshell_health import GatewayHealthProbe

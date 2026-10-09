@@ -28,19 +28,6 @@ import requests
 from tests.utils.async_polling import simulate_processing_delay
 
 
-@pytest.fixture(autouse=True)
-def _restore_main_module():
-    """Put back the ``__main__`` module a test replaced.
-
-    Streamlit's ``AppTest`` swaps ``sys.modules["__main__"]`` for the script
-    it renders and never restores it; every later spawned child re-runs that
-    script before its target and dies outside a Streamlit session.
-    """
-    main = sys.modules["__main__"]
-    yield
-    sys.modules["__main__"] = main
-
-
 @pytest.fixture(scope="session")
 def face_embed_container(remote_inference):
     """Base URL of the cluster's face-embed service."""
@@ -1549,9 +1536,9 @@ def _restore_telemetry_endpoint_overrides():
     them.
 
     ``configure_telemetry_endpoints`` records process-wide endpoints that every
-    later ``get_telemetry_manager`` build applies over its own config. The
-    dashboard sets them on import, so without this a manager a later test
-    builds from its own config exports to the dashboard's endpoints instead.
+    later ``get_telemetry_manager`` build applies over its own config. An
+    entrypoint a test runs sets them, so without this a manager a later test
+    builds from its own config exports to that entrypoint's endpoints instead.
     """
     import sys
 

@@ -146,7 +146,7 @@ class HumanApprovalAgent:
         e.g. the finetuning synthetic-data path. Each item is (re)classified
         against ``confidence_threshold``: ``>= threshold`` is auto-approved,
         the rest stay ``PENDING_REVIEW`` for a human to resolve in the
-        dashboard. The batch is persisted (when storage is configured) so the
+        web client. The batch is persisted (when storage is configured) so the
         approval queue surfaces it, then returned immediately — review is
         asynchronous, so callers must resume work from the persisted batch
         after a human acts (via :meth:`apply_decision` /

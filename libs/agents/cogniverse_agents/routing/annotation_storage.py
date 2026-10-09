@@ -387,7 +387,7 @@ class AnnotationStorage:
         # Annotations live in Phoenix's separate annotation store, not on the
         # span attributes — fetch them and join to spans by span_id. The old
         # read of ``attributes.annotation.label`` was never populated, so the
-        # feedback loop and dashboard always saw zero annotations.
+        # feedback loop and the UI always saw zero annotations.
         annotations_df = await self.provider.annotations.get_annotations(
             spans_df=spans_df,
             project=self.project_name,

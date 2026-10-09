@@ -18,8 +18,8 @@ from pathlib import Path
 import yaml
 from pathspec import GitIgnoreSpec
 
-# First-party image repositories keyed by torch backend. Runtime + dashboard
-# ship one image per backend; each bakes in the matching torch wheel —
+# First-party image repositories keyed by torch backend. The runtime
+# ships one image per backend; each bakes in the matching torch wheel —
 # runtime-cpu carries torch+cpu, -cuda torch+cu128, -rocm torch+rocm6.4. Tags
 # derive from the latest commit to their own build inputs: dev builds are
 # ``<release>.dev<N>+g<sha>`` (``+`` later sanitizes to ``-`` for Docker).
@@ -27,11 +27,6 @@ RUNTIME_REPOS_BY_BACKEND = {
     "cpu": "cogniverse/runtime-cpu",
     "cuda": "cogniverse/runtime-cuda",
     "rocm": "cogniverse/runtime-rocm",
-}
-DASHBOARD_REPOS_BY_BACKEND = {
-    "cpu": "cogniverse/dashboard-cpu",
-    "cuda": "cogniverse/dashboard-cuda",
-    "rocm": "cogniverse/dashboard-rocm",
 }
 # The web client: a Node server and the built browser client, one image for
 # every backend.
@@ -57,7 +52,7 @@ SIDECAR_BUILDS = {
     "colbert_pylate": ("cogniverse/pylate", "deploy/pylate/Dockerfile", "."),
     "code_colbert_pylate": ("cogniverse/pylate", "deploy/pylate/Dockerfile", "."),
 }
-# The PyLate image bakes the host-matching torch wheel, like runtime/dashboard.
+# The PyLate image bakes the host-matching torch wheel, like the runtime.
 _TORCH_BACKEND_SIDECARS = frozenset({"colbert_pylate", "code_colbert_pylate"})
 # Every locally-built image keyed by the inference service that runs it.
 # GLiNER is enabled by the chart defaults; the rest are opt-in.
@@ -101,7 +96,6 @@ _APP_WORKSPACE_INPUTS = (
 
 IMAGE_DOCKERFILES = {
     "runtime": "libs/runtime/Dockerfile",
-    "dashboard": "libs/dashboard/Dockerfile",
     "web": "clients/web/Dockerfile",
     "pylate": "deploy/pylate/Dockerfile",
     "gliner": "deploy/gliner/Dockerfile",
@@ -127,15 +121,6 @@ IMAGE_INPUT_PATHS = {
         "configs/schemas",
         "configs/config.json",
         "configs/agent_policies",
-        ".dockerignore",
-    ),
-    "dashboard": (
-        IMAGE_DOCKERFILES["dashboard"],
-        *_APP_WORKSPACE_INPUTS,
-        "libs/dashboard",
-        "configs/schemas",
-        "configs/config.json",
-        "scripts",
         ".dockerignore",
     ),
     "web": (
@@ -413,8 +398,8 @@ def _app_image_tags(
     values_files: list[Path] | None,
     versions: dict[str, str],
 ) -> dict[str, str]:
-    """The runtime image and each enabled UI image (web, dashboard), keyed by
-    image family, mapped to the tag the deploy renders."""
+    """The runtime image and the web image when enabled, keyed by image
+    family, mapped to the tag the deploy renders."""
     values = _merged_values(project_root, values_files)
     tags = {
         "runtime": _dev_tag(
@@ -423,10 +408,6 @@ def _app_image_tags(
     }
     if _component_enabled(values, "web"):
         tags["web"] = _dev_tag(WEB_REPO, versions["web"])
-    if _component_enabled(values, "dashboard"):
-        tags["dashboard"] = _dev_tag(
-            DASHBOARD_REPOS_BY_BACKEND[torch_backend], versions["dashboard"]
-        )
     return tags
 
 
@@ -723,9 +704,8 @@ def build_images(
     required tag set, including reused images.
 
     Builds the runtime variant matching ``torch_backend`` (auto-detected when
-    None), the web client and the dashboard variant when their ``enabled``
-    resolves true across ``values_files``, plus the backend-agnostic GLiNER
-    sidecar. Each
+    None), the web client when its ``enabled`` resolves true across
+    ``values_files``, plus the backend-agnostic GLiNER sidecar. Each
     optional embedder sidecar in ``SIDECAR_BUILDS`` is built only when its
     ``inference.<svc>.enabled`` resolves true across ``values_files``, so
     passing the overlays helm receives is what brings an enabled sidecar into
@@ -794,10 +774,6 @@ def dev_image_set_values(
     }
     if "web" in app_images:
         overrides["web.image.tag"] = _docker_tag(resolved["web"])
-    if "dashboard" in app_images:
-        overrides[f"dashboard.imagesByBackend.{backend}.tag"] = _docker_tag(
-            resolved["dashboard"]
-        )
     overrides["inference.gliner.image.tag"] = _docker_tag(resolved["gliner"])
     for svc in enabled_sidecars(project_root, values_files):
         _, dockerfile, _ = LOCAL_IMAGE_BUILDS[svc]

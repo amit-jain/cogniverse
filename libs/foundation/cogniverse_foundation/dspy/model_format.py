@@ -1,7 +1,7 @@
 """Helpers for stripping a litellm provider prefix from a model id.
 
 Some sites talk to the OpenAI-compatible HTTP API directly (Mem0's
-embedder/llm wiring, the dashboard's memory tab) and expect a bare
+embedder/llm wiring) and expect a bare
 model name in the request body, not a litellm-prefixed id. This
 module owns the list of provider prefixes the codebase recognises
 when stripping.

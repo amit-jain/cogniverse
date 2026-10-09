@@ -16,10 +16,13 @@ import httpx
 import pytest
 
 from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError, CircuitState
-from cogniverse_dashboard.tabs.optimization import _TELEMETRY_PROBE_TIMEOUT_S
 from cogniverse_telemetry_phoenix.provider import PhoenixTraceStore
 
 pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
+
+# The deadline a caller puts on one probe read: well above a healthy read,
+# far below a held one.
+_PROBE_DEADLINE_S = 1.0
 
 
 @pytest.fixture
@@ -136,9 +139,7 @@ async def test_deadline_cancelled_probe_recovers_exact_tenant_spans(
     clock[0] += breaker.config.reset_timeout_s
     delayed_phoenix.mode = "hold"
     pending = asyncio.create_task(
-        asyncio.wait_for(
-            store.get_spans(project=projects[0]), _TELEMETRY_PROBE_TIMEOUT_S
-        )
+        asyncio.wait_for(store.get_spans(project=projects[0]), _PROBE_DEADLINE_S)
     )
     try:
         assert await asyncio.to_thread(delayed_phoenix.entered.wait, 5) is True

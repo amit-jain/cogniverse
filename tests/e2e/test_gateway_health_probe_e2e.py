@@ -4,7 +4,7 @@ Pins the shipped probe contract against the live OpenShell gateway:
 
   * probe_once on a live gateway returns ``(True, latency_ms)`` with a
     bounded latency, and the probe records ``last_available`` /
-    ``last_latency_ms`` for the dashboard tile;
+    ``last_latency_ms`` for the UI;
   * the probe always emits an OpenTelemetry span named
     ``openshell.gateway_health`` with attributes ``openshell.gateway_available``
     (0/1) and ``openshell.gateway_latency_ms`` (positive number);

@@ -3,8 +3,8 @@
 The evaluation (golden set and dataset modes) and the optimization
 framework's search annotations, golden dataset and span analysis read only
 ``search_service.search`` spans. The agent searched its backend directly, so
-a search made in the web Search workspace, or the dashboard's Interactive
-Search, which run through the agent, never reached any of them. Each backend
+a search made in the web Search workspace, which runs through the agent,
+never reached any of them. Each backend
 search the agent runs for a query now records that span, carrying the user's
 query rather than the agent's rewrite of it, since golden queries are matched
 by their text.

@@ -310,7 +310,6 @@ agent dispatcher — there is no per-agent container or replica count.
 | **runtime** (all agents, unified dispatcher) | 2 cores | 4GB | 4 cores | 8GB | 2 (autoscales 2-10) |
 | **vespa** | 4 cores | 8GB | 8 cores | 20GB | 1 (static, no HPA) |
 | **ingestor** | 1 core | 2GB | 4 cores | 8GB | 2 (static) |
-| **dashboard** | 1 core | 2GB | 2 cores | 4GB | 1 (static) |
 | **phoenix** | 1 core | 2GB | 2 cores | 4GB | 1 (static) |
 
 > **Note**: Mem0 uses the same Vespa backend, so no separate deployment is needed. Model-inference sidecars (ColPali/ColQwen/X-CLIP/LLM) are configured separately under the `inference` and `llm` chart values and are not shown here.
@@ -399,7 +398,7 @@ flowchart TB
 The Helm chart ships exactly one `HorizontalPodAutoscaler`
 (`charts/cogniverse/templates/hpa.yaml`), targeting the `runtime`
 deployment — the process that hosts every agent via the unified
-dispatcher. Vespa, the dashboard, Phoenix, and the ingestor run with
+dispatcher. Vespa, Phoenix, and the ingestor run with
 static `replicaCount` values and are scaled manually.
 
 ```mermaid
@@ -423,7 +422,7 @@ flowchart LR
 | **runtime** (all agents) | CPU > 70% or Memory > 80% | 2 | 10 |
 | **vespa** | Not autoscaled — static `replicaCount: 1` | 1 | 1 |
 | **ingestor** | Not autoscaled — static `replicaCount: 2` | 2 | 2 |
-| **dashboard** / **phoenix** | Not autoscaled — static `replicaCount: 1` | 1 | 1 |
+| **phoenix** | Not autoscaled — static `replicaCount: 1` | 1 | 1 |
 
 ---
 

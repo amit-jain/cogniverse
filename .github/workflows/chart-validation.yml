@@ -23,7 +23,6 @@ on:
       - 'libs/runtime/cogniverse_runtime/admin/profile_models.py'
       - 'libs/runtime/cogniverse_runtime/routers/admin.py'
       - 'libs/runtime/Dockerfile'
-      - 'libs/dashboard/Dockerfile'
       # test_ingress_runtime.py builds and runs the web client image.
       - 'clients/web/**'
       - 'tests/utils/web_image.py'
@@ -55,7 +54,6 @@ on:
       - 'libs/runtime/cogniverse_runtime/admin/profile_models.py'
       - 'libs/runtime/cogniverse_runtime/routers/admin.py'
       - 'libs/runtime/Dockerfile'
-      - 'libs/dashboard/Dockerfile'
       # test_ingress_runtime.py builds and runs the web client image.
       - 'clients/web/**'
       - 'tests/utils/web_image.py'

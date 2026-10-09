@@ -6420,8 +6420,8 @@ async def run_ab_compare(
     columns (Phoenix wraps these under ``input``/``output`` dicts when
     saved with input_keys; we flatten on load). For each row we run both
     arms and emit a Phoenix span (``rlm.ab_compare``) with the harness's
-    ``to_telemetry_dict()`` as attributes — that's what the dashboard
-    tile will read.
+    ``to_telemetry_dict()`` as attributes — that's what the runtime's A/B
+    comparison metrics read.
 
     Optional ``judge_substring`` enables a deterministic substring-match
     judge (1.0 if the substring appears in the answer, 0.0 otherwise).

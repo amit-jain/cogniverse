@@ -649,7 +649,7 @@ sequenceDiagram
         Phoenix->>Phoenix: Store spans (tenant-isolated projects)
     end
 
-    Note over OptCLI: Triggered on-demand (dashboard)<br/>or by Argo workflow
+    Note over OptCLI: Triggered on-demand (web client)<br/>or by Argo workflow
 
     OptCLI->>Phoenix: Fetch recent spans (tenant-scoped)
     Phoenix-->>OptCLI: gateway_spans[] (filtered by tenant)
@@ -764,8 +764,7 @@ flowchart TB
     Calib --> Report
     PerAgent --> Report
 
-    Report --> Visualize[<span style='color:#000'>Create Visualizations<br/>cogniverse_dashboard</span>]
-    Visualize --> Dashboard[<span style='color:#000'>Phoenix Dashboard</span>]
+    Report --> Visualize[<span style='color:#000'>Optimization metrics view<br/>web client</span>]
 
     style Start fill:#90caf9,stroke:#1565c0,color:#000
     style QuerySpans fill:#90caf9,stroke:#1565c0,color:#000
@@ -779,7 +778,6 @@ flowchart TB
     style PerAgent fill:#a5d6a7,stroke:#388e3c,color:#000
     style Report fill:#ffcc80,stroke:#ef6c00,color:#000
     style Visualize fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 ### Scenario 15: Quality Evaluator for Experiments
@@ -1094,7 +1092,7 @@ flowchart TB
 
 ### Scenario 23: Kubernetes Deployment via Helm Chart
 
-The runtime deploys as a Helm chart (`charts/cogniverse`), validated on every PR touching `charts/**` by `.github/workflows/chart-validation.yml` (`helm lint` &rarr; `helm template` &rarr; `kubeconform`). There is no blue-green or traffic-split rollout in this codebase — model-weight-holding Deployments (`runtime`, `llm`, per-agent `inference-*`) use `strategy: Recreate` (avoids two pods contending for the same GPU device); `dashboard` and `messaging` use the Kubernetes default rolling update. Only the `runtime` component has an optional HPA.
+The runtime deploys as a Helm chart (`charts/cogniverse`), validated on every PR touching `charts/**` by `.github/workflows/chart-validation.yml` (`helm lint` &rarr; `helm template` &rarr; `kubeconform`). There is no blue-green or traffic-split rollout in this codebase — model-weight-holding Deployments (`runtime`, `llm`, per-agent `inference-*`) use `strategy: Recreate` (avoids two pods contending for the same GPU device); `web` and `messaging` use the Kubernetes default rolling update. Only the `runtime` component has an optional HPA.
 
 ```mermaid
 flowchart TB
@@ -1106,7 +1104,7 @@ flowchart TB
     Upgrade --> Deployments[<span style='color:#000'>Renders per-component Deployments</span>]
 
     Deployments --> Recreate[<span style='color:#000'>strategy: Recreate<br/>runtime, llm, inference-&lt;agent&gt;<br/>(GPU/model-weight singleton pods)</span>]
-    Deployments --> Rolling[<span style='color:#000'>default RollingUpdate<br/>dashboard, messaging</span>]
+    Deployments --> Rolling[<span style='color:#000'>default RollingUpdate<br/>web, messaging</span>]
 
     Recreate --> HPA{<span style='color:#000'>runtime.autoscaling.enabled?</span>}
     HPA -->|Yes| Scale[<span style='color:#000'>HPA: min/maxReplicas<br/>CPU/memory utilization target</span>]

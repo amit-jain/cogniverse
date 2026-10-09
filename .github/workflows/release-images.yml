@@ -38,18 +38,6 @@ jobs:
             dockerfile: libs/runtime/Dockerfile
             context: .
             backend: rocm
-          - repo: dashboard-cpu
-            dockerfile: libs/dashboard/Dockerfile
-            context: .
-            backend: cpu
-          - repo: dashboard-cuda
-            dockerfile: libs/dashboard/Dockerfile
-            context: .
-            backend: cuda
-          - repo: dashboard-rocm
-            dockerfile: libs/dashboard/Dockerfile
-            context: .
-            backend: rocm
           - repo: web
             dockerfile: clients/web/Dockerfile
             context: clients/web
@@ -117,9 +105,9 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
-          # SETUPTOOLS_SCM_PRETEND_VERSION feeds hatch-vcs inside the runtime /
-          # dashboard builds (docker context has no .git); the sidecar builds
-          # ignore both args.
+          # SETUPTOOLS_SCM_PRETEND_VERSION feeds hatch-vcs inside the runtime
+          # builds (docker context has no .git); the sidecar builds ignore
+          # both args.
           build-args: |
             TORCH_BACKEND=${{ matrix.backend }}
             SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.version.outputs.version }}

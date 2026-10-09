@@ -207,11 +207,6 @@ _CI_SELECTION_COMMANDS = [
     " tests/memory/integration/test_dispatcher_conversation_history_real_mem0.py"
     " tests/memory/integration/test_soft_delete_lifecycle.py -m 'integration and"
     " ci_fast and not requires_lm' -v -p no:cacheprovider --tb=long",
-    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
-    " python -m pytest tests/dashboard/unit -v -p no:cacheprovider --tb=long",
-    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
-    " python -m pytest tests/dashboard -m 'integration and ci_fast and not"
-    " requires_lm' -v -p no:cacheprovider --tb=long",
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false COVERAGE_FILE=.coverage uv run"
     " python -m pytest tests/evaluation/unit -m unit -v -p no:cacheprovider --tb=long",
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false COVERAGE_FILE=.coverage uv run"

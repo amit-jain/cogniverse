@@ -61,12 +61,10 @@ _APP_CLOSURE = _AGENTS_CLOSURE | {
 BASE_CLOSURES = {
     "cogniverse-agents": _AGENTS_CLOSURE,
     "cogniverse-runtime": _APP_CLOSURE | {"cogniverse-runtime"},
-    "cogniverse-dashboard": _APP_CLOSURE | {"cogniverse-dashboard"},
 }
 ROOT_IMPORTS = {
     "cogniverse-agents": "cogniverse_agents",
     "cogniverse-runtime": "cogniverse_runtime.main",
-    "cogniverse-dashboard": "cogniverse_dashboard",
 }
 THREADS = 8
 INSTALLERS = ("pip", "uv")
@@ -419,17 +417,12 @@ def _installed_file_mismatches(site_packages: Path, wheel: Path) -> list[str]:
 def test_the_readmes_document_the_installs_the_clean_install_runs():
     assert _documented_pip_target("cogniverse-agents") == "cogniverse-agents"
     assert _documented_pip_target("cogniverse-runtime") == "cogniverse-runtime[vespa]"
-    assert _documented_pip_target("cogniverse-dashboard") == "cogniverse-dashboard"
     assert _documented_uv_install("cogniverse-agents") == ([], "cogniverse-agents")
     assert _documented_uv_install("cogniverse-runtime") == (
         [],
         "cogniverse-runtime[vespa]",
     )
-    assert _documented_uv_install("cogniverse-dashboard") == (
-        [],
-        "cogniverse-dashboard",
-    )
-    for root in ("cogniverse-runtime", "cogniverse-dashboard"):
+    for root in ("cogniverse-runtime",):
         assert "--prerelease" not in _readme(root), root
 
 
@@ -669,11 +662,7 @@ def _clean_install_lifecycle(root, installer, release, work, caches):
     assert before.returncode == 0, before.stderr
     before_report = json.loads(before.stdout)
     torch = before_report.pop("torch")
-    if root == "cogniverse-dashboard":
-        assert Version(torch).local is None, torch
-        assert str(Version(torch)) == torch
-    else:
-        assert torch is None or Version(torch).local is None, torch
+    assert torch is None or Version(torch).local is None, torch
     assert before_report == {
         "cogniverse": sorted([n, VERSION] for n in BASE_CLOSURES[root]),
         "spacy": "3.8.14",

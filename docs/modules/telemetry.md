@@ -4,15 +4,12 @@
 
 - **Foundation Interfaces**: `cogniverse-foundation` (libs/foundation/cogniverse_foundation/telemetry/)
 
-- **Dashboard Tab**: `cogniverse-dashboard` (libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py)
-
 - **Phoenix Plugin**: `cogniverse-telemetry-phoenix` (libs/telemetry-phoenix/)
-**Layer:** Foundation Layer (interfaces and infrastructure) + Dashboard Layer (per-modality tab) + Plugin (Phoenix provider)
+**Layer:** Foundation Layer (interfaces and infrastructure) + Plugin (Phoenix provider)
 
-**Architecture Note:** Cogniverse uses a **plugin-based telemetry architecture** with two layers plus a dashboard consumer:
+**Architecture Note:** Cogniverse uses a **plugin-based telemetry architecture** with two layers:
 1. **Foundation Layer** (`cogniverse-foundation`): Telemetry provider interfaces, infrastructure, manager, and configuration. Zero knowledge of any specific backend.
 2. **Plugin Layer** (`cogniverse-telemetry-phoenix`): Phoenix-specific implementation auto-discovered via Python entry points
-3. **Dashboard Layer** (`cogniverse-dashboard`): Reads spans through the Foundation manager/provider APIs to render the Profile Routing Metrics tab
 
 There is no `cogniverse_core.telemetry` re-export layer — a compatibility
 shim existed briefly during the foundation-package migration but was
@@ -91,19 +88,11 @@ libs/foundation/cogniverse_foundation/telemetry/
   Also holds the annotation constants (`RESULT_RELEVANCE`, `RESULT_CLICK`,
   `RESULT_ID_META_KEY`, `RELEVANCE_POSITIVE_THRESHOLD`,
   `PREFERENCE_CHOSEN_THRESHOLD`) that `TripletExtractor`,
-  `PreferencePairExtractor`, the trace converter, and the dashboard relevance
-  writer all import instead of hardcoding the annotation names, metadata key,
+  `PreferencePairExtractor`, the trace converter, and the relevance writer
+  (`persist_result_relevance`) all use instead of hardcoding the annotation names, metadata key,
   and thresholds at each site.
 
-### 2. Dashboard Layer: Profile Routing Metrics (cogniverse-dashboard)
-```text
-libs/dashboard/cogniverse_dashboard/tabs/
-└── profile_metrics.py       # render_profile_metrics_tab() — per-modality observability
-```
-
-**Purpose:** Per-modality runtime observability surfaced in the dashboard. Reads `cogniverse.profile_selection` spans from Phoenix and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch.
-
-### 3. Plugin Layer: Phoenix Telemetry Provider (cogniverse-telemetry-phoenix)
+### 2. Plugin Layer: Phoenix Telemetry Provider (cogniverse-telemetry-phoenix)
 ```text
 libs/telemetry-phoenix/cogniverse_telemetry_phoenix/
 ├── __init__.py              # Package initialization & exports
@@ -160,7 +149,7 @@ The Telemetry Module provides **multi-tenant observability** infrastructure for 
 - **Lazy Initialization**: Tracer providers created on-demand with LRU caching
 - **Batch Export**: Configurable batch processing for high-throughput span export
 - **Graceful Degradation**: System continues functioning even when telemetry fails
-- **Per-Modality Observability**: Profile routing metrics aggregated from `cogniverse.profile_selection` spans; surfaced in the "Profile Routing Metrics" dashboard tab
+- **Per-Modality Observability**: Profile routing metrics aggregated from `cogniverse.profile_selection` spans; surfaced in the web client's "Profile metrics" view
 - **OpenTelemetry Integration**: Standards-based distributed tracing with Phoenix backend
 
 ### Key Features
@@ -182,7 +171,7 @@ The Telemetry Module provides **multi-tenant observability** infrastructure for 
 
 4. **Per-Modality Observability**
    - `cogniverse.profile_selection` spans emitted by `ProfileSelectionAgent` carry a `profile_selection.modality` attribute
-   - The "Profile Routing Metrics" dashboard tab (`profile_metrics.py`) queries those spans from Phoenix and aggregates P50/P95/P99 latency, success rate, and request count per modality
+   - The runtime's `GET /admin/tenant/{tenant_id}/telemetry/profile-selection` route (`routers/telemetry_metrics.py`), shown in the web client's "Profile metrics" view, queries those spans from Phoenix and aggregates P50/P95/P99 latency, success rate, and request count per modality
    - No separate metrics class required — all observability flows through standard OTel spans
 
 5. **Context Helpers**
@@ -1480,7 +1469,7 @@ config.should_instrument_component("backend")         # True
 config.should_instrument_component("encoder")         # False (VERBOSE only)
 ```
 
-**Span Name Constants** (`config.py`): standardized span/service names used across agents and the dashboard, so callers don't hardcode string literals:
+**Span Name Constants** (`config.py`): standardized span/service names used across agents and the runtime, so callers don't hardcode string literals:
 
 ```python
 SPAN_NAME_REQUEST = "cogniverse.request"
@@ -1494,8 +1483,8 @@ SPAN_NAME_ENTITY_EXTRACTION = "cogniverse.entity_extraction"
 SERVICE_NAME_ORCHESTRATION = "cogniverse.orchestration"
 ```
 
-`SPAN_NAME_PROFILE_SELECTION` is the constant the Profile Routing Metrics
-dashboard tab (`profile_metrics.py`) filters on server-side via
+`SPAN_NAME_PROFILE_SELECTION` is the constant the runtime's profile-selection
+metrics route (`routers/telemetry_metrics.py`) filters on server-side via
 `provider.traces.get_spans(..., filters={"name": SPAN_NAME_PROFILE_SELECTION})`.
 
 ---
@@ -2150,7 +2139,7 @@ if stats['failed_initializations'] > 0:
     alert("Telemetry provider initialization failures", severity="error")
 ```
 
-3. **Per-Modality Performance:** Monitor via the "Profile Routing Metrics" dashboard tab, which aggregates P95 latency and success rate per modality from `cogniverse.profile_selection` spans. Set Phoenix alerts for `cogniverse.profile_selection` span P95 duration or error rate thresholds directly in Phoenix.
+3. **Per-Modality Performance:** Monitor via the web client's "Profile metrics" view, which aggregates P95 latency and success rate per modality from `cogniverse.profile_selection` spans. Set Phoenix alerts for `cogniverse.profile_selection` span P95 duration or error rate thresholds directly in Phoenix.
 
 4. **Export Queue Health:**
 ```python
@@ -2483,7 +2472,7 @@ The Telemetry Module provides **production-ready, multi-tenant observability** w
 
 - Search operations use pre-built context helpers
 
-- Per-modality observability flows through `cogniverse.profile_selection` spans and the Profile Routing Metrics dashboard tab
+- Per-modality observability flows through `cogniverse.profile_selection` spans and the web client's Profile metrics view
 
 - Phoenix provides analytics and visualization
 
@@ -2502,7 +2491,5 @@ The Telemetry Module provides **production-ready, multi-tenant observability** w
 - Manager: `libs/foundation/cogniverse_foundation/telemetry/manager.py`
 
 - Config: `libs/foundation/cogniverse_foundation/telemetry/config.py`
-
-- Per-Modality Dashboard: `libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`
 
 - Context: `libs/foundation/cogniverse_foundation/telemetry/context.py`

@@ -947,5 +947,5 @@ const profile = await client.createProfile({
 
 ## Next Steps
 
-- [Profile Management Dashboard](profile-management.md) - UI guide
+- [Backend Profile Management](profile-management.md) - UI guide
 - [Dynamic Profiles Architecture](../architecture/dynamic-profiles.md) - System design

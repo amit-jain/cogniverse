@@ -2,8 +2,8 @@
 
 Phoenix stores spans in UTC. A naive ``datetime.now()`` on a non-UTC
 host (e.g. IST = UTC+5:30) shifts the query window by the local offset
-and silently drops or fetches the wrong traces. The evaluation +
-dashboard sites used to build the window with naive ``datetime.now()``;
+and silently drops or fetches the wrong traces. The evaluation
+sites used to build the window with naive ``datetime.now()``;
 they now use ``datetime.now(timezone.utc)``.
 """
 

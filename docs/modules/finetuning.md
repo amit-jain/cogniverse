@@ -1223,7 +1223,7 @@ async def read_experiment_records(
     return {"runs": runs, "details": details, "comparison": comparison}
 ```
 
-The dashboard has no fine-tuning-specific experiment tab requirement; use the
+Use the
 helpers or the provider's trace store to query `experiments`.
 
 ## Automatic Adapter Evaluation

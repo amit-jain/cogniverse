@@ -300,7 +300,7 @@ class TestAnnotationAgentCanonicalTenant:
     def test_raw_tenant_scopes_to_the_canonical_project(self):
         """The runtime writes routing spans under the canonical tenant
         project; an AnnotationAgent built with a raw id (e.g. from a
-        dashboard tab) must read the SAME project or every identify run
+        UI request) must read the SAME project or every identify run
         sees an empty project on real traffic."""
         from cogniverse_agents.routing.annotation_agent import AnnotationAgent
 

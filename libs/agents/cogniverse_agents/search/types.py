@@ -3,7 +3,7 @@
 Defines the content-modality taxonomy and the reranker-facing result shape
 consumed by both the live request path (reranker in
 `libs/runtime/.../routers/search.py`) and the offline analytics path
-(`routing/modality_*` modules, `routing/xgboost_meta_models.py`, dashboards,
+(`routing/modality_*` modules, `routing/xgboost_meta_models.py`,
 `evaluation/quality_monitor.py`).
 
 `QueryModality` is a closed taxonomy; it is used as a dict key for XGBoost

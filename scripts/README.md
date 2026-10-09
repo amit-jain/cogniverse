@@ -43,7 +43,6 @@ Cogniverse uses a 10-package modular architecture:
 
 ### Application Layer (Light Blue/Purple)
 - **cogniverse-runtime** - FastAPI server and API endpoints
-- **cogniverse-dashboard** - Streamlit dashboards and UI components
 
 **All scripts use proper package imports**:
 ```python
@@ -578,26 +577,6 @@ uv run python scripts/analyze_traces.py \
 
 ---
 
-#### `phoenix_dashboard.py` - Phoenix Monitoring Dashboard
-**Streamlit dashboard for Phoenix metrics and traces**
-
-```bash
-# Launch Phoenix dashboard
-uv run streamlit run scripts/phoenix_dashboard.py -- \
-  --tenant-id default \
-  --phoenix-endpoint http://localhost:6006
-
-# Multi-tenant dashboard
-uv run streamlit run scripts/phoenix_dashboard.py -- \
-  --tenants default acme_corp enterprise_client
-```
-
-**Imports:**
-- `cogniverse_dashboard.components` - Dashboard UI components
-- `cogniverse_telemetry_phoenix` - Phoenix integration
-
----
-
 #### `export_backend_embeddings.py` - Export Embeddings for Analysis
 **Export embeddings from any backend for dimensionality reduction/visualization**
 
@@ -613,24 +592,7 @@ uv run python scripts/export_backend_embeddings.py \
   --max-documents 10000
 ```
 
----
-
-#### `embedding_atlas_tab.py` - Embedding Visualization
-**Interactive embedding atlas with UMAP/t-SNE visualization**
-
-```bash
-# Launch embedding atlas
-uv run streamlit run scripts/embedding_atlas_tab.py -- \
-  --embeddings embeddings/video_embeddings.npz \
-  --reduction umap
-
-# With clustering
-uv run streamlit run scripts/embedding_atlas_tab.py -- \
-  --embeddings embeddings/doc_embeddings.npz \
-  --reduction tsne \
-  --clustering kmeans \
-  --n-clusters 20
-```
+Upload the parquet in the web client's Embedding atlas (Exported file).
 
 ---
 
@@ -752,9 +714,6 @@ uv run python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id
 cat results/optimization_*.json | jq '.summary'
 
 # 3. Agents pick up the new artifacts at startup (no redeploy step)
-
-# 4. Monitor performance
-uv run streamlit run scripts/phoenix_dashboard.py
 ```
 
 ### Evaluation Workflow
@@ -830,7 +789,6 @@ uv run python scripts/<script>.py [OPTIONS]
 # Examples
 uv run python scripts/run_ingestion.py --help
 uv run python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id default
-uv run streamlit run scripts/phoenix_dashboard.py
 ```
 
 ---
@@ -857,7 +815,6 @@ from cogniverse_synthetic import SyntheticDataService, SyntheticDataRequest
 
 # Application Layer
 from cogniverse_runtime.api import create_app
-from cogniverse_dashboard.components import MetricsViewer
 ```
 
 ---
@@ -913,7 +870,7 @@ bash scripts/start_phoenix.sh
 | **Evaluation** | 6 | `bootstrap_dataset_from_traces.py`, `run_experiments_with_visualization.py`, `evaluate_comprehensive_test_spans.py` |
 | **Dataset Management** | 5 | `manage_datasets.py`, `manage_golden_datasets.py`, `create_golden_dataset_from_traces.py` |
 | **Deployment** | 1 | Schema deployment flows through runtime `POST /admin/profiles/{profile}/deploy` |
-| **Monitoring** | 5 | `analyze_traces.py`, `phoenix_dashboard.py`, `export_backend_embeddings.py`, `embedding_atlas_tab.py` |
+| **Monitoring** | 2 | `analyze_traces.py`, `export_backend_embeddings.py` |
 | **Setup** | 4 | `setup_system.py`, `start_phoenix.py`, `setup_evaluation.sh` |
 | **Total** | **36+** | Core operational scripts |
 

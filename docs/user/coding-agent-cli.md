@@ -290,7 +290,7 @@ named `openshell.gateway_health` with attributes:
 | `openshell.gateway_latency_ms` | Round-trip probe latency |
 | `openshell.gateway_error` | Sick status name, exception class name, or `no_client` (only set when unavailable) |
 
-The Phoenix dashboard reads these spans for the gateway-status tile. The probe
+Phoenix holds these spans as the gateway's status history. The probe
 runs as part of the FastAPI lifespan; `stop()` is awaited at shutdown so the
 runtime can exit cleanly.
 

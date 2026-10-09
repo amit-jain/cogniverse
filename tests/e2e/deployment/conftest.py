@@ -597,7 +597,6 @@ def deployment_helm_inputs(
     helm_set_overrides = {
         "argo-workflows.crds.install": "false",
         "runtime.backend": backend,
-        "dashboard.backend": backend,
         "devMode.enabled": "false",
     }
     helm_set_overrides.update(

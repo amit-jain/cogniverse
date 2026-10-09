@@ -48,7 +48,7 @@ def test_stack_workloads_lists_non_inference_deployments_and_statefulsets(monkey
     def fake_cmd(args, *, timeout=120, check=True):
         calls.append(list(args))
         return _completed(
-            "Deployment/cogniverse-dashboard dashboard\n"
+            "Deployment/cogniverse-messaging messaging\n"
             "Deployment/cogniverse-gliner inference-gliner\n"
             "Deployment/cogniverse-runtime runtime\n"
             "StatefulSet/cogniverse-vespa vespa\n"
@@ -58,7 +58,7 @@ def test_stack_workloads_lists_non_inference_deployments_and_statefulsets(monkey
 
     monkeypatch.setattr(deploy_conftest, "_cmd", fake_cmd)
     assert deploy_conftest.stack_workloads("cogniverse") == [
-        "deployment/cogniverse-dashboard",
+        "deployment/cogniverse-messaging",
         "deployment/cogniverse-runtime",
         "statefulset/cogniverse-vespa",
     ]
@@ -141,7 +141,7 @@ def test_stack_ready_shares_one_budget_across_the_workloads(monkeypatch):
     def cmd(args, *, timeout=120, check=True):
         if "get" in args:
             return _completed(
-                "Deployment/a runtime\nDeployment/b dashboard\nDeployment/c minio\n"
+                "Deployment/a runtime\nDeployment/b web\nDeployment/c minio\n"
             )
         budgets.append(int(args[-1].removeprefix("--timeout=").removesuffix("s")))
         return _completed("")
@@ -209,12 +209,12 @@ class TestDevmodeRefreshWaitsOnDerivedOwners:
 
     PODS = (
         "cogniverse-runtime-abc-1|src-libs\n"
-        "cogniverse-dashboard-def-2|src-libs\n"
+        "cogniverse-messaging-def-2|src-libs\n"
         "cogniverse-quality-monitor-ghi-3|src-libs\n"
         "cogniverse-minio-jkl-4|\n"
     )
     DEPLOYS = (
-        "cogniverse-dashboard|src-libs\n"
+        "cogniverse-messaging|src-libs\n"
         "cogniverse-minio|\n"
         "cogniverse-quality-monitor|src-libs\n"
         "cogniverse-runtime|src-libs\n"
@@ -256,11 +256,11 @@ class TestDevmodeRefreshWaitsOnDerivedOwners:
         assert result is True
         assert deleted == [
             "cogniverse-runtime-abc-1",
-            "cogniverse-dashboard-def-2",
+            "cogniverse-messaging-def-2",
             "cogniverse-quality-monitor-ghi-3",
         ]
         assert waited == [
-            "deployment/cogniverse-dashboard",
+            "deployment/cogniverse-messaging",
             "deployment/cogniverse-quality-monitor",
             "deployment/cogniverse-runtime",
         ]
@@ -269,7 +269,7 @@ class TestDevmodeRefreshWaitsOnDerivedOwners:
         """devMode pods with no derivable owners: refuse before deleting
         anything rather than delete pods and wait on nothing."""
         result, deleted, waited = self._run(
-            monkeypatch, "cogniverse-dashboard|\ncogniverse-runtime|\n"
+            monkeypatch, "cogniverse-messaging|\ncogniverse-runtime|\n"
         )
         assert result is False
         assert deleted == []

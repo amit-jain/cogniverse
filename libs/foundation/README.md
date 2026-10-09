@@ -202,7 +202,7 @@ Implementation Layer:
   cogniverse-agents, cogniverse-vespa, cogniverse-synthetic
     ↓
 Application Layer:
-  cogniverse-runtime, cogniverse-dashboard
+  cogniverse-runtime
 ```
 
 ## Design Principles

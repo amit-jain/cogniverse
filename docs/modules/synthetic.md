@@ -956,7 +956,6 @@ cogniverse_synthetic/
 flowchart TB
     subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
         Runtime["<span style='color:#000'>cogniverse-runtime</span>"]
-        Dashboard["<span style='color:#000'>cogniverse-dashboard</span>"]
     end
 
     subgraph ImplLayer["<span style='color:#000'>Implementation Layer</span>"]
@@ -982,7 +981,6 @@ flowchart TB
 
     style AppLayer fill:#90caf9,stroke:#1565c0,color:#000
     style Runtime fill:#64b5f6,stroke:#1565c0,color:#000
-    style Dashboard fill:#64b5f6,stroke:#1565c0,color:#000
     style ImplLayer fill:#ffcc80,stroke:#ef6c00,color:#000
     style Synthetic fill:#ffb74d,stroke:#ef6c00,color:#000
     style Agents fill:#ffb74d,stroke:#ef6c00,color:#000
@@ -998,7 +996,7 @@ flowchart TB
 
 **Dependencies:** `cogniverse-sdk`, `cogniverse-foundation`, `cogniverse-core`, `dspy-ai`, `pydantic`, `httpx`, `fastapi`
 
-**Dependents:** `cogniverse-runtime`, `cogniverse-agents`, `cogniverse-finetuning` (declared workspace dependencies); `cogniverse-dashboard` also imports it directly at runtime for the optimization and approval-queue tabs
+**Dependents:** `cogniverse-runtime`, `cogniverse-agents`, `cogniverse-finetuning` (declared workspace dependencies)
 
 ---
 

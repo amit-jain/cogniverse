@@ -20,7 +20,7 @@
 
 ## Overview
 
-Cogniverse consists of **13 independent packages** organized in a **layered architecture**. The publishing scripts build and publish **5 main packages** (core, agents, vespa, runtime, dashboard) together with the internal packages they require:
+Cogniverse consists of **12 independent packages** organized in a **layered architecture**. The publishing scripts build and publish **4 main packages** (core, agents, vespa, runtime) together with the internal packages they require:
 
 ### Packages Supported by Publishing Scripts
 
@@ -30,7 +30,6 @@ Cogniverse consists of **13 independent packages** organized in a **layered arch
 | **cogniverse-agents** | Agent implementations | cogniverse-sdk, cogniverse-core, cogniverse-synthetic |
 | **cogniverse-vespa** | Vespa backend integration | cogniverse-sdk, cogniverse-core |
 | **cogniverse-runtime** | FastAPI server runtime | cogniverse-sdk, cogniverse-core, cogniverse-synthetic (agents/vespa optional) |
-| **cogniverse-dashboard** | Standalone Streamlit UI dashboard | cogniverse-sdk, cogniverse-core, cogniverse-agents, cogniverse-evaluation, cogniverse-vespa, cogniverse-telemetry-phoenix |
 
 ### Other Packages
 
@@ -68,9 +67,9 @@ flowchart LR
 
 **Publishing Scripts Handle the Release Set**
 
-Pushing a `v*` tag drives CI, which builds + publishes these packages (`build_packages.sh` / `publish_packages.sh`); hatch-vcs stamps each from the tag. `build_packages.sh` builds them together with every internal package they require — the release set, in dependency order: sdk, foundation, core, evaluation, synthetic, vespa, agents, telemetry-phoenix, runtime, dashboard.
+Pushing a `v*` tag drives CI, which builds + publishes these packages (`build_packages.sh` / `publish_packages.sh`); hatch-vcs stamps each from the tag. `build_packages.sh` builds them together with every internal package they require — the release set, in dependency order: sdk, foundation, core, evaluation, synthetic, vespa, agents, telemetry-phoenix, runtime.
 
-**Note:** `publish_packages.sh` uploads exactly the artifacts listed in `dist/BUILD_MANIFEST.json` — the whole release set, sdk through dashboard. finetuning, cli and messaging are not built or published by the scripts.
+**Note:** `publish_packages.sh` uploads exactly the artifacts listed in `dist/BUILD_MANIFEST.json` — the whole release set, sdk through runtime. finetuning, cli and messaging are not built or published by the scripts.
 
 ---
 
@@ -110,7 +109,6 @@ libs/
 ├── finetuning/              # cogniverse-finetuning
 ├── APPLICATION LAYER
 ├── runtime/                 # cogniverse-runtime
-├── dashboard/               # cogniverse-dashboard
 ├── cli/                     # cogniverse-cli (standalone, no cogniverse deps)
 └── messaging/               # cogniverse-messaging (standalone, no cogniverse deps)
 ```
@@ -326,7 +324,7 @@ which builds and publishes everything at `0.2.0`:
 | Artifact | Versioned by | Published by |
 |---|---|---|
 | Python wheels + sdists (release set) | `hatch-vcs`, from the tag | `publish-packages.yml` → PyPI |
-| Docker images (runtime/dashboard ×3, gliner, 3 sidecars) | the tag (`github.ref_name`) | `release-images.yml` → docker.io/cogniverse |
+| Docker images (runtime ×3, web, gliner, 3 sidecars) | the tag (`github.ref_name`) | `release-images.yml` → docker.io/cogniverse |
 | Helm chart | `Chart.yaml` `appVersion`/`version` | `release-images.yml` (`publish-chart` job) → OCI `oci://registry-1.docker.io/cogniverse` |
 
 Each release image also gets an **SBOM + build provenance** attached and is
@@ -349,12 +347,12 @@ minio/vllm/envoy/…) — enumerated from a chart render — into a registry you
   source change therefore retags only the images that consume it. Existing host
   tags are not rebuilt, and existing k3d-node tags are not re-imported.
   PyLate appends `-cpu`, `-cuda`, or `-rocm` because its build argument changes
-  image bytes; runtime and dashboard encode that backend in their repositories.
+  image bytes; runtime encodes that backend in its repositories.
   `pullPolicy: Never` selects those local images. `values.k3s.yaml` carries a
   static `<line>-dev` placeholder that `cogniverse up` replaces via per-image
   `--set` values from `dev_image_set_values`.
 
-`.dockerignore` excludes `.git`, so the runtime/dashboard images (which install the
+`.dockerignore` excludes `.git`, so the runtime images (which install the
 workspace and thus trigger hatch-vcs) receive the version through the
 `SETUPTOOLS_SCM_PRETEND_VERSION` build-arg that `build_images` / `release-images.yml`
 set from the host, where git is available. Each package therefore carries the
@@ -401,8 +399,8 @@ dist/
 ├── cogniverse_sdk-0.2.0-py3-none-any.whl
 ├── cogniverse_sdk-0.2.0.tar.gz
 ├── ...                                  # one wheel + sdist per release package
-├── cogniverse_dashboard-0.2.0-py3-none-any.whl
-├── cogniverse_dashboard-0.2.0.tar.gz
+├── cogniverse_runtime-0.2.0-py3-none-any.whl
+├── cogniverse_runtime-0.2.0.tar.gz
 └── BUILD_MANIFEST.json
 ```
 
@@ -459,7 +457,6 @@ pip install dist/cogniverse_vespa-*.whl
 
 # Application packages (depend on core, agents, vespa)
 pip install dist/cogniverse_runtime-*.whl
-pip install dist/cogniverse_dashboard-*.whl
 
 # Verify imports
 python -c "from cogniverse_foundation.config.unified_config import SystemConfig"

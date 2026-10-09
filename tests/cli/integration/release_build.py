@@ -36,7 +36,6 @@ EXPECTED_RELEASE = {
     "cogniverse-agents",
     "cogniverse-telemetry-phoenix",
     "cogniverse-runtime",
-    "cogniverse-dashboard",
 }
 
 GIT_ENV = {

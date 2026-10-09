@@ -376,7 +376,7 @@ curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deplo
   -d '{"tenant_id": "newcorp_inc"}'
 ```
 
-Profile configs read and written by these admin endpoints go through `ConfigManager` with `service="backend"` (the default `service` for profile CRUD in `libs/runtime/cogniverse_runtime/routers/admin.py`) — the same config-service scope the dashboard's backend-profile views read from.
+Profile configs read and written by these admin endpoints go through `ConfigManager` with `service="backend"` (the default `service` for profile CRUD in `libs/runtime/cogniverse_runtime/routers/admin.py`) — the same config-service scope the web client's Backend profiles view reads from.
 
 ---
 
@@ -577,7 +577,7 @@ curl -X POST http://localhost:8000/admin/tenant/acme_corp/optimize \
   -H 'Content-Type: application/json' \
   -d '{"mode": "simba"}'
 
-# Poll the on-demand run's status (dashboard uses this to render progress)
+# Poll the on-demand run's status (the web client uses this to render progress)
 curl http://localhost:8000/admin/tenant/acme_corp/optimize/runs/<workflow-name>
 ```
 

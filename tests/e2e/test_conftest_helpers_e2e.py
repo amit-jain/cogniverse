@@ -265,7 +265,7 @@ class TestTheSeededTenantIsDerivedFromTheChart:
 class TestCollectionOrdering:
     """Collection order keeps browser tests after non-browser tests."""
 
-    def test_browser_item_from_non_dashboard_module_sorts_last(self, monkeypatch):
+    def test_browser_item_from_any_module_sorts_last(self, monkeypatch):
         items = [
             _collection_item(
                 Path("tests/e2e/test_multiprofile_and_isolation_e2e.py"),
@@ -463,7 +463,6 @@ def _expected_e2e_deployment_set_overrides() -> dict[str, str]:
     return {
         "argo-workflows.crds.install": "false",
         "runtime.backend": "rocm",
-        "dashboard.backend": "rocm",
         "devMode.enabled": "false",
         **_expected_e2e_sandbox_overrides(),
     }
@@ -472,7 +471,6 @@ def _expected_e2e_deployment_set_overrides() -> dict[str, str]:
 def _expected_e2e_image_tags(backend: str = "rocm") -> tuple[str, ...]:
     return (
         f"cogniverse/runtime-{backend}:0.1.dev3019-g51f8bee27",
-        f"cogniverse/dashboard-{backend}:0.1.dev3017-g61e9ccd38",
         "cogniverse/gliner:0.1.dev2988-gbf5b73d11",
     )
 
@@ -1200,7 +1198,6 @@ class TestSharedClusterOwnership:
             or {
                 "devMode.enabled": "false",
                 "runtime.backend": backend,
-                "dashboard.backend": backend,
             },
             "image_tags": image_tags or _expected_e2e_image_tags(backend),
             "chart_digest": _expected_e2e_chart_digest(),
@@ -1402,7 +1399,6 @@ class TestSharedClusterOwnership:
             set_overrides={
                 "devMode.enabled": "false",
                 "runtime.backend": "rocm",
-                "dashboard.backend": "rocm",
                 "inference.vllm_asr.livenessProbe.failureThreshold": "60",
             }
         )
@@ -1418,7 +1414,6 @@ class TestSharedClusterOwnership:
         current_identity = self._current_identity(
             image_tags=(
                 "cogniverse/runtime-rocm:0.1.dev3020-gabcdef123",
-                "cogniverse/dashboard-rocm:0.1.dev3017-g61e9ccd38",
                 "cogniverse/gliner:0.1.dev2988-gbf5b73d11",
             )
         )
@@ -1441,7 +1436,6 @@ class TestSharedClusterOwnership:
             "helm_set_overrides": {
                 "devMode.enabled": "false",
                 "runtime.backend": "rocm",
-                "dashboard.backend": "rocm",
                 "somefuture.imagesByBackend.rocm.tag": "0.1.dev9999-gdeadbeef00",
             },
         }
@@ -1467,7 +1461,6 @@ class TestSharedClusterOwnership:
             "set_overrides": {
                 "devMode.enabled": "false",
                 "runtime.backend": "rocm",
-                "dashboard.backend": "rocm",
                 "somefuture.imagesByBackend.rocm.tag": "0.1.dev9999-gdeadbeef00",
             },
             "image_tags": (
@@ -1486,7 +1479,6 @@ class TestSharedClusterOwnership:
             set_overrides={
                 "devMode.enabled": "false",
                 "runtime.backend": "rocm",
-                "dashboard.backend": "rocm",
                 "runtime.imagesByBackend.rocm.tag": "0.1.dev3019-g51f8bee27",
             }
         )
@@ -1494,7 +1486,6 @@ class TestSharedClusterOwnership:
             set_overrides={
                 "devMode.enabled": "false",
                 "runtime.backend": "rocm",
-                "dashboard.backend": "rocm",
                 "runtime.imagesByBackend.rocm.tag": "0.1.dev3020-gabcdef1234",
             }
         )
@@ -1517,7 +1508,6 @@ class TestSharedClusterOwnership:
             set_overrides={
                 "devMode.enabled": "false",
                 "runtime.backend": "rocm",
-                "dashboard.backend": "rocm",
                 "runtime.imagesByBackend.rocm.tag": "0.1.dev3019-g51f8bee27",
             }
         )
@@ -1525,7 +1515,6 @@ class TestSharedClusterOwnership:
             set_overrides={
                 "devMode.enabled": "false",
                 "runtime.backend": "rocm",
-                "dashboard.backend": "rocm",
                 "runtime.imagesByBackend.rocm.tag": "0.1.dev3020-gabcdef1234",
             }
         )
@@ -1601,7 +1590,6 @@ class TestSharedClusterOwnership:
             **current_identity,
             "image_tags": (
                 "cogniverse/runtime-cuda:0.1.dev3019-g51f8bee27",
-                "cogniverse/dashboard-rocm:0.1.dev3017-g61e9ccd38",
                 "cogniverse/gliner:0.1.dev2988-gbf5b73d11",
             ),
         }
@@ -1663,7 +1651,6 @@ class TestSharedClusterOwnership:
         assert baseline_identity == self._seeded_repo_identity(
             {
                 "runtime": base_version,
-                "dashboard": base_version,
                 "gliner": base_version,
                 "face_embed": base_version,
             },
@@ -1697,7 +1684,7 @@ class TestSharedClusterOwnership:
             (
                 "configs/config.json",
                 '{"backend": "cuda"}\n',
-                {"dashboard", "runtime"},
+                {"runtime"},
                 True,
             ),
             ("charts/cogniverse/values.yaml", "replicaCount: 2\n", set(), True),
@@ -1707,14 +1694,6 @@ class TestSharedClusterOwnership:
                 {"pylate"},
                 False,
             ),
-            # The seeded chart enables neither UI, so a dashboard input moves
-            # the dashboard's tag and nothing the deploy renders.
-            (
-                "scripts/dashboard_tab.py",
-                "VALUE = 'changed'\n",
-                {"dashboard"},
-                False,
-            ),
             ("clients/web/src/app.ts", "export {};\n", {"web"}, False),
             (
                 "pyproject.toml",
@@ -1722,7 +1701,7 @@ class TestSharedClusterOwnership:
                 set(images_mod.IMAGE_INPUT_PATHS),
                 True,
             ),
-            ("uv.lock", "lock-version = 2\n", {"dashboard", "runtime"}, True),
+            ("uv.lock", "lock-version = 2\n", {"runtime"}, True),
             (
                 ".dockerignore",
                 "__pycache__\n*.tmp\n",
@@ -2657,7 +2636,6 @@ class TestSharedClusterOwnership:
         identity = self._seeded_repo_identity(
             {
                 "runtime": base_version,
-                "dashboard": base_version,
                 "gliner": base_version,
                 "face_embed": base_version,
             },
@@ -2721,7 +2699,6 @@ class TestSharedClusterOwnership:
             self._seeded_repo_identity(
                 {
                     "runtime": base_version,
-                    "dashboard": base_version,
                     "gliner": base_version,
                     "face_embed": base_version,
                 },
@@ -2730,7 +2707,6 @@ class TestSharedClusterOwnership:
             self._seeded_repo_identity(
                 {
                     "runtime": runtime_version,
-                    "dashboard": base_version,
                     "gliner": base_version,
                     "face_embed": base_version,
                 },
@@ -2785,7 +2761,6 @@ class TestSharedClusterOwnership:
         identity = self._seeded_repo_identity(
             {
                 "runtime": base_version,
-                "dashboard": base_version,
                 "gliner": base_version,
                 "face_embed": base_version,
             },
@@ -2840,7 +2815,6 @@ class TestSharedClusterOwnership:
         identity = self._seeded_repo_identity(
             {
                 "runtime": base_version,
-                "dashboard": base_version,
                 "gliner": base_version,
                 "face_embed": base_version,
             },

@@ -469,7 +469,7 @@ def test_a_degraded_prune_listing_deletes_nothing(response, coverage, caplog):
 
 def test_get_stats_raises_on_truncated_visit(monkeypatch):
     """A traversal that stops halfway must raise, not present partial (or
-    zero) counts as complete stats — a dashboard keyed off the counts would
+    zero) counts as complete stats — a reader keyed off the counts would
     read an empty store during a Vespa blip. Matches the raising sibling
     reads."""
     pages = [

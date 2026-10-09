@@ -116,8 +116,6 @@ tests/
 ├── common/
 │   ├── unit/
 │   └── integration/
-├── dashboard/
-│   └── unit/
 ├── ui/                              # Currently empty
 ├── synthetic/
 │   ├── unit/
@@ -946,7 +944,7 @@ build on a coverage floor via `--cov-fail-under`:
 | `evaluation-tests.yml` | cogniverse-evaluation | 50% |
 | `routing-tests.yml` | cogniverse-agents (routing) | 15% |
 
-All other workflows (agents, core, dashboard, finetuning, ingestion,
+All other workflows (agents, core, finetuning, ingestion,
 synthetic, telemetry, vespa, runtime) report coverage but do not fail the
 build below any specific percentage.
 
@@ -966,7 +964,6 @@ and two manual/release workflows not tied to a single module:
 | `chart-validation.yml` | Helm chart (`charts/cogniverse`) | lint + template + kubeconform | None |
 | `cli-tests.yml` | cogniverse-cli | unit + integration | None |
 | `core-tests.yml` | cogniverse-core (incl. `tests/core/*`, `tests/memory/*` and the `ci_fast` files under `tests/utils/`; the rest of memory integration is local-tier — it needs the cluster's DenseOn service) | unit + integration | Vespa |
-| `dashboard-tests.yml` | cogniverse-dashboard | unit + integration | None (TestClient) |
 | `evaluation-tests.yml` | cogniverse-evaluation | unit + integration | Phoenix |
 | `finetuning-tests.yml` | cogniverse-finetuning | unit + integration | Vespa |
 | `ingestion-tests.yml` | cogniverse-runtime (ingestion) | unit + integration | Vespa |

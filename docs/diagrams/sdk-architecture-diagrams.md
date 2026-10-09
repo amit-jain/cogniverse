@@ -3,7 +3,7 @@
 
 ## Table of Contents
 1. [Package Dependency Graph](#package-dependency-graph)
-2. [Package Internal Structure](#package-internal-structure) — all 13 workspace packages: sdk, foundation, core, evaluation, telemetry_phoenix, synthetic, agents, vespa, runtime, dashboard, messaging, finetuning, cli
+2. [Package Internal Structure](#package-internal-structure) — all 12 workspace packages: sdk, foundation, core, evaluation, telemetry_phoenix, synthetic, agents, vespa, runtime, messaging, finetuning, cli
 3. [Cross-Package Data Flow](#cross-package-data-flow)
    - [Video Ingestion Flow](#video-ingestion-flow-across-packages-layered-architecture)
    - [Query Routing Flow](#query-routing-flow-across-packages-layered-architecture)
@@ -40,7 +40,6 @@ flowchart TB
 
     subgraph "Application Layer"
         Runtime["<span style='color:#000'>cogniverse_runtime<br/>v0.1.0<br/><br/>• FastAPI Server<br/>• Ingestion Pipeline<br/>• Search API</span>"]
-        Dashboard["<span style='color:#000'>cogniverse_dashboard<br/>v0.1.0<br/><br/>• Streamlit UI<br/>• Phoenix Analytics<br/>• Experiment Mgmt</span>"]
         Messaging["<span style='color:#000'>cogniverse_messaging<br/>v0.1.0<br/><br/>• Telegram Gateway<br/>• Invite Auth<br/>• Conversation History</span>"]
         Finetuning["<span style='color:#000'>cogniverse_finetuning<br/>v0.1.0<br/><br/>• Model Training<br/>• Adapter Management<br/>• LoRA/QLoRA</span>"]
         Cli["<span style='color:#000'>cogniverse_cli<br/>v0.1.0<br/><br/>• Cluster Deploy<br/>• up / status / index / graph</span>"]
@@ -68,12 +67,6 @@ flowchart TB
     Runtime --> Synthetic
     Runtime -.->|optional extra| Agents
     Runtime -.->|optional extra| Vespa
-    Dashboard --> Core
-    Dashboard --> Evaluation
-    Dashboard --> Agents
-    Dashboard --> Vespa
-    Dashboard --> Phoenix
-    Dashboard --> Runtime
     Messaging --> Core
     Finetuning --> Core
     Finetuning --> Agents
@@ -96,7 +89,6 @@ flowchart TB
 
     %% Styling - Application Layer (blue)
     style Runtime fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
     style Messaging fill:#90caf9,stroke:#1565c0,color:#000
     style Finetuning fill:#90caf9,stroke:#1565c0,color:#000
     style Cli fill:#90caf9,stroke:#1565c0,color:#000
@@ -125,7 +117,6 @@ flowchart TB
 
     subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
         Runtime["<span style='color:#000'>cogniverse_runtime</span>"]
-        Dashboard["<span style='color:#000'>cogniverse_dashboard</span>"]
         Messaging["<span style='color:#000'>cogniverse_messaging</span>"]
         Finetuning["<span style='color:#000'>cogniverse_finetuning</span>"]
         Cli["<span style='color:#000'>cogniverse_cli</span>"]
@@ -153,12 +144,6 @@ flowchart TB
     Runtime --> Synthetic
     Runtime -.->|optional extra| Agents
     Runtime -.->|optional extra| Vespa
-    Dashboard --> Core
-    Dashboard --> Evaluation
-    Dashboard --> Agents
-    Dashboard --> Vespa
-    Dashboard --> Phoenix
-    Dashboard --> Runtime
     Messaging --> Core
     Finetuning --> Core
     Finetuning --> Agents
@@ -181,7 +166,6 @@ flowchart TB
 
     %% Application Layer (blue)
     style Runtime fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
     style Messaging fill:#90caf9,stroke:#1565c0,color:#000
     style Finetuning fill:#90caf9,stroke:#1565c0,color:#000
     style Cli fill:#90caf9,stroke:#1565c0,color:#000
@@ -775,70 +759,6 @@ flowchart TB
     style QualityMonitorCLI fill:#64b5f6,stroke:#1565c0,color:#000
 ```
 
-### cogniverse_dashboard Package Structure (Application Layer)
-
-```mermaid
-flowchart TB
-    DashboardPkg["<span style='color:#000'>cogniverse_dashboard</span>"]
-
-    subgraph DashboardApp["<span style='color:#000'>App Entry</span>"]
-        DashboardAppPy["<span style='color:#000'>app.py (Streamlit entry)</span>"]
-        SearchSummary["<span style='color:#000'>search_summary.py</span>"]
-    end
-
-    subgraph DashboardTabs["<span style='color:#000'>Tabs (tabs/) — 12 render_*_tab entry points</span>"]
-        ApprovalQueueTab["<span style='color:#000'>approval_queue.py</span>"]
-        BackendProfileTab["<span style='color:#000'>backend_profile.py</span>"]
-        ConfigManagementTab["<span style='color:#000'>config_management.py</span>"]
-        EmbeddingAtlasTab["<span style='color:#000'>embedding_atlas.py</span>"]
-        EvaluationTab["<span style='color:#000'>evaluation.py</span>"]
-        MemoryManagementTab["<span style='color:#000'>memory_management.py</span>"]
-        OptimizationTab["<span style='color:#000'>optimization.py</span>"]
-        OrchestrationAnnotationTab["<span style='color:#000'>orchestration_annotation.py</span>"]
-        ProfileMetricsTab["<span style='color:#000'>profile_metrics.py</span>"]
-        RlmAbCompareTab["<span style='color:#000'>rlm_ab_compare.py</span>"]
-        RoutingEvaluationTab["<span style='color:#000'>routing_evaluation.py</span>"]
-        TenantManagementTab["<span style='color:#000'>tenant_management.py</span>"]
-    end
-
-    subgraph DashboardUtils["<span style='color:#000'>Utils (utils/)</span>"]
-        AsyncUtils["<span style='color:#000'>async_utils.py</span>"]
-    end
-
-    DashboardPkg --> DashboardAppPy
-    DashboardPkg --> SearchSummary
-    DashboardAppPy --> ApprovalQueueTab
-    DashboardAppPy --> BackendProfileTab
-    DashboardAppPy --> ConfigManagementTab
-    DashboardAppPy --> EmbeddingAtlasTab
-    DashboardAppPy --> EvaluationTab
-    DashboardAppPy --> MemoryManagementTab
-    DashboardAppPy --> OptimizationTab
-    DashboardAppPy --> OrchestrationAnnotationTab
-    DashboardAppPy --> ProfileMetricsTab
-    DashboardAppPy --> RlmAbCompareTab
-    DashboardAppPy --> RoutingEvaluationTab
-    DashboardAppPy --> TenantManagementTab
-    DashboardPkg --> AsyncUtils
-
-    style DashboardPkg fill:#90caf9,stroke:#1565c0,stroke-width:3px,color:#000
-    style DashboardAppPy fill:#90caf9,stroke:#1565c0,color:#000
-    style SearchSummary fill:#90caf9,stroke:#1565c0,color:#000
-    style ApprovalQueueTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style BackendProfileTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style ConfigManagementTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style EmbeddingAtlasTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style EvaluationTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style MemoryManagementTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style OptimizationTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style OrchestrationAnnotationTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style ProfileMetricsTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style RlmAbCompareTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style RoutingEvaluationTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style TenantManagementTab fill:#64b5f6,stroke:#1565c0,color:#000
-    style AsyncUtils fill:#64b5f6,stroke:#1565c0,color:#000
-```
-
 ### cogniverse_messaging Package Structure (Application Layer)
 
 ```mermaid
@@ -1222,7 +1142,7 @@ flowchart TB
     subgraph HealthProbe["<span style='color:#000'>GatewayHealthProbe<br/>openshell_health.py</span>"]
         Probe["<span style='color:#000'>SandboxClient.health()</span>"]
         ProbeResult["<span style='color:#000'>available: bool<br/>latency_ms: float</span>"]
-        PhoenixSpan["<span style='color:#000'>openshell.gateway_health span<br/>→ Phoenix dashboard tile</span>"]
+        PhoenixSpan["<span style='color:#000'>openshell.gateway_health span<br/>→ Phoenix</span>"]
     end
 
     subgraph PolicyGate["<span style='color:#000'>Policy Gate</span>"]
@@ -1529,7 +1449,6 @@ sequenceDiagram
 
     Note over UV,Packages: Application Layer
     UV->>Packages: Install libs/runtime in editable mode
-    UV->>Packages: Install libs/dashboard in editable mode
     UV->>Packages: Install libs/messaging in editable mode
     UV->>Packages: Install libs/cli in editable mode
     UV->>Packages: Install libs/finetuning in editable mode
@@ -1565,7 +1484,7 @@ flowchart TB
         PublishFoundation["<span style='color:#000'>1. Foundation Layer<br/>sdk, foundation</span>"]
         PublishCore["<span style='color:#000'>2. Core Layer<br/>core, evaluation, telemetry-phoenix, synthetic</span>"]
         PublishImpl["<span style='color:#000'>3. Implementation Layer<br/>agents, vespa</span>"]
-        PublishApp["<span style='color:#000'>4. Application Layer<br/>runtime, dashboard</span>"]
+        PublishApp["<span style='color:#000'>4. Application Layer<br/>runtime</span>"]
     end
 
     UpdateVersion --> UpdateChangelog
@@ -1657,7 +1576,7 @@ flowchart TB
 This diagram collection provides comprehensive visual documentation of the **layered architecture**:
 
 1. **Package Dependencies**: Clear 4-layer hierarchy (Foundation → Core → Implementation → Application)
-2. **Internal Structure**: Detailed breakdown of all 13 workspace packages' modules by layer
+2. **Internal Structure**: Detailed breakdown of all 12 workspace packages' modules by layer
 3. **Data Flow**: Cross-package interactions during ingestion, routing, search, and knowledge synthesis
 4. **Import Patterns**: Valid and invalid import paths with layer enforcement
 5. **Build & Deploy**: Complete pipeline from development to production
@@ -1673,7 +1592,7 @@ This diagram collection provides comprehensive visual documentation of the **lay
 | **Foundation** | sdk, foundation | Base configuration, telemetry interfaces, common utilities | Green (#a5d6a7) |
 | **Core** | core, evaluation, telemetry-phoenix, synthetic | Multi-agent system, experiment tracking, Phoenix provider, synthetic data generation | Purple (#ce93d8) |
 | **Implementation** | agents, vespa | Concrete agents, backends | Orange (#ffcc80) |
-| **Application** | runtime, dashboard, messaging, finetuning, cli | FastAPI server, ingestion pipeline, Streamlit UI, Telegram gateway, model training, CLI | Blue (#90caf9) |
+| **Application** | runtime, messaging, finetuning, cli | FastAPI server, ingestion pipeline, Telegram gateway, model training, CLI | Blue (#90caf9) |
 
 **Key Principles:**
 

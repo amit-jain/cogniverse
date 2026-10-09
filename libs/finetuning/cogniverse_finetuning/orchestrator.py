@@ -433,7 +433,7 @@ class SyntheticApprovalPending(Exception):
     but is still awaiting human approval, so training cannot proceed yet.
 
     This is a terminal-but-recoverable state, not a failure: approve the pending
-    items (dashboard) and re-run the orchestrator, which picks up the approved
+    items (web client) and re-run the orchestrator, which picks up the approved
     synthetic data. Distinguished from a plain ValueError so callers can surface
     "pending approval" instead of "failed".
     """

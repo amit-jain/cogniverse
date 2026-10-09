@@ -515,7 +515,7 @@ class TestHumanApprovalAgent:
     async def test_submit_for_review_classifies_and_persists_prebuilt_batch(self):
         """submit_for_review re-classifies a caller-built batch against the
         threshold (>= auto-approve, else pending) using each item's own
-        confidence, and persists it so the dashboard surfaces it. This is the
+        confidence, and persists it so the UI surfaces it. This is the
         path the finetuning synthetic-data flow uses."""
 
         class _Extractor:

@@ -63,7 +63,7 @@ uv run pytest tests/common/ -v
 
 ## System Architecture
 
-### 13-Package Layered Architecture
+### 12-Package Layered Architecture
 
 Cogniverse uses a **UV workspace** with a layered architecture:
 
@@ -71,7 +71,6 @@ Cogniverse uses a **UV workspace** with a layered architecture:
 flowchart TB
     subgraph APP["<span style='color:#000'><b>APPLICATION LAYER</b></span>"]
         runtime["<span style='color:#000'><b>runtime</b><br/>FastAPI Server · Quality Monitor</span>"]
-        dashboard["<span style='color:#000'><b>dashboard</b><br/>Streamlit UI</span>"]
         messaging["<span style='color:#000'><b>messaging</b><br/>Telegram Gateway</span>"]
         cogcli["<span style='color:#000'><b>cli</b><br/>cogniverse CLI</span>"]
     end
@@ -115,7 +114,6 @@ flowchart TB
 
     %% Styling - Application Layer (blue)
     style runtime fill:#90caf9,stroke:#1565c0,color:#000
-    style dashboard fill:#90caf9,stroke:#1565c0,color:#000
     style messaging fill:#90caf9,stroke:#1565c0,color:#000
     style cogcli fill:#90caf9,stroke:#1565c0,color:#000
 ```
@@ -144,7 +142,6 @@ flowchart TB
 | **runtime** | Application | FastAPI server, ingestion, optimization CLI, quality monitor CLI | routers/, ingestion/, admin/, optimization_cli.py, quality_monitor_cli.py |
 | **messaging** | Application | Telegram messaging gateway | gateway.py, auth.py, command_router.py |
 | **cli** | Application | cogniverse CLI (up, down, status, code, index, graph, logs, secrets, admin, sandbox) | main.py, cluster.py, deploy.py, code.py, graph.py |
-| **dashboard** | Application | Streamlit UI, analytics | tabs/, utils/ |
 
 ---
 
@@ -241,7 +238,7 @@ uv --version
 git clone <repository-url>
 cd cogniverse
 
-# Install workspace (all 13 packages + dependencies)
+# Install workspace (all 12 packages + dependencies)
 uv sync
 
 # Activate virtual environment
@@ -270,7 +267,7 @@ uv run pytest tests/common/ -v
 # Verify all packages installed
 uv pip list | grep cogniverse
 
-# Expected: 13 packages (sdk, foundation, core, evaluation, cli, etc.)
+# Expected: 12 packages (sdk, foundation, core, evaluation, cli, etc.)
 ```
 
 ### Development Workflow: Three Loops
@@ -394,7 +391,7 @@ flowchart TB
     subgraph ROOT["<span style='color:#000'><b>Cogniverse Workspace</b></span>"]
         direction TB
 
-        subgraph LIBS["<span style='color:#000'><b>libs/</b><br/>All 13 workspace packages</span>"]
+        subgraph LIBS["<span style='color:#000'><b>libs/</b><br/>All 12 workspace packages</span>"]
             sdk["<span style='color:#000'><b>sdk/</b><br/>Foundation: Pure interfaces</span>"]
             foundation["<span style='color:#000'><b>foundation/</b><br/>Foundation: Config & telemetry</span>"]
             core["<span style='color:#000'><b>core/</b><br/>Core: Base classes & registries</span>"]
@@ -407,7 +404,6 @@ flowchart TB
             runtime["<span style='color:#000'><b>runtime/</b><br/>Application: FastAPI server</span>"]
             messaging2["<span style='color:#000'><b>messaging/</b><br/>Application: Telegram gateway</span>"]
             cogcli2["<span style='color:#000'><b>cli/</b><br/>Application: cogniverse CLI</span>"]
-            dashboard["<span style='color:#000'><b>dashboard/</b><br/>Application: Streamlit UI</span>"]
         end
 
         subgraph TESTS["<span style='color:#000'><b>tests/</b><br/>Test suite</span>"]
@@ -421,7 +417,6 @@ flowchart TB
             test_backends["<span style='color:#000'>backends/</span>"]
             test_finetuning["<span style='color:#000'>finetuning/</span>"]
             test_synthetic["<span style='color:#000'>synthetic/</span>"]
-            test_dashboard["<span style='color:#000'>dashboard/</span>"]
             test_admin["<span style='color:#000'>admin/</span>"]
             test_events["<span style='color:#000'>events/</span>"]
             test_system["<span style='color:#000'>system/</span>"]
@@ -484,7 +479,6 @@ flowchart TB
     style runtime fill:#90caf9,stroke:#1565c0,color:#000
     style messaging2 fill:#90caf9,stroke:#1565c0,color:#000
     style cogcli2 fill:#90caf9,stroke:#1565c0,color:#000
-    style dashboard fill:#90caf9,stroke:#1565c0,color:#000
 
     %% Styling - Supporting directories (grey)
     style TESTS fill:#b0bec5,stroke:#546e7a,color:#000
@@ -755,7 +749,6 @@ flowchart TB
             test_finetuning["<span style='color:#000'><b>finetuning/</b><br/>Fine-tuning tests</span>"]
             test_synthetic["<span style='color:#000'><b>synthetic/</b><br/>Synthetic data tests</span>"]
             test_telemetry["<span style='color:#000'><b>telemetry/</b><br/>Telemetry provider tests</span>"]
-            test_dashboard["<span style='color:#000'><b>dashboard/</b><br/>Dashboard UI tests</span>"]
             test_core["<span style='color:#000'><b>core/</b><br/>cogniverse_core unit tests</span>"]
             test_foundation["<span style='color:#000'><b>foundation/</b><br/>cogniverse_foundation tests</span>"]
         end

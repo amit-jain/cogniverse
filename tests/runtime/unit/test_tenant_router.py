@@ -1508,7 +1508,7 @@ class TestGetManualOptimizeStatus:
 
     def test_omitted_step_reads_as_skipped_not_succeeded(self, argo_configured_client):
         """A profile step Argo omitted (no ground truth uploaded) must reach the
-        dashboard as Skipped, not vanish inside a green workflow."""
+        UI as Skipped, not vanish inside a green workflow."""
         client = argo_configured_client
 
         async def fake_get(self, url, **kwargs):
@@ -1660,7 +1660,7 @@ class TestGetManualOptimizeStatus:
     def test_pending_due_to_mutex_wait_surfaces_reason(self, argo_configured_client):
         """When Argo records a mutex wait under ``synchronization.mutex.waiting``,
         the status endpoint must propagate it as ``blocked_reason`` so the
-        dashboard can distinguish mutex-pending from ordinary scheduler-pending."""
+        UI can distinguish mutex-pending from ordinary scheduler-pending."""
         client = argo_configured_client
 
         async def fake_get(self, url, **kwargs):
@@ -1700,7 +1700,7 @@ class TestGetManualOptimizeStatus:
         self, argo_configured_client
     ):
         """Ordinary scheduler-pending (no mutex wait) must NOT produce a
-        blocked_reason — the dashboard would mis-label a cold-start pod
+        blocked_reason — the UI would mis-label a cold-start pod
         pull as a concurrency wait."""
         client = argo_configured_client
 

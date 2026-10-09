@@ -1521,36 +1521,9 @@ provider.log_session_evaluation(
 
 ---
 
-#### Dashboard Integration
+#### Web Client Integration
 
-The Interactive Search tab in the dashboard provides unified session evaluation:
-
-**Features:**
-
-- Conversation history tracking across turns
-
-- Session ID display and "New Session" button
-
-- Per-result relevance annotation (thumbs up/down)
-
-- Session-level outcome selection (Success/Partial/Failure)
-
-- Session quality scoring (0.0-1.0 slider)
-
-**Workflow:**
-
-1. User performs searches (single or multiple turns)
-
-2. Each search adds to `st.session_state.conversation_history`
-
-3. Individual results can be annotated for relevance
-
-4. After any search, session-level evaluation is available:
-   - Select outcome: Success, Partial, or Failure
-   - Set quality score: 0.0 to 1.0
-   - Click "Log Session Evaluation" to record
-
-**Note:** Session evaluation works for both single-turn and multi-turn conversations, providing a unified annotation mechanism.
+The web client's search conversation provides unified session evaluation: each result can be rated for relevance, and "Evaluate this conversation" stores an outcome (success, partial, failure) and a 0-1 quality on each search span of the conversation. See [Web Client](web-client.md).
 
 ### Inspect AI Model Provider
 
@@ -1891,7 +1864,7 @@ It returns `golden_queries`; `strategies` (per profile and strategy, sorted: `qu
 
 **Files:** `libs/evaluation/cogniverse_evaluation/data/{datasets,storage,traces}.py`
 
-**`DatasetManager`** (`data/datasets.py`) — sync facade over the telemetry provider's async `DatasetStore`, used by the CLI's `create-dataset` command, the dashboard optimization tab, and `scripts/manage_datasets.py`:
+**`DatasetManager`** (`data/datasets.py`) — sync facade over the telemetry provider's async `DatasetStore`, used by the CLI's `create-dataset` command, the runtime's optimization framework router (`routers/optimization_framework.py`), and `scripts/manage_datasets.py`:
 
 ```python
 DatasetManager(tenant_id: str, dataset_store: DatasetStore | None = None)

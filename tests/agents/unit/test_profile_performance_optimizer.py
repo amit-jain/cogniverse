@@ -1,6 +1,6 @@
 """Round-trip coverage for the XGBoost ProfilePerformanceOptimizer.
 
-The 390-LOC profile recommender (consumed by the dashboard optimization tab) had
+The 390-LOC profile recommender (consumed by the optimization runs) had
 zero tests: a feature-array shape change or a save->load breakage would ship
 undetected. This trains on real extracted features, predicts, saves, reloads,
 and asserts the reloaded model reproduces the prediction.

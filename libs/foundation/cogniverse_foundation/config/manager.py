@@ -123,7 +123,7 @@ class ConfigManager:
         self.store = store
         # `get_system_config` is hot, so the system config is held in memory
         # and re-read off the caller's thread; another process's write (the
-        # runtime storing its deployment overrides, a dashboard edit) is
+        # runtime storing its deployment overrides, a UI edit) is
         # served within the staleness bound.
         self._system_config: RefreshingCache[str, SystemConfig] = RefreshingCache(
             name="system-config",

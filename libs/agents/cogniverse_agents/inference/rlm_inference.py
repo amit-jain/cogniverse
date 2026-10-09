@@ -324,7 +324,7 @@ class RLMInference:
             # some LiteLLM backends. Estimate from full_query + context +
             # answer length using the conventional 4-chars-per-token
             # heuristic so RLMResult.tokens_used stays a stable
-            # never-zero signal for tests/dashboards that pin lower
+            # never-zero signal for tests and metrics that pin lower
             # bounds. Real-LM paths and tracker-populated cache hits
             # always win over this estimate above.
             answer_text = getattr(result, "answer", "") or ""

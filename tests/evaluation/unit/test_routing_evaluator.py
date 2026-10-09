@@ -495,8 +495,8 @@ class TestProviderQuery:
 
 
 class TestQueryRoutingSpansAwaited:
-    """query_routing_spans is async; the optimization dashboard tab must await
-    it (via run_async_in_streamlit) before passing the result to
+    """query_routing_spans is async; a caller must await it before passing
+    the result to
     calculate_metrics, which iterates it. This guards the await -> list ->
     metrics sequence the tab performs — the pre-fix bug passed the raw coroutine
     to calculate_metrics, which then failed iterating a coroutine.

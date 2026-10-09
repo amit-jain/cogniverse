@@ -120,7 +120,7 @@ export function entityText(entity: unknown): string {
   return cellText(entity);
 }
 
-/** Milliseconds as the dashboard showed them: "1250ms", "—" when unknown. */
+/** Milliseconds as "1250ms", "—" when unknown. */
 export function millis(value: number | null): string {
   return value === null ? '—' : `${Math.round(value)}ms`;
 }

@@ -178,7 +178,7 @@ flowchart TB
   `system_config_refresh_s` (default 5s) and `system_config_max_staleness_s`
   (default 60s), on the same terms as the scoped configs below:
   `set_system_config` holds what it wrote at once, another process's write
-  (the runtime storing its deployment overrides, a dashboard edit) is served
+  (the runtime storing its deployment overrides) is served
   within 60s, and a store outage past that bound raises. Pinned inference
   URLs are laid over every value served. Per-tenant scoped configs (routing,
   telemetry, backend, agent, durable execution, tenant instructions) are held
@@ -1258,7 +1258,7 @@ with dspy.context(adapter=StructuredJSONAdapter()):
 (`cogniverse_foundation.dspy.model_format`) — strip or add a litellm provider
 prefix (`ollama`, `ollama_chat`, `hosted_vllm`, `openai`) on a model id, for
 sites that talk to an OpenAI-compatible HTTP API directly and need a bare
-model name (Mem0's embedder/LLM wiring, the dashboard's memory tab) versus
+model name (Mem0's embedder/LLM wiring) versus
 sites that need litellm's required `provider/model` form.
 
 ```python
