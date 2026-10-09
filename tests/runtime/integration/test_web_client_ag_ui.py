@@ -18,6 +18,7 @@ npm are required; their absence is a failure, not a skip.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import http.client
 import json
 import shutil
@@ -27,9 +28,11 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import FastAPI
 
@@ -56,6 +59,7 @@ from tests.utils.web_client import (
     recording_telemetry_sink,
     serve_app,
     serve_web,
+    web_server_process,
 )
 from tests.utils.web_ops import harness_key_admin
 
@@ -662,6 +666,146 @@ def test_the_server_revokes_its_keys_when_it_stops(
         [{"reply": [f"[{tenant}] Two clips match: hi"], "error": None}],
         [(tenant, f"cogniverse-web {socket.gethostname()}")],
     )
+    assert _live_keys(live_runtime, tenant) == []
+
+
+KEY_TTL_S = 6
+
+
+def _keyed_ping(url: str, headers: dict) -> int:
+    """POST an empty relevance rating; the runtime resolves the bearer key
+    before reading the body, so a valid key answers 400 and a refused one
+    401."""
+    response = httpx.post(
+        f"{url}/results/relevance",
+        content="{}",
+        headers={"content-type": "application/json", **headers},
+        timeout=30,
+    )
+    return response.status_code
+
+
+def _wait_until(moment: float) -> None:
+    time.sleep(max(0.0, moment - time.monotonic()))
+
+
+def test_a_killed_servers_key_expires_while_a_running_server_renews_its_own(
+    web_client_dir, live_runtime, telemetry_sink
+):
+    """Two servers act for one tenant with short-lived keys; one is killed
+    with SIGKILL, so it never revokes its key. Its key stops authenticating
+    once its ttl passes and lists as revoked, while the other server replaces
+    its key at half the ttl, the superseded key staying valid until it
+    expires, and keeps serving runs."""
+    tenant = "delta:web"
+    presented: list[str] = []
+
+    def recording(key: str) -> str:
+        presented.append(key)
+        return live_runtime.keys.resolve(key)
+
+    def taken() -> list[str]:
+        keys = list(dict.fromkeys(presented))
+        presented.clear()
+        return keys
+
+    def listed() -> dict:
+        return {
+            key["key_hash"]: (
+                key["revoked"],
+                (
+                    datetime.fromisoformat(key["expires_at"])
+                    - datetime.fromisoformat(key["created_at"])
+                ).total_seconds(),
+            )
+            for key in live_runtime.keys.list(tenant)["keys"]
+        }
+
+    def digest(key: str) -> str:
+        return hashlib.sha256(key.encode()).hexdigest()
+
+    def at_runtime(key: str) -> int:
+        return _keyed_ping(
+            f"{live_runtime.url}/ag-ui", {"authorization": f"Bearer {key}"}
+        )
+
+    env = {"COGNIVERSE_WEB_HARNESS_KEY_TTL_S": str(KEY_TTL_S)}
+    openai_compat.set_key_resolver(recording)
+    try:
+        with (
+            web_server_process(
+                web_client_dir,
+                live_runtime.url,
+                telemetry_url=telemetry_sink[0],
+                env=env,
+            ) as survivor,
+            web_server_process(
+                web_client_dir,
+                live_runtime.url,
+                telemetry_url=telemetry_sink[0],
+                env=env,
+            ) as doomed,
+        ):
+            through = {"x-cogniverse-tenant": tenant}
+            doomed_minted = time.monotonic()
+            assert _keyed_ping(f"{doomed.url}/ui-api/runtime/ag-ui", through) == 400
+            [doomed_key] = taken()
+            survivor_minted = time.monotonic()
+            assert _keyed_ping(f"{survivor.url}/ui-api/runtime/ag-ui", through) == 400
+            renewable = time.monotonic() + KEY_TTL_S / 2 + 0.3
+            [first_key] = taken()
+            doomed.kill()
+            assert listed() == {
+                digest(doomed_key): (False, KEY_TTL_S),
+                digest(first_key): (False, KEY_TTL_S),
+            }
+
+            # Past half the ttl the survivor mints a replacement; the key it
+            # replaces is neither revoked nor expired yet.
+            _wait_until(renewable)
+            assert _keyed_ping(f"{survivor.url}/ui-api/runtime/ag-ui", through) == 400
+            [second_key] = taken()
+            assert second_key != first_key
+            assert at_runtime(first_key) == 400
+            assert time.monotonic() < survivor_minted + KEY_TTL_S, (
+                "the checks before the first key's expiry ran past it"
+            )
+            assert listed() == {
+                digest(doomed_key): (False, KEY_TTL_S),
+                digest(first_key): (False, KEY_TTL_S),
+                digest(second_key): (False, KEY_TTL_S),
+            }
+
+            # Once their ttl has passed, the killed server's key and the
+            # superseded one are refused and listed as revoked.
+            _wait_until(max(doomed_minted, survivor_minted) + KEY_TTL_S + 0.3)
+            assert [at_runtime(doomed_key), at_runtime(first_key)] == [401, 401]
+            assert listed() == {
+                digest(doomed_key): (True, KEY_TTL_S),
+                digest(first_key): (True, KEY_TTL_S),
+                digest(second_key): (False, KEY_TTL_S),
+            }
+
+            presented.clear()
+            ran = _drive(
+                web_client_dir,
+                survivor.url,
+                SCENARIO="sequence",
+                QUERIES="still here",
+                TENANT=tenant,
+            )
+            assert ran == [
+                {"reply": [f"[{tenant}] Two clips match: still here"], "error": None}
+            ]
+            # The run went with the survivor's current key, never one that
+            # expired.
+            used = taken()
+            live = {h for h, (revoked, _) in listed().items() if not revoked}
+            assert (used != [], {digest(key) for key in used} - live) == (True, set())
+            assert {doomed_key, first_key} & set(used) == set()
+    finally:
+        openai_compat.set_key_resolver(live_runtime.keys.resolve)
+    # The survivor revoked the keys it still held when it stopped.
     assert _live_keys(live_runtime, tenant) == []
 
 

@@ -126,10 +126,12 @@ async def test_round_trip_canonical_hash_and_tombstone(store):
             "tenant_id",
             "name",
             "created_at",
+            "expires_at",
             "revoked",
             "key_hash",
             "key_prefix",
         }
+        assert public["expires_at"] is None
         for tid in (tenant, f"{tenant}:{tenant}"):
             listed = await client.get("/admin/harness/keys", params={"tenant_id": tid})
             assert listed.status_code == 200
@@ -289,6 +291,7 @@ def test_confirmation_failure_leaves_complete_record(store, monkeypatch, operati
         assert {k: v for k, v in entry.config_value.items() if k != "created_at"} == {
             "tenant_id": "torn:torn",
             "name": "create",
+            "expires_at": None,
             "revoked": False,
         }
         assert keys(store).resolve(plaintext) == "torn:torn"
@@ -533,3 +536,34 @@ def test_store_canonicalizes_raw_create_and_both_listing_forms(store):
         "keys": [public],
         "continuation": None,
     }
+
+
+def test_expiry_round_trips_through_the_store(store):
+    from datetime import datetime, timedelta, timezone
+
+    module = importlib.import_module("cogniverse_runtime.harness_keys")
+    moments = [datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)]
+    timed = module.HarnessKeyStore(store, now=lambda: moments[-1])
+    tenant = "expiry" + uuid.uuid4().hex[:8]
+    record = timed.create(tenant, "web", ttl_seconds=30)
+    public = {k: v for k, v in record.items() if k != "key"}
+    entry = store.get_immutable_config(
+        SYSTEM_TENANT_ID, ConfigScope.SYSTEM, "harness_keys", record["key_hash"]
+    )
+    assert entry.config_value == {
+        "tenant_id": f"{tenant}:{tenant}",
+        "name": "web",
+        "created_at": "2026-10-09T12:00:00+00:00",
+        "expires_at": "2026-10-09T12:00:30+00:00",
+        "revoked": False,
+    }
+    assert timed.resolve(record["key"]) == f"{tenant}:{tenant}"
+    assert timed.list(tenant) == {"keys": [public], "continuation": None}
+    moments.append(moments[0] + timedelta(seconds=30))
+    with pytest.raises(module.HarnessKeyNotFoundError):
+        timed.resolve(record["key"])
+    assert timed.list(tenant) == {
+        "keys": [{**public, "revoked": True}],
+        "continuation": None,
+    }
+    assert timed.revoke_tenant(tenant) == 0

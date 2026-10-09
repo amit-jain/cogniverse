@@ -2707,8 +2707,11 @@ by `cogniverse_vespa/config`. The `cogniverse_runtime/routers` admin endpoints
 `POST /admin/harness/keys`, `GET /admin/harness/keys`, and
 `DELETE /admin/harness/keys/{key_hash}` create, page through, and revoke credentials.
 Only creation returns plaintext; listings include a 12-character hash prefix and
-revocation state. List pages accept `page_size` (1–1000) and an opaque `continuation`,
-which must be followed even on an empty page. A page holds at most `page_size` keys,
+revocation state. Creation takes an optional `ttl_seconds` (1–604800): the key's
+`expires_at` is that long after `created_at`, and from then on it is refused like a
+revoked key and listed with `revoked: true`. A key created without one, or stored
+without `expires_at`, never expires. List pages accept `page_size` (1–1000) and an
+opaque `continuation`, which must be followed even on an empty page. A page holds at most `page_size` keys,
 and following the continuation to its end returns each key exactly once; a cursor the
 store did not issue is refused with 422. Store outages return 503 with their
 cause. Tenant deletion in `cogniverse_runtime/admin` revokes credentials before

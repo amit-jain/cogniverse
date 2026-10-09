@@ -8,7 +8,7 @@ import { CogniverseThreadRunner, NOTICE_ACTIVITY } from '../src/server/threads';
 import { deadUrl, json, runtimeServer, withAdmin, type Admin } from './fakeRuntime';
 
 function config(runtimeUrl: string): ServerConfig {
-  return { runtimeUrl, port: 4000, host: '127.0.0.1', clientDir: '/nonexistent' };
+  return { runtimeUrl, port: 4000, host: '127.0.0.1', clientDir: '/nonexistent', harnessKeyTtlS: 3600 };
 }
 
 const TENANT = 'acme:prod';

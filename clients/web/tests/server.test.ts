@@ -10,7 +10,7 @@ import { TENANT_HEADER, TenantAuthUnavailableError, TenantKeys, UnknownTenantErr
 import { deadUrl, json, runtimeServer, withAdmin } from './fakeRuntime';
 
 function config(runtimeUrl: string): ServerConfig {
-  return { runtimeUrl, port: 4000, host: '127.0.0.1', clientDir: '/nonexistent' };
+  return { runtimeUrl, port: 4000, host: '127.0.0.1', clientDir: '/nonexistent', harnessKeyTtlS: 3600 };
 }
 
 describe('loadConfig', () => {
@@ -25,7 +25,22 @@ describe('loadConfig', () => {
       port: 5173,
       host: '127.0.0.1',
       clientDir: '/srv/client',
+      harnessKeyTtlS: 3600,
     });
+    expect(
+      loadConfig({ COGNIVERSE_RUNTIME_URL: 'http://rt', COGNIVERSE_WEB_HARNESS_KEY_TTL_S: '120' }, '/c')
+        .harnessKeyTtlS,
+    ).toBe(120);
+  });
+
+  it('rejects a harness key ttl that is not a whole number of seconds within a week', () => {
+    const env = { COGNIVERSE_RUNTIME_URL: 'http://rt' };
+    for (const ttl of ['0', '-5', '604801', '1.5', 'hour', ''])
+      expect(() => loadConfig({ ...env, COGNIVERSE_WEB_HARNESS_KEY_TTL_S: ttl }, '/c')).toThrow(
+        new ConfigError(
+          `COGNIVERSE_WEB_HARNESS_KEY_TTL_S must be a whole number of seconds from 1 to 604800, got ${ttl}.`,
+        ),
+      );
   });
 
   it('names the missing runtime URL', () => {
@@ -221,6 +236,153 @@ describe('TenantKeys', () => {
     expect(admin.calls.filter((call) => call.startsWith('revoke')).sort()).toEqual(['revoke hash-1', 'revoke hash-2']);
     await keys.keyFor('acme:prod');
     expect(admin.calls.at(-1)).toBe('mint acme:prod web-test');
+  });
+});
+
+describe('TenantKeys renewal', () => {
+  const TTL_S = 100;
+  const T0 = 1_000_000;
+
+  function renewing(url: string, clock: { now: number }) {
+    return new TenantKeys({ ...config(url), harnessKeyTtlS: TTL_S }, fetch, 'web-test', () => clock.now);
+  }
+
+  it('mints with the configured ttl and renews once less than half of it remains', async () => {
+    const [route, admin] = withAdmin(['acme:prod']);
+    const url = await runtimeServer(route);
+    const clock = { now: T0 };
+    const keys = renewing(url, clock);
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-1');
+    clock.now = T0 + (TTL_S / 2) * 1000;
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-1');
+    clock.now += 1;
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-2');
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-2');
+    expect(admin.ttls).toEqual([TTL_S, TTL_S]);
+    // The superseded key is left to expire, never revoked by the renewal.
+    expect(admin.calls).toEqual([
+      'probe acme:prod',
+      'mint acme:prod web-test',
+      'probe acme:prod',
+      'mint acme:prod web-test',
+    ]);
+  });
+
+  it('renews with one mint however many requests find the key due at once', async () => {
+    const [route, admin] = withAdmin(['acme:prod']);
+    let held: (() => void) | undefined;
+    let arrived: () => void = () => {};
+    const renewalArrived = new Promise<void>((resolve) => (arrived = resolve));
+    const url = await runtimeServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/admin/harness/keys' && admin.ttls.length === 1) {
+        held = () => route(req, res);
+        arrived();
+        return;
+      }
+      route(req, res);
+    });
+    const clock = { now: T0 };
+    const keys = renewing(url, clock);
+    await keys.keyFor('acme:prod');
+    clock.now = T0 + (TTL_S / 2) * 1000 + 1;
+    const first = Array.from({ length: 6 }, () => keys.keyFor('acme:prod'));
+    await renewalArrived;
+    // More requests arrive while the renewal is held at the runtime.
+    const late = Array.from({ length: 6 }, () => keys.keyFor('acme:prod'));
+    held!();
+    expect(await Promise.all([...first, ...late])).toEqual(Array(12).fill('key-acme:prod-2'));
+    expect(admin.calls.filter((call) => call.startsWith('mint'))).toEqual([
+      'mint acme:prod web-test',
+      'mint acme:prod web-test',
+    ]);
+  });
+
+  it('fails a renewal the runtime refuses like a first mint, keeps the old key, and retries', async () => {
+    const [route, admin] = withAdmin(['acme:prod']);
+    let refuse = false;
+    let refused = 0;
+    const url = await runtimeServer((req, res) => {
+      if (refuse && req.method === 'POST' && req.url === '/admin/harness/keys') {
+        refused += 1;
+        return json(res, 503, {
+          detail: { error: 'harness_key_store_unavailable', message: 'The harness key store did not answer; retry.' },
+        });
+      }
+      route(req, res);
+    });
+    const clock = { now: T0 };
+    const keys = renewing(url, clock);
+    await keys.keyFor('acme:prod');
+    refuse = true;
+    clock.now = T0 + (TTL_S / 2) * 1000 + 1;
+    const failure = new TenantAuthUnavailableError(
+      'The runtime did not issue a harness key for tenant acme:prod (HTTP 503: The harness key store did not answer; retry.).',
+    );
+    const outcomes = await Promise.allSettled(Array.from({ length: 4 }, () => keys.keyFor('acme:prod')));
+    expect(outcomes).toEqual(Array(4).fill({ status: 'rejected', reason: failure }));
+    expect(refused).toBe(1);
+    await expect(keys.keyFor('acme:prod')).rejects.toThrow(failure);
+    expect(refused).toBe(2);
+    refuse = false;
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-2');
+    // The still-valid key was held throughout: stopping revokes it with the new one.
+    await keys.revokeAll();
+    expect(admin.calls.filter((call) => call.startsWith('revoke')).sort()).toEqual(['revoke hash-1', 'revoke hash-2']);
+  });
+
+  it('a request refused with a key superseded while it was in flight retries with the current one', async () => {
+    let refuseHeld: (() => void) | undefined;
+    let arrived: () => void = () => {};
+    const heldArrived = new Promise<void>((resolve) => (arrived = resolve));
+    const seen: string[] = [];
+    const [route, admin] = withAdmin(['acme:prod'], (req, res) => {
+      seen.push(req.headers.authorization!);
+      if (req.headers.authorization === 'Bearer key-acme:prod-1') {
+        refuseHeld = () => json(res, 401, { error: { message: 'Invalid API key' } });
+        arrived();
+        return;
+      }
+      json(res, 200, { auth: req.headers.authorization });
+    });
+    const url = await runtimeServer(route);
+    const clock = { now: T0 };
+    const keys = renewing(url, clock);
+    const agent = cogniverseAgents(config(url), ['search_agent'], keys, 'acme:prod').search_agent;
+    const inFlight = agent.fetch(agent.url, { method: 'POST', body: '{}' });
+    await heldArrived;
+    clock.now = T0 + (TTL_S / 2) * 1000 + 1;
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-2');
+    refuseHeld!();
+    const response = await inFlight;
+    expect([response.status, await response.json()]).toEqual([200, { auth: 'Bearer key-acme:prod-2' }]);
+    expect(seen).toEqual(['Bearer key-acme:prod-1', 'Bearer key-acme:prod-2']);
+    // The renewed key is kept: the refusal of the superseded one mints nothing.
+    expect(admin.calls.filter((call) => call.startsWith('mint'))).toEqual([
+      'mint acme:prod web-test',
+      'mint acme:prod web-test',
+    ]);
+  });
+
+  it('revokes only the keys that have not expired, and forgets the expired ones', async () => {
+    const [route, admin] = withAdmin(['acme:prod', 'beta:dev']);
+    const url = await runtimeServer(route);
+    const clock = { now: T0 };
+    const keys = renewing(url, clock);
+    await keys.keyFor('acme:prod');
+    clock.now = T0 + 60_000;
+    await keys.keyFor('acme:prod');
+    clock.now = T0 + 120_000;
+    await keys.keyFor('acme:prod');
+    await keys.keyFor('beta:dev');
+    // hash-1 expired at T0 + 100 s; hash-2 (until T0 + 160 s), hash-3 and hash-4 have not.
+    expect((keys as unknown as { minted: { keyHash: string }[] }).minted.map((m) => m.keyHash)).toEqual([
+      'hash-2',
+      'hash-3',
+      'hash-4',
+    ]);
+    clock.now = T0 + 160_000;
+    await keys.revokeAll();
+    expect(admin.calls.filter((call) => call.startsWith('revoke')).sort()).toEqual(['revoke hash-3', 'revoke hash-4']);
   });
 });
 

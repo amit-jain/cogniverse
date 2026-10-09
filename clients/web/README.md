@@ -81,12 +81,15 @@ harness key named `cogniverse-web <host>` through the runtime's `POST
 /admin/harness/keys` (refusing a tenant the registry says is unknown), and
 sends every run, thread restore and relevance rating of that tenant with that
 key, so the runtime resolves the tenant from the key and one browser can never
-read another tenant's runs. Concurrent first runs of a tenant share one mint;
+read another tenant's runs. Each key expires after
+`COGNIVERSE_WEB_HARNESS_KEY_TTL_S` and is replaced once less than half of that
+remains. Concurrent first runs of a tenant share one mint, as do concurrent runs
+that find its key due for replacement;
 a key the runtime rejects (revoked when its tenant is deleted, say) is
 replaced by a new one and the request retried once; a running conversation
 can only be joined for the tenant that started it; and the server revokes the
-keys it minted when it stops. A runtime that cannot issue a key fails the run
-with its reason. The operations views reach the runtime's admin, ingestion and
+unexpired keys it minted when it stops. A runtime that cannot issue a key fails
+the run with its reason. The operations views reach the runtime's admin, ingestion and
 event routes through `/ui-api/runtime/*`, which forwards an allowlist of those
 routes (`src/server/proxy.ts`) and streams their server-sent events; those
 routes take their tenant from their path. `GET /ui-api/agents/status` reports the
@@ -127,6 +130,7 @@ Use Node.js 22. Copy `.env.example` to `.env` and set:
 | `COGNIVERSE_RUNTIME_URL` | Runtime base URL, including any ingress prefix; the server needs its `/admin` routes, `/admin/harness/keys` among them |
 | `PORT` | Port the server listens on (default `4000`) |
 | `HOST` | Interface the server binds (default `127.0.0.1`) |
+| `COGNIVERSE_WEB_HARNESS_KEY_TTL_S` | Lifetime in seconds of each harness key the server mints, 1–604800 (default `3600`); a server that stops without revoking its keys leaves them valid at most this long |
 
 The Analytics view's trace links and the Evaluation view's dataset links point
 at the runtime's `PHOENIX_UI_URL` (chart value `phoenix.uiUrl`, the Phoenix UI

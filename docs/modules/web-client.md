@@ -45,10 +45,14 @@ runtime's `/api` ingress prefix.
 | `COGNIVERSE_RUNTIME_URL` | Runtime base URL, including any ingress prefix; the server needs its `/admin` routes, `/admin/harness/keys` among them |
 | `PORT` | Port the server listens on (default `4000`) |
 | `HOST` | Interface the server binds (default `127.0.0.1`; the image sets `0.0.0.0`) |
+| `COGNIVERSE_WEB_HARNESS_KEY_TTL_S` | Lifetime in seconds of each harness key the server mints, 1–604800 (default `3600`) |
 
 The server holds no key of its own. For a tenant's first run it mints a harness
-key for that tenant through the runtime's `POST /admin/harness/keys` and sends
-that tenant's runs with it; it revokes the keys it minted when it stops.
+key for that tenant through the runtime's `POST /admin/harness/keys` with
+`COGNIVERSE_WEB_HARNESS_KEY_TTL_S` as its ttl and sends that tenant's runs with
+it, minting a replacement once less than half the ttl remains. It revokes its
+unexpired keys when it stops; a server killed without stopping leaves them to
+expire.
 
 ## Deployment
 

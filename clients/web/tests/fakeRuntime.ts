@@ -35,6 +35,8 @@ export async function deadUrl(): Promise<string> {
 export interface Admin {
   /** Every tenant probe, key mint and key revocation, in arrival order. */
   calls: string[];
+  /** The ``ttl_seconds`` each mint asked for, in arrival order. */
+  ttls: unknown[];
   /** The bearer each tenant's latest key is sent with. */
   bearer(tenant: string): string;
   /** The tenant a bearer key was minted for. */
@@ -55,6 +57,7 @@ export function withAdmin(
   let count = 0;
   const admin: Admin = {
     calls: [],
+    ttls: [],
     bearer: (tenant) => `Bearer ${latest.get(tenant)}`,
     tenantOf: (authorization) => minted.get(authorization?.replace(/^Bearer /, '') ?? ''),
   };
@@ -72,13 +75,27 @@ export function withAdmin(
       let body = '';
       req.on('data', (chunk) => (body += chunk));
       req.on('end', () => {
-        const { tenant_id: id, name } = JSON.parse(body) as { tenant_id: string; name: string };
+        const { tenant_id: id, name, ttl_seconds: ttl } = JSON.parse(body) as {
+          tenant_id: string;
+          name: string;
+          ttl_seconds?: unknown;
+        };
         count += 1;
         const key = `key-${id}-${count}`;
         minted.set(key, id);
         latest.set(id, key);
         admin.calls.push(`mint ${id} ${name}`);
-        json(res, 200, { key, key_hash: `hash-${count}`, tenant_id: id, name });
+        admin.ttls.push(ttl);
+        const created = new Date();
+        json(res, 200, {
+          key,
+          key_hash: `hash-${count}`,
+          tenant_id: id,
+          name,
+          created_at: created.toISOString(),
+          expires_at: typeof ttl === 'number' ? new Date(created.getTime() + ttl * 1000).toISOString() : null,
+          revoked: false,
+        });
       });
       return;
     }

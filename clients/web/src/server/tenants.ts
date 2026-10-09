@@ -13,6 +13,8 @@ export class TenantAuthUnavailableError extends Error {}
 interface Minted {
   key: string;
   keyHash: string;
+  /** When the key stops authenticating, by this server's clock (ms). */
+  expiresAt: number;
 }
 
 /** How long one call to the runtime's tenant or key admin may take. */
@@ -30,55 +32,64 @@ function reason(body: unknown, status: number): string {
 /**
  * The harness key the server acts with for each tenant.
  *
- * A tenant's key is minted once, through the runtime's ``POST
- * /admin/harness/keys``; concurrent first requests share that one mint. A
+ * A tenant's key is minted through the runtime's ``POST /admin/harness/keys``
+ * with ``config.harnessKeyTtlS`` as its ttl, so a key outlives a server that
+ * stops without revoking it by at most that long. Once less than half the ttl
+ * remains the next request mints a replacement; concurrent requests share one
+ * mint, first or renewal, and a failed renewal fails them as a first mint
+ * would while the old key stays held. A superseded key is left to expire. A
  * tenant ``GET /admin/tenants/{id}`` answers is not registered gets none; one
  * the registry could not be read for (5xx) does, since the runtime checks the
- * tenant again on every data path it serves. The runtime
- * resolves every AG-UI call's tenant from its key, so a browser acting for one
- * tenant can never read another's runs. A key the runtime rejects is
- * forgotten and the next request mints a new one; ``revokeAll`` revokes every
- * key this server minted.
+ * tenant again on every data path it serves. The runtime resolves every AG-UI
+ * call's tenant from its key, so a browser acting for one tenant can never
+ * read another's runs. A key the runtime rejects is forgotten and the next
+ * request mints a new one; ``revokeAll`` revokes every key this server minted
+ * that has not expired.
  */
 export class TenantKeys {
-  private readonly keys = new Map<string, Promise<Minted>>();
-  /** The key each tenant's settled mint issued. */
-  private readonly current = new Map<string, string>();
-  private readonly minted: Minted[] = [];
+  /** The mint in flight for each tenant. */
+  private readonly pending = new Map<string, Promise<Minted>>();
+  /** The key each tenant's latest settled mint issued. */
+  private readonly current = new Map<string, Minted>();
+  /** Every key this server minted that has not expired. */
+  private minted: Minted[] = [];
 
   constructor(
     private readonly config: ServerConfig,
     private readonly fetchFn: typeof fetch = fetch,
     readonly keyName = `cogniverse-web ${hostname()}`,
+    private readonly now: () => number = Date.now,
   ) {}
 
-  /** The key for ``tenant``, minting it on first use. */
+  /** The key for ``tenant``, minting it on first use and renewing it once
+   * less than half its ttl remains. */
   async keyFor(tenant: string): Promise<string> {
-    let entry = this.keys.get(tenant);
-    if (!entry) {
-      const pending = this.mint(tenant);
-      entry = pending;
-      this.keys.set(tenant, pending);
-      pending.catch(() => {
-        if (this.keys.get(tenant) === pending) this.keys.delete(tenant);
-      });
+    const held = this.current.get(tenant);
+    if (held && held.expiresAt - this.now() >= (this.config.harnessKeyTtlS * 1000) / 2) return held.key;
+    let pending = this.pending.get(tenant);
+    if (!pending) {
+      const mint = this.mint(tenant);
+      pending = mint;
+      this.pending.set(tenant, mint);
+      const settle = () => {
+        if (this.pending.get(tenant) === mint) this.pending.delete(tenant);
+      };
+      mint.then(settle, settle);
     }
-    return (await entry).key;
+    return (await pending).key;
   }
 
   /** Drop ``key`` for ``tenant`` (the runtime rejected it) unless a newer
    * key already replaced it. */
   forget(tenant: string, key: string): void {
-    if (this.current.get(tenant) === key) {
-      this.keys.delete(tenant);
-      this.current.delete(tenant);
-    }
+    if (this.current.get(tenant)?.key === key) this.current.delete(tenant);
   }
 
   /** Revoke every key this server minted; failures are logged, not raised. */
   async revokeAll(): Promise<void> {
-    const keys = this.minted.splice(0);
-    this.keys.clear();
+    const keys = this.unexpired();
+    this.minted = [];
+    this.pending.clear();
     this.current.clear();
     const results = await Promise.allSettled(
       keys.map(async ({ keyHash }) => {
@@ -97,6 +108,11 @@ export class TenantKeys {
           }`,
         );
     });
+  }
+
+  private unexpired(): Minted[] {
+    const now = this.now();
+    return this.minted.filter((minted) => minted.expiresAt > now);
   }
 
   private async admin(path: string, init: RequestInit = {}): Promise<{ status: number; body: unknown }> {
@@ -132,19 +148,22 @@ export class TenantKeys {
       throw new TenantAuthUnavailableError(
         `The runtime could not confirm tenant ${tenant} (${reason(probe.body, probe.status)}).`,
       );
+    const ttlS = this.config.harnessKeyTtlS;
+    // The expiry is counted from before the request, so it never trails the runtime's.
+    const expiresAt = this.now() + ttlS * 1000;
     const issued = await this.admin('/admin/harness/keys', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tenant_id: tenant, name: this.keyName }),
+      body: JSON.stringify({ tenant_id: tenant, name: this.keyName, ttl_seconds: ttlS }),
     });
     const body = issued.body as { key?: unknown; key_hash?: unknown } | null;
     if (issued.status !== 200 || typeof body?.key !== 'string' || typeof body.key_hash !== 'string')
       throw new TenantAuthUnavailableError(
         `The runtime did not issue a harness key for tenant ${tenant} (${reason(issued.body, issued.status)}).`,
       );
-    const minted = { key: body.key, keyHash: body.key_hash };
-    this.minted.push(minted);
-    this.current.set(tenant, minted.key);
+    const minted = { key: body.key, keyHash: body.key_hash, expiresAt };
+    this.minted = [...this.unexpired(), minted];
+    this.current.set(tenant, minted);
     return minted;
   }
 }

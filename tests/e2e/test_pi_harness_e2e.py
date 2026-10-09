@@ -134,8 +134,10 @@ def harness_tenant():
             "tenant_id",
             "name",
             "created_at",
+            "expires_at",
             "revoked",
         }
+        assert record["expires_at"] is None
         assert record["tenant_id"] == tenant_id
         assert record["name"] == "pi-harness-e2e"
         assert record["revoked"] is False

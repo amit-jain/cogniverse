@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import signal
 import socket
 import subprocess
 import threading
@@ -16,7 +17,7 @@ import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Iterator, List, Tuple
+from typing import Iterator, List, Mapping, Tuple
 
 import uvicorn
 
@@ -92,17 +93,35 @@ def build_web_client(root: Path) -> Path:
     return root
 
 
+class WebServer:
+    """A running web server process: its base URL, and ``kill`` to end it
+    with SIGKILL, as a node loss or OOM kill ends a pod."""
+
+    def __init__(self, url: str, proc: subprocess.Popen) -> None:
+        self.url = url
+        self.proc = proc
+        self.killed = False
+
+    def kill(self) -> None:
+        self.proc.kill()
+        assert self.proc.wait(timeout=20) == -signal.SIGKILL
+        self.killed = True
+
+
 @contextmanager
-def serve_web(
+def web_server_process(
     client_dir: Path,
     runtime_url: str,
     *,
     telemetry_url: str,
     built: bool = False,
-) -> Iterator[str]:
+    env: Mapping[str, str] | None = None,
+) -> Iterator[WebServer]:
     """Run the client's Node server: the built ``dist`` entry when ``built``,
-    otherwise the sources through tsx. Yields its base URL. The server acts
-    for each tenant with a harness key it mints through the runtime.
+    otherwise the sources through tsx, with ``env`` added to its environment.
+    Yields the running server. The server acts for each tenant with a harness
+    key it mints through the runtime. A server the test did not kill must exit
+    cleanly when it is stopped.
 
     ``telemetry_url`` points CopilotKit's telemetry sink at a local recorder
     so a test never reports to CopilotKit's servers.
@@ -125,6 +144,7 @@ def serve_web(
                 COGNIVERSE_RUNTIME_URL=runtime_url,
                 PORT=str(port),
                 COPILOTKIT_TELEMETRY_URL=telemetry_url,
+                **(env or {}),
             ),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -152,14 +172,32 @@ def serve_web(
         if not any("EADDRINUSE" in line for line in output):
             break
     assert ready in output, f"the web server exited: {output}"
+    server = WebServer(f"http://127.0.0.1:{port}", proc)
     try:
-        yield f"http://127.0.0.1:{port}"
+        yield server
     finally:
-        proc.terminate()
-        assert proc.wait(timeout=20) == 0, (
-            f"the web server did not exit cleanly: {output}"
-        )
+        if not server.killed:
+            proc.terminate()
+            assert proc.wait(timeout=20) == 0, (
+                f"the web server did not exit cleanly: {output}"
+            )
         reader.join(timeout=10)
+
+
+@contextmanager
+def serve_web(
+    client_dir: Path,
+    runtime_url: str,
+    *,
+    telemetry_url: str,
+    built: bool = False,
+    env: Mapping[str, str] | None = None,
+) -> Iterator[str]:
+    """``web_server_process``, yielding only its base URL."""
+    with web_server_process(
+        client_dir, runtime_url, telemetry_url=telemetry_url, built=built, env=env
+    ) as server:
+        yield server.url
 
 
 def browse_as(context, tenant: str) -> None:

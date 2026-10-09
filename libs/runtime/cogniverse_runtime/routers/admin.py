@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictInt, field_validator
 
 from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
     ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KEY,
@@ -59,7 +59,7 @@ from cogniverse_runtime.admin.profile_models import (
     SchemaDeploymentRequest,
     SchemaDeploymentResponse,
 )
-from cogniverse_runtime.harness_keys import HarnessKeyStore
+from cogniverse_runtime.harness_keys import MAX_TTL_SECONDS, HarnessKeyStore
 from cogniverse_runtime.http_errors import (
     canonical_tenant_or_400,
     failure_response,
@@ -2667,6 +2667,7 @@ def _reset_admin_overrides_for_tests() -> None:
 class HarnessKeyCreateRequest(BaseModel):
     tenant_id: str = Field(min_length=1)
     name: str = Field(min_length=1, max_length=200)
+    ttl_seconds: StrictInt | None = Field(None, ge=1, le=MAX_TTL_SECONDS)
 
     @field_validator("tenant_id", "name")
     @classmethod
@@ -2729,6 +2730,7 @@ async def create_harness_key(
             HarnessKeyStore(config_manager.store).create,
             tenant_id,
             request.name,
+            request.ttl_seconds,
         )
     except ConfigStoreUnavailableError as exc:
         raise _harness_key_store_unavailable(exc) from exc
