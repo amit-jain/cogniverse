@@ -118,12 +118,11 @@ def _last_json_object(text: str) -> dict:
 def _require_runtime_ready(timeout_s: float = 300.0) -> None:
     """Poll until the runtime /health/live returns 200.
 
-    Used at the start of tests in this file that follow an upstream
-    test which triggered a runtime rollout. The deployment's
-    observedGeneration advances when the controller schedules the new
-    replica, NOT when it's HTTP-ready — and rocm vLLM workloads can
-    take 2-3 minutes to fully come back. Without this wait, downstream
-    tests' probes race the rollout and read connection errors.
+    Used by a test that triggers a runtime rollout before it returns, and
+    at the start of tests whose first probe needs the runtime. The
+    deployment's observedGeneration advances when the controller schedules
+    the new replica, NOT when it's HTTP-ready. Without this wait, probes
+    race the rollout and read connection errors.
     """
     endpoint = f"{RUNTIME}/health/live"
     deadline = time.monotonic() + timeout_s
@@ -207,6 +206,31 @@ def _runtime_deployment_generation() -> int:
     return int(out.stdout.strip() or "0")
 
 
+def _runtime_deployment_name() -> str:
+    """Name of the runtime deployment, found by the label the chart gives it."""
+    out = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "get",
+            "deployment",
+            "-n",
+            NAMESPACE,
+            "-l",
+            "app.kubernetes.io/component=runtime",
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    [name] = out.stdout.split()
+    return name
+
+
 # ---------------------------------------------------------------------------
 # Heavy-tier tests
 # ---------------------------------------------------------------------------
@@ -252,6 +276,32 @@ class TestAgentOptimizationWorkflow:
             f"all must have run for the rollout to fire"
         )
 
+        # The rollout replaces the runtime every later test shares; the
+        # generation advances when the replacement is scheduled, not when it
+        # serves. The test ends only once the rollout completed and the new
+        # runtime answers, so nothing after it meets a pod mid-restart.
+        rollout = subprocess.run(
+            [
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "rollout",
+                "status",
+                f"deployment/{_runtime_deployment_name()}",
+                "-n",
+                NAMESPACE,
+                "--timeout=600s",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=660,
+        )
+        assert rollout.returncode == 0, (
+            f"the runtime rollout the workflow started did not complete: "
+            f"{rollout.stdout[-500:]} {rollout.stderr[-500:]}"
+        )
+        _require_runtime_ready()
+
 
 @pytest.mark.e2e_heavy
 class TestScheduledDistillationWorkflow:
@@ -263,12 +313,8 @@ class TestScheduledDistillationWorkflow:
     def test_workflow_runs_against_strategy_store_without_regression(self):
         _require_cronworkflow("cogniverse-scheduled-distillation")
 
-        # Wait for runtime to be HTTP-ready before the pre-probe.
-        # The agent-optimization test above bounces the runtime as its
-        # functional outcome; its observedGeneration assertion fires
-        # the moment the controller schedules the new replica, NOT
-        # when it's accepting HTTP. Without this wait the pre-probe
-        # below races the rollout and reports a prerequisite endpoint failure.
+        # Wait for runtime to be HTTP-ready before the pre-probe, which
+        # reads the runtime's memory API.
         _require_runtime_ready()
 
         # Data-agnostic functional contract: the cron Succeeds, the
