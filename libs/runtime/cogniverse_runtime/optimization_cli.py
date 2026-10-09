@@ -568,7 +568,9 @@ def _student_demo_budget(endpoint):
         context_window=window.tokens,
         reserved_output=endpoint.max_tokens,
     )
-    return budget, served_message_counter(endpoint.api_base, endpoint.model)
+    return budget, served_message_counter(
+        endpoint.api_base, endpoint.model, retries=endpoint.num_retries
+    )
 
 
 def _bound_candidate_demos(

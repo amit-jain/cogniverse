@@ -726,11 +726,21 @@ class _TokenizeHandler(BaseHTTPRequestHandler):
     status: int = 200
     body: dict | None = None
     received: list = []
+    # Statuses answered before ``status``, one per request, in order.
+    failures: list = []
 
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler contract
         length = int(self.headers.get("Content-Length") or 0)
         request = json.loads(self.rfile.read(length))
         type(self).received.append((self.path, request))
+        if type(self).failures:
+            failed = type(self).failures.pop(0)
+            encoded = b"upstream unavailable"
+            self.send_response(failed)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+            return
         payload = type(self).body
         if payload is None:
             count = sum(
@@ -749,12 +759,19 @@ class _TokenizeHandler(BaseHTTPRequestHandler):
         return
 
 
-def _serve_tokenize(status: int = 200, body: dict | None = None):
+def _serve_tokenize(
+    status: int = 200, body: dict | None = None, failures: list | None = None
+):
     received: list = []
     handler = type(
         "Handler",
         (_TokenizeHandler,),
-        {"status": status, "body": body, "received": received},
+        {
+            "status": status,
+            "body": body,
+            "received": received,
+            "failures": list(failures or []),
+        },
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -798,13 +815,20 @@ class TestServedMessageCounter:
         )
 
     def test_an_endpoint_without_the_route_refuses_to_count(self):
-        server, api_base, _ = _serve_tokenize(status=404, body={"detail": "Not Found"})
+        server, api_base, received = _serve_tokenize(
+            status=404, body={"detail": "Not Found"}
+        )
+        slept: list = []
         try:
-            count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+            count = served_message_counter(
+                api_base, "openai/google/gemma-4-e4b-it", retries=1, sleep=slept.append
+            )
             with pytest.raises(TokenCountUnavailableError) as exc:
                 count(self.MESSAGES)
         finally:
             server.shutdown()
+        # A missing route is not transient: it is asked once.
+        assert (len(received), slept) == (1, [])
         root = api_base.removesuffix("/v1")
         assert str(exc.value) == (
             f"{root}/tokenize answered HTTP 404, so the request cannot be "
@@ -824,6 +848,38 @@ class TestServedMessageCounter:
             f"{root}/tokenize answered without an integer count, so the request "
             "cannot be counted with the tokenizer openai/google/gemma-4-e4b-it "
             "is served with"
+        )
+
+    def test_a_transient_gateway_failure_is_retried(self):
+        """One count of hundreds meeting a 502 from the endpoint's gateway is
+        asked again after a pause, as the LM's own calls are."""
+        server, api_base, received = _serve_tokenize(failures=[502])
+        slept: list = []
+        try:
+            count = served_message_counter(
+                api_base, "openai/google/gemma-4-e4b-it", retries=1, sleep=slept.append
+            )
+            assert count(self.MESSAGES) == 4 + 3 + 4 + 5
+        finally:
+            server.shutdown()
+        assert (len(received), slept) == (2, [1.0])
+
+    def test_a_failure_that_outlasts_the_retries_refuses_to_count(self):
+        server, api_base, received = _serve_tokenize(failures=[503, 502, 502])
+        slept: list = []
+        try:
+            count = served_message_counter(
+                api_base, "openai/google/gemma-4-e4b-it", retries=2, sleep=slept.append
+            )
+            with pytest.raises(TokenCountUnavailableError) as exc:
+                count(self.MESSAGES)
+        finally:
+            server.shutdown()
+        assert (len(received), slept) == (3, [1.0, 2.0])
+        root = api_base.removesuffix("/v1")
+        assert str(exc.value) == (
+            f"{root}/tokenize answered HTTP 502, so the request cannot be "
+            "counted with the tokenizer openai/google/gemma-4-e4b-it is served with"
         )
 
     def test_concurrent_counts_each_get_their_own_request_s_count(self):

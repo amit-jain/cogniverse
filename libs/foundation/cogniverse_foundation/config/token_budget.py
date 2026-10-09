@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Sequence
 
@@ -210,7 +211,9 @@ def served_message_counter(
     api_base: str,
     model: str,
     *,
+    retries: int = 1,
     timeout_seconds: float = TOKENIZE_TIMEOUT_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> TokenCounter:
     """Count chat messages with the tokenizer and chat template ``model`` is
     served with, through the endpoint's ``POST /tokenize``.
@@ -220,9 +223,13 @@ def served_message_counter(
     by about a quarter, so a request sized to the window by litellm's count is
     refused. vLLM's ``/tokenize`` renders the messages with the served chat
     template and counts them with the served tokenizer: its ``count`` is the
-    ``prompt_tokens`` the completion reports. Raises
-    ``TokenCountUnavailableError`` when the endpoint cannot answer; a count
-    by another tokenizer is the defect this counter exists to close.
+    ``prompt_tokens`` the completion reports. A count is idempotent and a
+    fitting pass asks hundreds, so an unreachable endpoint or a 5xx answer is
+    asked again up to ``retries`` times, after 1 s, 2 s, 4 s ... (the
+    endpoint's ``num_retries``, as its LM calls are retried). Raises
+    ``TokenCountUnavailableError`` when the endpoint still cannot answer, or
+    answers 4xx or without an integer count; a count by another tokenizer is
+    the defect this counter exists to close.
     """
 
     from cogniverse_foundation.dspy.model_format import bare_model_name
@@ -235,13 +242,24 @@ def served_message_counter(
     )
     http = httpx.Client(headers=dict(inference_headers(root)), timeout=timeout_seconds)
 
+    def ask(messages: Messages) -> httpx.Response:
+        attempt = 0
+        while True:
+            try:
+                response = http.post(url, json={"model": served, "messages": messages})
+            except httpx.HTTPError as exc:
+                if attempt == retries:
+                    raise TokenCountUnavailableError(
+                        f"{url} is unreachable, {unavailable}"
+                    ) from exc
+            else:
+                if response.status_code < 500 or attempt == retries:
+                    return response
+            attempt += 1
+            sleep(float(2 ** (attempt - 1)))
+
     def count(messages: Messages) -> int:
-        try:
-            response = http.post(url, json={"model": served, "messages": messages})
-        except httpx.HTTPError as exc:
-            raise TokenCountUnavailableError(
-                f"{url} is unreachable, {unavailable}"
-            ) from exc
+        response = ask(messages)
         if response.status_code != 200:
             raise TokenCountUnavailableError(
                 f"{url} answered HTTP {response.status_code}, {unavailable}"
