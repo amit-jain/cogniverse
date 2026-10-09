@@ -113,6 +113,7 @@ def _prune_closed_loops() -> None:
 _DATASET_OP_TIMEOUT_S = 120
 # Listing and deleting projects: a project delete removes all of its spans.
 _PROJECT_OP_TIMEOUT_S = 60
+_SPAN_LOOKUP_TIMEOUT_S = 10
 _SPAN_QUERY_WINDOW_MIN_STEP = timedelta(microseconds=1)
 
 # A projected span row carries only the requested columns: 82 bytes per row for
@@ -619,6 +620,48 @@ class PhoenixTraceStore(TraceStore):
         except Exception as e:
             logger.error(f"Failed to get span {span_id}: {e}")
             raise
+
+    async def span_projects(self, span_ids: Sequence[str]) -> Dict[str, Optional[str]]:
+        """The project holding each of ``span_ids``, from Phoenix's span
+        lookup by OTel id across every project, in one request; None for a
+        span Phoenix does not hold. Raises on an unreachable Phoenix or a
+        lookup it refuses."""
+        wanted = list(dict.fromkeys(span_ids))
+        if not wanted:
+            return {}
+        parameters = ", ".join(f"$s{i}: String!" for i in range(len(wanted)))
+        fields = " ".join(
+            f"s{i}: getSpanByOtelId(spanId: $s{i}) {{ project {{ name }} }}"
+            for i in range(len(wanted))
+        )
+
+        async def lookup() -> Dict[str, Optional[str]]:
+            async with httpx.AsyncClient(
+                base_url=self.http_endpoint, timeout=_SPAN_LOOKUP_TIMEOUT_S
+            ) as client:
+                response = await client.post(
+                    "/graphql",
+                    json={
+                        "query": f"query({parameters}) {{ {fields} }}",
+                        "variables": {f"s{i}": span for i, span in enumerate(wanted)},
+                    },
+                )
+            response.raise_for_status()
+            body = response.json()
+            if body.get("errors"):
+                raise RuntimeError(
+                    f"Phoenix refused the lookup of spans {wanted}: {body['errors']}"
+                )
+            return {
+                span: (
+                    None
+                    if body["data"][f"s{i}"] is None
+                    else body["data"][f"s{i}"]["project"]["name"]
+                )
+                for i, span in enumerate(wanted)
+            }
+
+        return await self._breaker.acall(lookup)
 
     async def iter_spans(
         self,

@@ -17,6 +17,7 @@ import re
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,7 +38,10 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.registry import get_telemetry_registry
-from cogniverse_foundation.telemetry.span_contract import SESSION_EVALUATION
+from cogniverse_foundation.telemetry.span_contract import (
+    SESSION_EVALUATION,
+    span_readable_within_s,
+)
 from cogniverse_runtime.agent_dispatcher import (
     CONVERSATION_PERSIST_FAILURE_CAPACITY,
     CONVERSATION_SAVE_LEASE_S,
@@ -49,6 +53,12 @@ from cogniverse_runtime.session_state import ContinuationStore, ConversationLedg
 from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.approval_review import run_in_own_loop
 from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.span_export import (
+    answers,
+    await_span_lookups,
+    held_span_export,
+    span_lookups,
+)
 from tests.utils.stub_search import (
     REPO_ROOT,
     StubBackend,
@@ -286,6 +296,12 @@ def page(browser, tenants):
     context.close()
 
 
+@pytest.fixture()
+def held_export(telemetry, tenants):
+    with held_span_export(telemetry) as batch_config:
+        yield batch_config
+
+
 def _auth(key: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
 
@@ -318,8 +334,9 @@ def _snapshot(events: list) -> dict:
     return snapshot["snapshot"]["result"]
 
 
-def _search(telemetry, tenant_id) -> str:
-    """Run a search for ``tenant_id``; the id of the span it recorded."""
+def _search(telemetry, tenant_id, *, flush=True) -> str:
+    """Run a search for ``tenant_id``; the id of the span it recorded.
+    ``flush`` exports the span before returning."""
     agent = build_stub_search_agent(tenant_id, HITS)
     agent.set_telemetry_manager(telemetry)
     output = run_in_own_loop(
@@ -327,8 +344,19 @@ def _search(telemetry, tenant_id) -> str:
             SearchInput(query=QUERY, tenant_id=tenant_id, enhanced_query=QUERY, top_k=3)
         )
     )
-    telemetry.force_flush(timeout_millis=10000)
+    if flush:
+        telemetry.force_flush(timeout_millis=10000)
     return output.span_id
+
+
+def _span_is_exported(telemetry, tenant_id, span_id) -> bool:
+    provider, project = _provider(telemetry, tenant_id)
+    spans = run_in_own_loop(
+        provider.traces.get_spans(
+            project=project, filters={"span_id": [span_id]}, limit=1
+        )
+    )
+    return list(spans["context.span_id"]) == [span_id]
 
 
 def _provider(telemetry, tenant_id):
@@ -507,6 +535,8 @@ class TestSessionEvaluation:
             },
         )
         assert _annotation_writes(phoenix_proxy, before) == []
+        # Another project holds the span, so one lookup settles it: no wait.
+        assert span_lookups(phoenix_proxy, foreign) == 1
         assert _evaluations(telemetry, tenant, [own], {}, timeout=6) == {}
 
     @pytest.mark.parametrize(
@@ -641,6 +671,230 @@ class TestSessionEvaluation:
             for index in range(count)
         }
         assert _evaluations(telemetry, tenant, spans, expected) == expected
+
+    def test_a_verdict_sent_before_the_last_search_is_exported_is_stored(
+        self, runtime_url, tenants, telemetry, phoenix_proxy, held_export
+    ):
+        tenant, _ = tenants
+        first = _search(telemetry, tenant)
+        _search_spans(telemetry, tenant, 1)
+        last = _search(telemetry, tenant, flush=False)
+        assert (
+            _span_is_exported(telemetry, tenant, first),
+            _span_is_exported(telemetry, tenant, last),
+        ) == (True, False)
+        thread = f"thread-{uuid.uuid4().hex}"
+        body = {"outcome": "partial", "score": 0.6, "span_ids": [first, last]}
+        before = len(phoenix_proxy.requests)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            verdict = pool.submit(_evaluate, runtime_url, KEY, thread, body)
+            await_span_lookups(phoenix_proxy, last, 2, lambda: answers([verdict]))
+            telemetry.force_flush(timeout_millis=10000)
+            response = verdict.result(timeout=held_export.schedule_delay_millis / 1000)
+
+        assert (response.status_code, response.json()) == (
+            200,
+            {
+                "thread_id": thread,
+                "outcome": "partial",
+                "score": 0.6,
+                "span_ids": sorted([first, last]),
+            },
+        )
+        assert len(_annotation_writes(phoenix_proxy, before)) == 2
+        expected = {span: ("partial", 0.6, thread) for span in (first, last)}
+        assert _evaluations(telemetry, tenant, [first, last], expected) == expected
+
+    def test_verdicts_on_spans_not_yet_exported_each_land_once(
+        self, runtime_url, tenants, telemetry, phoenix_proxy, held_export
+    ):
+        tenant, _ = tenants
+        count = 4
+        spans = [_search(telemetry, tenant, flush=False) for _ in range(count)]
+        outcomes = ["success", "partial", "failure", "success"]
+        before = len(phoenix_proxy.requests)
+        # The first lookups are held until there is one per conversation: a
+        # verdict sends its next lookup only after its first is answered, so
+        # all of them are waiting on their spans together.
+        all_waiting = threading.Event()
+        barrier = threading.Barrier(count, action=all_waiting.set, timeout=60)
+
+        def hold_first_lookups(method, path, body):
+            if path == "/graphql" and not all_waiting.is_set():
+                barrier.wait()
+            return None
+
+        phoenix_proxy.intercept = hold_first_lookups
+        with ThreadPoolExecutor(max_workers=count) as pool:
+            pending = [
+                pool.submit(
+                    _evaluate,
+                    runtime_url,
+                    KEY,
+                    f"thread-{index}",
+                    {
+                        "outcome": outcomes[index],
+                        "score": index / 10,
+                        "span_ids": [spans[index]],
+                    },
+                )
+                for index in range(count)
+            ]
+            deadline = time.monotonic() + 60
+            while not all_waiting.is_set():
+                assert answers(pending) == [], "answered before the span was exported"
+                assert time.monotonic() < deadline, "the verdicts never all waited"
+                time.sleep(0.05)
+            for span in spans:
+                await_span_lookups(phoenix_proxy, span, 2, lambda: answers(pending))
+            telemetry.force_flush(timeout_millis=10000)
+            responses = [
+                verdict.result(timeout=held_export.schedule_delay_millis / 1000)
+                for verdict in pending
+            ]
+        phoenix_proxy.intercept = None
+
+        assert [(r.status_code, r.json()) for r in responses] == [
+            (
+                200,
+                {
+                    "thread_id": f"thread-{index}",
+                    "outcome": outcomes[index],
+                    "score": index / 10,
+                    "span_ids": [spans[index]],
+                },
+            )
+            for index in range(count)
+        ]
+        assert len(_annotation_writes(phoenix_proxy, before)) == count
+        expected = {
+            spans[index]: (outcomes[index], index / 10, f"thread-{index}")
+            for index in range(count)
+        }
+        assert _evaluations(telemetry, tenant, spans, expected) == expected
+
+    @pytest.mark.parametrize(
+        ("fault", "error_type"),
+        [
+            # Phoenix answers every call with 503.
+            (lambda method, path, body: (503, {"detail": "down"}), "HTTPStatusError"),
+            # Phoenix holds the lookup past its deadline.
+            (
+                lambda method, path, body: time.sleep(12) or (200, {"data": {}}),
+                "ReadTimeout",
+            ),
+        ],
+        ids=["down", "hung"],
+    )
+    def test_a_telemetry_backend_failing_during_the_wait_stores_nothing(
+        self,
+        runtime_url,
+        tenants,
+        telemetry,
+        phoenix_proxy,
+        held_export,
+        fault,
+        error_type,
+    ):
+        tenant, _ = tenants
+        span = _search(telemetry, tenant, flush=False)
+        body = {"outcome": "success", "score": 0.7, "span_ids": [span]}
+        before = len(phoenix_proxy.requests)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            verdict = pool.submit(_evaluate, runtime_url, KEY, "thread-z", body)
+            await_span_lookups(phoenix_proxy, span, 2, lambda: answers([verdict]))
+            phoenix_proxy.intercept = fault
+            response = verdict.result(timeout=30)
+        phoenix_proxy.intercept = None
+
+        assert (response.status_code, response.json()) == (
+            502,
+            {
+                "error": {
+                    "message": "The evaluation of conversation thread-z was not "
+                    f"stored ({error_type}). See server logs for detail.",
+                    "type": "server_error",
+                    "code": "annotation_not_stored",
+                    "error_type": error_type,
+                }
+            },
+        )
+        assert _annotation_writes(phoenix_proxy, before) == []
+        telemetry.force_flush(timeout_millis=10000)
+        assert _evaluations(telemetry, tenant, [span], {}, timeout=6) == {}
+
+    def test_a_span_another_tenant_exports_late_is_refused(
+        self, runtime_url, tenants, telemetry, phoenix_proxy, held_export
+    ):
+        tenant, other = tenants
+        own = _search(telemetry, tenant)
+        foreign = _search(telemetry, other, flush=False)
+        body = {"outcome": "failure", "score": 0.0, "span_ids": [own, foreign]}
+        before = len(phoenix_proxy.requests)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            verdict = pool.submit(_evaluate, runtime_url, KEY, "thread-x", body)
+            await_span_lookups(phoenix_proxy, foreign, 2, lambda: answers([verdict]))
+            flushed = time.monotonic()
+            telemetry.force_flush(timeout_millis=10000)
+            response = verdict.result(timeout=30)
+            # The span landing in the other tenant's project ends the wait.
+            answered_after_flush = time.monotonic() - flushed
+
+        project = telemetry.config.get_project_name(tenant)
+        assert (response.status_code, response.json()) == (
+            404,
+            {
+                "error": {
+                    "message": "Conversation thread-x names search spans this "
+                    f"tenant does not have: spans {foreign} are not in project "
+                    f"{project}.",
+                    "type": "invalid_request_error",
+                    "code": "span_not_found",
+                }
+            },
+        )
+        assert answered_after_flush < span_readable_within_s(BatchExportConfig())
+        assert _annotation_writes(phoenix_proxy, before) == []
+        assert _evaluations(telemetry, tenant, [own], {}, timeout=6) == {}
+
+    def test_a_span_no_project_holds_is_refused_after_the_wait(
+        self, runtime_url, tenants, telemetry, phoenix_proxy
+    ):
+        tenant, _ = tenants
+        own = _search(telemetry, tenant)
+        _search_spans(telemetry, tenant, 1)
+        missing = uuid.uuid4().hex[:16]
+        window = span_readable_within_s(telemetry.config.batch_config)
+        before = len(phoenix_proxy.requests)
+
+        started = time.monotonic()
+        response = _evaluate(
+            runtime_url,
+            KEY,
+            "thread-x",
+            {"outcome": "success", "score": 1.0, "span_ids": [own, missing]},
+        )
+        elapsed = time.monotonic() - started
+
+        project = telemetry.config.get_project_name(tenant)
+        assert (response.status_code, response.json()) == (
+            404,
+            {
+                "error": {
+                    "message": "Conversation thread-x names search spans this "
+                    f"tenant does not have: spans {missing} are not in project "
+                    f"{project} after 5.5s.",
+                    "type": "invalid_request_error",
+                    "code": "span_not_found",
+                }
+            },
+        )
+        assert (window <= elapsed < window + 3, window) == (True, 5.5)
+        assert _annotation_writes(phoenix_proxy, before) == []
+        assert _evaluations(telemetry, tenant, [own], {}, timeout=6) == {}
 
 
 def _workspace(page: Page, web_url: str) -> str:

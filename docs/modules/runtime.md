@@ -1800,10 +1800,13 @@ tenant. Body `{span_id, result_id, relevance}`: `span_id` is 16 hex digits,
 `result_id` the id the span records the result under, `relevance` one of
 `Highly Relevant` (score 1.0), `Somewhat Relevant` (0.5) or `Not Relevant`
 (0.0). Each result keeps its own rating, and rating it again replaces it. The
-answer is `{span_id, result_id, relevance, score}`. An unknown key is 401, a
-key-store outage 503, an invalid body 400 naming the field, a span that is not
-in the tenant's telemetry project 404 `span_not_found`, and a telemetry
-backend that fails the read or the write 502 `annotation_not_stored`. The
+answer is `{span_id, result_id, relevance, score}`. A search hands out its
+span id before the span is exported, so a span no project holds yet is waited
+for: up to the exporter's `schedule_delay_millis` plus 5 s. An unknown key is
+401, a key-store outage 503, an invalid body 400 naming the field, a span of
+another tenant's project (at once) or of none after that wait 404
+`span_not_found`, and a telemetry backend that fails the lookup or the write,
+waiting included, 502 `annotation_not_stored`. The
 triplet miner (`TripletExtractor`) counts a `Highly Relevant` result as a
 positive for the search's query.
 
@@ -1812,14 +1815,16 @@ on a whole conversation as a `session_evaluation` annotation (the name the
 trajectory converter reads) on each search span of it, in the key's tenant.
 Body `{outcome, score, span_ids}`: `outcome` one of `success`, `partial`,
 `failure` (the annotation's label), `score` 0-1, `span_ids` 1-200 span ids
-of the conversation's searches. Every span is read back from the tenant's
-project before any is written; the annotation's metadata carries
+of the conversation's searches. Every span is looked up before any is
+written, and spans no project holds yet are waited for as a rating's span is;
+the annotation's metadata carries
 `session_id` (the thread) and `num_spans`, and evaluating the thread again
 replaces its verdict on each span. The answer is `{thread_id, outcome, score,
 span_ids}` with the spans sorted. An unknown key is 401, a key-store outage
-503, an invalid body or a malformed span id 400, a span not in the tenant's
-project 404 `span_not_found` naming it (nothing is written), and a telemetry
-backend that fails a read or write 502 `annotation_not_stored`
+503, an invalid body or a malformed span id 400, spans of another tenant's
+project (at once) or of none after the wait 404 `span_not_found` naming them
+(nothing is written), and a telemetry backend that fails a lookup or write,
+waiting included, 502 `annotation_not_stored`
 (`span_contract.persist_session_evaluation`).
 
 The browser UI in `clients/web` drives this surface through a CopilotKit
