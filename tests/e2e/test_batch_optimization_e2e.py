@@ -5353,10 +5353,29 @@ class TestArtifactLoadingRoundTrip:
                 assert {entity["type"] for entity in body["entities"]} <= set(
                     ENTITY_TYPES
                 ), body
-                answer_payload = json.loads(str(body["answer"]))
-                assert {field: answer_payload[field] for field in served_fields} == {
-                    field: body[field] for field in served_fields
-                }, body
+                # The answer is the one sentence a person reads, naming each
+                # served entity with its type and each relationship.
+                entities = ", ".join(
+                    f"{entity['text'].strip()} ({entity['type'].lower()})"
+                    for entity in body["entities"]
+                )
+                count = len(body["entities"])
+                expected_answer = (
+                    f"Found {count} {'entity' if count == 1 else 'entities'}: "
+                    f"{entities}."
+                    if count
+                    else "Found no entities."
+                )
+                relations = [
+                    " ".join(
+                        str(relation.get(key, "")).strip()
+                        for key in ("subject", "relation", "object")
+                    )
+                    for relation in body["relationships"]
+                ]
+                if relations:
+                    expected_answer += f" Relationships: {'; '.join(relations)}."
+                assert body["answer"] == expected_answer, body
                 served.append({field: body[field] for field in served_fields})
             return served
 
