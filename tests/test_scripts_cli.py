@@ -238,39 +238,64 @@ _CI_SELECTION_COMMANDS = [
     _RUNTIME_UNIT_COMMAND,
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false TEST_LLM_MODEL=qwen2.5:0.5b"
     " JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/runtime/integration"
+    " --ignore=tests/runtime/integration/test_ag_ui_threads.py"
+    " --ignore=tests/runtime/integration/test_web_agent_workspace.py"
     " --ignore=tests/runtime/integration/test_web_client_ag_ui.py"
+    " --ignore=tests/runtime/integration/test_web_ops_analytics.py"
     " --ignore=tests/runtime/integration/test_web_ops_annotations.py"
     " --ignore=tests/runtime/integration/test_web_ops_approvals.py"
     " --ignore=tests/runtime/integration/test_web_ops_atlas.py"
     " --ignore=tests/runtime/integration/test_web_ops_config.py"
+    " --ignore=tests/runtime/integration/test_web_ops_eval_metrics.py"
     " --ignore=tests/runtime/integration/test_web_ops_ingestion.py"
     " --ignore=tests/runtime/integration/test_web_ops_memory.py"
     " --ignore=tests/runtime/integration/test_web_ops_optimization.py"
+    " --ignore=tests/runtime/integration/test_web_ops_optimization_framework.py"
     " --ignore=tests/runtime/integration/test_web_ops_profiles.py"
+    " --ignore=tests/runtime/integration/test_web_ops_shell.py"
     " --ignore=tests/runtime/integration/test_web_ops_telemetry_metrics.py"
     " --ignore=tests/runtime/integration/test_web_ops_tenants.py"
     " --ignore=tests/runtime/integration/test_web_ops_workflows.py"
-    " -m 'integration and ci_fast and not requires_lm' -v -p no:cacheprovider"
-    " --tb=long",
+    " --ignore=tests/runtime/integration/test_web_search_relevance.py"
+    " --ignore=tests/runtime/integration/test_web_search_session.py -m 'integration"
+    " and ci_fast and not requires_lm' -v -p no:cacheprovider --tb=long",
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false TEST_LLM_MODEL=qwen2.5:0.5b"
-    " JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/admin -m integration -v -p"
-    " no:cacheprovider --tb=long",
+    " JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/admin -m integration -v"
+    " -p no:cacheprovider --tb=long",
     _PLATFORM_INTEGRATION_COMMAND,
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
-    " python -m pytest"
+    " python -m pytest tests/runtime/integration/test_ag_ui_threads.py"
+    " tests/runtime/integration/test_web_agent_workspace.py"
     " tests/runtime/integration/test_web_client_ag_ui.py"
-    " tests/runtime/integration/test_web_ops_annotations.py"
-    " tests/runtime/integration/test_web_ops_approvals.py"
-    " tests/runtime/integration/test_web_ops_atlas.py"
-    " tests/runtime/integration/test_web_ops_config.py"
-    " tests/runtime/integration/test_web_ops_ingestion.py"
-    " tests/runtime/integration/test_web_ops_memory.py"
+    " tests/runtime/integration/test_web_ops_analytics.py"
+    " tests/runtime/integration/test_web_ops_shell.py -m 'integration and ci_fast"
+    " and not requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/runtime/integration/test_web_ops_config.py"
     " tests/runtime/integration/test_web_ops_optimization.py"
-    " tests/runtime/integration/test_web_ops_profiles.py"
-    " tests/runtime/integration/test_web_ops_telemetry_metrics.py"
+    " tests/runtime/integration/test_web_ops_profiles.py -m 'integration and"
+    " ci_fast and not requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/runtime/integration/test_web_ops_annotations.py"
+    " tests/runtime/integration/test_web_ops_memory.py"
     " tests/runtime/integration/test_web_ops_tenants.py"
-    " tests/runtime/integration/test_web_ops_workflows.py"
-    " -m 'integration and ci_fast and not requires_lm' -v -p no:cacheprovider"
+    " tests/runtime/integration/test_web_search_session.py -m 'integration and"
+    " ci_fast and not requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/runtime/integration/test_web_ops_atlas.py"
+    " tests/runtime/integration/test_web_ops_ingestion.py"
+    " tests/runtime/integration/test_web_ops_workflows.py -m 'integration and"
+    " ci_fast and not requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest tests/runtime/integration/test_web_ops_approvals.py"
+    " tests/runtime/integration/test_web_ops_eval_metrics.py"
+    " tests/runtime/integration/test_web_ops_telemetry_metrics.py"
+    " tests/runtime/integration/test_web_search_relevance.py -m 'integration and"
+    " ci_fast and not requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
+    " python -m pytest"
+    " tests/runtime/integration/test_web_ops_optimization_framework.py -m"
+    " 'integration and ci_fast and not requires_lm' -v -p no:cacheprovider"
     " --tb=long",
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
     " python -m pytest tests/synthetic/unit -v -p no:cacheprovider --tb=long",
@@ -278,8 +303,13 @@ _CI_SELECTION_COMMANDS = [
     " python -m pytest tests/telemetry/unit -m 'unit or not integration' -v -p"
     " no:cacheprovider --tb=long",
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false uv run python -m pytest"
-    " tests/telemetry/integration -m 'integration and ci_fast and not requires_lm' -v"
-    " -p no:cacheprovider --tb=long",
+    " tests/telemetry/integration/test_multi_tenant_telemetry.py -m 'integration"
+    " and ci_fast and not requires_lm' -v -p no:cacheprovider --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false uv run python -m pytest"
+    " tests/telemetry/integration"
+    " --ignore=tests/telemetry/integration/test_multi_tenant_telemetry.py -m"
+    " 'integration and ci_fast and not requires_lm' -v -p no:cacheprovider"
+    " --tb=long",
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false JAX_PLATFORM_NAME=cpu uv run"
     " python -m pytest tests/backends/unit -m 'unit or not integration' -v -p"
     " no:cacheprovider --tb=long",
