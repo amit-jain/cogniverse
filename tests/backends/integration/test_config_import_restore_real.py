@@ -1,0 +1,436 @@
+"""Configuration imports keep the destination tenant at the Vespa boundary.
+
+``VespaConfigStore.import_configs`` writes every row of an export under the
+tenant the call names, refuses schema-registry rows before any write, and
+removes what it wrote when a row fails.
+"""
+
+from __future__ import annotations
+
+import json
+import multiprocessing
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
+from uuid import uuid4
+
+import httpx
+import pytest
+
+from cogniverse_core.registries.schema_registry import (
+    SCHEMA_REGISTRY_SERVICE,
+    SchemaRegistry,
+)
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_vespa.config.config_store import VespaConfigStore
+
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
+
+
+def _store(port):
+    return VespaConfigStore(backend_url="http://127.0.0.1", backend_port=port)
+
+
+def _import(port, tenant, payload):
+    """Import ``payload`` into ``tenant`` through the store on ``port``.
+
+    Returns the imported counts and the failures, each failure named with
+    its exception type.
+    """
+    try:
+        return {
+            "imported": [_store(port).import_configs(tenant, payload)],
+            "errors": [],
+        }
+    except Exception as exc:
+        return {"imported": [], "errors": [f"{type(exc).__name__}: {exc}"]}
+
+
+def _child_import(port, tenant, payload, output):
+    """Drive one import in its own process; the write barrier the two
+    imports meet at lives in the proxy in the parent."""
+    output.put({"tenant": tenant, **_import(port, tenant, payload)})
+
+
+@contextmanager
+def _vespa_proxy(upstream, *, barrier=None, fail_key=None):
+    state = SimpleNamespace(writes=[], failures=0, lock=threading.Lock())
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self._forward()
+
+        def do_POST(self):
+            self._forward()
+
+        def do_PUT(self):
+            self._forward()
+
+        def do_DELETE(self):
+            # The rollback a failed import runs deletes the versions it wrote;
+            # without this the proxy answers 501 and the rollback cannot run.
+            self._forward()
+
+        def _forward(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            # Version documents only: version counters live in their own
+            # namespace and carry no tenant or key.
+            if (
+                self.command in {"POST", "PUT"}
+                and "/document/v1/config_metadata/" in self.path
+            ):
+                fields = json.loads(body)["fields"]
+                with state.lock:
+                    state.writes.append((fields["tenant_id"], fields["config_key"]))
+                if barrier is not None:
+                    barrier.wait(timeout=30)
+                if fields["config_key"] == fail_key:
+                    state.failures += 1
+                    content = b'{"message":"config write rejected during import"}'
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(content)))
+                    self.end_headers()
+                    self.wfile.write(content)
+                    return
+            with httpx.Client(timeout=30) as client:
+                response = client.request(
+                    self.command,
+                    upstream + self.path,
+                    content=body,
+                    headers={
+                        key: value
+                        for key, value in self.headers.items()
+                        if key.lower()
+                        not in {
+                            "host",
+                            "content-length",
+                            "connection",
+                            "transfer-encoding",
+                        }
+                    },
+                )
+            self.send_response(response.status_code)
+            self.send_header(
+                "Content-Type", response.headers.get("Content-Type", "application/json")
+            )
+            self.send_header("Content-Length", str(len(response.content)))
+            self.end_headers()
+            self.wfile.write(response.content)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_port, state
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _payload(source, entries):
+    return {
+        "tenant_id": source,
+        "configs": [
+            {
+                "tenant_id": source,
+                "scope": "agent",
+                "service": "search_agent",
+                "config_key": key,
+                "config_value": value,
+            }
+            for key, value in entries.items()
+        ],
+    }
+
+
+def test_import_writes_under_the_named_tenant_and_preserves_source(shared_vespa):
+    store = _store(shared_vespa["http_port"])
+    source, target = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
+    expected = {"model": "selected-model", "top_k": 7}
+    store.set_config(source, ConfigScope.AGENT, "search_agent", "settings", expected)
+    payload = store.export_configs(source)
+    result = _import(shared_vespa["http_port"], target, payload)
+    assert result["errors"] == []
+    assert result["imported"] == [1]
+    assert (
+        store.get_config(
+            target, ConfigScope.AGENT, "search_agent", "settings"
+        ).config_value
+        == expected
+    )
+    assert (
+        store.get_config(
+            source, ConfigScope.AGENT, "search_agent", "settings"
+        ).config_value
+        == expected
+    )
+    assert len(store.list_configs(target)) == 1
+    assert len(store.list_configs(source)) == 1
+
+
+def test_concurrent_imports_keep_each_destination(shared_vespa):
+    """Two operators restoring the same export into different tenants.
+
+    The destination belongs to the call, not to the store, so two writes
+    overlapping at the Vespa write barrier must land one document each,
+    under their own tenant, and leave the export's source tenant empty.
+    """
+    source = f"source{uuid4().hex[:8]}:tenant"
+    tenants = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
+    context = multiprocessing.get_context("spawn")
+    output = context.Queue()
+    barrier = threading.Barrier(2)
+    with _vespa_proxy(shared_vespa["base_url"], barrier=barrier) as (port, state):
+        children = [
+            context.Process(
+                target=_child_import,
+                args=(
+                    port,
+                    tenant,
+                    _payload(source, {"settings": {"owner": tenant}}),
+                    output,
+                ),
+            )
+            for tenant in tenants
+        ]
+        try:
+            for child in children:
+                child.start()
+            results = [output.get(timeout=180) for _ in children]
+            for child in children:
+                child.join(timeout=10)
+            assert [child.exitcode for child in children] == [0, 0]
+            assert sorted(results, key=lambda row: row["tenant"]) == sorted(
+                (
+                    {"tenant": tenant, "errors": [], "imported": [1]}
+                    for tenant in tenants
+                ),
+                key=lambda row: row["tenant"],
+            )
+            assert sorted(state.writes) == sorted(
+                (tenant, "settings") for tenant in tenants
+            )
+        finally:
+            for child in children:
+                if child.is_alive():
+                    child.terminate()
+                child.join(timeout=5)
+    store = _store(shared_vespa["http_port"])
+    for tenant in tenants:
+        assert store.get_config(
+            tenant, ConfigScope.AGENT, "search_agent", "settings"
+        ).config_value == {"owner": tenant}
+        assert len(store.list_configs(tenant)) == 1
+    assert store.list_configs(source) == []
+
+
+def test_import_write_failure_raises_and_removes_what_it_wrote(shared_vespa):
+    target = f"import{uuid4().hex[:8]}:tenant"
+    payload = _payload("file:tenant", {"first": {"value": 1}, "second": {"value": 2}})
+    with _vespa_proxy(shared_vespa["base_url"], fail_key="second") as (port, state):
+        result = _import(port, target, payload)
+        assert len(result["errors"]) == 1
+        assert result["errors"][0].startswith(
+            f"RuntimeError: Configuration import for tenant {target} failed at "
+            f"row 2 of 2 (search_agent/second): "
+        )
+        assert result["errors"][0].endswith(
+            "; removed 1 of the 1 versions it had written"
+        ), result["errors"][0]
+        assert result["imported"] == []
+        assert state.writes == [(target, "first"), (target, "second")]
+        assert state.failures == 1
+    store = _store(shared_vespa["http_port"])
+    # The import is all or nothing: the row written before the failure is
+    # removed, so the tenant holds neither.
+    assert store.get_config(target, ConfigScope.AGENT, "search_agent", "first") is None
+    assert store.get_config(target, ConfigScope.AGENT, "search_agent", "second") is None
+
+
+@pytest.fixture
+def register_schema(shared_vespa):
+    """File deployments in the registry the way the schema registry does, and
+    delete them after the test: their stub definitions cannot be deployed, so a
+    row left on the session's Vespa fails every later deploy that merges the
+    registry."""
+    store = _store(shared_vespa["http_port"])
+    registry = SchemaRegistry(
+        SimpleNamespace(store=store), backend=object(), schema_loader=object()
+    )
+    filed = []
+
+    def _register(tenant, base_schema):
+        registry.register_schema(
+            tenant_id=tenant,
+            base_schema_name=base_schema,
+            full_schema_name=_full_schema_name(base_schema, tenant),
+            schema_definition=json.dumps(
+                {"name": _full_schema_name(base_schema, tenant)}
+            ),
+        )
+        filed.append((tenant, base_schema))
+
+    yield _register
+    for tenant, base_schema in filed:
+        store.delete_config(
+            tenant, ConfigScope.SCHEMA, SCHEMA_REGISTRY_SERVICE, f"schema_{base_schema}"
+        )
+
+
+def _full_schema_name(base_schema, tenant):
+    return f"{base_schema}_{tenant.replace(':', '_')}"
+
+
+def _registry_rows(store, tenants):
+    """(row tenant, key, tenant the row names, schema the row names) per
+    registry row under ``tenants``, as the schema registry reads them."""
+    return sorted(
+        (
+            row.tenant_id,
+            row.config_key,
+            row.config_value["tenant_id"],
+            row.config_value["full_schema_name"],
+        )
+        for row in store.list_all_configs(
+            scope=ConfigScope.SCHEMA, service=SCHEMA_REGISTRY_SERVICE
+        )
+        if row.tenant_id in tenants
+    )
+
+
+def test_an_export_restores_configurations_without_the_sources_deployments(
+    shared_vespa, register_schema
+):
+    store = _store(shared_vespa["http_port"])
+    source, target = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
+    base_schema = "document_text"
+    register_schema(source, base_schema)
+    register_schema(target, base_schema)
+    store.set_config(source, ConfigScope.AGENT, "search_agent", "settings", {"k": 3})
+
+    payload = store.export_configs(source)
+    assert [
+        (entry["scope"], entry["service"], entry["config_key"])
+        for entry in payload["configs"]
+    ] == [("agent", "search_agent", "settings")]
+
+    result = _import(shared_vespa["http_port"], target, payload)
+    assert result["errors"] == []
+    assert result["imported"] == [1]
+    assert store.get_config(
+        target, ConfigScope.AGENT, "search_agent", "settings"
+    ).config_value == {"k": 3}
+    assert sorted(
+        (entry.scope.value, entry.service, entry.config_key)
+        for entry in store.list_configs(target)
+    ) == [
+        ("agent", "search_agent", "settings"),
+        ("schema", SCHEMA_REGISTRY_SERVICE, f"schema_{base_schema}"),
+    ]
+    # Each tenant's registry names only that tenant's own deployment.
+    assert _registry_rows(store, {source, target}) == sorted(
+        [
+            (
+                tenant,
+                f"schema_{base_schema}",
+                tenant,
+                _full_schema_name(base_schema, tenant),
+            )
+            for tenant in (source, target)
+        ]
+    )
+
+
+def test_an_import_carrying_schema_rows_is_refused_before_any_write(shared_vespa):
+    source, target = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
+    payload = _payload(source, {"settings": {"k": 3}})
+    payload["configs"].append(
+        {
+            "tenant_id": source,
+            "scope": "schema",
+            "service": SCHEMA_REGISTRY_SERVICE,
+            "config_key": "schema_document_text",
+            "config_value": {
+                "tenant_id": source,
+                "base_schema_name": "document_text",
+                "full_schema_name": _full_schema_name("document_text", source),
+                "schema_definition": "{}",
+                "config": {},
+                "deployment_time": "2026-09-17T00:00:00+00:00",
+            },
+        }
+    )
+    with _vespa_proxy(shared_vespa["base_url"]) as (port, state):
+        result = _import(port, target, payload)
+        assert result["errors"] == [
+            f"ValueError: Configuration import for tenant {target} refused: "
+            "schema rows record deployments made by the schema registry and are "
+            f"not importable: {SCHEMA_REGISTRY_SERVICE}/schema_document_text"
+        ]
+        assert result["imported"] == []
+        assert state.writes == []
+    store = _store(shared_vespa["http_port"])
+    assert store.list_configs(target) == []
+    assert _registry_rows(store, {source, target}) == []
+
+
+def test_concurrent_restores_keep_each_tenants_own_registry(
+    shared_vespa, register_schema
+):
+    """Two operators restore one source's export into two registered tenants
+    at once; each tenant's registry still names only its own deployment."""
+    store = _store(shared_vespa["http_port"])
+    source = f"source{uuid4().hex[:8]}:tenant"
+    tenants = [f"import{uuid4().hex[:8]}:tenant" for _ in range(2)]
+    base_schema = "document_text"
+    for tenant in [source, *tenants]:
+        register_schema(tenant, base_schema)
+    store.set_config(source, ConfigScope.AGENT, "search_agent", "settings", {"k": 5})
+    payload = store.export_configs(source)
+
+    context = multiprocessing.get_context("spawn")
+    output = context.Queue()
+    barrier = threading.Barrier(2)
+    with _vespa_proxy(shared_vespa["base_url"], barrier=barrier) as (port, state):
+        children = [
+            context.Process(target=_child_import, args=(port, tenant, payload, output))
+            for tenant in tenants
+        ]
+        try:
+            for child in children:
+                child.start()
+            results = [output.get(timeout=180) for _ in children]
+            for child in children:
+                child.join(timeout=10)
+            assert [child.exitcode for child in children] == [0, 0]
+            assert sorted(results, key=lambda row: row["tenant"]) == [
+                {"tenant": tenant, "errors": [], "imported": [1]}
+                for tenant in sorted(tenants)
+            ]
+            assert sorted(state.writes) == sorted(
+                (tenant, "settings") for tenant in tenants
+            )
+        finally:
+            for child in children:
+                if child.is_alive():
+                    child.terminate()
+                child.join(timeout=5)
+    for tenant in tenants:
+        assert store.get_config(
+            tenant, ConfigScope.AGENT, "search_agent", "settings"
+        ).config_value == {"k": 5}
+    assert _registry_rows(store, {source, *tenants}) == sorted(
+        (
+            tenant,
+            f"schema_{base_schema}",
+            tenant,
+            _full_schema_name(base_schema, tenant),
+        )
+        for tenant in [source, *tenants]
+    )
