@@ -3899,6 +3899,10 @@ class TestProfileOptimization:
     def test_profile_artifact_has_learned_demos(self):
         """Profile artifact must have demos with real query→profile pairs."""
         approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
+        _, reset_version = _reset_profile_selection_artifact_in_pod()
+        assert (
+            _active_blob_version_in_pod("model", "profile_selection") == reset_version
+        )
         result = _run_batch_job("profile")
         version_blob, ledger = _load_blob_version_in_pod(
             "model", "profile_selection", result["version"]
@@ -3933,7 +3937,12 @@ class TestProfileOptimization:
         )
         assert result["spans_found"] >= expected_min_samples, result
         assert result["holdout_source"] == "derived_labels", result
-        assert result["decision"] in BLOB_VERSION_DECISIONS, result
+        # The run starts from the base module served above, so the served
+        # artifact is the module the baseline scored: the job scores it as
+        # the baseline, never rolls back to that same state, and its version
+        # holds the compiled candidate.
+        assert result["current_score"] == result["baseline_score"], result
+        assert result["decision"] in {"promote", "keep"}, result
         _assert_profile_labels_partition_ground_truth(result)
         assert result["dominant_label_share"] == (
             max(result["labels_by_profile"].values())
@@ -4007,6 +4016,9 @@ class TestProfileOptimization:
         assert ledger["base_score"] == result["baseline_score"], ledger
         assert ledger["candidate_score"] == result["candidate_score"], ledger
         assert ledger["score"] == result["candidate_score"], ledger
+        assert _active_blob_version_in_pod("model", "profile_selection") == (
+            result["version"] if result["decision"] == "promote" else reset_version
+        ), ledger
 
         artifact = json.loads(version_blob)
         assert list(artifact) == ["selector.predict"], artifact
