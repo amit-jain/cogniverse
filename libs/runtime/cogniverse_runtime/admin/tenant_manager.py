@@ -71,7 +71,7 @@ from cogniverse_runtime.admin.models import (
 )
 from cogniverse_runtime.cluster_events import ClusterEventError, ClusterEvents
 from cogniverse_runtime.harness_keys import HarnessKeyStore
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 from cogniverse_runtime.task_events import TaskEventStore, TaskEventsUnavailable
 from cogniverse_sdk.interfaces.backend import Backend
 from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
@@ -541,15 +541,26 @@ async def list_organizations() -> OrganizationListResponse:
 
     Returns:
         List of all organizations with count
+
+    Raises:
+        HTTPException 503: The organization or tenant registry did not answer
     """
     try:
         with metadata_backend() as backend:
-            # Query all organizations
-            documents = backend.query_metadata_documents(
-                schema="organization_metadata",
-                yql="select * from organization_metadata where true",
-                hits=400,
-            )
+            try:
+                documents = backend.query_metadata_documents(
+                    schema="organization_metadata",
+                    yql="select * from organization_metadata where true",
+                    hits=400,
+                )
+            except Exception as e:
+                raise failure_response(
+                    503,
+                    "organization_registry_unavailable",
+                    "The organization registry did not answer, so the "
+                    "organizations could not be listed; retry.",
+                    e,
+                ) from e
 
             organizations = []
             for fields in documents:
@@ -572,6 +583,8 @@ async def list_organizations() -> OrganizationListResponse:
                 organizations=organizations, total_count=len(organizations)
             )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise failure_response(
             500,
@@ -1059,8 +1072,10 @@ async def get_tenant(tenant_full_id: str) -> Tenant:
         Tenant details
 
     Raises:
+        HTTPException 400: The tenant ID is malformed
         HTTPException 404: Tenant not found
     """
+    canonical_tenant_or_400(tenant_full_id)
     tenant = await get_tenant_internal(tenant_full_id)
     if not tenant:
         raise HTTPException(
@@ -1136,6 +1151,36 @@ async def list_router_tiers() -> Dict:
     return {"tiers": sorted(ROUTER_TIERS), "default": DEFAULT_ROUTER_TIER}
 
 
+@router.get("/base-schemas")
+async def list_base_schemas() -> Dict:
+    """The shipped schemas a new tenant can be given, and the ones it gets
+    when its create names none.
+
+    Raises:
+        HTTPException 503: The schema loader is not wired, or the backend
+            naming the deployment-wide schemas did not answer
+    """
+
+    def _tenant_schemas() -> List[str]:
+        shipped = set(_known_base_schemas())
+        with metadata_backend() as backend:
+            deployment_wide = backend.schema_manager._PROTECTED_SCHEMAS
+        return sorted(shipped - deployment_wide)
+
+    try:
+        schemas = await asyncio.to_thread(_tenant_schemas)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise failure_response(
+            503,
+            "base_schemas_unavailable",
+            "The backend did not answer while listing the base schemas; retry.",
+            exc,
+        ) from exc
+    return {"schemas": schemas, "default": list(TENANT_BASE_SCHEMAS)}
+
+
 @router.get("/tenants/{tenant_full_id}/tier", response_model=TenantTier)
 async def get_tenant_tier(tenant_full_id: str) -> TenantTier:
     """The tenant's semantic-router tier.
@@ -1149,7 +1194,7 @@ async def get_tenant_tier(tenant_full_id: str) -> TenantTier:
     """
     from cogniverse_foundation.config.tenant_tiers import read_tenant_tier
 
-    canonical = canonical_tenant_id(tenant_full_id)
+    canonical = canonical_tenant_or_400(tenant_full_id)
     await _assert_tenant_exists(canonical)
     try:
         tier = await asyncio.to_thread(
@@ -1189,7 +1234,7 @@ async def set_tenant_tier_route(
         validate_router_tier,
     )
 
-    canonical = canonical_tenant_id(tenant_full_id)
+    canonical = canonical_tenant_or_400(tenant_full_id)
     try:
         validate_router_tier(request.tier)
     except ValueError as e:
@@ -1247,12 +1292,14 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
         Deletion summary, with the workers that released the tenant
 
     Raises:
+        HTTPException 400: The tenant ID is malformed
         HTTPException 404: Tenant not found
         HTTPException 503: The marker could not be written, not every worker
             confirmed it released the tenant, or another create or delete of
             it held it too long; retry the delete
         HTTPException 500: Deletion failed
     """
+    canonical_tenant_or_400(tenant_full_id)
     try:
         result = await delete_tenant_internal(tenant_full_id)
         return result
@@ -1270,12 +1317,20 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
         )
 
 
-def _delete_tenant_state(config_manager, tenant_id: str) -> tuple[list[str], bool]:
+def _delete_tenant_state(
+    config_manager, schema_manager, tenant_id: str
+) -> tuple[list[str], bool]:
     """Delete every config-store row the tenant left once its schemas are
     dropped: its own rows in every scope (registry tombstones, backend
     profiles, pin quotas, signature variants and other overrides), its
     schema deployment intents, its provenance write lease and the drift
     migration's refusals of its schemas.
+
+    Its registry rows and deployment intents are deleted holding
+    ``schema_manager``'s deployment lease, under which every deployer reads
+    them to build the application package: each version of a row is its own
+    document, and a read between the deletion of a tombstone and of the
+    registration under it finds the schema registered and deploys it again.
 
     The deletion marker, its pending record and the tenant's operation lease
     are kept: the marker until the tenant is created again, the lease because
@@ -1289,6 +1344,7 @@ def _delete_tenant_state(config_manager, tenant_id: str) -> tuple[list[str], boo
     from cogniverse_core.registries.schema_deployment_intents import (
         SchemaDeploymentIntents,
     )
+    from cogniverse_core.registries.schema_registry import SCHEMA_REGISTRY_SERVICE
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
     store = config_manager.store
@@ -1316,24 +1372,51 @@ def _delete_tenant_state(config_manager, tenant_id: str) -> tuple[list[str], boo
     except Exception as exc:
         own = []
         failed("the config rows", exc)
+    leased = []
     for entry in own:
-        delete(
+        row = (
             f"{entry.service}:{entry.config_key}",
             lambda entry=entry: store.delete_config(
                 tenant_id, entry.scope, entry.service, entry.config_key
             ),
         )
+        if entry.service == SCHEMA_REGISTRY_SERVICE:
+            leased.append(row)
+        else:
+            delete(*row)
     intents = SchemaDeploymentIntents(store)
+    intents_read = False
     try:
-        names = intents.tenant_names(tenant_id)
+        with schema_manager.deployment_lease() as lease:
+            try:
+                names = intents.tenant_names(tenant_id)
+            except Exception as exc:
+                names = []
+                failed("the schema deployment intents", exc)
+            intents_read = True
+            leased += [
+                (
+                    f"schema_deployment_intents:{name}",
+                    lambda name=name: intents.delete(name),
+                )
+                for name in names
+            ]
+            for row, delete_row in leased:
+                if lease is not None:
+                    try:
+                        lease.ensure_owned()
+                    except Exception as exc:
+                        found.append(row)
+                        failed(row, exc)
+                        continue
+                delete(row, delete_row)
     except Exception as exc:
-        names = []
-        failed("the schema deployment intents", exc)
-    for name in names:
-        delete(
-            f"schema_deployment_intents:{name}",
-            lambda name=name: intents.delete(name),
-        )
+        for row, _ in leased:
+            if row not in found:
+                found.append(row)
+                failed(row, exc)
+        if not intents_read:
+            failed("the schema deployment intents", exc)
     try:
         lease = store.get_config(
             SYSTEM_TENANT_ID,
@@ -1379,6 +1462,99 @@ async def _cancel_tenant_tasks(tenant_id: str) -> tuple[list[str], bool]:
             f"Cancelled the tasks {sorted(cancelled)} of deleted tenant {tenant_id}"
         )
     return cancelled, True
+
+
+def _left_pending(what: str, tenant_id: str, exc: BaseException, them: str) -> None:
+    logger.error(
+        f"Cannot {what} of deleted tenant {tenant_id} "
+        f"({type(exc).__name__}: {exc}); the delete stays pending and its "
+        f"retry, or the next create of the tenant, deletes {them}"
+    )
+
+
+async def _delete_tenant_projects(tenant_id: str) -> tuple[list[str], bool]:
+    """Delete the tenant's telemetry projects, its own and its service ones,
+    with their spans. Returns the projects found and whether every one was
+    deleted. Nothing raises: a project that cannot be listed or deleted is
+    logged at ERROR naming the tenant."""
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    try:
+        manager = get_telemetry_manager()
+        if not manager.config.enabled:
+            return [], True
+        provider = manager.get_provider(tenant_id=SYSTEM_TENANT_ID)
+        listed = await provider.list_projects(
+            name_contains=manager.config.get_project_name(tenant_id)
+        )
+    except Exception as exc:
+        _left_pending("list the telemetry projects", tenant_id, exc, "them")
+        return [], False
+    found = sorted(
+        name for name in listed if manager.config.is_tenant_project(name, tenant_id)
+    )
+    deleted = True
+    for name in found:
+        try:
+            await provider.delete_project(name)
+        except Exception as exc:
+            deleted = False
+            _left_pending(f"delete telemetry project {name}", tenant_id, exc, "it")
+    if found:
+        logger.info(
+            f"Deleted the telemetry projects {found} of deleted tenant {tenant_id}"
+        )
+    return found, deleted
+
+
+def _not_removed(what: str, tenant_id: str, reason: str) -> None:
+    logger.error(
+        f"Cannot {what} of deleted tenant {tenant_id} ({reason}); the delete "
+        "stays pending and its retry, or the next create of the tenant, "
+        "removes it"
+    )
+
+
+async def _delete_tenant_cron_workflows(tenant_id: str) -> tuple[list[str], bool]:
+    """Delete the CronWorkflows of the tenant's scheduled jobs. Returns the
+    CronWorkflows found and whether every one was deleted. Nothing raises: a
+    CronWorkflow that cannot be listed or deleted is logged at ERROR naming
+    the tenant."""
+    from cogniverse_runtime.routers.tenant import delete_tenant_cron_workflows
+
+    try:
+        deleted, failed = await delete_tenant_cron_workflows(tenant_id)
+    except Exception as exc:
+        _left_pending("list the CronWorkflows", tenant_id, exc, "them")
+        return [], False
+    for name, reason in sorted(failed.items()):
+        _not_removed(f"delete CronWorkflow {name}", tenant_id, reason)
+    if deleted:
+        logger.info(
+            f"Deleted the CronWorkflows {deleted} of deleted tenant {tenant_id}"
+        )
+    return sorted([*deleted, *failed]), not failed
+
+
+async def _delete_tenant_workflows(tenant_id: str) -> tuple[list[str], bool]:
+    """Stop the tenant's running Argo Workflows and delete all of them.
+    Returns the Workflows found and whether every one was deleted. Nothing
+    raises: a Workflow that cannot be listed, stopped or deleted is logged at
+    ERROR naming the tenant."""
+    from cogniverse_runtime.routers.tenant import delete_tenant_workflows
+
+    try:
+        deleted, failed = await delete_tenant_workflows(tenant_id)
+    except Exception as exc:
+        _left_pending("list the workflows", tenant_id, exc, "them")
+        return [], False
+    for name, (action, reason) in sorted(
+        failed.items(), key=lambda item: (item[1][0] != "stop", item[0])
+    ):
+        _not_removed(f"{action} workflow {name}", tenant_id, reason)
+    if deleted:
+        logger.info(f"Deleted the workflows {deleted} of deleted tenant {tenant_id}")
+    return sorted([*deleted, *failed]), not failed
 
 
 class TenantRecordRetained(RuntimeError):
@@ -1550,10 +1726,18 @@ async def _delete_tenant(
         deleted_schemas: list = list(
             await asyncio.to_thread(schema_manager.delete_tenant_schemas, canonical_tid)
         )
-        # Its schemas are gone, so is everything the config store holds for it.
+        # Its schemas are gone, so is everything the config store holds for it,
+        # its telemetry projects, its schedules and its workflows. Schedules
+        # go before workflows are listed, so a run one spawns meanwhile is
+        # listed and stopped too.
         state_rows, state_deleted = await asyncio.to_thread(
-            _delete_tenant_state, config_manager, canonical_tid
+            _delete_tenant_state, config_manager, schema_manager, canonical_tid
         )
+        projects, projects_deleted = await _delete_tenant_projects(canonical_tid)
+        schedules, schedules_deleted = await _delete_tenant_cron_workflows(
+            canonical_tid
+        )
+        workflows, workflows_deleted = await _delete_tenant_workflows(canonical_tid)
 
         # Allow schema-only orphans (no tenant_metadata record) to be cleaned
         # up — they're created by /ingestion/upload auto-deploy bypassing
@@ -1562,8 +1746,14 @@ async def _delete_tenant(
             not tenant
             and not deleted_schemas
             and not state_rows
+            and not projects
+            and not schedules
+            and not workflows
             and not tasks_cancelled
             and tasks_settled
+            and projects_deleted
+            and schedules_deleted
+            and workflows_deleted
         ):
             # Nothing existed to delete: the tenant id stays free to use.
             await asyncio.to_thread(clear_tenant_deleted, store, canonical_tid)
@@ -1642,13 +1832,19 @@ async def _delete_tenant(
                     f"failed (organization {org_id} may remain): {e}"
                 )
 
-        # Every step has completed, unless some of the tenant's state could not
-        # be deleted or its tasks not cancelled: the delete then stays pending,
-        # and its retry or the next create of the tenant finishes it. A failure
-        # to record completion leaves it pending too, so the next create runs
-        # its steps again.
+        # Every step has completed, unless some of the tenant's state, telemetry
+        # projects, schedules or workflows could not be deleted or its tasks
+        # not cancelled: the delete then stays pending, and its retry or the
+        # next create of the tenant finishes it. A failure to record completion
+        # leaves it pending too, so the next create runs its steps again.
         try:
-            if state_deleted and tasks_settled:
+            if (
+                state_deleted
+                and tasks_settled
+                and projects_deleted
+                and schedules_deleted
+                and workflows_deleted
+            ):
                 await asyncio.to_thread(complete_tenant_delete, store, canonical_tid)
         except Exception as exc:
             logger.error(

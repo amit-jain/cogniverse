@@ -269,8 +269,13 @@ async def test_diverse_sampling_with_overfetch_past_default_limit(
 
 
 @pytest.mark.asyncio
+@pytest.mark.requires_inference("vllm_colpali")
 async def test_service_samples_deployed_configured_profile_from_real_vespa(
-    shared_vespa, config_manager, schema_loader, real_telemetry
+    shared_vespa,
+    config_manager,
+    schema_loader,
+    real_telemetry,
+    resolved_inference_endpoints,
 ):
     class _RecordingVespaBackend(VespaBackend):
         def __init__(self, *args, **kwargs):
@@ -426,17 +431,29 @@ async def test_service_samples_deployed_configured_profile_from_real_vespa(
         backend_config.profiles[base_schema],
         tenant_id=tenant,
     )
-
-    response = await service.generate(
-        SyntheticDataRequest(
-            tenant_id=tenant,
-            optimizer="profile",
-            count=2,
-            vespa_sample_size=2,
-            strategy="diverse",
-            max_profiles=1,
+    # Profile selection offers a tenant profile only when its embedding
+    # service is configured; the video profile names vllm_colpali.
+    system_config = config_manager.get_system_config()
+    configured_urls = dict(system_config.inference_service_urls)
+    system_config.inference_service_urls["vllm_colpali"] = resolved_inference_endpoints[
+        "vllm_colpali"
+    ].base_url
+    config_manager.set_system_config(system_config)
+    try:
+        response = await service.generate(
+            SyntheticDataRequest(
+                tenant_id=tenant,
+                optimizer="profile",
+                count=2,
+                vespa_sample_size=2,
+                strategy="diverse",
+                max_profiles=1,
+            )
         )
-    )
+    finally:
+        restored = config_manager.get_system_config()
+        restored.inference_service_urls = configured_urls
+        config_manager.set_system_config(restored)
 
     assert response.selected_profiles == [base_schema]
     assert response.metadata["sampled_content_count"] == 2

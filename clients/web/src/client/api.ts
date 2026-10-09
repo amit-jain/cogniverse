@@ -1,5 +1,5 @@
 export async function fetchAgents(signal?: AbortSignal): Promise<string[]> {
-  const response = await fetch('/api/agents', { signal });
+  const response = await fetch('/ui-api/agents', { signal });
   const body = (await response
     .json()
     .catch(() => ({ error: 'The server returned an unreadable response.' }))) as {

@@ -932,7 +932,7 @@ class TestPersistentSession:
 @pytest.mark.integration
 class TestExportImportRoundTrip:
     """export_configs → import_configs round-trips real configs through real
-    Vespa — the dashboard's backup/restore path had zero test reach (and
+    Vespa — the backup/restore path had zero test reach (and
     ConfigManager.export_configs is a DIFFERENT implementation, so this store
     pair was never exercised anywhere)."""
 
@@ -1570,40 +1570,6 @@ class TestCompleteHistoryExport:
             "beta": 3,
             "gamma": 3,
         }
-
-    def test_dashboard_download_contains_every_retained_version(
-        self, export_history_corpus
-    ):
-        from streamlit.testing.v1 import AppTest
-
-        app = AppTest.from_string("""
-import streamlit as st
-from types import SimpleNamespace
-from streamlit.runtime import get_instance
-from cogniverse_dashboard.tabs.config_management import render_import_export_ui
-from cogniverse_vespa.config.config_store import VespaConfigStore
-store = VespaConfigStore(
-    backend_url=st.session_state.endpoint,
-    backend_port=st.session_state.port,
-)
-render_import_export_ui(SimpleNamespace(store=store), "export_history")
-st.session_state.media = get_instance().media_file_mgr._storage
-""")
-        url = export_history_corpus.vespa_app.url
-        app.session_state.endpoint, _, port = url.rpartition(":")
-        app.session_state.port = int(port)
-        app.run(timeout=30)
-        app.checkbox[0].check()
-        app.button[0].click().run(timeout=30)
-        assert [error.message for error in app.exception] == []
-        assert [notice.value for notice in app.error] == []
-        assert [notice.value for notice in app.success] == [
-            "Exported 410 configurations"
-        ]
-        [download] = app.get("download_button")
-        media = app.session_state.media.get_file(download.proto.url.rsplit("/", 1)[-1])
-        assert media.mimetype == "application/json"
-        assert _export_coordinates(json.loads(media.content)) == _expected_history()
 
 
 @pytest.mark.integration

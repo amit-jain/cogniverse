@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { chooseTenant, useTenant, type TenantNotice } from '../tenant';
 import { Alert, Panel, useLoad } from './common';
 import { runtimeJson, seg } from './http';
 
@@ -19,11 +20,19 @@ export async function knownTenants(signal: AbortSignal): Promise<string[]> {
   return lists.flatMap((list) => list.tenants.map((tenant) => tenant.tenant_full_id)).sort();
 }
 
-/** A "Tenant" panel whose form hands the typed tenant ID to ``onChoose``,
- * suggesting the registered tenants. */
+/** A "Tenant" panel whose form chooses the active tenant every view shares
+ * (``chooseTenant``), suggesting the registered tenants. ``onChoose`` gets
+ * the active tenant now and whenever it changes. */
 export function TenantChooser({ action, onChoose }: { action: string; onChoose: (tenant: string) => void }) {
   const known = useLoad(knownTenants, []);
-  const [draft, setDraft] = useState('');
+  const { tenant, notice, checking } = useTenant();
+  const [draft, setDraft] = useState(tenant);
+  const report = useRef(onChoose);
+  report.current = onChoose;
+  useEffect(() => {
+    setDraft(tenant);
+    if (tenant) report.current(tenant);
+  }, [tenant]);
   return (
     <Panel title="Tenant">
       <form
@@ -31,7 +40,10 @@ export function TenantChooser({ action, onChoose }: { action: string; onChoose: 
         aria-label="Choose tenant"
         onSubmit={(e) => {
           e.preventDefault();
-          onChoose(draft.trim());
+          chooseTenant(draft).then((active) => {
+            // Choosing the tenant already active reloads it in this view.
+            if (active && active === tenant) report.current(active);
+          });
         }}
       >
         <label>
@@ -49,9 +61,26 @@ export function TenantChooser({ action, onChoose }: { action: string; onChoose: 
             ))}
           </datalist>
         </label>
-        <button type="submit">{action}</button>
+        <button type="submit" disabled={checking}>
+          {action}
+        </button>
         {known.error && <Alert>Tenant suggestions are unavailable: {known.error}</Alert>}
       </form>
+      {notice && <TenantNoticeLine notice={notice} />}
+      {!tenant && (
+        <p className="muted">
+          Every view reads one tenant. Choose a registered tenant; register a new one in the Tenants view (POST
+          /admin/tenants) first.
+        </p>
+      )}
     </Panel>
+  );
+}
+
+export function TenantNoticeLine({ notice }: { notice: TenantNotice }) {
+  return (
+    <p className={`alert ${notice.tone}`} role={notice.tone === 'error' ? 'alert' : undefined}>
+      {notice.text}
+    </p>
   );
 }

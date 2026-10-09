@@ -14,7 +14,7 @@ Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
   deploys the LLM as a Deployment instead (see LLM serving below)
 
 - **Deployments**: Runtime (with an optional in-pod `quality-monitor`
-  sidecar container), Dashboard, Ingestor workers (dequeue ingestion
+  sidecar container), Web client, Ingestor workers (dequeue ingestion
   jobs from Redis), MinIO, Redis, Semantic Router (`Envoy` +
   `vllm-sr` router), Messaging Gateway (Telegram/Slack, disabled by
   default), LLM (only when `llm.engine: vllm`), and one Deployment per
@@ -145,12 +145,12 @@ kubectl get pods -n cogniverse
 # Port-forward Runtime API
 kubectl port-forward -n cogniverse svc/cogniverse-runtime 8000:8000
 
-# Port-forward Dashboard
-kubectl port-forward -n cogniverse svc/cogniverse-dashboard 8501:8501
+# Port-forward the web client
+kubectl port-forward -n cogniverse svc/cogniverse-web 4000:4000
 
 # Access
 open http://localhost:8000/docs
-open http://localhost:8501
+open http://localhost:4000
 ```
 
 ---
@@ -211,8 +211,8 @@ ingress:
           port: 8000
         - path: /
           pathType: Prefix
-          service: dashboard
-          port: 8501
+          service: web
+          port: 4000
   tls:
     - secretName: cogniverse-tls
       hosts:
@@ -445,18 +445,21 @@ runtime:
       cpu: "1"
       memory: "4Gi"
 
-dashboard:
+web:
   replicaCount: 1
   resources:
     requests:
-      cpu: "250m"
-      memory: "1Gi"
+      cpu: "100m"
+      memory: "512Mi"
     limits:
-      cpu: "500m"
-      memory: "2Gi"
+      cpu: "1"
+      memory: "512Mi"
 
 phoenix:
   replicaCount: 1
+  # The Phoenix UI address a browser reaches (the runtime's PHOENIX_UI_URL);
+  # the web client's trace and dataset links point at it.
+  uiUrl: "http://localhost:26006"
   persistence:
     enabled: true
     storageClass: "local-path"
@@ -502,8 +505,8 @@ ingress:
           port: 8000
         - path: /
           pathType: Prefix
-          service: dashboard
-          port: 8501
+          service: web
+          port: 4000
   tls: []  # No TLS for local development
 
 # Local development tenant
@@ -793,9 +796,9 @@ Or use port-forwarding:
 kubectl port-forward -n cogniverse svc/cogniverse-runtime 8000:8000
 open http://localhost:8000/docs
 
-# Dashboard
-kubectl port-forward -n cogniverse svc/cogniverse-dashboard 8501:8501
-open http://localhost:8501
+# Web client
+kubectl port-forward -n cogniverse svc/cogniverse-web 4000:4000
+open http://localhost:4000
 
 # Phoenix
 kubectl port-forward -n cogniverse svc/cogniverse-phoenix 6006:6006
@@ -1187,7 +1190,9 @@ kubectl delete job cogniverse-schema-deployment -n cogniverse
 helm upgrade cogniverse ./charts/cogniverse -n cogniverse --reuse-values
 ```
 
-Each deploy call in the schema-deployment Job allows `--max-time 580` seconds: one attempt (the deploy lease wait, one Vespa prepareandactivate request, the convergence wait and a margin). On any status other than `success` or `already_deployed` the Job fails and Kubernetes retries it up to `backoffLimit`; a retry that meets a deploy still holding the lease answers `failed` within the lease wait, and ingestion deploys a missing schema on first use. `activeDeadlineSeconds` caps the whole Job at the runtime's startup-probe budget plus `(backoffLimit + 1) × tenants × 580` seconds plus 300 seconds of retry delay per retry (with `restartPolicy: OnFailure` a retry restarts the container in place, after the kubelet's crash-loop backoff, capped at five minutes). Helm waits up to its `--timeout` (the CLI passes `10m`) for the hook: longer than one attempt, shorter than the Job's deadline, so a Job still retrying fails `helm install`/`upgrade` (and `cogniverse up`) while it keeps running.
+For each `config.tenants` entry the schema-deployment Job first registers the tenant (`POST /admin/tenants` with `created_by: "helm:cogniverse"`, which also deploys the tenant's base schemas), then deploys `config.defaultProfiles.video` for it when one is selected. A create answering 200 or 201 logs `Registered tenant <id>`, a 409 logs `Tenant <id> is already registered` and both proceed; any other status logs `Response (<status>): <body>` and `Tenant registration failed for tenant <id>` and fails the attempt. The chart's tenants are therefore registered tenants: the web client can act for them and uploads and queries for them are accepted.
+
+Each runtime call in the schema-deployment Job allows `--max-time 580` seconds: one attempt (the deploy lease wait, one Vespa prepareandactivate request, the convergence wait and a margin); a tenant create activates its base schemas in one such deploy. On any deploy status other than `success` or `already_deployed` the Job fails and Kubernetes retries it up to `backoffLimit`; a retry that meets a deploy still holding the lease answers `failed` within the lease wait, and ingestion deploys a missing schema on first use. `activeDeadlineSeconds` caps the whole Job at the runtime's startup-probe budget plus `(backoffLimit + 1) × tenants × 2 × 580` seconds (a create and a deploy per tenant) plus 300 seconds of retry delay per retry (with `restartPolicy: OnFailure` a retry restarts the container in place, after the kubelet's crash-loop backoff, capped at five minutes). Helm waits up to its `--timeout` (the CLI passes `10m`) for the hook: longer than one attempt, shorter than the Job's deadline, so a Job still retrying fails `helm install`/`upgrade` (and `cogniverse up`) while it keeps running.
 
 ### Service Connection Issues
 

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from cogniverse_core.common.tenant_utils import (
     canonical_tenant_id,
@@ -26,7 +26,12 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.common.argo_client import build_argo_async_client
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.config_loader import get_workflow_settings
-from cogniverse_runtime.http_errors import failure_response, upstream_rejection
+from cogniverse_runtime.http_errors import (
+    canonical_tenant_or_400,
+    failure_response,
+    upstream_rejection,
+)
+from cogniverse_runtime.optimization_options import options_model
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_synthetic.registry import APPROVED_TRAINING_AGENT_BY_OPTIMIZER
 
@@ -113,6 +118,10 @@ class MemoryItem(BaseModel):
     category: Optional[str] = None
     metadata: Dict[str, Any] = {}
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    score: Optional[float] = Field(
+        None, description="Similarity to the search query; null when listing"
+    )
 
 
 class MemoryListResponse(BaseModel):
@@ -310,15 +319,25 @@ class MemoryCreateRequest(BaseModel):
 
 class MemoryStats(BaseModel):
     agent_name: str
+    user_id: str = Field(..., description="The tenant partition the count reads")
     total: int
     archived: int
     writable: bool
 
 
+class MemoryHealth(BaseModel):
+    tenant_id: str
+    agent_name: str
+    healthy: bool
+    problem: Optional[str] = Field(
+        None, description="Why the memory store is not healthy"
+    )
+
+
 @router.post("/{tenant_id}/memories")
 async def create_memory(tenant_id: str, request: MemoryCreateRequest):
     """Save a memory with optional category, kind, metadata."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     _require_writable(request.agent_name)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
     metadata: Dict[str, Any] = {}
@@ -366,6 +385,8 @@ def _entry_to_item(entry: dict, agent_name: str) -> Optional[MemoryItem]:
         category=meta.get("category"),
         metadata=meta,
         created_at=str(entry.get("created_at", "")) or None,
+        updated_at=str(entry.get("updated_at") or "") or None,
+        score=entry.get("score"),
     )
 
 
@@ -389,7 +410,7 @@ async def list_memories(
     Use ``type`` to restrict to a single memory type and ``category`` to
     filter user-created memories by their category tag.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
     if agent_name:
@@ -452,7 +473,7 @@ async def memory_stats(
 
     The count reads the store, so a backend outage answers 503 rather than 0.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
     try:
         stats = await asyncio.to_thread(
@@ -462,9 +483,43 @@ async def memory_stats(
         raise _memory_read_failed(exc, tenant_id, [agent_name]) from exc
     return MemoryStats(
         agent_name=agent_name,
+        user_id=tenant_id,
         total=stats["total_memories"],
         archived=stats["archived_memories"],
         writable=_is_writable(agent_name),
+    )
+
+
+@router.get("/{tenant_id}/memories/health", response_model=MemoryHealth)
+async def memory_health(
+    tenant_id: str,
+    agent_name: str = Query(
+        default=_USER_MEMORY_AGENT, description="The namespace to read"
+    ),
+):
+    """Whether the tenant's memory manager is up and its store answers a read
+    of ``agent_name``; an unhealthy answer names the step that failed."""
+    tenant_id = canonical_tenant_or_400(tenant_id)
+
+    def _probe() -> Optional[str]:
+        try:
+            mgr = _get_memory_manager(tenant_id)
+        except Exception as exc:
+            return f"The memory manager could not start ({type(exc).__name__})."
+        if not mgr.health_check():
+            return "The memory manager is not initialized."
+        try:
+            mgr.get_all_memories(tenant_id=tenant_id, agent_name=agent_name, limit=1)
+        except Exception as exc:
+            return f"The memory store did not answer a read ({type(exc).__name__})."
+        return None
+
+    problem = await asyncio.to_thread(_probe)
+    return MemoryHealth(
+        tenant_id=tenant_id,
+        agent_name=agent_name,
+        healthy=problem is None,
+        problem=problem,
     )
 
 
@@ -482,7 +537,7 @@ async def delete_memory(
     Answers 404 unless the memory is this tenant's and in that namespace,
     and 403 for a system namespace.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     _require_writable(agent_name)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
@@ -522,7 +577,7 @@ async def clear_memories(
 
     System namespaces answer 403.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     _require_writable(agent_name)
     mgr = await asyncio.to_thread(_get_memory_manager, tenant_id)
 
@@ -705,6 +760,8 @@ _MANUAL_OPTIMIZE_MODES = {
     "entity-extraction",
     "llm-annotate",
     "synthetic",
+    "routing",
+    "unified",
 }
 _SYNTHETIC_MODE = "synthetic"
 _DEFAULT_LOOKBACK_HOURS = 48.0
@@ -748,10 +805,12 @@ def _build_optimization_workflow_manifest(
     *,
     lookback_hours: float = _DEFAULT_LOOKBACK_HOURS,
     agents: Optional[List[str]] = None,
+    options: Optional[str] = None,
 ) -> dict:
     """Build a one-off Argo Workflow that runs ``optimization_cli --mode``;
     ``agents`` becomes its ``--agents`` (the synthetic mode's optimizer
-    types)."""
+    types) and ``options`` its ``--options`` (the mode's run options as
+    JSON)."""
     parameters = [
         {"name": "mode", "value": mode},
         {"name": "tenant-id", "value": tenant_id},
@@ -759,6 +818,8 @@ def _build_optimization_workflow_manifest(
     ]
     if agents:
         parameters.append({"name": "agents", "value": ",".join(agents)})
+    if options is not None:
+        parameters.append({"name": "options", "value": options})
     if not get_workflow_settings().optimization_template:
         raise HTTPException(
             status_code=503,
@@ -784,7 +845,7 @@ def _build_optimization_workflow_manifest(
             # RBAC grants.
             "serviceAccountName": get_workflow_settings().service_account,
             # Auto-delete completed workflows after 1 hour so the
-            # namespace doesn't fill with dashboard-triggered runs.
+            # namespace doesn't fill with UI-triggered runs.
             "ttlStrategy": {
                 "secondsAfterCompletion": 3600,
                 "secondsAfterSuccess": 3600,
@@ -838,6 +899,14 @@ class ManualOptimizeRequest(BaseModel):
             "for; required for it and refused for every other mode"
         ),
     )
+    options: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "Run options of the synthetic, routing, workflow and unified "
+            "modes (cogniverse_runtime.optimization_options); refused for "
+            "every other mode"
+        ),
+    )
 
 
 class ManualOptimizeResponse(BaseModel):
@@ -859,7 +928,7 @@ class OptimizeRunStatus(BaseModel):
     steps: Dict[str, str] = {}
     # ``blocked_reason`` is populated when phase is ``Pending`` specifically
     # because the per-tenant optimization mutex is held by another Workflow.
-    # The dashboard surfaces this so users don't confuse mutex-wait with
+    # The web client surfaces this so users don't confuse mutex-wait with
     # ordinary scheduler pending.
     blocked_reason: Optional[str] = None
 
@@ -954,6 +1023,38 @@ def _synthetic_optimizers(body: ManualOptimizeRequest) -> Optional[List[str]]:
     return sorted(set(body.optimizers))
 
 
+def _run_options(tenant_id: str, body: ManualOptimizeRequest) -> Optional[str]:
+    """The request's options validated against its mode, as the JSON the
+    run receives; ``None`` when it carries none."""
+    if body.options is None:
+        return None
+    model = options_model(body.mode)
+    if model is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {body.mode} mode takes no options.",
+        )
+    try:
+        options = model.model_validate(body.options)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {**error, "loc": ["body", "options", *error["loc"]]}
+                for error in exc.errors(include_url=False, include_context=False)
+            ],
+        ) from exc
+    dataset = getattr(options, "dataset_name", None)
+    if dataset is not None and not dataset.endswith(
+        f"-{canonical_tenant_id(tenant_id)}"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset {dataset} is not a dataset of tenant {tenant_id}.",
+        )
+    return options.model_dump_json()
+
+
 @router.post("/{tenant_id}/optimize", response_model=ManualOptimizeResponse)
 async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
     """Manually trigger an optimization run for a tenant via Argo.
@@ -983,6 +1084,7 @@ async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
         get_workflow_settings().namespace,
         lookback_hours=body.lookback_hours,
         agents=optimizers,
+        options=_run_options(tenant_id, body),
     )
     response = await _submit_workflow(manifest)
 
@@ -1124,8 +1226,11 @@ _OPTIMIZE_RUNS_MAX_LIMIT = 100
 _ARGO_LIST_CEILING = 500
 
 
-async def _argo_list_workflows(label_selector: str) -> List[Dict[str, Any]]:
-    """List namespace Workflows matching ``label_selector``.
+async def _argo_list_workflows(
+    label_selector: str, resource: str = "workflows"
+) -> List[Dict[str, Any]]:
+    """List namespace Workflows (or, with ``resource="cron-workflows"``,
+    CronWorkflows) matching ``label_selector``.
 
     Raises ``ArgoListUnavailableError`` when Argo is unreachable or answers
     anything but 200, so the caller reports the outage instead of an empty
@@ -1135,7 +1240,7 @@ async def _argo_list_workflows(label_selector: str) -> List[Dict[str, Any]]:
     try:
         client = await _shared_argo_client()
         response = await client.get(
-            f"{settings.api_url}/api/v1/workflows/{settings.namespace}",
+            f"{settings.api_url}/api/v1/{resource}/{settings.namespace}",
             params={
                 "listOptions.labelSelector": label_selector,
                 "listOptions.limit": _ARGO_LIST_CEILING,
@@ -1155,6 +1260,170 @@ async def _argo_list_workflows(label_selector: str) -> List[Dict[str, Any]]:
             f"Argo list returned a non-JSON body: {response.text[:200]}"
         ) from exc
     return [item for item in (body.get("items") or []) if isinstance(item, dict)]
+
+
+# Phases after which Argo runs nothing more for a Workflow.
+_FINISHED_WORKFLOW_PHASES = frozenset({"Succeeded", "Failed", "Error"})
+
+# The phase a finished run reports when it was shut down (cancelled): Argo
+# itself ends such a run Succeeded (still waiting on the mutex, its step
+# Skipped) or Failed (stopped while running).
+CANCELLED_PHASE = "Cancelled"
+
+
+def _run_phase(data: Dict[str, Any]) -> Optional[str]:
+    """The phase a run reports: Argo's, except ``Cancelled`` for a finished
+    run that was shut down."""
+    phase = (data.get("status") or {}).get("phase")
+    if (data.get("spec") or {}).get("shutdown") and phase in _FINISHED_WORKFLOW_PHASES:
+        return CANCELLED_PHASE
+    return phase
+
+
+async def _argo_delete(resource: str, name: str) -> Optional[str]:
+    """Delete one Argo object; None when it is gone (a 404 counts), else why
+    Argo did not delete it."""
+    settings = get_workflow_settings()
+    client = await _shared_argo_client()
+    try:
+        response = await client.delete(
+            f"{settings.api_url}/api/v1/{resource}/{settings.namespace}/{name}",
+            headers=_argo_auth_headers(),
+        )
+    except httpx.HTTPError as exc:
+        return f"{type(exc).__name__}: {exc}"
+    if response.status_code in (200, 404):
+        return None
+    return f"HTTP {response.status_code}: {response.text[:200]}"
+
+
+async def _argo_terminate(name: str) -> Optional[str]:
+    """Terminate one Workflow as the cancel route does; None when it no
+    longer runs (terminated, finished meanwhile, or gone), else why Argo
+    did not stop it."""
+    settings = get_workflow_settings()
+    client = await _shared_argo_client()
+    url = f"{settings.api_url}/api/v1/workflows/{settings.namespace}/{name}"
+    try:
+        response = await client.put(
+            f"{url}/terminate", json={"name": name}, headers=_argo_auth_headers()
+        )
+    except httpx.HTTPError as exc:
+        return f"{type(exc).__name__}: {exc}"
+    if response.status_code in (200, 201, 404):
+        return None
+    refusal = f"HTTP {response.status_code}: {response.text[:200]}"
+    # Argo refuses to terminate a Workflow that finished after it was listed.
+    try:
+        current = await client.get(url, headers=_argo_auth_headers())
+    except httpx.HTTPError:
+        return refusal
+    if current.status_code == 404:
+        return None
+    if current.status_code != 200:
+        return refusal
+    try:
+        phase = (current.json().get("status") or {}).get("phase")
+    except ValueError:
+        return refusal
+    return None if phase in _FINISHED_WORKFLOW_PHASES else refusal
+
+
+def _cron_workflow_belongs_to_tenant(data: Dict[str, Any], tenant_id: str) -> bool:
+    """Whether a CronWorkflow was created for ``tenant_id``, decided on the
+    raw ``tenant-id`` argument it passes each run: its ``tenant`` label is
+    the lossy sanitized form two tenant ids can share."""
+    workflow_spec = (data.get("spec") or {}).get("workflowSpec") or {}
+    for param in (workflow_spec.get("arguments") or {}).get("parameters") or []:
+        if isinstance(param, dict) and param.get("name") == "tenant-id":
+            value = param.get("value")
+            return bool(value) and canonical_tenant_id(value) == canonical_tenant_id(
+                tenant_id
+            )
+    return False
+
+
+async def delete_tenant_cron_workflows(
+    tenant_id: str,
+) -> tuple[List[str], Dict[str, str]]:
+    """Delete every CronWorkflow of ``tenant_id``'s scheduled jobs, so none
+    fires again.
+
+    Found by the ``tenant`` label ``create_job`` stamps and owned by the raw
+    ``tenant-id`` argument. A deployment without Argo has none. Returns the
+    names deleted (one already gone counts) and, for each one Argo did not
+    delete, why.
+
+    Raises:
+        ArgoListUnavailableError: Argo could not be listed.
+    """
+    if get_workflow_settings().api_url is None:
+        return [], {}
+    listed = await _argo_list_workflows(
+        f"app=cogniverse,tenant={_sanitize_label_value(tenant_id)}",
+        resource="cron-workflows",
+    )
+    names = sorted(
+        {
+            item["metadata"]["name"]
+            for item in listed
+            if (item.get("metadata") or {}).get("name")
+            and _cron_workflow_belongs_to_tenant(item, tenant_id)
+        }
+    )
+    deleted: List[str] = []
+    failed: Dict[str, str] = {}
+    for name in names:
+        reason = await _argo_delete("cron-workflows", name)
+        if reason is None:
+            deleted.append(name)
+        else:
+            failed[name] = reason
+    return deleted, failed
+
+
+async def delete_tenant_workflows(
+    tenant_id: str,
+) -> tuple[List[str], Dict[str, tuple[str, str]]]:
+    """Stop and delete every Workflow ``tenant_id`` owns.
+
+    Found as ``list_optimization_runs`` finds a tenant's runs: by the tenant
+    label and, for scheduled runs, the cron-workflow label, owned by the raw
+    ``tenant-id`` argument. Each one not finished is terminated, as the
+    cancel route does, then every one is deleted; one Argo would not
+    terminate is not deleted. A deployment without Argo has none. Returns
+    the names deleted (one already gone counts) and, for each one Argo did
+    not stop or delete, the action (``stop`` or ``delete``) and why.
+
+    Raises:
+        ArgoListUnavailableError: Argo could not be listed.
+    """
+    if get_workflow_settings().api_url is None:
+        return [], {}
+    listed = await _argo_list_workflows(
+        f"cogniverse.ai/tenant={_sanitize_label_value(tenant_id)}"
+    )
+    listed += await _argo_list_workflows(_CRON_WORKFLOW_LABEL)
+    owned: Dict[str, Dict[str, Any]] = {}
+    for item in listed:
+        name = (item.get("metadata") or {}).get("name")
+        if name and _workflow_belongs_to_tenant(item, tenant_id):
+            owned[name] = item
+    failed: Dict[str, tuple[str, str]] = {}
+    for name in sorted(owned):
+        if (owned[name].get("status") or {}).get("phase") in _FINISHED_WORKFLOW_PHASES:
+            continue
+        reason = await _argo_terminate(name)
+        if reason is not None:
+            failed[name] = ("stop", reason)
+    deleted: List[str] = []
+    for name in sorted(set(owned) - set(failed)):
+        reason = await _argo_delete("workflows", name)
+        if reason is None:
+            deleted.append(name)
+        else:
+            failed[name] = ("delete", reason)
+    return deleted, failed
 
 
 def _references_template(node: Any, template_name: str) -> bool:
@@ -1204,7 +1473,7 @@ def _optimize_run_summary(data: Dict[str, Any]) -> OptimizeRunSummary:
         mode=labels.get("cogniverse.ai/mode") or _workflow_parameter(data, "mode"),
         trigger=labels.get("cogniverse.ai/trigger")
         or ("scheduled" if labels.get(_CRON_WORKFLOW_LABEL) else "unknown"),
-        phase=status_block.get("phase"),
+        phase=_run_phase(data),
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
     )
@@ -1273,12 +1542,12 @@ async def list_optimization_runs(
     response_model=OptimizeRunStatus,
 )
 async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
-    """Return current phase + timestamps for a dashboard-triggered run."""
+    """Return current phase + timestamps for a UI-triggered run."""
     data = await _argo_get_workflow_data(workflow_name, tenant_id)
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(
         workflow_name=workflow_name,
-        phase=status_block.get("phase"),
+        phase=_run_phase(data),
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
@@ -1343,14 +1612,14 @@ async def cancel_manual_optimization(tenant_id: str, workflow_name: str):
     Argo's ``terminate`` verb stops the main container immediately; TTL
     still applies so the Workflow resource auto-deletes after the
     configured grace window. Returns the post-terminate status block so
-    the dashboard can surface the ``Failed`` phase without polling again.
+    the web client can surface the ``Failed`` phase without polling again.
     """
     await _argo_get_workflow_data(workflow_name, tenant_id)
     data = await _argo_workflow_action("cancel", workflow_name, "terminate")
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(
         workflow_name=workflow_name,
-        phase=status_block.get("phase"),
+        phase=_run_phase(data),
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
@@ -1376,7 +1645,7 @@ async def retry_manual_optimization(tenant_id: str, workflow_name: str):
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(
         workflow_name=workflow_name,
-        phase=status_block.get("phase"),
+        phase=_run_phase(data),
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
@@ -1484,7 +1753,7 @@ async def list_jobs(tenant_id: str):
     # param would read an empty namespace for any non-canonical tenant id.
     entries = await asyncio.to_thread(
         cm.store.list_configs,
-        tenant_id=canonical_tenant_id(tenant_id),
+        tenant_id=canonical_tenant_or_400(tenant_id),
         scope=ConfigScope.SYSTEM,
         service=_JOBS_SERVICE,
     )

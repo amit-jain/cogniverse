@@ -454,10 +454,7 @@ def main():
 
     if output_path:
         print(f"\n✅ Export complete: {output_path}")
-        print("\n📊 Visualize with embedding-atlas:")
-        print("   uv run streamlit run scripts/atlas_viewer.py")
-        print("\n🎨 Or with custom 3D visualization:")
-        print("   uv run streamlit run scripts/simple_atlas.py")
+        print("\n📊 Upload it in the web client's Embedding atlas (Exported file).")
     else:
         print("\n❌ Export failed")
         sys.exit(1)

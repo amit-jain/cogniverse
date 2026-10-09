@@ -35,6 +35,9 @@ class _FakeStore(DatasetStore):
         self.fail_next_create = False
         self.creates: list = []
 
+    async def list_datasets(self):
+        return [{"name": name} for name in self.data]
+
     async def create_dataset(self, name, data, metadata=None):
         self.creates.append(name)
         if self.fail_next_create:
@@ -112,6 +115,9 @@ class _OutageOnPreReadStore(DatasetStore):
         self.data: dict = {"d": pd.DataFrame([{"v": "PRECIOUS"}])}
         self.deleted: list = []
 
+    async def list_datasets(self):
+        return [{"name": name} for name in self.data]
+
     async def create_dataset(self, name, data, metadata=None):
         self.data[name] = data
         return name
@@ -179,6 +185,9 @@ class _ControlledReplaceStore(DatasetStore):
         self.release_first_create = asyncio.Event()
         self.active_creates = 0
         self.max_active_creates = 0
+
+    async def list_datasets(self):
+        return [{"name": name} for name in self.data]
 
     async def create_dataset(self, name, data, metadata=None):
         self.create_calls.append(name)

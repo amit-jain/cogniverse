@@ -267,7 +267,7 @@ sequenceDiagram
 
 ### On-Demand Gateway Optimization
 
-Optimization runs on-demand via the dashboard or Argo Workflow submission. The `optimization_cli` reads Phoenix spans and compiles updated DSPy modules per tenant.
+Optimization runs on-demand via the web client or Argo Workflow submission. The `optimization_cli` reads Phoenix spans and compiles updated DSPy modules per tenant.
 
 **Location**: `libs/runtime/cogniverse_runtime/optimization_cli.py`
 
@@ -540,6 +540,6 @@ with tracer.start_as_current_span("search_request") as trace_span:
 - **Foundation Layer**: cogniverse-sdk, cogniverse-foundation (config, telemetry)
 - **Core Layer**: cogniverse-core (base agents, memory), cogniverse-evaluation (experiments), cogniverse-telemetry-phoenix (Phoenix integration)
 - **Implementation Layer**: cogniverse-agents (routing, search), cogniverse-vespa (backends), cogniverse-synthetic (data generation)
-- **Application Layer**: cogniverse-runtime (ingestion, API), cogniverse-dashboard (UI), cogniverse-cli (deployment/management CLI), cogniverse-finetuning (LoRA/DPO fine-tuning), cogniverse-messaging (Telegram/Slack gateway)
+- **Application Layer**: cogniverse-runtime (ingestion, API), cogniverse-cli (deployment/management CLI), cogniverse-finetuning (LoRA/DPO fine-tuning), cogniverse-messaging (Telegram/Slack gateway)
 
 All code examples follow the correct import paths for the layered structure located in `libs/`.

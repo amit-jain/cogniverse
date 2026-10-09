@@ -17,7 +17,7 @@ TENANT = "acme:exp-roundtrip"
 
 @pytest.fixture
 def provider(search_evaluator_provider, phoenix_container):
-    """Provider resolved the way the dashboard does it, against the managed
+    """Provider resolved the way the UI does it, against the managed
     Phoenix container (search_evaluator_provider boots the telemetry
     manager singleton for this endpoint)."""
     from cogniverse_evaluation.providers import get_evaluation_provider

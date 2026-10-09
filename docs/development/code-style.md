@@ -490,8 +490,6 @@ tests/
 ├── events/
 │   ├── unit/
 │   └── integration/
-├── dashboard/
-│   └── unit/
 ├── charts/
 │   └── test_semantic_router_chart.py
 ├── cli/
@@ -645,7 +643,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["cogniverse_sdk", "cogniverse_foundation", "cogniverse_core", "cogniverse_evaluation", "cogniverse_telemetry_phoenix", "cogniverse_agents", "cogniverse_vespa", "cogniverse_synthetic", "cogniverse_runtime", "cogniverse_dashboard", "cogniverse_finetuning"]
+known-first-party = ["cogniverse_sdk", "cogniverse_foundation", "cogniverse_core", "cogniverse_evaluation", "cogniverse_telemetry_phoenix", "cogniverse_agents", "cogniverse_vespa", "cogniverse_synthetic", "cogniverse_runtime", "cogniverse_finetuning"]
 ```
 
 ---

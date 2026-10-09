@@ -1,6 +1,6 @@
-# Backend Profile Management - Dashboard Guide
+# Backend Profile Management - Web Client Guide
 
-This guide shows how to manage backend profiles (video processing configurations) using the Cogniverse dashboard.
+This guide shows how to manage backend profiles (video processing configurations) in the web client's **Backend profiles** view.
 
 ## Overview
 
@@ -18,113 +18,46 @@ Profiles are **tenant-scoped**, allowing each tenant to have isolated configurat
 
 ## Accessing Backend Profiles
 
-1. Launch the dashboard:
-   ```bash
-   uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
-   ```
+1. Open the web client (http://localhost:28400 under `cogniverse up`; see
+   [Web Client](../modules/web-client.md)).
+2. Choose **Backend profiles** under Operations.
+3. Enter the **Tenant ID** (known tenants are suggested) and click
+   **Show profiles**. There is no default tenant.
 
-2. Set the **Active Tenant** in the sidebar. This is required — the dashboard
-   blocks every tab, including Backend Profiles, until a tenant is entered
-   here. There is no default tenant fallback.
-
-3. Navigate to the **⚙️ Configuration** tab, then select the **🔧 Backend Profiles** sub-tab (5th sub-tab). The Configuration tab also shows an editable **Tenant ID** text field, pre-filled from the sidebar's Active Tenant, that applies to all its sub-tabs.
+The **Profiles of {tenant}** panel lists the profiles created for the tenant
+with their type, schema, embedding model, whether the schema is deployed, and
+description. Shipped profiles are not listed. **Refresh** reloads the list.
 
 ## Creating a Profile
 
-### Step 1: Click "Create New Profile"
+The **New profile for {tenant}** panel creates one.
 
-The create form will appear with the following fields:
+### Step 1: Choose a Starting Point
 
-### Step 2: Fill Required Fields
+**Start from shipped profile** lists the shipped profiles. Choosing one fills
+every field from it; **Blank profile** clears them.
 
-**Profile Identity:**
+### Step 2: Fill the Fields
 
-- **Profile Name**: Unique identifier (e.g., `video_colpali_mv_frame`)
-  - Use naming convention: `{type}_{model}_{variant}_{strategy}`
-  - Must be unique within the tenant
+| Field | Required | Meaning |
+|---|---|---|
+| Profile name | yes | Unique within the tenant |
+| Type | yes | `video`, `image`, `audio`, `document` or `code` |
+| Schema name | yes | Base schema template, e.g. `video_colpali_smol500_mv_frame` |
+| Embedding model | yes | e.g. `TomoroAI/tomoro-colqwen3-embed-4b` |
+| Embedding type | yes | `multi_vector` or `single_vector` |
+| Model loader | no | Suggestions come from the shipped profiles |
+| Process type | no | Empty lets the runtime infer it |
+| Description | no | |
+| Pipeline config, Strategies, Schema config, Model-specific parameters, Extra config | no | JSON objects; empty means `{}` (model-specific: none) |
 
-- **Type**: Profile type — must be one of `video`, `image`, `audio`, `document`, `code`
-
-- **Description**: Human-readable description (optional but recommended)
-
-**Schema Configuration:**
-
-- **Schema Name**: Vespa schema template name
-  - Must exist in your schema directory
-  - Example: `video_colpali_smol500_mv_frame`, `video_xclip_sv_chunk_6s`
-
-- **Schema Config** (optional JSON, defaults to `{}`): Schema metadata such as `embedding_dim`, `model_name`, `num_patches`, `binary_dim`
-  - If `embedding_dim` is set, it must be an integer between 1 and 100000
-
-**Embedding Configuration:**
-
-- **Embedding Model**: Model identifier
-  - Format: `org/model-name` (e.g., `vidore/colpali`)
-  - Or simple name (e.g., `xclip-base`)
-
-- **Embedding Type**: Processing approach
-  - `multi_vector`: Multi-vector embedding (frames or chunks)
-  - `single_vector`: Single embedding for entire video
-
-**Strategy Configuration (Optional):**
-
-- **Strategies**: JSON object mapping strategy names to configurations
-  ```json
-  {
-    "segmentation": {
-      "class": "FrameSegmentationStrategy",
-      "params": {
-        "fps": 0.5,
-        "threshold": 0.999,
-        "max_frames": 3000
-      }
-    },
-    "embedding": {
-      "class": "MultiVectorEmbeddingStrategy",
-      "params": {
-        "model_name": "TomoroAI/tomoro-colqwen3-embed-4b"
-      }
-    }
-  }
-  ```
-
-**Pipeline Configuration (Optional):**
-
-- **Pipeline Config**: JSON object for processing settings
-  ```json
-  {
-    "extract_keyframes": true,
-    "transcribe_audio": true,
-    "generate_descriptions": true,
-    "generate_embeddings": true,
-    "keyframe_strategy": "fps",
-    "keyframe_fps": 0.5
-  }
-  ```
-
-**Model-Specific Configuration (Optional):**
-
-- **Model Specific**: JSON object for model parameters
-  ```json
-  {
-    "quantization": "int8",
-    "max_batch_size": 32
-  }
-  ```
-
-**Deployment (Optional):**
-
-- **Deploy Schema Immediately**: Checkbox — when checked, the schema is deployed to the backend as part of profile creation (equivalent to setting `deploy_schema: true` in the create API request). Leave unchecked to deploy later from the Deploy Schema tab.
+Tick **Deploy the schema now** to deploy the tenant schema in the same request.
 
 ### Step 3: Submit
 
-Click **Create Profile** button. You'll see:
-
-- Success message with profile name
-
-- Profile appears in the dropdown selector
-
-- Automatic validation of all fields
+Click **Create profile**. The view reports the created profile and its config
+version (and the deployed tenant schema when requested), lists it, and opens
+it. A rejected request shows the runtime's reason in the form.
 
 ### Validation Rules
 
@@ -178,12 +111,17 @@ Only these fields can be updated after creation:
 
 ### Edit Steps
 
-1. Select the profile from the dropdown
-2. Navigate to the **Edit** tab
-3. Modify any of the 4 mutable fields
-4. Click **Save Changes**
+1. Click the profile's name in the list. Its panel shows type, schema, the
+   tenant schema it is deployed as, embedding model and type, model loader,
+   process type, config version, schema config and extra config.
+2. In **Edit**, change the description or the Pipeline config, Strategies or
+   Model-specific parameters JSON. Model-specific parameters cannot be removed;
+   enter `{}` to clear them.
+3. Click **Save changes**. Only changed fields are sent; the view reports the
+   saved fields and the new config version, or "Nothing to save; no field
+   changed."
 
-Every update is versioned — each write creates a new, incrementing version number that is visible via the profile detail response and the History sub-tab. There is no client-supplied version check: updates are not rejected for being based on a stale read, and two concurrent writers will silently overwrite each other (the last write wins). A single dashboard/runtime process serializes its own writes with an internal lock, but this does not protect against concurrent writes from separate processes.
+Every update is versioned — each write creates a new, incrementing version number that is shown as the profile panel's **Config version**. There is no client-supplied version check: updates are not rejected for being based on a stale read, and two concurrent writers will silently overwrite each other (the last write wins). A single runtime process serializes its own writes with an internal lock, but this does not protect against concurrent writes from separate processes.
 
 ## Deploying a Schema
 
@@ -197,11 +135,12 @@ Deploying a schema creates the Vespa document schema in your configured backend.
 
 ### Deploy Steps
 
-1. Select the profile from the dropdown
-2. Navigate to the **Deploy Schema** tab
-3. Review deployment settings:
-   - **Force Redeployment**: Redeploy even if already deployed
-4. Click **Deploy Schema**
+1. Open the profile from the list
+2. Under **Schema**, tick **Redeploy even if already deployed** to force a redeployment
+3. Click **Deploy schema**
+
+The view reports the tenant schema it deployed, that it was already deployed,
+or the runtime's error message when deployment failed.
 
 ### Deployment Process
 
@@ -218,15 +157,9 @@ The system will:
 
 ### Deployment Status
 
-The profile details page automatically displays:
-
-- **Schema Status**: ✅ Deployed / ⚠️ Not Deployed / Unknown
-
-- **Tenant Schema Name**: Full schema name in Vespa (shown in tooltip when deployed)
-
-- **Error messages**: Displayed if API connection fails
-
-The status is refreshed automatically when you view the profile.
+The list's **Schema deployed** column and the profile panel's **Deployed as**
+field (the tenant schema name, or "not deployed") show the current state each
+time the profile is loaded.
 
 ## Deleting a Profile
 
@@ -237,37 +170,12 @@ The status is refreshed automatically when you view the profile.
 
 ### Delete Steps
 
-1. Select the profile from the dropdown
-2. Navigate to the **Delete** tab
-3. Choose deletion scope:
-   - ☐ Also delete associated schema from backend
-4. Type the profile name to confirm
-5. Click **Delete Profile**
+1. Open the profile from the list
+2. Under **Delete**, tick **Also delete schema {schema}** to remove the schema too
+3. Click **Delete**, type the profile name, and confirm
 
-### Safety Features
-
-- Confirmation dialog prevents accidental deletion
-- Deletion is **permanent** - no undo
-- Schema deletion fails safely if schema doesn't exist
-- Tenant isolation prevents cross-tenant deletion
-
-## Viewing Profile Details
-
-Select a profile from the dropdown to view:
-
-**Summary Metrics:**
-
-- Type
-
-- Embedding Type
-
-- Schema Name
-
-- Schema Status (✅ Deployed / ⚠️ Not Deployed)
-
-**Description:** Displayed below metrics if available
-
-**Detailed Configuration:** Access via Edit, Deploy Schema, or Delete tabs to view and modify full profile configuration including strategies and pipeline config.
+The view reports what was deleted, including when the schema was not deployed.
+Deletion is permanent.
 
 ## Multi-Tenant Isolation
 
@@ -276,7 +184,7 @@ Profiles are **strictly isolated** by tenant:
 - Each tenant sees only their own profiles
 - Same profile name can exist in different tenants
 - Cannot access, edit, or delete other tenants' profiles
-- Tenant ID is required on every operation — there is no default/fallback tenant. Omitting it raises an error via the API and blocks every tab in the dashboard
+- Tenant ID is required on every operation — there is no default/fallback tenant. Omitting it raises an error via the API, and the view shows nothing until a tenant is chosen
 
 Example:
 ```text
@@ -290,28 +198,24 @@ Both can coexist without conflict.
 
 ### Workflow 1: Create and Deploy
 
-1. Create profile with all required fields
-2. Verify profile appears in dropdown
-3. Select profile and go to Deploy Schema tab
-4. Click Deploy Schema and wait for confirmation
-5. Use profile name in ingestion scripts
+1. Choose the tenant, pick a shipped profile to start from, and set a new profile name
+2. Tick **Deploy the schema now** and click **Create profile**
+3. Use the profile name in ingestion (the Ingestion view takes a profile name)
 
 ### Workflow 2: Test with Different Settings
 
-1. Create profile with base settings
-2. Select profile and deploy schema
-3. Test ingestion/query
-4. Go to Edit tab and modify pipeline_config
-5. Go to Deploy Schema tab and enable Force Redeployment
-6. Compare results
+1. Create the profile and deploy its schema
+2. Test ingestion and queries
+3. Edit its pipeline config and **Save changes**
+4. Tick **Redeploy even if already deployed** and **Deploy schema**
+5. Compare results
 
 ### Workflow 3: Clone for Different Tenant
 
-1. Fetch the profile JSON from tenant_a via `GET /admin/profiles/{profile_name}?tenant_id=tenant_a` (the dashboard's Import/Export tab exports a tenant's whole configuration, not a single profile)
-2. Switch the Active Tenant to tenant_b
-3. Create profile with same config
-4. Deploy (creates tenant_b-specific schema)
-5. Both tenants have isolated instances
+1. Fetch the profile JSON from tenant_a via `GET /admin/profiles/{profile_name}?tenant_id=tenant_a`
+2. Choose tenant_b in the view
+3. Create a profile with the same fields
+4. Deploy it (creates the tenant_b schema)
 
 ## Troubleshooting
 
@@ -340,7 +244,7 @@ Both can coexist without conflict.
 
 ## API Alternative
 
-All dashboard operations can be performed via REST API. See [Profile API Reference](profile-api-reference.md) for details.
+Every operation in the view is a runtime REST call. See [Profile API Reference](profile-api-reference.md) for details.
 
 Example:
 ```bash

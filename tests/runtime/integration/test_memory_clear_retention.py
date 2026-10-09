@@ -120,7 +120,7 @@ def memory_app(memory_store, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("entry", ["tenant", "admin", "mixin", "dashboard"])
+@pytest.mark.parametrize("entry", ["tenant", "admin", "mixin", "manager"])
 async def test_clear_all_removes_205_active_and_archived_rows(
     memory_store, memory_app, entry
 ):
@@ -153,7 +153,7 @@ async def test_clear_all_removes_205_active_and_archived_rows(
         mixin.set_tenant_for_context(target.tenant_id)
         assert await asyncio.to_thread(mixin.clear_memory) is True
     else:
-        # The dashboard's clear button calls this manager entrypoint directly.
+        # A caller holding a manager calls this entrypoint directly.
         assert (
             await asyncio.to_thread(
                 target.clear_agent_memory, target.tenant_id, "_user_memories"
@@ -434,18 +434,21 @@ async def test_stats_count_live_and_archived_rows_past_the_page(
 
     assert users.json() == {
         "agent_name": "_user_memories",
+        "user_id": target.tenant_id,
         "total": 136,
         "archived": 69,
         "writable": True,
     }
     assert strategies.json() == {
         "agent_name": "_strategy_store",
+        "user_id": target.tenant_id,
         "total": 2,
         "archived": 2,
         "writable": False,
     }
     assert empty.json() == {
         "agent_name": "search_agent",
+        "user_id": target.tenant_id,
         "total": 0,
         "archived": 0,
         "writable": True,
@@ -732,3 +735,54 @@ async def test_cleanup_pin_read_failure_mutates_nothing_and_fails_explicitly(
         for row in mm.memory.get_all(user_id=mm.tenant_id, limit=None)["results"]
     }
     assert after == before
+
+
+@pytest.mark.asyncio
+async def test_health_reads_the_store_and_names_an_outage(memory_store, memory_app):
+    managers, proxy, _ = memory_store
+    target, peer = managers
+    refused = []
+
+    def intercept(method, path, body):
+        if (
+            method == "POST"
+            and path.startswith("/search/")
+            and (target.tenant_id.replace(":", "_").encode() in body)
+        ):
+            refused.append(path)
+            return 503, {"message": "injected search outage"}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=memory_app), base_url="http://runtime"
+    ) as client:
+        healthy = await client.get(f"/{target.tenant_id}/memories/health")
+        proxy.intercept = intercept
+        answers = await asyncio.gather(
+            *(
+                client.get(f"/{manager.tenant_id}/memories/health")
+                for manager in (target, peer, target, peer)
+            )
+        )
+    proxy.intercept = None
+
+    assert (healthy.status_code, healthy.json()) == (
+        200,
+        {
+            "tenant_id": target.tenant_id,
+            "agent_name": "_user_memories",
+            "healthy": True,
+            "problem": None,
+        },
+    )
+    assert [
+        (a.status_code, a.json()["tenant_id"], a.json()["healthy"]) for a in answers
+    ] == [
+        (200, target.tenant_id, False),
+        (200, peer.tenant_id, True),
+        (200, target.tenant_id, False),
+        (200, peer.tenant_id, True),
+    ]
+    assert answers[0].json()["problem"] == (
+        "The memory store did not answer a read (VespaError)."
+    )
+    assert len(refused) == 2

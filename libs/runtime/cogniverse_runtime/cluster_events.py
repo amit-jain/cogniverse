@@ -28,6 +28,12 @@ from redis.exceptions import RedisError
 logger = logging.getLogger(__name__)
 
 CLUSTER_EVENT_CHANNEL = "cogniverse:runtime:events"
+# Config and backend profile writes reach every runtime worker and every
+# ingestion worker on a channel of their own: an ingestion worker holds
+# configs and profiles, but none of the state the runtime-only events release.
+CONFIG_EVENT_CHANNEL = "cogniverse:config:events"
+CONFIGS_CHANGED = "configs_changed"
+BACKEND_PROFILES_CHANGED = "backend_profiles_changed"
 # Seconds an acknowledgement list outlives its event, so one a publisher
 # stopped waiting for does not stay in Redis.
 _REPLY_TTL_S = 120
@@ -37,6 +43,41 @@ _REPLY_POLL_S = 1.0
 _RECONNECT_BACKOFF_S = (0.5, 1.0, 2.0, 5.0)
 
 Handler = Callable[[Dict[str, Any]], Dict[str, Any]]
+
+
+def release_held_configs(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """The ``configs_changed`` handler: drop everything this process's config
+    managers hold for the payload's stored tenant id, so its next read of any
+    of the tenant's configs comes from the store."""
+    from cogniverse_foundation.config.manager import forget_held_tenant_configs
+
+    tenant_id = payload["tenant_id"]
+    return {
+        "tenant_id": tenant_id,
+        "config_managers": forget_held_tenant_configs(tenant_id),
+    }
+
+
+def release_backend_profiles(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """The ``backend_profiles_changed`` handler: drop the backend config this
+    process's config managers hold for the tenant, so its next read of the
+    tenant's profiles comes from the store."""
+    from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+    from cogniverse_foundation.config.manager import forget_held_backend_configs
+
+    tenant_id = canonical_tenant_id(payload["tenant_id"])
+    return {
+        "tenant_id": tenant_id,
+        "config_managers": forget_held_backend_configs(tenant_id),
+    }
+
+
+# What every runtime worker and ingestion worker answers on the config events
+# channel.
+CONFIG_EVENT_HANDLERS: Dict[str, Handler] = {
+    CONFIGS_CHANGED: release_held_configs,
+    BACKEND_PROFILES_CHANGED: release_backend_profiles,
+}
 
 
 class ClusterEventError(RuntimeError):

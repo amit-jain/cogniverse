@@ -191,11 +191,10 @@ def test_every_container_reading_the_config_can_authenticate_to_inference():
     """A container that mounts the config must be able to call what it names.
 
     ``cogniverse-config`` carries the inference endpoints, and under Modal
-    serving those reject unauthenticated requests. The dashboard hit this: its
-    memory tab constructs Mem0 in-process, and the two Vespa schema deploys
-    inside ``initialize`` run *before* the line that raises on the missing key,
-    so every Streamlit rerun re-ran both deploys on the render thread until the
-    liveness probe killed the pod.
+    serving those reject unauthenticated requests. A process that constructs
+    Mem0 runs the two Vespa schema deploys inside ``initialize`` *before* the
+    line that raises on the missing key, so every retry re-runs both deploys
+    until the liveness probe kills the pod.
 
     Derived from the render, not a restated list, so a new container that
     mounts the config without the bearer fails here.
@@ -295,9 +294,9 @@ def test_modal_llm_serving_fits_the_host_the_overlay_targets():
     """
     total = _scheduled_memory_gib(_render_as_deployed("values.modal-llm.yaml"))
 
-    assert round(total, 2) == 109.50, (
+    assert round(total, 2) == 106.00, (
         f"resident memory requests under Modal chat serving are {total:.2f}Gi, "
-        "not the pinned 109.50Gi"
+        "not the pinned 106.00Gi"
     )
     assert total <= SYSTEM_RAM_GIB, (
         f"the release requests {total:.2f}Gi but the host has "
@@ -318,9 +317,9 @@ def test_local_chat_serving_overcommits_this_host_by_the_overlay_delta():
         f"the Modal overlay returns {local - modal:.2f}Gi, not the 44Gi its "
         "own header claims"
     )
-    assert round(local, 2) == 153.50, (
+    assert round(local, 2) == 150.00, (
         f"resident memory requests under local chat serving are {local:.2f}Gi, "
-        "not the pinned 153.50Gi"
+        "not the pinned 150.00Gi"
     )
     assert local > SYSTEM_RAM_GIB, (
         f"local chat serving now fits in {SYSTEM_RAM_GIB}Gi ({local:.2f}Gi); "

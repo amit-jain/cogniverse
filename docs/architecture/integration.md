@@ -43,7 +43,6 @@ graph TD
 
     subgraph Application["<span style='color:#000'>Application Layer</span>"]
         RUNTIME["<span style='color:#000'>cogniverse-runtime<br/>FastAPI server and ingestion pipelines</span>"]
-        DASH["<span style='color:#000'>cogniverse-dashboard<br/>Streamlit analytics UI</span>"]
         CLI["<span style='color:#000'>cogniverse-cli<br/>Deployment and cluster management CLI</span>"]
         MSG["<span style='color:#000'>cogniverse-messaging<br/>Telegram/Slack messaging gateway</span>"]
     end
@@ -58,7 +57,6 @@ graph TD
     FINE --> CORE
     RUNTIME --> AGENTS
     RUNTIME --> VESPA
-    DASH --> EVAL
     CLI -.->|HTTP| RUNTIME
     MSG -.->|HTTP| RUNTIME
 
@@ -76,12 +74,11 @@ graph TD
     style SYNTH fill:#81d4fa,stroke:#0288d1,color:#000
     style FINE fill:#81d4fa,stroke:#0288d1,color:#000
     style RUNTIME fill:#a5d6a7,stroke:#388e3c,color:#000
-    style DASH fill:#a5d6a7,stroke:#388e3c,color:#000
     style CLI fill:#a5d6a7,stroke:#388e3c,color:#000
     style MSG fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-The workspace has 13 packages total (`libs/*`); all are shown above. `cogniverse-cli` and `cogniverse-messaging` have no internal `cogniverse-*` package dependencies — they talk to the runtime over HTTP rather than by import.
+The workspace has 12 packages total (`libs/*`); all are shown above. `cogniverse-cli` and `cogniverse-messaging` have no internal `cogniverse-*` package dependencies — they talk to the runtime over HTTP rather than by import.
 
 ### Test Categories
 
@@ -691,8 +688,7 @@ tracker = ExperimentTracker(
 )
 
 # Phoenix persistent-data management (backup/restore/clean) is handled by
-# the scripts/manage_phoenix_data.py CLI, not an importable dashboard util.
-# Dashboard integration happens via the Streamlit app, not direct API
+# the scripts/manage_phoenix_data.py CLI.
 ```
 
 ---

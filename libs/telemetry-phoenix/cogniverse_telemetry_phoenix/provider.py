@@ -13,6 +13,7 @@ import weakref
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Dict, Generator, List, Optional, Sequence
+from urllib.parse import quote
 
 import httpx
 import pandas as pd
@@ -27,10 +28,12 @@ from phoenix.client import AsyncClient
 
 from cogniverse_core.common.utils.circuit_breaker import CircuitOpenError
 from cogniverse_foundation.telemetry.providers.base import (
+    DATASET_TENANT_KEY,
     AnnotationStore,
     DatasetNotFoundError,
     DatasetStore,
     DatasetStoreUnavailableError,
+    DatasetSummary,
     TelemetryProvider,
     TraceStore,
 )
@@ -84,8 +87,8 @@ class _CheckedSynchronousSpanProcessor(SpanProcessor):
 
 
 # AsyncClient connection pools bind to the event loop that uses them, so a
-# process-wide singleton breaks callers that run on fresh loops (Streamlit's
-# asyncio.run per interaction). Memoize per (running loop, endpoint) instead.
+# process-wide singleton breaks callers that run on fresh loops (an
+# asyncio.run per call). Memoize per (running loop, endpoint) instead.
 #
 # Keep-alive is DISABLED on the underlying httpx client: under the
 # asyncio.run-per-call pattern a kept-alive socket stays bound to the
@@ -93,7 +96,7 @@ class _CheckedSynchronousSpanProcessor(SpanProcessor):
 # it) and leaking a file descriptor per call until EMFILE. With keep-alive
 # off, each request's socket is released on the still-running loop before it
 # closes, so nothing survives the loop. Phoenix reads here are infrequent
-# (monitor cycles, dashboard interactions), so the per-request handshake cost
+# (monitor cycles, UI reads), so the per-request handshake cost
 # is negligible. Closed-loop entries are also pruned on access so the memo
 # stays bounded regardless of GC timing.
 _CLIENTS_BY_LOOP: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
@@ -108,6 +111,9 @@ def _prune_closed_loops() -> None:
 # Dataset ops run the sync phoenix Client, whose per-request default is 5s —
 # too short for a large trigger dataset or a loaded Phoenix. Pass this to every dataset call.
 _DATASET_OP_TIMEOUT_S = 120
+# Listing and deleting projects: a project delete removes all of its spans.
+_PROJECT_OP_TIMEOUT_S = 60
+_SPAN_LOOKUP_TIMEOUT_S = 10
 _SPAN_QUERY_WINDOW_MIN_STEP = timedelta(microseconds=1)
 
 # A projected span row carries only the requested columns: 82 bytes per row for
@@ -471,7 +477,7 @@ class PhoenixTraceStore(TraceStore):
         # Telemetry is integral (auto-optimization, eval) but not on the user
         # request path, so its breaker uses a longer reset window — there is no
         # urgency to retry Phoenix fast. Read call sites choose whether to
-        # degrade (dashboard) or surface (checkpoint) the CircuitOpenError.
+        # degrade (UI reads) or surface (checkpoint) the CircuitOpenError.
         from cogniverse_core.common.utils.circuit_breaker import (
             BreakerConfig,
             CircuitBreaker,
@@ -614,6 +620,48 @@ class PhoenixTraceStore(TraceStore):
         except Exception as e:
             logger.error(f"Failed to get span {span_id}: {e}")
             raise
+
+    async def span_projects(self, span_ids: Sequence[str]) -> Dict[str, Optional[str]]:
+        """The project holding each of ``span_ids``, from Phoenix's span
+        lookup by OTel id across every project, in one request; None for a
+        span Phoenix does not hold. Raises on an unreachable Phoenix or a
+        lookup it refuses."""
+        wanted = list(dict.fromkeys(span_ids))
+        if not wanted:
+            return {}
+        parameters = ", ".join(f"$s{i}: String!" for i in range(len(wanted)))
+        fields = " ".join(
+            f"s{i}: getSpanByOtelId(spanId: $s{i}) {{ project {{ name }} }}"
+            for i in range(len(wanted))
+        )
+
+        async def lookup() -> Dict[str, Optional[str]]:
+            async with httpx.AsyncClient(
+                base_url=self.http_endpoint, timeout=_SPAN_LOOKUP_TIMEOUT_S
+            ) as client:
+                response = await client.post(
+                    "/graphql",
+                    json={
+                        "query": f"query({parameters}) {{ {fields} }}",
+                        "variables": {f"s{i}": span for i, span in enumerate(wanted)},
+                    },
+                )
+            response.raise_for_status()
+            body = response.json()
+            if body.get("errors"):
+                raise RuntimeError(
+                    f"Phoenix refused the lookup of spans {wanted}: {body['errors']}"
+                )
+            return {
+                span: (
+                    None
+                    if body["data"][f"s{i}"] is None
+                    else body["data"][f"s{i}"]["project"]["name"]
+                )
+                for i, span in enumerate(wanted)
+            }
+
+        return await self._breaker.acall(lookup)
 
     async def iter_spans(
         self,
@@ -1082,6 +1130,10 @@ class PhoenixAnnotationStore(AnnotationStore):
             raise
 
 
+class DatasetOwnedByAnotherTenantError(ValueError):
+    """A dataset write named a dataset another tenant owns."""
+
+
 class PhoenixDatasetStore(DatasetStore):
     """Phoenix implementation of DatasetStore using dataset API."""
 
@@ -1089,7 +1141,8 @@ class PhoenixDatasetStore(DatasetStore):
         """
         Initialize Phoenix dataset store.
 
-        Tenant scoping is caller-side (dataset names carry the tenant).
+        A dataset created with a ``tenant_id`` records that tenant as its
+        owner in the dataset's metadata; other datasets have no owner.
 
         Args:
             http_endpoint: Phoenix HTTP API endpoint
@@ -1114,31 +1167,36 @@ class PhoenixDatasetStore(DatasetStore):
                 - input_keys: List of input column names
                 - output_keys: List of output/expected column names
                 - metadata_keys: List of metadata column names
+                - tenant_id: The owning tenant, recorded in the dataset's
+                  metadata when the dataset is created. A new dataset whose
+                  rows cannot be added is deleted again; appending (the
+                  name exists) to a dataset another tenant owns, or no
+                  tenant owns, raises DatasetOwnedByAnotherTenantError.
 
         Returns:
-            Dataset identifier (name in Phoenix's case)
+            Dataset identifier
         """
-        try:
-            # Extract Phoenix-specific metadata
-            metadata = metadata or {}
-            input_keys = metadata.get("input_keys", [])
-            output_keys = metadata.get("output_keys", [])
-            metadata_keys = metadata.get("metadata_keys", [])
-            description = metadata.get("description", "")
+        metadata = metadata or {}
+        input_keys = metadata.get("input_keys", [])
+        output_keys = metadata.get("output_keys", [])
+        metadata_keys = metadata.get("metadata_keys", [])
+        description = metadata.get("description", "")
+        owner = metadata.get(DATASET_TENANT_KEY)
 
-            def _upload(action: str) -> str:
-                return upload_dataset_rows(
-                    self.http_endpoint,
-                    name=name,
-                    data=data,
-                    action=action,
-                    input_keys=input_keys,
-                    output_keys=output_keys,
-                    metadata_keys=metadata_keys,
-                    description=description,
-                )
+        def _upload(action: str) -> str:
+            return upload_dataset_rows(
+                self.http_endpoint,
+                name=name,
+                data=data,
+                action=action,
+                input_keys=input_keys,
+                output_keys=output_keys,
+                metadata_keys=metadata_keys,
+                description=description,
+            )
 
-            def _create() -> str:
+        def _create() -> str:
+            if owner is None:
                 try:
                     return _upload("create")
                 except httpx.HTTPStatusError as create_err:
@@ -1148,20 +1206,123 @@ class PhoenixDatasetStore(DatasetStore):
                     if _http_status(create_err) == 409:
                         return _upload("append")
                     raise
+            dataset_id = self._create_owned(name, description, owner)
+            if dataset_id is None:
+                existing = self._summary_by_name(name)
+                if existing is None or existing.tenant_id != owner:
+                    raise DatasetOwnedByAnotherTenantError(
+                        f"Dataset {name!r} exists and is not owned by tenant {owner!r}"
+                    )
+                return _upload("append")
+            try:
+                _upload("append")
+            except Exception:
+                self._delete_by_id(dataset_id)
+                raise
+            return dataset_id
 
+        try:
             # Sync Phoenix HTTP off the event loop so a large upload doesn't
             # stall the whole runtime (mirrors log_evaluations).
             dataset_id = await asyncio.to_thread(_create)
-
-            logger.info(
-                f"Created dataset '{name}' with {len(data)} records "
-                f"(inputs={input_keys}, outputs={output_keys})"
-            )
-            return dataset_id
-
         except Exception as e:
             logger.error(f"Failed to create dataset '{name}': {e}")
             raise
+        logger.info(
+            f"Created dataset '{name}' with {len(data)} records "
+            f"(inputs={input_keys}, outputs={output_keys})"
+        )
+        return dataset_id
+
+    def _create_owned(
+        self, name: str, description: str, tenant_id: str
+    ) -> Optional[str]:
+        """Create an empty dataset ``name`` owned by ``tenant_id`` and return
+        its id, or None when the name is taken."""
+        response = httpx.post(
+            f"{self.http_endpoint.rstrip('/')}/graphql",
+            json={
+                "query": (
+                    "mutation($name: String!, $description: String,"
+                    " $metadata: JSON) { createDataset(input: {name: $name,"
+                    " description: $description, metadata: $metadata})"
+                    " { dataset { id } } }"
+                ),
+                "variables": {
+                    "name": name,
+                    "description": description,
+                    "metadata": {DATASET_TENANT_KEY: tenant_id},
+                },
+            },
+            timeout=_DATASET_OP_TIMEOUT_S,
+        )
+        response.raise_for_status()
+        body = response.json()
+        errors = body.get("errors")
+        if errors:
+            if [e.get("message") for e in errors] == [
+                f"A dataset named {name!r} already exists."
+            ]:
+                return None
+            raise RuntimeError(f"Phoenix refused to create dataset {name!r}: {errors}")
+        return body["data"]["createDataset"]["dataset"]["id"]
+
+    def _delete_by_id(self, dataset_id: str) -> None:
+        response = httpx.delete(
+            f"{self.http_endpoint.rstrip('/')}/v1/datasets/{dataset_id}",
+            timeout=_DATASET_OP_TIMEOUT_S,
+        )
+        if response.status_code not in (204, 404):
+            response.raise_for_status()
+
+    def _summaries(self, name: Optional[str] = None) -> List[DatasetSummary]:
+        """Every dataset (or the one named ``name``) as Phoenix lists it."""
+        summaries: List[DatasetSummary] = []
+        params: Dict[str, Any] = {"limit": 100}
+        if name is not None:
+            params["name"] = name
+        while True:
+            response = httpx.get(
+                f"{self.http_endpoint.rstrip('/')}/v1/datasets",
+                params=params,
+                timeout=_DATASET_OP_TIMEOUT_S,
+            )
+            response.raise_for_status()
+            page = response.json()
+            for row in page["data"]:
+                metadata = row.get("metadata") or {}
+                owner = metadata.get(DATASET_TENANT_KEY)
+                summaries.append(
+                    DatasetSummary(
+                        id=row["id"],
+                        name=row["name"],
+                        example_count=int(row["example_count"]),
+                        created_at=datetime.fromisoformat(row["created_at"]),
+                        description=row.get("description") or "",
+                        tenant_id=str(owner) if owner else None,
+                        metadata=dict(metadata),
+                    )
+                )
+            if not page.get("next_cursor"):
+                return summaries
+            params = {**params, "cursor": page["next_cursor"]}
+
+    def _summary_by_name(self, name: str) -> Optional[DatasetSummary]:
+        found = self._summaries(name)
+        return found[0] if found else None
+
+    async def describe_datasets(self) -> List[DatasetSummary]:
+        """Every dataset Phoenix stores, newest first."""
+        try:
+            summaries = await asyncio.to_thread(self._summaries)
+        except Exception as e:
+            raise DatasetStoreUnavailableError(
+                f"dataset store at {self.http_endpoint} could not list its "
+                f"datasets: {type(e).__name__}: {e}",
+                endpoint=self.http_endpoint,
+                dataset="*",
+            ) from e
+        return sorted(summaries, key=lambda d: d.created_at, reverse=True)
 
     async def delete_dataset(self, name: str) -> bool:
         """Delete a dataset by name via the Phoenix REST API.
@@ -1195,6 +1356,37 @@ class PhoenixDatasetStore(DatasetStore):
             return resp.status_code == 204
 
         return await asyncio.to_thread(_delete)
+
+    async def list_datasets(self) -> List[Dict[str, Any]]:
+        """Every dataset Phoenix holds, with its example count.
+
+        Raises:
+            DatasetStoreUnavailableError: If Phoenix could not answer.
+        """
+        from phoenix.client import Client
+
+        def _list() -> List[Dict[str, Any]]:
+            return [
+                {
+                    "name": dataset["name"],
+                    "example_count": dataset.get("example_count"),
+                    "created_at": dataset.get("created_at"),
+                    "description": dataset.get("description"),
+                }
+                for dataset in Client(base_url=self.http_endpoint).datasets.list(
+                    timeout=_DATASET_OP_TIMEOUT_S
+                )
+            ]
+
+        try:
+            return await asyncio.to_thread(_list)
+        except Exception as e:
+            raise DatasetStoreUnavailableError(
+                f"dataset store at {self.http_endpoint} could not list its "
+                f"datasets: {type(e).__name__}: {e}",
+                endpoint=self.http_endpoint,
+                dataset="*",
+            ) from e
 
     async def get_dataset(self, name: str) -> pd.DataFrame:
         """
@@ -1521,6 +1713,65 @@ class PhoenixProvider(TelemetryProvider):
                 f"Failed to configure Phoenix span export for {project_name}: {e}"
             )
             raise RuntimeError(f"Phoenix span export configuration failed: {e}") from e
+
+    async def list_projects(self, name_contains: str) -> List[str]:
+        """Names of the Phoenix projects whose name contains ``name_contains``
+        (Phoenix matches it case-insensitively)."""
+        from phoenix.client import Client
+
+        endpoint = self._require_http_endpoint()
+
+        def _list() -> List[str]:
+            with httpx.Client(
+                base_url=endpoint, timeout=_PROJECT_OP_TIMEOUT_S
+            ) as http_client:
+                projects = Client(http_client=http_client).projects.list(
+                    name_contains=name_contains
+                )
+            return [project["name"] for project in projects]
+
+        return await asyncio.to_thread(_list)
+
+    async def project_id(self, name: str) -> Optional[str]:
+        """Phoenix's id for the project ``name`` (the one its UI addresses
+        the project by), or ``None`` when Phoenix has no such project."""
+        endpoint = self._require_http_endpoint()
+
+        def _read() -> Optional[str]:
+            response = httpx.get(
+                f"{endpoint.rstrip('/')}/v1/projects/{quote(name, safe='')}",
+                timeout=_PROJECT_OP_TIMEOUT_S,
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()["data"]["id"]
+
+        return await asyncio.to_thread(_read)
+
+    async def delete_project(self, name: str) -> bool:
+        """Delete a Phoenix project and its spans; False when Phoenix has no
+        project by that name."""
+        endpoint = self._require_http_endpoint()
+
+        def _delete() -> bool:
+            response = httpx.delete(
+                f"{endpoint.rstrip('/')}/v1/projects/{quote(name, safe='')}",
+                timeout=_PROJECT_OP_TIMEOUT_S,
+            )
+            if response.status_code == 404:
+                return False
+            response.raise_for_status()
+            return True
+
+        return await asyncio.to_thread(_delete)
+
+    def _require_http_endpoint(self) -> str:
+        if not self._http_endpoint:
+            raise RuntimeError(
+                "PhoenixProvider not initialized - call initialize() first"
+            )
+        return self._http_endpoint
 
     @property
     def client(self):

@@ -98,3 +98,11 @@ async def test_real_gateway_and_routing_spans_read_by_consumers(real_telemetry):
     ).evaluate_routing_decision(routing_row.to_dict())
     assert metrics["chosen_agent"] == gw_out["routed_to"]
     assert metrics["confidence"] == gw_out["confidence"]
+    # The gateway records no processing_time; the decision is timed by its
+    # span, from the start of classification to its record.
+    assert "processing_time" not in routing_out
+    duration_ms = (
+        routing_row["end_time"] - routing_row["start_time"]
+    ).total_seconds() * 1000
+    assert metrics["latency_ms"] == duration_ms
+    assert duration_ms != 0.0

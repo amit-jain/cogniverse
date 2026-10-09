@@ -41,7 +41,7 @@ A2A agent (`cogniverse_agents/audit_explanation_agent.py`) that explains why a g
 Abstract interface for vector database operations (search, feed, delete). Implemented by `VespaBackend`.
 
 ### BackendProfileConfig
-Configuration for a specific embedding/search strategy. Defines embedding model, chunk strategy, top_k, etc. Read and written through `ConfigManager`'s backend-profile methods (`get_backend_profile`, `add_backend_profile`, `update_backend_profile`, `list_backend_profiles`), which default to `service="backend"` — the same config service used by both the runtime admin API and the dashboard's backend-profile editor.
+Configuration for a specific embedding/search strategy. Defines embedding model, chunk strategy, top_k, etc. Read and written through `ConfigManager`'s backend-profile methods (`get_backend_profile`, `add_backend_profile`, `update_backend_profile`, `list_backend_profiles`), which default to `service="backend"` — the same config service used by both the runtime admin API and the web client's backend-profile editor.
 
 ### BackendRegistry
 Central registry for vector database backends. Enables switching backends without code changes.
@@ -239,7 +239,7 @@ Standard for distributed tracing and metrics. Cogniverse uses OpenTelemetry for 
 DSPy component that improves module performance via training. Examples: GEPA, MIPROv2.
 
 ### OrchestratorAgent
-A2A agent (`cogniverse_agents/orchestrator_agent.py`) with its own DSPy planning via `OrchestrationModule`. Plans and executes multi-agent workflows independently using `AgentRegistry` for agent discovery and direct A2A HTTP calls. Invoked by `AgentDispatcher` when `GatewayAgent` classifies a query as complex. Emits `cogniverse.orchestration` telemetry spans consumed by the dashboard's Orchestration tab.
+A2A agent (`cogniverse_agents/orchestrator_agent.py`) with its own DSPy planning via `OrchestrationModule`. Plans and executes multi-agent workflows independently using `AgentRegistry` for agent discovery and direct A2A HTTP calls. Invoked by `AgentDispatcher` when `GatewayAgent` classifies a query as complex. Emits `cogniverse.orchestration` telemetry spans consumed by the web client's Workflow reviews view.
 
 ---
 

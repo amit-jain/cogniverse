@@ -3,7 +3,7 @@ against the real Vespa + Phoenix stack.
 
 The cron writes ``usage-YYYYMM.json`` + ``performance-YYYYMM.json`` to
 the configured output dir; both files must be valid JSON with the
-exact schema downstream (billing, dashboards) consumes. The test
+exact schema downstream (billing, reporting) consumes. The test
 seeds real org/tenant rows in the live metadata schemas, runs the
 function, and parses the files — no mocks of the filesystem, Phoenix
 client, or tenant_manager helpers.

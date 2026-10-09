@@ -1244,11 +1244,10 @@ def test_the_tier_refresh_does_not_stall_the_event_loop(request):
     assert body["status"] == "success", body
     assert body["agent"] == TIER_REFRESH_AGENT, body
     assert body["results_count"] == len(body["results"]), body
-    searched = body["query_rewrite"]["enhanced_query"] or QUERY
     assert body["message"] == (
-        f"Found {body['results_count']} results for '{searched}'"
+        f"Found {body['results_count']} results for '{QUERY}'"
         if body["results_count"]
-        else f"No results found for '{searched}'"
+        else f"No results found for '{QUERY}'"
     ), body["message"]
     assert_loop_served(served)
     # The refresh resolved the tier the admin write stored, so the offload

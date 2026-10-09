@@ -22,7 +22,7 @@ The `cogniverse-runtime` package provides:
 
 ## Architecture
 
-### Position in the 13-Package Workspace
+### Position in the 12-Package Workspace
 
 ```
 Foundation Layer
@@ -43,8 +43,7 @@ Implementation Layer
 Application Layer
 ├── cogniverse-runtime ← YOU ARE HERE
 ├── cogniverse-cli
-├── cogniverse-messaging
-└── cogniverse-dashboard
+└── cogniverse-messaging
 ```
 
 ### Dependencies
@@ -650,4 +649,3 @@ MIT License - See [LICENSE](../../LICENSE) for details.
 - **cogniverse-vespa**: Vespa backend (optional `vespa` extra)
 - **cogniverse-synthetic**: Synthetic data generation (required dependency)
 - **cogniverse-telemetry-phoenix**: Phoenix telemetry and evaluation provider (required dependency)
-- **cogniverse-dashboard**: Streamlit UI (companion application)

@@ -313,6 +313,10 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
+        {{- with .Values.phoenix.uiUrl }}
+        - name: PHOENIX_UI_URL
+          value: {{ . | quote }}
+        {{- end }}
         # Instrument DSPy LM spans; the runtime routes each to the tenant's
         # own Phoenix project via the tenant-routing tracer provider.
         - name: OPENINFERENCE_DSPY
@@ -375,7 +379,7 @@ spec:
         {{- end }}
         {{- if .Values.argo.enabled }}
         # Wire Argo so the runtime can submit CronWorkflows (for scheduled
-        # jobs) and one-off Workflows (for dashboard-triggered optimisation).
+        # jobs) and one-off Workflows (for UI-triggered optimisation).
         # Follow the same gate the CronWorkflow templates use: the in-release
         # subchart exposes ``{release}-argo-workflows-server`` in this
         # namespace, but it is off by default (argo.subchart.enabled), and the
@@ -798,148 +802,6 @@ spec:
           path: {{ .Values.devMode.hostPath }}/scripts
           type: Directory
       {{- end }}
-{{- end }}
----
-# Dashboard Deployment
-{{- if .Values.dashboard.enabled }}
-{{- $dashboardBackend := default "cuda" .Values.dashboard.backend }}
-{{- $dashboardImage := .Values.dashboard.image }}
-{{- if .Values.dashboard.imagesByBackend }}
-{{- $dashboardImage = (index .Values.dashboard.imagesByBackend $dashboardBackend) | default .Values.dashboard.image }}
-{{- end }}
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ $fullName }}-dashboard
-  labels:
-    {{- include "cogniverse.labels" . | nindent 4 }}
-    app.kubernetes.io/component: dashboard
-spec:
-  replicas: {{ .Values.dashboard.replicaCount }}
-  selector:
-    matchLabels:
-      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: dashboard
-  template:
-    metadata:
-      labels:
-        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: dashboard
-    spec:
-      {{- with .Values.global.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
-      containers:
-      - name: dashboard
-        image: "{{ $dashboardImage.repository }}:{{ $dashboardImage.tag }}"
-        imagePullPolicy: {{ $dashboardImage.pullPolicy }}
-        ports:
-        - name: http
-          containerPort: 8501
-        env:
-        - name: INFERENCE_SERVICE_URLS
-          value: |-
-            {{- include "cogniverse.inferenceServiceUrls" $ | nindent 12 }}
-        - name: COGNIVERSE_INFERENCE_API_KEY
-{{ include "cogniverse.inferenceApiKeyEnv" . | nindent 10 }}
-{{ include "cogniverse.redisUrlEnv" . | nindent 8 }}
-        - name: RUNTIME_URL
-          value: "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
-        - name: BACKEND_URL
-          value: "http://{{ $fullName }}-vespa"
-        - name: BACKEND_PORT
-          value: "{{ .Values.vespa.service.ports.query }}"
-        - name: TELEMETRY_HTTP_ENDPOINT
-          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
-        - name: TELEMETRY_OTLP_ENDPOINT
-          value: "{{ $fullName }}-phoenix:4317"
-        - name: LLM_ENDPOINT
-          value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
-        - name: LLM_ENGINE
-          value: {{ .Values.llm.engine | quote }}
-        - name: LLM_MODEL
-          value: {{ .Values.llm.model | quote }}
-        {{- range $key, $value := .Values.dashboard.env }}
-        - name: {{ $key }}
-          value: {{ $value | quote }}
-        {{- end }}
-        livenessProbe:
-          {{- toYaml .Values.dashboard.livenessProbe | nindent 10 }}
-        readinessProbe:
-          {{- toYaml .Values.dashboard.readinessProbe | nindent 10 }}
-        resources:
-          {{- toYaml .Values.dashboard.resources | nindent 10 }}
-        volumeMounts:
-        - name: config
-          mountPath: /app/configs/config.json
-          subPath: config.json
-          readOnly: true
-        {{- if .Values.devMode.enabled }}
-        - name: src-libs
-          mountPath: /app/libs
-        - name: src-scripts
-          mountPath: /app/scripts
-        {{- end }}
-      volumes:
-      - name: config
-        configMap:
-          name: {{ $fullName }}-config
-      {{- if .Values.devMode.enabled }}
-      - name: src-libs
-        hostPath:
-          path: {{ .Values.devMode.hostPath }}/libs
-          type: Directory
-      - name: src-scripts
-        hostPath:
-          path: {{ .Values.devMode.hostPath }}/scripts
-          type: Directory
-      {{- end }}
-      {{- with .Values.dashboard.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.dashboard.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.dashboard.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-{{- end }}
----
-# Dashboard Service
-{{- if .Values.dashboard.enabled }}
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ $fullName }}-dashboard
-  labels:
-    {{- include "cogniverse.labels" . | nindent 4 }}
-    app.kubernetes.io/component: dashboard
-  {{- with .Values.dashboard.service.annotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-spec:
-  type: {{ .Values.dashboard.service.type }}
-  ports:
-  - port: {{ .Values.dashboard.service.port }}
-    targetPort: http
-    protocol: TCP
-    name: http
-    {{- if eq .Values.dashboard.service.type "NodePort" }}
-    nodePort: {{ .Values.dashboard.service.nodePort | default .Values.dashboard.service.port }}
-    {{- end }}
-  selector:
-    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: dashboard
 {{- end }}
 ---
 # Phoenix StatefulSet

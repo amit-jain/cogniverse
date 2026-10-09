@@ -7,8 +7,8 @@ probe:
   2. Records latency in ms and an availability boolean.
   3. Emits an OpenTelemetry span (``openshell.gateway_health``) with
      attributes ``openshell.gateway_available`` (0/1) and
-     ``openshell.gateway_latency_ms``. The Phoenix dashboard reads these
-     spans for the gateway-status dashboard tile.
+     ``openshell.gateway_latency_ms``, so gateway status is visible in
+     Phoenix.
 
 Lifecycle: ``GatewayHealthProbe.start()`` schedules the loop on the running
 event loop; ``stop()`` cancels it and awaits clean shutdown.

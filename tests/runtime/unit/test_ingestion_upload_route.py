@@ -42,13 +42,23 @@ _EXPLICIT_DOCUMENT_PROFILE = "explicit_document_pages"
 _EXPLICIT_AUDIO_PROFILE = "explicit_audio_segments"
 _EXPLICIT_IMAGE_PROFILE = "explicit_image_frames"
 _STRATEGYLESS_DOCUMENT_PROFILE = "explicit_document_no_strategies"
+_TEXT_DOCUMENT_PROFILE = "document_text_files"
+_PDF_DOCUMENT_PROFILE = "document_pdf_pages"
+_AUDIO_FILE_PROFILE = "audio_files"
+_IMAGE_FILE_PROFILE = "image_files"
+_CODE_PROFILE = "python_code"
+_UNSEGMENTED_PROFILE = "embedding_only"
 
 
-def _profile_config(profile_type: str = "video") -> dict:
+def _profile_config(
+    profile_type: str = "video",
+    segmentation: str = "ChunkSegmentationStrategy",
+    params: dict | None = None,
+) -> dict:
     return {
         "type": profile_type,
         "strategies": {
-            "segmentation": {"class": "ChunkSegmentationStrategy", "params": {}},
+            "segmentation": {"class": segmentation, "params": params or {}},
         },
     }
 
@@ -127,6 +137,32 @@ def upload_client(monkeypatch):
                             "type": "document",
                             "strategies": {},
                         },
+                        _TEXT_DOCUMENT_PROFILE: _profile_config(
+                            "document", "DocumentSegmentationStrategy"
+                        ),
+                        _PDF_DOCUMENT_PROFILE: _profile_config(
+                            "document", "DocumentVisualSegmentationStrategy"
+                        ),
+                        _AUDIO_FILE_PROFILE: _profile_config(
+                            "audio", "AudioFileSegmentationStrategy"
+                        ),
+                        _IMAGE_FILE_PROFILE: _profile_config(
+                            "image", "ImageSegmentationStrategy"
+                        ),
+                        _CODE_PROFILE: _profile_config(
+                            "code",
+                            "CodeSegmentationStrategy",
+                            {"languages": ["python"]},
+                        ),
+                        _UNSEGMENTED_PROFILE: {
+                            "type": "document",
+                            "strategies": {
+                                "embedding": {
+                                    "class": "DocumentTextEmbeddingStrategy",
+                                    "params": {},
+                                }
+                            },
+                        },
                     },
                     "default_profiles": {
                         "video": {
@@ -187,6 +223,7 @@ def test_async_default_returns_queued_envelope(upload_client):
     assert body["wait_timed_out"] is False
     assert body["source_url"] == _SOURCE_URL
     assert body["filename"] == "v.mp4"
+    assert captured["filename"] == "v.mp4"
     # Defaults reached the queue: not a synchronous wait, no idempotency bypass.
     assert captured["wait"] is False
     assert captured["force"] is False
@@ -472,6 +509,125 @@ def test_invalid_explicit_profile_rejected_before_side_effects(upload_client, pr
     assert captured == {}
 
 
+_VIDEO_SUFFIXES = ".avi, .mkv, .mov, .mp4, .webm"
+
+
+@pytest.mark.parametrize(
+    ("filename", "profile", "detail"),
+    [
+        (
+            "zephyr_kangaroo.txt",
+            None,
+            "zephyr_kangaroo.txt is a .txt file; profile 'tenant_video_chunked' "
+            f"ingests video files ({_VIDEO_SUFFIXES}).",
+        ),
+        (
+            "clip.mp4",
+            _TEXT_DOCUMENT_PROFILE,
+            "clip.mp4 is a .mp4 file; profile 'document_text_files' ingests "
+            "document files (.doc, .docx, .md, .pdf, .rtf, .txt).",
+        ),
+        (
+            "notes",
+            _TEXT_DOCUMENT_PROFILE,
+            "notes has no file extension; profile 'document_text_files' ingests "
+            "document files (.doc, .docx, .md, .pdf, .rtf, .txt).",
+        ),
+        (
+            "paper.txt",
+            _PDF_DOCUMENT_PROFILE,
+            "paper.txt is a .txt file; profile 'document_pdf_pages' ingests PDF "
+            "files (.pdf).",
+        ),
+        (
+            "clip.mp4",
+            _AUDIO_FILE_PROFILE,
+            "clip.mp4 is a .mp4 file; profile 'audio_files' ingests audio files "
+            "(.aac, .flac, .m4a, .mp3, .ogg, .wav, .wma).",
+        ),
+        (
+            "song.mp3",
+            _IMAGE_FILE_PROFILE,
+            "song.mp3 is a .mp3 file; profile 'image_files' ingests image files "
+            "(.bmp, .jpeg, .jpg, .png, .tiff, .webp).",
+        ),
+        (
+            "main.go",
+            _CODE_PROFILE,
+            "main.go is a .go file; profile 'python_code' ingests source files (.py).",
+        ),
+    ],
+)
+def test_a_file_the_profile_does_not_ingest_is_refused_before_side_effects(
+    upload_client, filename, profile, detail
+):
+    """The profile's segmentation decides what its pipeline can read; any
+    other file is refused at upload with the reason, before its bytes reach
+    the object store or a job reaches the queue."""
+    client, captured, state = upload_client
+
+    resp = client.post(
+        "/ingestion/upload",
+        files={"file": (filename, b"zephyr the kangaroo", "text/plain")},
+        data={"tenant_id": "acme:acme", **({"profile": profile} if profile else {})},
+    )
+
+    assert (resp.status_code, resp.json()) == (400, {"detail": detail})
+    assert state["uploads"] == []
+    assert state["enqueued"] == []
+    assert captured == {}
+
+
+@pytest.mark.parametrize(
+    ("filename", "profile"),
+    [
+        ("CLIP.MP4", None),
+        ("dusk.webm", None),
+        ("notes.md", _TEXT_DOCUMENT_PROFILE),
+        ("paper.pdf", _PDF_DOCUMENT_PROFILE),
+        ("song.mp3", _AUDIO_FILE_PROFILE),
+        ("frame.PNG", _IMAGE_FILE_PROFILE),
+        ("main.py", _CODE_PROFILE),
+    ],
+)
+def test_a_file_the_profile_ingests_is_queued_under_its_name(
+    upload_client, filename, profile
+):
+    client, captured, state = upload_client
+
+    resp = client.post(
+        "/ingestion/upload",
+        files={"file": (filename, b"content", "application/octet-stream")},
+        data={"tenant_id": "acme:acme", **({"profile": profile} if profile else {})},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["filename"], captured["filename"]) == (filename, filename)
+    assert captured["profile"] == (profile or _TENANT_DEFAULT_PROFILE)
+    assert [kwargs["filename"] for _, kwargs in state["uploads"]] == [filename]
+
+
+def test_a_profile_without_segmentation_is_refused_before_side_effects(
+    upload_client,
+):
+    client, captured, state = upload_client
+
+    resp = _post(client, data={"profile": _UNSEGMENTED_PROFILE})
+
+    assert (resp.status_code, resp.json()) == (
+        422,
+        {
+            "detail": (
+                "profile 'embedding_only' has no segmentation strategy, so it "
+                "ingests no uploaded file"
+            )
+        },
+    )
+    assert state["uploads"] == []
+    assert state["enqueued"] == []
+    assert captured == {}
+
+
 def test_an_empty_profile_field_resolves_the_tenant_default(upload_client):
     """An empty form value is dropped as omitted, not rejected as a blank
     explicit profile; only a non-empty blank value is that."""
@@ -603,3 +759,133 @@ def test_org_id_ignored_when_tenant_already_qualified(upload_client):
 
     assert resp.status_code == 200, resp.text
     assert captured["tenant_id"] == "acme:research"
+
+
+def test_profiles_lists_what_an_upload_can_go_to(upload_client):
+    """Every profile whose segmentation reads one uploaded file, with that
+    kind of file and its suffixes; profiles without usable segmentation are
+    left out, and the default is the profile an upload naming none uses."""
+    from cogniverse_core.common.media import DEFAULT_VIDEO_EXTENSIONS
+    from cogniverse_runtime.ingestion.strategies import (
+        AUDIO_EXTENSIONS,
+        DOCUMENT_EXTENSIONS,
+        IMAGE_EXTENSIONS,
+    )
+
+    client, _, _ = upload_client
+
+    resp = client.get("/ingestion/profiles", params={"tenant_id": "acme:acme"})
+
+    assert resp.status_code == 200, resp.text
+    video = sorted(DEFAULT_VIDEO_EXTENSIONS)
+
+    def entry(name, profile_type, kind, extensions):
+        return {
+            "name": name,
+            "type": profile_type,
+            "kind": kind,
+            "extensions": sorted(extensions),
+        }
+
+    assert resp.json() == {
+        "tenant_id": "acme:acme",
+        "backend": "vespa",
+        "default_profile": _TENANT_DEFAULT_PROFILE,
+        "profiles": [
+            entry(_AUDIO_FILE_PROFILE, "audio", "audio", AUDIO_EXTENSIONS),
+            entry(_PDF_DOCUMENT_PROFILE, "document", "PDF", {".pdf"}),
+            entry(_TEXT_DOCUMENT_PROFILE, "document", "document", DOCUMENT_EXTENSIONS),
+            entry(_EXPLICIT_AUDIO_PROFILE, "audio", "video", video),
+            entry(_EXPLICIT_DOCUMENT_PROFILE, "document", "video", video),
+            entry(_EXPLICIT_IMAGE_PROFILE, "image", "video", video),
+            entry(_EXPLICIT_PROFILE, "video", "video", video),
+            entry(_IMAGE_FILE_PROFILE, "image", "image", IMAGE_EXTENSIONS),
+            entry(_CODE_PROFILE, "code", "source", {".py"}),
+            entry(_TENANT_DEFAULT_PROFILE, "video", "video", video),
+        ],
+    }
+
+
+def test_profiles_has_no_default_when_the_tenants_default_cannot_take_uploads(
+    upload_client,
+):
+    client, _, state = upload_client
+    state["tenant_defaults"]["acme:acme"] = _UNSEGMENTED_PROFILE
+
+    resp = client.get("/ingestion/profiles", params={"tenant_id": "acme:acme"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["default_profile"] is None
+    assert _UNSEGMENTED_PROFILE not in [
+        profile["name"] for profile in resp.json()["profiles"]
+    ]
+
+
+def test_profiles_refuses_a_malformed_tenant(upload_client):
+    client, _, _ = upload_client
+
+    resp = client.get("/ingestion/profiles", params={"tenant_id": "a:b:c"})
+
+    assert resp.status_code == 400
+    assert resp.json() == {
+        "detail": "Invalid tenant_id format: a:b:c. Expected 'org:tenant' with "
+        "single colon"
+    }
+
+
+def test_profiles_answers_503_when_the_config_store_is_down(upload_client):
+    client, _, _ = upload_client
+    application = client.app
+    broken = MagicMock()
+    broken.get_system_config.side_effect = ConnectionError("config store down")
+    application.dependency_overrides[ingestion_router.get_config_manager_dependency] = (
+        lambda: broken
+    )
+
+    resp = client.get("/ingestion/profiles", params={"tenant_id": "acme:acme"})
+
+    assert resp.status_code == 503
+    assert resp.json() == {
+        "detail": {
+            "error": "upload_profile_unavailable",
+            "message": "Upload profile configuration is unavailable for tenant "
+            "'acme:acme'; retry.",
+            "failure": "ConnectionError",
+            "tenant_id": "acme:acme",
+        }
+    }
+
+
+async def test_concurrent_profile_listings_each_name_their_tenants_default(
+    upload_client,
+):
+    """Both listings read their tenant's config at once (a two-party barrier
+    inside the config read) and each answers its own tenant's default."""
+    _client, _captured, state = upload_client
+    state["tenant_defaults"] = {
+        "alpha:alpha": _TENANT_DEFAULT_PROFILE,
+        "beta:beta": _EXPLICIT_PROFILE,
+    }
+    state["profile_barrier"] = threading.Barrier(2)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=state["application"]),
+        base_url="http://test",
+    ) as client:
+        responses = await asyncio.gather(
+            client.get("/ingestion/profiles", params={"tenant_id": "alpha:alpha"}),
+            client.get("/ingestion/profiles", params={"tenant_id": "beta:beta"}),
+        )
+
+    assert [
+        (
+            response.status_code,
+            response.json()["tenant_id"],
+            response.json()["default_profile"],
+        )
+        for response in responses
+    ] == [
+        (200, "alpha:alpha", _TENANT_DEFAULT_PROFILE),
+        (200, "beta:beta", _EXPLICIT_PROFILE),
+    ]
+    assert len(set(state["profile_threads"])) == 2

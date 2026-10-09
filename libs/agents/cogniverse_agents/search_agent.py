@@ -38,6 +38,7 @@ from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.query.encoders import (
     EncoderNotConfiguredError,
     EncoderUnavailableError,
@@ -55,68 +56,20 @@ from cogniverse_foundation.config.lm_endpoint_availability import (
     lm_endpoint_availability,
     not_serving_cause,
 )
-from cogniverse_foundation.telemetry.context import request_trace_context
+from cogniverse_foundation.telemetry.context import (
+    add_search_results_to_span,
+    request_trace_context,
+    search_span,
+)
 from cogniverse_foundation.telemetry.span_contract import (
     QUERY_ENHANCEMENT_PATH_ATTRIBUTE,
     QUERY_ENHANCEMENT_PATH_HEURISTIC_FALLBACK,
     QUERY_ENHANCEMENT_PATH_LM,
+    current_span_id,
+    record_search_io_on_current_span,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _current_span_id() -> Optional[str]:
-    """16-hex id of the active telemetry span, or None when none is active
-    (telemetry disabled → invalid/NoOp span). Stamped onto SearchOutput so a
-    client can attach result_click / result_relevance annotations to this exact
-    search span for embedding-triplet mining. Must be read on the coroutine's
-    own thread — a worker thread spawned by ``to_thread`` does not carry the
-    span contextvar.
-    """
-    try:
-        from opentelemetry import trace as _otel_trace
-
-        ctx = _otel_trace.get_current_span().get_span_context()
-        if ctx and ctx.is_valid:
-            return f"{ctx.span_id:016x}"
-    except Exception:
-        pass
-    return None
-
-
-def _stamp_search_io_on_span(query: str, results: list, modality: str) -> None:
-    """Record the query, modality, and full result set (with content) on the
-    active ``SearchAgent.process`` span as ``input.value`` / ``modality`` /
-    ``output.value``.
-
-    This is the span whose id is on ``SearchOutput.span_id`` and that clients
-    annotate with relevance, so the embedding triplet miner reads the anchor
-    (query), the modality filter, the candidates (results), and the relevance
-    annotation from one span. Modality rides on a plain ``modality`` attribute,
-    not ``input.modality`` — Phoenix folds the OpenInference ``input.*`` object
-    into the ``input.value`` scalar and drops sibling ``input.*`` sub-keys.
-    """
-    try:
-        from opentelemetry import trace as _otel_trace
-
-        from cogniverse_foundation.telemetry.span_contract import (
-            OP_SEARCH,
-            record_span_io,
-            search_result_row,
-        )
-
-        span = _otel_trace.get_current_span()
-        if not (span and span.get_span_context().is_valid):
-            return
-        record_span_io(
-            span,
-            input_value=query,
-            output=[search_result_row(r) for r in results],
-            operation=OP_SEARCH,
-            modality=modality,
-        )
-    except Exception:
-        pass
 
 
 class EncoderCapabilityError(Exception):
@@ -442,6 +395,61 @@ def _timed_stage(key: str):
         timings = _STAGE_TIMINGS.get()
         if timings is not None:
             timings[key] = (time.perf_counter() - started) * 1000.0
+
+
+@contextmanager
+def _recorded_search_span(
+    *,
+    tenant_id: str,
+    query: str,
+    top_k: int,
+    strategy: Optional[str],
+    profile: str,
+    backend: str,
+):
+    """A ``search_service.search`` span for one search, under the tenant's
+    canonical id (the project the evaluation reads). When telemetry cannot be
+    set up the search runs unrecorded and the loss is logged."""
+    from cogniverse_foundation.telemetry.manager import (
+        NoOpSpan,
+        get_telemetry_manager,
+    )
+
+    tenant_id = canonical_tenant_id(tenant_id)
+    try:
+        get_telemetry_manager()
+    except Exception as exc:
+        logger.warning(
+            "search of %r for tenant %r not recorded: telemetry unavailable: %s",
+            profile,
+            tenant_id,
+            exc,
+        )
+        yield NoOpSpan()
+        return
+    with search_span(
+        tenant_id=tenant_id,
+        query=query,
+        top_k=top_k,
+        ranking_strategy=strategy or "default",
+        profile=profile,
+        backend=backend,
+    ) as span:
+        yield span
+
+
+def _record_search_results(span, profile: str, tenant_id: str, results) -> None:
+    """Record ``results`` on a search's span; a failure to record is logged
+    and never fails the search."""
+    try:
+        add_search_results_to_span(span, results)
+    except Exception as exc:
+        logger.warning(
+            "search span of %r for tenant %r recorded no results: %s",
+            profile,
+            canonical_tenant_id(tenant_id),
+            exc,
+        )
 
 
 def _bound_lm_name() -> str:
@@ -1024,6 +1032,27 @@ class SearchAgent(
         with leased_backend(self._get_backend) as backend:
             return backend.search(query_dict)
 
+    def _recorded_search(self, query_dict: Dict[str, Any], recorded_query: str):
+        """Run ``query_dict`` as a recorded search: a ``search_service.search``
+        span under the query's tenant carrying ``recorded_query`` (the user's
+        query, which golden sets match on), the profile, strategy and result
+        rows, and the rewritten query when one was searched instead."""
+        with _recorded_search_span(
+            tenant_id=query_dict["tenant_id"],
+            query=recorded_query,
+            top_k=query_dict["top_k"],
+            strategy=query_dict.get("strategy"),
+            profile=query_dict["profile"],
+            backend=self._backend_type,
+        ) as span:
+            if query_dict["query"] != recorded_query:
+                span.set_attribute("enhanced_query", query_dict["query"])
+            results = self._search_backend(query_dict)
+            _record_search_results(
+                span, query_dict["profile"], query_dict["tenant_id"], results
+            )
+            return results
+
     def _fuse_results_rrf(
         self,
         profile_results: Dict[str, List[Dict[str, Any]]],
@@ -1185,6 +1214,7 @@ class SearchAgent(
         modality: str = "video",
         top_k: int = 10,
         rrf_k: int = 60,
+        recorded_query: Optional[str] = None,
         **kwargs,
     ) -> EnsembleOutcome:
         """
@@ -1196,6 +1226,8 @@ class SearchAgent(
             modality: Content modality to search
             top_k: Number of final results to return
             rrf_k: RRF constant for fusion
+            recorded_query: The user's query each profile's recorded search
+                carries; ``query`` when not given
             **kwargs: Additional search parameters
 
         Returns:
@@ -1274,7 +1306,10 @@ class SearchAgent(
 
                 # Execute synchronous search in shared thread pool
                 search_results = await loop.run_in_executor(
-                    executor, self._search_backend, query_dict
+                    executor,
+                    self._recorded_search,
+                    query_dict,
+                    recorded_query or query,
                 )
 
                 # Convert SearchResult objects to dict
@@ -1412,6 +1447,7 @@ class SearchAgent(
         tenant_id: str,
         modality: str = "video",
         top_k: int = 10,
+        recorded_query: Optional[str] = None,
         **kwargs,
     ) -> List[Dict[str, Any]]:
         """
@@ -1421,6 +1457,8 @@ class SearchAgent(
             query: Text search query
             modality: Content modality to search (video/image/text/audio/document)
             top_k: Number of results to return
+            recorded_query: The user's query the recorded search carries;
+                ``query`` when not given
             **kwargs: Additional search parameters
 
         Returns:
@@ -1451,7 +1489,7 @@ class SearchAgent(
                 "tenant_id": tenant_id,
             }
 
-            search_results = self._search_backend(query_dict)
+            search_results = self._recorded_search(query_dict, recorded_query or query)
 
             # Convert SearchResult objects to dict format
             results = []
@@ -1864,6 +1902,7 @@ class SearchAgent(
                 rrf_k = context.routing_metadata.get("rrf_k", 60)
                 raw_results = self._search_multi_query_fusion(
                     query_variants=context.query_variants,
+                    recorded_query=context.original_query,
                     tenant_id=tenant_id,
                     modality=search_params.modality,
                     top_k=top_k,
@@ -1892,7 +1931,9 @@ class SearchAgent(
                     "tenant_id": tenant_id,
                 }
 
-                search_results = self._search_backend(query_dict)
+                search_results = self._recorded_search(
+                    query_dict, context.original_query
+                )
 
                 # Convert SearchResult objects to dict format
                 raw_results = []
@@ -1944,6 +1985,7 @@ class SearchAgent(
         self,
         query_variants: List[Dict[str, str]],
         *,
+        recorded_query: str,
         tenant_id: str,
         modality: str,
         top_k: int,
@@ -1955,6 +1997,8 @@ class SearchAgent(
 
         Args:
             query_variants: List of {"name": str, "query": str} variants
+            recorded_query: The user's query; the fused results are recorded
+                as one search of it
             modality: Content modality to search
             top_k: Number of final results to return
             rrf_k: RRF constant for fusion
@@ -1963,6 +2007,36 @@ class SearchAgent(
         Returns:
             Fused results ranked by RRF score
         """
+        with _recorded_search_span(
+            tenant_id=tenant_id,
+            query=recorded_query,
+            top_k=top_k,
+            strategy=ranking_strategy,
+            profile=self.active_profile,
+            backend=self._backend_type,
+        ) as span:
+            fused = self._fuse_query_variants(
+                query_variants,
+                tenant_id=tenant_id,
+                modality=modality,
+                top_k=top_k,
+                rrf_k=rrf_k,
+                ranking_strategy=ranking_strategy,
+            )
+            _record_search_results(span, self.active_profile, tenant_id, fused)
+            return fused
+
+    def _fuse_query_variants(
+        self,
+        query_variants: List[Dict[str, str]],
+        *,
+        tenant_id: str,
+        modality: str,
+        top_k: int,
+        rrf_k: int,
+        ranking_strategy: str,
+    ) -> List[Dict[str, Any]]:
+        """Search each query variant in parallel and fuse the results."""
         import concurrent.futures
 
         # One encoder for every variant: built at most once, and the backend
@@ -2250,7 +2324,7 @@ class SearchAgent(
         # inside the to_thread search calls, which don't carry the span
         # contextvar. Surfaced on SearchOutput so a client can annotate this
         # exact search (result_click / result_relevance) for triplet mining.
-        search_span_id = _current_span_id()
+        search_span_id = current_span_id()
         _STAGE_TIMINGS.set({})
 
         search_mode = "single_profile"
@@ -2279,6 +2353,7 @@ class SearchAgent(
             results = await asyncio.to_thread(
                 self._search_multi_query_fusion,
                 query_variants=input.query_variants,
+                recorded_query=query,
                 tenant_id=tenant_id,
                 modality=modality,
                 top_k=top_k,
@@ -2304,6 +2379,7 @@ class SearchAgent(
             with _timed_stage("search.stage.retrieval_ms"):
                 outcome = await self._search_ensemble(
                     query=search_query,
+                    recorded_query=query,
                     tenant_id=tenant_id,
                     profiles=input.profiles,
                     modality=modality,
@@ -2358,6 +2434,7 @@ class SearchAgent(
                 results = await asyncio.to_thread(
                     self._search_by_text,
                     query=search_query,
+                    recorded_query=query,
                     tenant_id=tenant_id,
                     modality=modality,
                     top_k=top_k,
@@ -2402,7 +2479,7 @@ class SearchAgent(
                     "rlm_error": str(e),
                 }
 
-        _stamp_search_io_on_span(query, results, modality)
+        record_search_io_on_current_span(query, results, modality)
         _stamp_stage_timings_on_span()
         return SearchOutput(
             query=query,

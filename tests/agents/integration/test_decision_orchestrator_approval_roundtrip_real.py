@@ -418,7 +418,7 @@ async def test_regenerated_item_is_approved_without_rerunning_generation(
         (item.item_id, item.status, item.reviewed_at)
         for item in final_context["current_batch"].items
     ] == [
-        (original_id, ApprovalStatus.REJECTED, None),
+        (original_id, ApprovalStatus.REJECTED, rejected_at),
         (replacement_id, ApprovalStatus.APPROVED, approved_at),
     ]
 
@@ -970,7 +970,7 @@ async def test_rejection_and_regeneration_use_redis_selected_timestamps(
         (
             regenerated_item.item_id,
             ApprovalStatus.REJECTED,
-            None,
+            regenerated_at,
             None,
         ),
         (

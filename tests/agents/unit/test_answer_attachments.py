@@ -52,7 +52,7 @@ class ContentDecision(dspy.Module):
             summary=ANSWER,
             executive_summary=ANSWER,
             key_points="Completed in 1889, Located in Paris",
-            recommendations="Visit the tower, Read its history",
+            recommendations="Visit the tower\nRead its history",
             sub_questions=["When was it completed?"],
             has_sufficient_evidence=True,
             gaps=[],

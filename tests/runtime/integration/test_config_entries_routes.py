@@ -32,7 +32,7 @@ pytestmark = [pytest.mark.integration]
 
 
 @pytest.fixture
-def client(config_manager):
+def client(config_manager, config_change_events):
     app = FastAPI()
     app.include_router(config_entries.router, prefix="/admin")
     admin.set_config_manager(config_manager)
@@ -260,6 +260,97 @@ class TestReadAndWrite:
         )
 
 
+class TestStoreHealth:
+    def test_a_store_that_answers_reads_as_healthy(self, client):
+        response = client.get("/admin/config/health")
+        assert (response.status_code, response.json()) == (
+            200,
+            {"store": "VespaConfigStore", "healthy": True},
+        )
+
+
+class TestChoicesAndRanges:
+    def test_fixed_choice_fields_and_the_port_carry_their_values_in_the_schema(
+        self, client
+    ):
+        sections = {
+            s["name"]: s["schema"]["properties"]
+            for s in client.get("/admin/config/sections").json()["sections"]
+        }
+        assert (
+            sections["system"]["search_backend"]["enum"],
+            sections["system"]["environment"]["enum"],
+            sections["routing"]["routing_mode"]["enum"],
+            sections["telemetry"]["provider"]["anyOf"],
+            sections["system"]["backend_port"]["minimum"],
+            sections["system"]["backend_port"]["maximum"],
+        ) == (
+            ["vespa"],
+            ["development", "staging", "production"],
+            ["tiered", "direct", "adaptive"],
+            [{"type": "string", "enum": ["phoenix"]}, {"type": "null"}],
+            1,
+            65535,
+        )
+
+    def test_a_value_outside_the_choices_or_the_range_stores_nothing(
+        self, client, tenant, reader
+    ):
+        refused = _put(
+            client,
+            "routing",
+            {"routing_mode": "fastest"},
+            0,
+            tenant_id=tenant,
+        )
+        assert refused.status_code == 422
+        assert refused.json()["detail"]["errors"] == [
+            "routing_mode: must be one of tiered, direct, adaptive"
+        ]
+        refused = _put(
+            client, "telemetry", {"provider": "langsmith"}, 0, tenant_id=tenant
+        )
+        assert refused.json()["detail"]["errors"] == [
+            "provider: must be one of phoenix"
+        ]
+        assert reader.store.list_configs(tenant_id=tenant) == []
+
+        system = client.get("/admin/config/sections/system").json()
+        refused = _put(
+            client,
+            "system",
+            {"backend_port": 70000, "environment": "qa", "search_backend": "solr"},
+            system["version"],
+        )
+        assert refused.status_code == 422
+        assert refused.json()["detail"]["errors"] == [
+            "search_backend: must be one of vespa",
+            "environment: must be one of development, staging, production",
+            "backend_port: must be between 1 and 65535",
+        ]
+        assert (
+            client.get("/admin/config/sections/system").json()["version"]
+            == system["version"]
+        )
+
+    def test_a_stored_value_outside_the_choices_is_kept_by_a_save(
+        self, client, tenant, reader, config_manager
+    ):
+        legacy = RoutingConfigUnified(tenant_id=tenant, routing_mode="hybrid")
+        config_manager.set_routing_config(legacy)
+        version = _routing(client, tenant)["version"]
+        saved = _put(
+            client,
+            "routing",
+            {"routing_mode": "hybrid", "min_unique_queries": 6},
+            version,
+            tenant_id=tenant,
+        )
+        assert saved.status_code == 200, saved.text
+        stored = reader.get_routing_config(tenant)
+        assert (stored.routing_mode, stored.min_unique_queries) == ("hybrid", 6)
+
+
 class TestSecrets:
     def test_a_secret_is_written_never_read_back_kept_when_null_and_cleared_by_empty(
         self, client, reader, system_restored
@@ -429,6 +520,33 @@ class TestEntriesHistoryRollback:
         )
         assert missing.status_code == 404
 
+    def test_the_system_history_is_read_from_the_system_configs(
+        self, client, tenant, system_restored
+    ):
+        """System configs live under the system tenant; a history read with
+        no tenant is theirs, never a tenant's system-scope rows."""
+        for name in ("history-one", "history-two"):
+            current = client.get("/admin/config/sections/system").json()
+            saved = _put(
+                client, "system", {"application_name": name}, current["version"]
+            )
+            assert saved.status_code == 200, saved.text
+        where = {"scope": "system", "service": "system", "config_key": "system_config"}
+        history = client.get("/admin/config/history", params=where).json()
+        latest = client.get("/admin/config/sections/system").json()["version"]
+        assert history["tenant_id"] == "_system"
+        assert [
+            (v["version"], v["value"]["application_name"])
+            for v in history["versions"][:2]
+        ] == [(latest, "history-two"), (latest - 1, "history-one")]
+        tenant_history = client.get(
+            "/admin/config/history", params={**where, "tenant_id": tenant}
+        )
+        assert (tenant_history.status_code, tenant_history.json()["detail"]) == (
+            404,
+            f"No system config system/system_config for {tenant}",
+        )
+
     def test_an_export_imports_whole_into_another_tenant(self, client, tenant, reader):
         assert (
             _put(
@@ -496,7 +614,7 @@ class TestConcurrency:
 
 
 class TestFaultContract:
-    def test_a_down_store_answers_503_not_defaults(self, tenant):
+    def test_a_down_store_answers_503_not_defaults(self, tenant, config_change_events):
         dead = ConfigManager(
             store=VespaConfigStore(
                 backend_url="http://localhost", backend_port=free_port()
@@ -529,4 +647,9 @@ class TestFaultContract:
             assert (listed.status_code, listed.json()["detail"]["error"]) == (
                 503,
                 "config_store_unavailable",
+            )
+            health = down.get("/admin/config/health")
+            assert (health.status_code, health.json()) == (
+                200,
+                {"store": "VespaConfigStore", "healthy": False},
             )

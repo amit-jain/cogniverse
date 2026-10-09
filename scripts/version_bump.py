@@ -53,7 +53,6 @@ PACKAGES = [
     "agents",  # cogniverse_agents
     "vespa",  # cogniverse_vespa
     "runtime",  # cogniverse_runtime
-    "dashboard",  # cogniverse_dashboard
 ]
 
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fieldsFromTemplate, shippedValues } from '../src/client/ops/profiles';
+import { BLANK_PROFILE, fieldsFromTemplate, withCurrent } from '../src/client/ops/profiles';
 
 const documentText = {
   type: 'document',
@@ -55,14 +55,42 @@ describe('fieldsFromTemplate', () => {
   });
 });
 
-describe('shippedValues', () => {
-  it('lists each value once, sorted, without blanks', () => {
-    const templates = [
-      { config: { model_loader: 'colpali' } },
-      { config: { model_loader: 'colbert' } },
-      { config: { model_loader: 'colpali' } },
-      { config: {} },
-    ];
-    expect(shippedValues(templates, 'model_loader')).toEqual(['colbert', 'colpali']);
+describe('withCurrent', () => {
+  it('keeps a value the choices lack selectable, first', () => {
+    expect(withCurrent(['colbert', 'colpali'], 'videoprism')).toEqual(['videoprism', 'colbert', 'colpali']);
+    expect(withCurrent(['colbert', 'colpali'], 'colpali')).toEqual(['colbert', 'colpali']);
+    expect(withCurrent(['colbert', 'colpali'], '')).toEqual(['colbert', 'colpali']);
+  });
+});
+
+describe('BLANK_PROFILE', () => {
+  it('starts a blank profile from the frame-based ColPali layout', () => {
+    expect({
+      ...BLANK_PROFILE,
+      pipeline: JSON.parse(BLANK_PROFILE.pipeline),
+      strategies: JSON.parse(BLANK_PROFILE.strategies),
+      schemaConfig: JSON.parse(BLANK_PROFILE.schemaConfig),
+    }).toEqual({
+      type: 'video',
+      description: '',
+      schemaName: '',
+      embeddingModel: '',
+      embeddingType: 'multi_vector',
+      modelLoader: 'colpali',
+      processType: '',
+      pipeline: { extract_keyframes: true, transcribe_audio: false, generate_descriptions: false, keyframe_fps: 0.5 },
+      strategies: {
+        segmentation: { class: 'FrameSegmentationStrategy', params: { fps: 0.5, max_frames: 100 } },
+        embedding: { class: 'MultiVectorEmbeddingStrategy', params: {} },
+      },
+      schemaConfig: {
+        schema_name: 'video_colpali_smol500_mv_frame',
+        model_name: 'TomoroAI/tomoro-colqwen3-embed-4b',
+        embedding_dim: 320,
+        binary_dim: 40,
+      },
+      modelSpecific: '{}',
+      extraConfig: '',
+    });
   });
 });

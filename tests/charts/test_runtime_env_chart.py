@@ -399,7 +399,6 @@ class TestDeviceOverlaysKeepDevMode:
             "values.k3s.yaml", "values.cuda.yaml", "values.modal-llm.yaml"
         )
         assert _dev_mount_deployments(manifests) == [
-            "cogniverse-dashboard",
             "cogniverse-quality-monitor",
             "cogniverse-runtime",
         ]
@@ -411,7 +410,6 @@ class TestDeviceOverlaysKeepDevMode:
     def test_k3s_plus_rocm_keeps_dev_mounts(self):
         manifests = _render_with_values("values.k3s.yaml", "values.rocm.yaml")
         assert _dev_mount_deployments(manifests) == [
-            "cogniverse-dashboard",
             "cogniverse-quality-monitor",
             "cogniverse-runtime",
         ]
@@ -562,6 +560,8 @@ def _cogniverse_app_containers(manifests: list) -> dict[str, dict]:
                 for server in ("/pylate", "/clap", "/gliner", "/vllm-audio")
             ):
                 continue  # model servers, not application code
+            if image.startswith("cogniverse/web:"):
+                continue  # Node server; it reaches cogniverse only via the runtime
             found[f"{name}/{c['name']}"] = {
                 e["name"]: e.get("value") for e in c.get("env", [])
             }
@@ -571,12 +571,8 @@ def _cogniverse_app_containers(manifests: list) -> dict[str, dict]:
 def test_every_cogniverse_app_container_gets_redis_url():
     """REDIS_URL reaches every container running cogniverse application code.
 
-    The dashboard shipped without it. cogniverse_dashboard.tabs.approval_queue
-    raises ValueError("REDIS_URL is required for approval item replacement"),
-    which aborted the Synthetic Data tab's render partway through, so its
-    primary "Generate Synthetic Data" button never appeared -- measured live:
-    the button existed 0 times inside that panel while the panel's text ended
-    at the error.
+    Approval storage, the ingestion queue and task state all live in Redis;
+    a container without it fails on its first read of any of them.
     """
     manifests = _render_chart("redis.enabled=true")
     containers = _cogniverse_app_containers(manifests)
@@ -636,3 +632,16 @@ def test_no_container_declares_the_same_env_var_twice():
             if dupes:
                 offenders[f"{m['metadata']['name']}/{c['name']}"] = dupes
     assert offenders == {}, f"containers declaring an env var twice: {offenders}"
+
+
+def test_phoenix_ui_url_reaches_the_runtime_only_when_set():
+    assert "PHOENIX_UI_URL" not in _runtime_container_env(_render_chart())
+    env = _runtime_container_env(_render_chart("phoenix.uiUrl=http://localhost:33006"))
+    assert env["PHOENIX_UI_URL"] == "http://localhost:33006"
+
+
+def test_the_dev_cluster_links_phoenix_at_its_host_nodeport():
+    """`cogniverse up` publishes Phoenix's NodePort 26006 on the host, so a
+    browser there opens the trace and dataset links at that port."""
+    env = _runtime_container_env(_render_chart(values="values.k3s.yaml"))
+    assert env["PHOENIX_UI_URL"] == "http://localhost:26006"

@@ -122,3 +122,35 @@ def test_other_context_rows_do_not_leak():
             "limit": None,
         }
     ]
+
+
+def test_a_cancelled_run_marker_is_shown_in_the_thread_never_to_an_agent():
+    """A run cancelled before its reply: its user turn and the marker in the
+    reply's place read back for display; the history an agent loads holds the
+    user turn alone, as an unanswered message."""
+    rows = [
+        _row("[ctx:c1] [user] stop me", _turn("user", CTX, 1.0)),
+        _row(
+            "[ctx:c1] [run_cancelled] Run cancelled before the turn completed.",
+            _turn("run_cancelled", CTX, 2.0),
+        ),
+        _row(
+            "[ctx:c1] [assistant_missing] assistant turn not persisted: x",
+            _turn("assistant_missing", CTX, 4.0),
+        ),
+        _row("[ctx:c1] [user] again", _turn("user", CTX, 3.0)),
+    ]
+    store = ConversationStore(_RecordingManager(rows), "acme:acme")
+
+    assert store.get_thread(CTX) == [
+        {"role": "user", "content": "stop me"},
+        {
+            "role": "run_cancelled",
+            "content": "Run cancelled before the turn completed.",
+        },
+        {"role": "user", "content": "again"},
+    ]
+    assert store.get_history(CTX) == [
+        {"role": "user", "content": "stop me"},
+        {"role": "user", "content": "again"},
+    ]

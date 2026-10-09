@@ -9,6 +9,7 @@ import {
   type FormField,
   type FormState,
   type JsonSchema,
+  type OptionalInput,
   type SecretInput,
 } from './schemaForm';
 import { TenantChooser } from './tenants';
@@ -41,8 +42,41 @@ interface Entry {
 
 interface HistoryVersion {
   version: number;
+  created_at: string;
   updated_at: string;
   value: JsonObject;
+}
+
+/** One config of an export file, as the import preview lists it. */
+interface ExportedConfig {
+  scope: string;
+  service: string;
+  config_key: string;
+  version: number;
+}
+
+/** An export file's configs, or an error naming why it cannot be imported. */
+export function exportPreview(name: string, text: string): { from: string; configs: ExportedConfig[] } {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error(`${name} is not valid JSON.`);
+  }
+  const configs = (body as { configs?: unknown } | null)?.configs;
+  if (!Array.isArray(configs)) throw new Error(`${name} is not a configuration export: it has no configs list.`);
+  return {
+    from: String((body as { tenant_id?: unknown }).tenant_id ?? 'an unnamed tenant'),
+    configs: configs.map((c) => {
+      const row = c as Record<string, unknown>;
+      return {
+        scope: String(row.scope),
+        service: String(row.service),
+        config_key: String(row.config_key),
+        version: Number(row.version),
+      };
+    }),
+  };
 }
 
 const query = (params: Record<string, string | undefined>) =>
@@ -91,7 +125,13 @@ export function ConfigView() {
           {all
             .filter((s) => s.tenant_scoped && s.service === null)
             .map((s) => (
-              <AgentConfigs key={`${tenant}-${s.name}-${version}`} section={s} tenant={tenant} onSaved={changed} />
+              <AgentConfigs
+                key={`${tenant}-${s.name}`}
+                section={s}
+                tenant={tenant}
+                version={version}
+                onSaved={changed}
+              />
             ))}
           <StoredConfigs key={`${tenant}-${version}`} tenant={tenant} onChanged={changed} />
           <ExportImport key={`${tenant}-transfer`} tenant={tenant} onImported={changed} />
@@ -123,13 +163,28 @@ function SectionPanel({
       ),
     [section.name, tenant, service],
   );
+  // Each reload starts the form over, so it drops unsaved edits even when
+  // the stored version is the same.
+  const [reloads, setReloads] = useState(0);
   const heading = title ?? (tenant ? `${section.title} config of ${tenant}` : `${section.title} config`);
   return (
-    <Panel title={heading} actions={<button onClick={loaded.reload}>Reload</button>}>
+    <Panel
+      title={heading}
+      actions={
+        <button
+          onClick={() => {
+            setReloads((n) => n + 1);
+            loaded.reload();
+          }}
+        >
+          Reload
+        </button>
+      }
+    >
       {loaded.error && <Alert>{loaded.error}</Alert>}
       {loaded.data && (
         <SectionForm
-          key={loaded.data.version}
+          key={`${loaded.data.version}-${reloads}`}
           section={section}
           loaded={loaded.data}
           tenant={tenant}
@@ -215,6 +270,29 @@ function Fields({
                 <Fields fields={f.fields ?? []} state={value as FormState} onChange={(next) => set(f.name, next)} />
               </fieldset>
             );
+          case 'optional': {
+            const optional = value as OptionalInput;
+            return (
+              <fieldset key={f.name}>
+                <legend>{f.name}</legend>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={optional.set}
+                    onChange={(e) => set(f.name, { ...optional, set: e.target.checked })}
+                  />
+                  Set {f.name}
+                </label>
+                {optional.set && (
+                  <Fields
+                    fields={f.fields ?? []}
+                    state={optional.fields}
+                    onChange={(next) => set(f.name, { ...optional, fields: next })}
+                  />
+                )}
+              </fieldset>
+            );
+          }
           case 'boolean':
             return (
               <label key={f.name} className="check">
@@ -222,18 +300,22 @@ function Fields({
                 {f.name}
               </label>
             );
-          case 'choice':
+          case 'choice': {
+            const options = f.options ?? [];
+            // A stored value the field no longer offers stays selectable.
+            const kept = value && !options.includes(value as string) ? [value as string] : [];
             return (
               <label key={f.name}>
                 {f.name}
                 <select aria-label={f.name} value={value as string} onChange={(e) => set(f.name, e.target.value)}>
                   {f.nullable && <option value="">(none)</option>}
-                  {(f.options ?? []).map((option) => (
+                  {[...kept, ...options].map((option) => (
                     <option key={option}>{option}</option>
                   ))}
                 </select>
               </label>
             );
+          }
           case 'json':
             return (
               <label key={f.name}>
@@ -282,7 +364,13 @@ function Fields({
                 <input
                   inputMode={f.kind === 'text' ? undefined : 'decimal'}
                   value={value as string}
-                  placeholder={f.nullable ? 'unset' : undefined}
+                  placeholder={
+                    f.min !== undefined && f.max !== undefined
+                      ? `${f.min}–${f.max}`
+                      : f.nullable
+                        ? 'unset'
+                        : undefined
+                  }
                   onChange={(e) => set(f.name, e.target.value)}
                 />
               </label>
@@ -296,10 +384,13 @@ function Fields({
 function AgentConfigs({
   section,
   tenant,
+  version,
   onSaved,
 }: {
   section: Section;
   tenant: string;
+  /** Bumped by every save; the agent being edited stays open across it. */
+  version: number;
   onSaved: (notice: string) => void;
 }) {
   const entries = useLoad(
@@ -307,7 +398,7 @@ function AgentConfigs({
       runtimeJson<{ entries: Entry[] }>(`/admin/config/entries?${query({ tenant_id: tenant })}`, { signal }).then(
         (body) => body.entries.filter((e) => e.section === section.name).map((e) => e.service),
       ),
-    [tenant, section.name],
+    [tenant, section.name, version],
   );
   const [agent, setAgent] = useState('');
   const [draft, setDraft] = useState('');
@@ -346,7 +437,7 @@ function AgentConfigs({
       )}
       {agent && (
         <SectionPanel
-          key={agent}
+          key={`${agent}-${version}`}
           section={section}
           tenant={tenant}
           service={agent}
@@ -447,7 +538,8 @@ function ConfigHistory({
       {(history.data ?? []).map((v) => (
         <details key={v.version}>
           <summary>
-            Version {v.version}, {new Date(v.updated_at).toLocaleString()}
+            Version {v.version}, created {new Date(v.created_at).toLocaleString()}, updated{' '}
+            {new Date(v.updated_at).toLocaleString()}
             {v.version === latest ? ' (current)' : ''}
           </summary>
           <pre>{jsonText(v.value)}</pre>
@@ -478,6 +570,7 @@ function ConfigHistory({
 function ExportImport({ tenant, onImported }: { tenant: string; onImported: (notice: string) => void }) {
   const [history, setHistory] = useState(false);
   const [file, setFile] = useState<File>();
+  const [preview, setPreview] = useState<ReturnType<typeof exportPreview>>();
   const exporting = useAction();
   const importing = useAction();
   return (
@@ -508,21 +601,15 @@ function ExportImport({ tenant, onImported }: { tenant: string; onImported: (not
       </div>
       <p className="muted">The export holds every secret: it is a backup the import restores whole.</p>
       <form
-        className="inline-form"
+        className="stacked-form"
         aria-label="Import configs"
         onSubmit={(e) => {
           e.preventDefault();
           importing.run(async () => {
-            if (!file) throw new Error('Choose an export file first.');
-            let configs: unknown;
-            try {
-              configs = JSON.parse(await file.text());
-            } catch {
-              throw new Error(`${file.name} is not valid JSON.`);
-            }
+            if (!file || !preview) throw new Error('Choose an export file first.');
             const result = await runtimeJson<{ imported: number }>('/admin/config/import', {
               method: 'POST',
-              body: { tenant_id: tenant, configs },
+              body: { tenant_id: tenant, configs: JSON.parse(await file.text()) },
             });
             onImported(`Imported ${result.imported} configs into ${tenant}.`);
           });
@@ -530,9 +617,47 @@ function ExportImport({ tenant, onImported }: { tenant: string; onImported: (not
       >
         <label>
           Export file
-          <input type="file" accept="application/json,.json" onChange={(e) => setFile(e.target.files?.[0])} />
+          <input
+            type="file"
+            accept="application/json,.json"
+            onChange={(e) => {
+              const chosen = e.target.files?.[0];
+              setFile(chosen);
+              setPreview(undefined);
+              importing.clear();
+              if (chosen)
+                importing.run(async () => setPreview(exportPreview(chosen.name, await chosen.text())));
+            }}
+          />
         </label>
-        <button type="submit" disabled={importing.pending}>
+        {preview && (
+          <div role="region" aria-label="Import preview">
+            <p className="muted">
+              {preview.configs.length} configs exported from {preview.from}; importing writes each into {tenant}.
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Scope</th>
+                  <th>Service</th>
+                  <th>Key</th>
+                  <th>Version</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.configs.map((c, index) => (
+                  <tr key={index}>
+                    <td>{c.scope}</td>
+                    <td>{c.service}</td>
+                    <td>{c.config_key}</td>
+                    <td>{c.version}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <button type="submit" disabled={importing.pending || !preview}>
           {importing.pending ? 'Importing…' : 'Import configs'}
         </button>
         {importing.error && <Alert>{importing.error}</Alert>}
@@ -549,14 +674,44 @@ function StoreStats() {
         total_versions: number;
         total_tenants: number;
         configs_per_scope: Record<string, number>;
+        storage_backend?: string;
       }>('/admin/config/stats', { signal }),
     [],
   );
+  const health = useLoad(
+    (signal) => runtimeJson<{ store: string; healthy: boolean }>('/admin/config/health', { signal }),
+    [],
+  );
   return (
-    <Panel title="Config store" actions={<button onClick={stats.reload}>Refresh</button>}>
+    <Panel
+      title="Config store"
+      actions={
+        <button
+          onClick={() => {
+            stats.reload();
+            health.reload();
+          }}
+        >
+          Refresh
+        </button>
+      }
+    >
+      {health.error && <Alert>{health.error}</Alert>}
+      {health.data && (
+        <dl className="facts" aria-label="Config store health">
+          <dt>Store</dt>
+          <dd>{health.data.store}</dd>
+          <dt>Health</dt>
+          <dd className={health.data.healthy ? undefined : 'alert error'}>
+            {health.data.healthy ? 'healthy: it answers queries' : 'unhealthy: it did not answer a query'}
+          </dd>
+        </dl>
+      )}
       {stats.error && <Alert>{stats.error}</Alert>}
       {stats.data && (
-        <dl className="facts">
+        <dl className="facts" aria-label="Config store facts">
+          <dt>Backend</dt>
+          <dd>{stats.data.storage_backend ?? '—'}</dd>
           <dt>Configs</dt>
           <dd>{stats.data.total_configs}</dd>
           <dt>Versions</dt>

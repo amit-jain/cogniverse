@@ -4,19 +4,24 @@ Every route reads all of the tenant's spans in the window (not a first page
 of them) from the tenant's telemetry project and aggregates them with
 ``cogniverse_foundation.telemetry.span_metrics``, or scores them against the
 tenant's golden set with ``cogniverse_evaluation.recorded_searches``. A
-telemetry backend that fails the read answers 502; it never reads as an empty
-window.
+telemetry backend that fails the read answers 502, one that does not answer
+within ``SPAN_READ_BUDGET_S`` answers 504, and a tenant no telemetry provider
+can be built for answers 503; none of them reads as an empty window.
 """
 
 import asyncio
 import logging
 import math
+import os
+import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
 import pandas as pd
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
@@ -26,14 +31,18 @@ from cogniverse_agents.optimizer.golden_set_ground_truth import (
     GoldenSetGroundTruthStoreUnavailableError,
     load_golden_set_ground_truth_rows,
 )
-from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_evaluation.analysis.root_cause_analysis import RootCauseAnalyzer
 from cogniverse_evaluation.recorded_searches import (
     SEARCH_SPAN_NAME,
+    dataset_golden_rows,
     score_recorded_searches,
 )
 from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.providers.base import (
+    DatasetSummary,
+    is_artifact_dataset,
+)
 from cogniverse_foundation.telemetry.span_metrics import (
     AB_COMPARE_SPAN_NAME,
     aggregate_ab_compare,
@@ -42,14 +51,35 @@ from cogniverse_foundation.telemetry.span_metrics import (
     trace_rows,
     trace_statistics,
 )
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.http_errors import canonical_tenant_or_400, failure_response
 from cogniverse_runtime.quality_monitor_cli import GOLDEN_SET_UPLOAD_ROUTE
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-Lookback = Query(24, ge=1, le=24 * 30)
+MAX_WINDOW = timedelta(days=30)
+Lookback = Query(24, ge=1, le=MAX_WINDOW.days * 24)
+WindowStart = Query(
+    None,
+    description="Start of the window (ISO 8601 with a timezone); with ``end`` "
+    "it replaces ``lookback_hours``.",
+)
+WindowEnd = Query(None, description="End of the window (ISO 8601 with a timezone).")
+
+# The Phoenix UI address a browser reaches. The trace links and the dataset
+# links point at it; unset, the routes answer no links.
+PHOENIX_UI_URL_ENV = "PHOENIX_UI_URL"
+
+
+def phoenix_ui_url() -> Optional[str]:
+    """``PHOENIX_UI_URL`` without a trailing slash, or ``None`` when unset."""
+    return os.environ.get(PHOENIX_UI_URL_ENV, "").rstrip("/") or None
+
+
+# The longest a route waits for the spans of its window before it answers
+# that the store is slow.
+SPAN_READ_BUDGET_S = 60.0
 
 
 class ModalityMetrics(BaseModel):
@@ -62,6 +92,8 @@ class ModalityMetrics(BaseModel):
 
 
 class ProfileSelectionMetrics(BaseModel):
+    project: str
+    spans: int
     modalities: List[ModalityMetrics]
 
 
@@ -164,6 +196,67 @@ class Recommendation(BaseModel):
     affected_components: List[str]
 
 
+class Tally(BaseModel):
+    value: str
+    count: int
+
+
+class HourlyFailures(BaseModel):
+    hour: int
+    requests: int
+    failed: int
+    failure_rate: float
+
+
+class FailureBurst(BaseModel):
+    start_time: str
+    end_time: str
+    failures: int
+    duration_minutes: float
+    trace_ids: List[str]
+
+
+class FailureAnalysis(BaseModel):
+    """What the failed traces have in common, each tally most frequent
+    first."""
+
+    error_types: List[Tally]
+    operations: List[Tally]
+    profiles: List[Tally]
+    strategies: List[Tally]
+    hours: List[HourlyFailures]
+    bursts: List[FailureBurst]
+
+
+class SlowOperation(BaseModel):
+    operation: str
+    count: int
+    mean_ms: float
+    min_ms: float
+    max_ms: float
+    sample_ms: List[float]
+
+
+class LatencyShift(BaseModel):
+    slow_mean_ms: float
+    slow_std_ms: float
+    normal_mean_ms: float
+    normal_std_ms: float
+    slowdown_factor: float
+
+
+class PerformanceAnalysis(BaseModel):
+    """Where the slow traces sit and how much slower they are than the
+    rest of the successful traces."""
+
+    percentile: int
+    threshold_ms: float
+    operations: List[SlowOperation]
+    profiles: List[Tally]
+    strategies: List[Tally]
+    latency: LatencyShift
+
+
 class RootCauseAnalysis(BaseModel):
     traces: int
     failed: int
@@ -172,6 +265,14 @@ class RootCauseAnalysis(BaseModel):
     slow_threshold_ms: Optional[float]
     root_causes: List[RootCause]
     recommendations: List[Recommendation]
+    failure_analysis: Optional[FailureAnalysis]
+    performance_analysis: Optional[PerformanceAnalysis]
+
+
+class PhoenixLinks(BaseModel):
+    phoenix_url: Optional[str]
+    project: str
+    project_url: Optional[str]
 
 
 class StrategyScores(BaseModel):
@@ -210,25 +311,99 @@ class GoldenEvaluation(BaseModel):
     unscored_searches: int
 
 
+class EvaluationDataset(BaseModel):
+    id: str
+    name: str
+    example_count: int
+    created_at: str
+    description: str
+
+
+class EvaluationDatasets(BaseModel):
+    phoenix_url: Optional[str]
+    datasets: List[EvaluationDataset]
+
+
+class DatasetEvaluation(GoldenEvaluation):
+    dataset: EvaluationDataset
+
+
+def _project(tenant_id: str) -> str:
+    return get_telemetry_manager().config.get_project_name(tenant_id)
+
+
+def _window(
+    lookback_hours: float, start: Optional[datetime], end: Optional[datetime]
+) -> tuple[datetime, datetime]:
+    """``start`` to ``end`` when both are given, else the last
+    ``lookback_hours``.
+
+    Raises:
+        HTTPException 422: only one bound given, a bound without a timezone,
+            an empty window or one longer than ``MAX_WINDOW``.
+    """
+    if start is None and end is None:
+        now = datetime.now(timezone.utc)
+        return now - timedelta(hours=lookback_hours), now
+    if start is None or end is None:
+        raise HTTPException(422, "Give both start and end, or neither.")
+    if start.tzinfo is None or end.tzinfo is None:
+        raise HTTPException(422, "start and end must carry a timezone.")
+    if start >= end:
+        raise HTTPException(422, "start must be before end.")
+    if end - start > MAX_WINDOW:
+        raise HTTPException(422, f"The window may span at most {MAX_WINDOW.days} days.")
+    return start, end
+
+
 async def _window_spans(
-    tenant_id: str, lookback_hours: int, *, span_name: str = "", roots_only=False
+    tenant_id: str,
+    lookback_hours: float,
+    *,
+    span_name: str = "",
+    roots_only=False,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
 ):
     manager = get_telemetry_manager()
-    project = manager.config.get_project_name(tenant_id)
-    end = datetime.now(timezone.utc)
+    project = _project(tenant_id)
+    start, end = _window(lookback_hours, start, end)
     filters: Dict[str, Any] = {"roots_only": True} if roots_only else {}
     if span_name:
         filters["name"] = span_name
+    what = f"the {span_name} spans" if span_name else "the traces"
     try:
         provider = manager.get_provider(tenant_id=tenant_id, project_name=project)
-        return await provider.traces.get_all_spans(
-            project=project,
-            start_time=end - timedelta(hours=lookback_hours),
-            end_time=end,
-            filters=filters,
-        )
     except Exception as exc:
-        what = f"the {span_name} spans" if span_name else "the traces"
+        raise failure_response(
+            503,
+            "telemetry_unconfigured",
+            f"No telemetry provider could be built for tenant {tenant_id}, so "
+            f"{what} cannot be read; the runtime log names the cause.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    try:
+        return await asyncio.wait_for(
+            provider.traces.get_all_spans(
+                project=project,
+                start_time=start,
+                end_time=end,
+                filters=filters,
+            ),
+            SPAN_READ_BUDGET_S,
+        )
+    except (TimeoutError, httpx.TimeoutException) as exc:
+        raise failure_response(
+            504,
+            "telemetry_slow",
+            f"The telemetry store did not return {what} of tenant {tenant_id} "
+            f"within {SPAN_READ_BUDGET_S:g} s. It is slow, not empty; retry "
+            "shortly.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    except Exception as exc:
         raise failure_response(
             502,
             "telemetry_unavailable",
@@ -259,19 +434,25 @@ def _text(value: Any) -> Optional[str]:
 )
 async def profile_selection(tenant_id: str, lookback_hours: int = Lookback):
     """Per-modality count, latency and success rate of the tenant's profile
-    selections in the last ``lookback_hours``."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    selections in the last ``lookback_hours``, the project they are read
+    from, and how many selection spans the window holds (spans without a
+    modality are counted there but not in ``modalities``)."""
+    tenant_id = canonical_tenant_or_400(tenant_id)
     spans = await _window_spans(
         tenant_id, lookback_hours, span_name=SPAN_NAME_PROFILE_SELECTION
     )
-    return ProfileSelectionMetrics(modalities=profile_selection_metrics(spans))
+    return ProfileSelectionMetrics(
+        project=_project(tenant_id),
+        spans=len(spans),
+        modalities=profile_selection_metrics(spans),
+    )
 
 
 @router.get("/{tenant_id}/telemetry/rlm-ab", response_model=RlmAbComparison)
-async def rlm_ab(tenant_id: str, lookback_hours: int = Lookback):
+async def rlm_ab(tenant_id: str, lookback_hours: float = Query(24, ge=0.1, le=24 * 30)):
     """The tenant's RLM A/B comparisons in the last ``lookback_hours``:
     averages, per queries dataset, and each compared row newest first."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     spans = await _window_spans(
         tenant_id, lookback_hours, span_name=AB_COMPARE_SPAN_NAME
     )
@@ -314,25 +495,32 @@ async def rlm_ab(tenant_id: str, lookback_hours: int = Lookback):
 async def traces(
     tenant_id: str,
     lookback_hours: int = Lookback,
+    start: Optional[datetime] = WindowStart,
+    end: Optional[datetime] = WindowEnd,
     operation: str = "",
     profile: List[str] = Query([]),
     strategy: List[str] = Query([]),
 ):
-    """The tenant's traces (root spans) in the last ``lookback_hours``,
-    newest first, with their statistics.
+    """The tenant's traces (root spans) in the last ``lookback_hours`` (or
+    from ``start`` to ``end``), newest first, with their statistics.
 
-    ``operation`` keeps traces whose name contains it (any case); ``profile``
-    and ``strategy`` keep traces with one of the given values. ``facets``
-    lists the values present in the whole window.
+    ``operation`` is a regular expression (any case) a trace's name must
+    match somewhere; ``profile`` and ``strategy`` keep traces with one of the
+    given values. ``facets`` lists the values present in the whole window.
     """
-    tenant_id = canonical_tenant_id(tenant_id)
-    rows = trace_rows(await _window_spans(tenant_id, lookback_hours, roots_only=True))
+    tenant_id = canonical_tenant_or_400(tenant_id)
+    pattern = _operation_pattern(operation)
+    rows = trace_rows(
+        await _window_spans(
+            tenant_id, lookback_hours, roots_only=True, start=start, end=end
+        )
+    )
     facets = TraceFacets(
         operations=sorted({row["operation"] for row in rows}),
         profiles=sorted({row["profile"] for row in rows if row["profile"]}),
         strategies=sorted({row["strategy"] for row in rows if row["strategy"]}),
     )
-    kept = _filtered(rows, operation, profile, strategy)
+    kept = _filtered(rows, pattern, profile, strategy)
     return TraceAnalytics(
         facets=facets,
         statistics=TraceStatistics(**trace_statistics(kept)),
@@ -340,16 +528,32 @@ async def traces(
     )
 
 
+def _operation_pattern(operation: str) -> re.Pattern:
+    """``operation`` compiled as a case-insensitive regular expression.
+
+    Raises:
+        HTTPException 422: it is not a valid regular expression.
+    """
+    try:
+        return re.compile(operation, re.IGNORECASE)
+    except re.error as exc:
+        raise HTTPException(
+            422, f"operation is not a valid regular expression: {exc}"
+        ) from exc
+
+
 def _filtered(
-    rows: List[Dict[str, Any]], operation: str, profile: List[str], strategy: List[str]
+    rows: List[Dict[str, Any]],
+    operation: re.Pattern,
+    profile: List[str],
+    strategy: List[str],
 ) -> List[Dict[str, Any]]:
-    """Rows whose operation contains ``operation`` (any case) and whose
-    profile and strategy are among the given ones, when any are given."""
-    needle = operation.casefold()
+    """Rows whose operation matches ``operation`` and whose profile and
+    strategy are among the given ones, when any are given."""
     return [
         row
         for row in rows
-        if needle in row["operation"].casefold()
+        if operation.search(row["operation"])
         and (not profile or row["profile"] in profile)
         and (not strategy or row["strategy"] in strategy)
     ]
@@ -408,6 +612,85 @@ def root_cause_analysis(
             )
             for item in analysis["recommendations"]
         ],
+        failure_analysis=_failure_analysis(analysis["failure_analysis"]),
+        performance_analysis=_performance_analysis(analysis["performance_analysis"]),
+    )
+
+
+def _tallies(counter: Counter) -> List[Tally]:
+    return [
+        Tally(value=str(value), count=count) for value, count in counter.most_common()
+    ]
+
+
+def _failure_analysis(found: Dict[str, Any]) -> Optional[FailureAnalysis]:
+    """The analyzer's failure patterns; ``None`` when nothing failed."""
+    if not found:
+        return None
+    temporal = found["temporal_patterns"]
+    return FailureAnalysis(
+        error_types=_tallies(found["error_types"]),
+        operations=_tallies(found["failed_operations"]),
+        profiles=_tallies(found["failed_profiles"]),
+        strategies=_tallies(found["failed_strategies"]),
+        hours=sorted(
+            (
+                HourlyFailures(
+                    hour=item["hour"],
+                    requests=item["total_requests"],
+                    failed=item["failed_requests"],
+                    failure_rate=float(item["failure_rate"]),
+                )
+                for item in temporal
+                if item["type"] == "hourly"
+            ),
+            key=lambda item: item.hour,
+        ),
+        bursts=[
+            FailureBurst(
+                start_time=item["start_time"],
+                end_time=item["end_time"],
+                failures=item["failure_count"],
+                duration_minutes=float(item["duration_minutes"]),
+                trace_ids=list(item["trace_ids"]),
+            )
+            for item in temporal
+            if item["type"] == "burst"
+        ],
+    )
+
+
+def _performance_analysis(found: Dict[str, Any]) -> Optional[PerformanceAnalysis]:
+    """The analyzer's slow-trace patterns; ``None`` when no trace was slow."""
+    if not found:
+        return None
+    latency = found["latency_distribution"]
+    return PerformanceAnalysis(
+        percentile=int(found["threshold_percentile"]),
+        threshold_ms=float(found["threshold"]),
+        operations=sorted(
+            (
+                SlowOperation(
+                    operation=operation,
+                    count=int(stats["count"]),
+                    mean_ms=float(stats["avg_duration"]),
+                    min_ms=float(stats["min_duration"]),
+                    max_ms=float(stats["max_duration"]),
+                    sample_ms=[float(value) for value in stats["durations"]],
+                )
+                for operation, stats in found["slow_operations"].items()
+            ),
+            key=lambda item: (-item.count, item.operation),
+        ),
+        profiles=_tallies(found["slow_profiles"]),
+        strategies=_tallies(found["slow_strategies"]),
+        latency=LatencyShift(
+            slow_mean_ms=float(latency["slow_mean"]),
+            slow_std_ms=float(latency["slow_std"]),
+            normal_mean_ms=float(latency["normal_mean"]),
+            normal_std_ms=float(latency["normal_std"]),
+            slowdown_factor=float(latency["slowdown_factor"]),
+        ),
     )
 
 
@@ -415,6 +698,8 @@ def root_cause_analysis(
 async def root_causes(
     tenant_id: str,
     lookback_hours: int = Lookback,
+    start: Optional[datetime] = WindowStart,
+    end: Optional[datetime] = WindowEnd,
     operation: str = "",
     profile: List[str] = Query([]),
     strategy: List[str] = Query([]),
@@ -422,16 +707,51 @@ async def root_causes(
     slow_percentile: int = Query(95, ge=50, le=99),
 ):
     """Root-cause hypotheses for the failed (and slow) traces among the
-    tenant's traces in the last ``lookback_hours``, filtered as
-    ``/telemetry/traces`` filters them."""
-    tenant_id = canonical_tenant_id(tenant_id)
-    rows = trace_rows(await _window_spans(tenant_id, lookback_hours, roots_only=True))
-    kept = _filtered(rows, operation, profile, strategy)
+    tenant's traces in the window, filtered as ``/telemetry/traces`` filters
+    them."""
+    tenant_id = canonical_tenant_or_400(tenant_id)
+    pattern = _operation_pattern(operation)
+    rows = trace_rows(
+        await _window_spans(
+            tenant_id, lookback_hours, roots_only=True, start=start, end=end
+        )
+    )
+    kept = _filtered(rows, pattern, profile, strategy)
     return await asyncio.to_thread(
         root_cause_analysis,
         kept,
         include_slow=include_slow,
         slow_percentile=slow_percentile,
+    )
+
+
+@router.get("/{tenant_id}/telemetry/phoenix", response_model=PhoenixLinks)
+async def phoenix_links(tenant_id: str):
+    """Where a browser opens the tenant's traces in Phoenix: the Phoenix UI
+    address (``PHOENIX_UI_URL``) and the tenant's project
+    page there. Either is ``null`` when the address is not set or Phoenix
+    has no project for the tenant yet."""
+    tenant_id = canonical_tenant_or_400(tenant_id)
+    manager = get_telemetry_manager()
+    project = manager.config.get_project_name(tenant_id)
+    ui_url = phoenix_ui_url()
+    if ui_url is None:
+        return PhoenixLinks(phoenix_url=None, project=project, project_url=None)
+    try:
+        provider = manager.get_provider(tenant_id=tenant_id, project_name=project)
+        project_id = await provider.project_id(project)
+    except Exception as exc:
+        raise failure_response(
+            502,
+            "telemetry_unavailable",
+            f"Could not read the Phoenix project of tenant {tenant_id}.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    return PhoenixLinks(
+        phoenix_url=ui_url,
+        project=project,
+        project_url=f"{ui_url}/projects/{project_id}" if project_id else None,
     )
 
 
@@ -485,7 +805,95 @@ async def golden_evaluation(
     """The tenant's searches of its golden queries in the last
     ``lookback_hours``, scored against its golden set: per profile and
     strategy, and per query for the latest search of each."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     golden_rows = await _golden_rows(tenant_id)
     spans = await _window_spans(tenant_id, lookback_hours, span_name=SEARCH_SPAN_NAME)
     return GoldenEvaluation(**score_recorded_searches(spans, golden_rows))
+
+
+def _dataset(summary: DatasetSummary) -> EvaluationDataset:
+    return EvaluationDataset(
+        id=summary.id,
+        name=summary.name,
+        example_count=summary.example_count,
+        created_at=summary.created_at.isoformat(),
+        description=summary.description,
+    )
+
+
+async def _tenant_datasets(tenant_id: str) -> Tuple[Any, List[DatasetSummary]]:
+    """The tenant's telemetry provider and the evaluation datasets it owns,
+    newest first: every dataset it owns but its optimization artifacts."""
+    try:
+        provider = get_telemetry_manager().get_provider(tenant_id=tenant_id)
+    except Exception as exc:
+        raise failure_response(
+            503,
+            "telemetry_unconfigured",
+            f"No telemetry provider could be built for tenant {tenant_id}, so "
+            "its datasets cannot be listed; the runtime log names the cause.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    try:
+        summaries = await provider.datasets.describe_datasets()
+    except Exception as exc:
+        raise failure_response(
+            502,
+            "dataset_store_unavailable",
+            f"Could not list the datasets of tenant {tenant_id}.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    return provider, [
+        s
+        for s in summaries
+        if s.tenant_id == tenant_id and not is_artifact_dataset(s.name, tenant_id)
+    ]
+
+
+@router.get("/{tenant_id}/evaluation/datasets", response_model=EvaluationDatasets)
+async def evaluation_datasets(tenant_id: str):
+    """The evaluation datasets the tenant owns, newest first, and the
+    address of the telemetry store's UI (``PHOENIX_UI_URL``; null when the
+    runtime is not given one)."""
+    tenant_id = canonical_tenant_or_400(tenant_id)
+    _, owned = await _tenant_datasets(tenant_id)
+    return EvaluationDatasets(
+        phoenix_url=phoenix_ui_url(),
+        datasets=[_dataset(summary) for summary in owned],
+    )
+
+
+@router.get("/{tenant_id}/evaluation/dataset", response_model=DatasetEvaluation)
+async def dataset_evaluation(
+    tenant_id: str,
+    dataset_id: str,
+    lookback_hours: int = Query(168, ge=1, le=24 * 90),
+):
+    """The tenant's searches of the queries of its dataset ``dataset_id`` in
+    the last ``lookback_hours``, scored against the dataset's expected
+    sources as ``/evaluation/golden`` scores them against the golden set."""
+    tenant_id = canonical_tenant_or_400(tenant_id)
+    provider, owned = await _tenant_datasets(tenant_id)
+    summary = next((d for d in owned if d.id == dataset_id), None)
+    if summary is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tenant {tenant_id} has no dataset {dataset_id}.",
+        )
+    try:
+        examples = await provider.datasets.get_dataset(summary.name)
+    except Exception as exc:
+        raise failure_response(
+            502,
+            "dataset_store_unavailable",
+            f"Could not read dataset {summary.name} of tenant {tenant_id}.",
+            exc,
+            tenant_id=tenant_id,
+        ) from exc
+    rows = dataset_golden_rows(examples)
+    spans = await _window_spans(tenant_id, lookback_hours, span_name=SEARCH_SPAN_NAME)
+    return DatasetEvaluation(
+        dataset=_dataset(summary), **score_recorded_searches(spans, rows)
+    )

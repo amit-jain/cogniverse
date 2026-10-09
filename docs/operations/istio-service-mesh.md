@@ -364,7 +364,7 @@ kubectl get pods -n default
 # Expected output (with Helm release name "cogniverse"):
 # NAME                                    READY   STATUS    RESTARTS   AGE
 # cogniverse-runtime-xxxxx-xxxxx          2/2     Running   0          1m
-# cogniverse-dashboard-xxxxx-xxxxx        2/2     Running   0          1m
+# cogniverse-web-xxxxx-xxxxx              2/2     Running   0          1m
 # cogniverse-vespa-0                      2/2     Running   0          1m
 # cogniverse-phoenix-0                    2/2     Running   0          1m
 # cogniverse-llm-0                        2/2     Running   0          1m
@@ -372,7 +372,7 @@ kubectl get pods -n default
 
 **Explanation of 2/2 READY:**
 
-- Container 1: Application (runtime, dashboard, etc.)
+- Container 1: Application (runtime, web, etc.)
 
 - Container 2: Envoy proxy sidecar (injected by Istio)
 
@@ -624,17 +624,6 @@ spec:
         host: cogniverse-runtime
         port:
           number: 8000
-      weight: 100
-
-  # Route /dashboard to dashboard service
-  - match:
-    - uri:
-        prefix: /dashboard
-    route:
-    - destination:
-        host: cogniverse-dashboard
-        port:
-          number: 8501
       weight: 100
 
   # Canary deployment example (10% traffic to new version)

@@ -24,6 +24,7 @@ from cogniverse_foundation.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
 )
+from tests.utils.memory_store import serve_every_shipped_profile
 from tests.utils.recorded_endpoints import RECORDED_REFUSAL, recorded_completion_lm
 
 
@@ -44,6 +45,11 @@ def _make_mock_config_manager() -> Mock:
         side_effect=lambda tenant_id=None, service="gateway_agent": (
             RoutingConfigUnified(tenant_id=tenant_id)
         )
+    )
+    # The tenants these tests plan for serve every shipped profile, so the
+    # planner is offered every registered agent.
+    serve_every_shipped_profile(
+        cm, ("test:unit", "acme_corp:acme_corp"), "http://127.0.0.1:29071"
     )
     return cm
 

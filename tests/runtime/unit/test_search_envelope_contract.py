@@ -124,7 +124,7 @@ class TestTheSearchEnvelopeReportsTheRewriteUnderItsOwnKey:
         with (
             dspy.context(lm=DummyLM([dict(_REWRITE_FIELDS)])),
             patch(
-                "cogniverse_agents.search_agent._current_span_id",
+                "cogniverse_agents.search_agent.current_span_id",
                 return_value=_SEARCH_SPAN_ID,
             ),
         ):
@@ -139,7 +139,7 @@ class TestTheSearchEnvelopeReportsTheRewriteUnderItsOwnKey:
         }
         assert response["status"] == "success"
         assert response["agent"] == "search_agent"
-        assert response["message"] == f"Found 1 results for '{_REWRITTEN_QUERY}'"
+        assert response["message"] == f"Found 1 results for '{_ORIGINAL_QUERY}'"
         assert response["results"] == [_HIT]
         assert response["results_count"] == 1
         assert response["profile"] == _SHIPPED_ACTIVE_PROFILE
@@ -181,7 +181,7 @@ class TestTheSearchEnvelopeReportsTheRewriteUnderItsOwnKey:
             "enhanced_query": _REWRITTEN_QUERY,
             "degraded": None,
         }
-        assert response["message"] == f"No results found for '{_REWRITTEN_QUERY}'"
+        assert response["message"] == f"No results found for '{_ORIGINAL_QUERY}'"
         assert response["results_count"] == 0
 
 
@@ -247,4 +247,4 @@ class TestTheGatewayResponseDoesNotSpreadTheRewrite:
             "gliner_threshold": routed.gliner_threshold,
         }
         assert final["results"] == [_HIT]
-        assert final["message"] == f"Found 1 results for '{_REWRITTEN_QUERY}'"
+        assert final["message"] == f"Found 1 results for '{_ORIGINAL_QUERY}'"

@@ -1,14 +1,19 @@
-export type Route = { kind: 'agent'; name?: string } | { kind: 'ops'; id: string };
+export type Route = { kind: 'agent'; name?: string; thread?: string } | { kind: 'ops'; id: string };
 
-/** ``#/agents/search_agent`` or ``#/ops/tenants``; anything else is the agent default. */
+/**
+ * ``#/agents/search_agent/<thread>``, ``#/agents/search_agent`` or
+ * ``#/ops/tenants``; anything else is the agent default.
+ */
 export function parseRoute(hash: string): Route {
-  const [section, id] = hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
+  const [section, id, thread] = hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   if (section === 'ops' && id) return { kind: 'ops', id };
-  if (section === 'agents' && id) return { kind: 'agent', name: id };
+  if (section === 'agents' && id) return thread ? { kind: 'agent', name: id, thread } : { kind: 'agent', name: id };
   return { kind: 'agent' };
 }
 
 export function routeHash(route: Route): string {
   if (route.kind === 'ops') return `#/ops/${encodeURIComponent(route.id)}`;
-  return route.name ? `#/agents/${encodeURIComponent(route.name)}` : '#/';
+  if (!route.name) return '#/';
+  const agent = `#/agents/${encodeURIComponent(route.name)}`;
+  return route.thread ? `${agent}/${encodeURIComponent(route.thread)}` : agent;
 }

@@ -178,7 +178,13 @@ def _deploy_profile_for_tenant(
         json=profile_create_payload(profile_name, profile_def, tenant_id),
         timeout=TENANT_DEPLOY_TIMEOUT_S,
     )
-    assert resp.status_code in (200, 201, 409), resp.text
+    # The create refuses a profile the tenant already holds with 400 and
+    # exactly this error, so a second deploy of the same profile proceeds.
+    already_held = resp.status_code == 400 and resp.json().get("detail") == {
+        "message": "Profile validation failed",
+        "errors": [f"Profile '{profile_name}' already exists for tenant '{tenant_id}'"],
+    }
+    assert resp.status_code in (200, 201) or already_held, resp.text
 
     resp = client.post(
         f"/admin/profiles/{profile_name}/deploy",
@@ -2317,10 +2323,14 @@ def _assert_synthetic_metadata_fields(
     assert isinstance(sampled_content, list), (
         f"metadata has no sampled_content block: {metadata}"
     )
+    # The generation's wall-clock time varies by run; it is a positive number
+    # of milliseconds.
+    generation_time_ms = metadata.get("generation_time_ms")
+    assert isinstance(generation_time_ms, float) and generation_time_ms > 0, metadata
     assert {
         key: value
         for key, value in metadata.items()
-        if key not in {"generation", "sampled_content"}
+        if key not in {"generation", "sampled_content", "generation_time_ms"}
     } == {
         "backend_query_strategy": backend_query_strategy,
         "sampled_content_count": sampled_content_count,

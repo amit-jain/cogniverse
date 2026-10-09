@@ -139,13 +139,6 @@ cogniverse/
 │   │       ├── ingestion/      # Data ingestion
 │   │       ├── ingestion_worker/ # Redis-Streams ingestion worker
 │   │       └── routers/        # API routers
-│   ├── dashboard/         # cogniverse_dashboard
-│   │   ├── pyproject.toml
-│   │   ├── README.md
-│   │   └── cogniverse_dashboard/
-│   │       ├── app.py          # Main Streamlit app
-│   │       ├── tabs/           # Dashboard tabs
-│   │       └── utils/          # Utility functions
 │   ├── cli/               # cogniverse_cli (standalone, no cogniverse deps)
 │   │   ├── pyproject.toml
 │   │   └── cogniverse_cli/
@@ -170,7 +163,6 @@ cogniverse/
 │   ├── cli/
 │   ├── common/
 │   ├── core/
-│   ├── dashboard/
 │   ├── e2e/
 │   ├── evaluation/
 │   ├── events/
@@ -213,7 +205,6 @@ flowchart TB
 
     subgraph Application["<span style='color:#000'>APPLICATION LAYER</span>"]
         Runtime["<span style='color:#000'>cogniverse_runtime<br/>FastAPI server</span>"]
-        Dashboard["<span style='color:#000'>cogniverse_dashboard<br/>Streamlit UI</span>"]
         CLI["<span style='color:#000'>cogniverse_cli<br/>Click CLI (no cogniverse deps)</span>"]
         Messaging["<span style='color:#000'>cogniverse_messaging<br/>Telegram gateway (no cogniverse deps)</span>"]
     end
@@ -246,12 +237,6 @@ flowchart TB
     Runtime --> Synthetic
     Runtime -.-> Agents
     Runtime -.-> Vespa
-    Dashboard --> SDK
-    Dashboard --> CorePkg
-    Dashboard --> Evaluation
-    Dashboard --> Agents
-    Dashboard --> Vespa
-    Dashboard --> TelemetryPhoenix
 
     style SDK fill:#a5d6a7,stroke:#388e3c,color:#000
     style FoundationPkg fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -263,7 +248,6 @@ flowchart TB
     style Synthetic fill:#ffcc80,stroke:#ef6c00,color:#000
     style Finetuning fill:#ffcc80,stroke:#ef6c00,color:#000
     style Runtime fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
     style CLI fill:#90caf9,stroke:#1565c0,color:#000
     style Messaging fill:#90caf9,stroke:#1565c0,color:#000
 ```
@@ -298,8 +282,6 @@ flowchart TB
 
 - `cogniverse_runtime`: Depends on `sdk`, `core`, `synthetic` (optional: `agents`, `vespa`)
 
-- `cogniverse_dashboard`: Depends on `sdk`, `core`, `evaluation`, `agents`, `vespa`, `telemetry_phoenix`
-
 - `cogniverse_cli`: Standalone Click CLI — no dependencies on other Cogniverse packages (talks to the runtime over HTTP)
 
 - `cogniverse_messaging`: Standalone Telegram gateway — no dependencies on other Cogniverse packages (talks to the runtime over HTTP)
@@ -324,7 +306,7 @@ uv sync
 
 # Verify installation
 uv pip list | grep cogniverse
-# Expected (13 packages in dependency order):
+# Expected (12 packages in dependency order):
 # cogniverse-sdk                   0.1.0
 # cogniverse-foundation            0.1.0
 # cogniverse-evaluation            0.1.0
@@ -335,7 +317,6 @@ uv pip list | grep cogniverse
 # cogniverse-synthetic             0.1.0
 # cogniverse-finetuning            0.1.0
 # cogniverse-runtime               0.1.0
-# cogniverse-dashboard             0.1.0
 # cogniverse-cli                   0.1.0
 # cogniverse-messaging             0.1.0
 ```
@@ -470,8 +451,8 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --backend vespa \
   --tenant-id acme_corp
 
-# Run dashboard
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
+# Open the web client (deployed by `cogniverse up`)
+open http://localhost:28400
 
 # Run experiments
 uv run python scripts/run_experiments_with_visualization.py \
@@ -613,7 +594,7 @@ uv sync
 
 **Understanding uv.lock:**
 ```bash
-# View lockfile (contains exact versions for all 13 packages + dependencies)
+# View lockfile (contains exact versions for all 12 packages + dependencies)
 cat uv.lock
 
 # Regenerate lockfile (after pyproject.toml changes)
@@ -653,7 +634,7 @@ uv add --upgrade pydantic
 
 **Build All Packages (in dependency order):**
 ```bash
-# Build all 13 SDK packages for distribution (order matters!)
+# Build all 12 SDK packages for distribution (order matters!)
 # Foundation layer first
 for dir in libs/sdk libs/foundation; do
   echo "Building $(basename $dir)..."
@@ -673,7 +654,7 @@ for dir in libs/telemetry-phoenix libs/agents libs/vespa libs/synthetic libs/fin
 done
 
 # Application layer (cli and messaging have no cogniverse deps, build anytime)
-for dir in libs/runtime libs/dashboard libs/cli libs/messaging; do
+for dir in libs/runtime libs/cli libs/messaging; do
   echo "Building $(basename $dir)..."
   (cd "$dir" && uv build)
 done
@@ -683,7 +664,7 @@ done
 # cogniverse_sdk-0.1.0.tar.gz
 # cogniverse_foundation-0.1.0-py3-none-any.whl
 # cogniverse_foundation-0.1.0.tar.gz
-# ... (all 13 packages)
+# ... (all 12 packages)
 ```
 
 **Build Individual Package:**
@@ -740,7 +721,6 @@ pip install dist/cogniverse_finetuning-0.1.0-py3-none-any.whl
 
 # Application layer
 pip install dist/cogniverse_runtime-0.1.0-py3-none-any.whl
-pip install dist/cogniverse_dashboard-0.1.0-py3-none-any.whl
 
 # INCORRECT: May fail due to missing dependencies
 pip install dist/cogniverse_runtime-0.1.0-py3-none-any.whl  # Needs all lower layers
@@ -792,7 +772,6 @@ from cogniverse_agents.gateway_agent import GatewayAgent
 
 # Test application layer
 import cogniverse_runtime
-import cogniverse_dashboard
 import cogniverse_cli
 import cogniverse_messaging
 
@@ -802,7 +781,7 @@ from importlib.metadata import version
 assert version("cogniverse-sdk") == "0.1.0"
 assert version("cogniverse-foundation") == "0.1.0"
 assert version("cogniverse-core") == "0.1.0"
-# ... verify all 13 packages
+# ... verify all 12 packages
 
 # Test basic functionality
 config = SystemConfig()
@@ -812,7 +791,7 @@ assert config.search_backend == "vespa"
 telemetry = TelemetryManager(config=TelemetryConfig())
 assert telemetry is not None
 
-print("✅ All 13 packages installed and verified")
+print("✅ All 12 packages installed and verified")
 ```
 
 ---
@@ -1128,7 +1107,6 @@ uv publish
 cd ../vespa && uv publish
 cd ../agents && uv publish
 cd ../runtime && uv publish
-cd ../dashboard && uv publish
 ```
 
 ### Version Compatibility Matrix (Key Packages)
@@ -1145,13 +1123,11 @@ cd ../dashboard && uv publish
 | cogniverse-synthetic | 0.2.0 | >=0.2.0    | >=0.2.0             | >=0.2.0       | -                   | -                 | -              | -                |
 | cogniverse-finetuning | 0.2.0 | >=0.2.0   | >=0.2.0             | >=0.2.0       | -                   | >=0.2.0           | >=0.2.0        | -                |
 | cogniverse-runtime | 0.2.0 | >=0.2.0     | -                   | >=0.2.0       | -                   | >=0.2.0           | -              | -                |
-| cogniverse-dashboard | 0.2.0 | >=0.2.0   | -                   | >=0.2.0       | >=0.2.0             | -                 | >=0.2.0        | -                |
 
 Note: This shows required dependencies only (columns cover the packages most
 often bumped together; cli and messaging are omitted because they carry no
 cogniverse-* dependencies at any version). Runtime has optional dependencies
-on agents and vespa. Dashboard also requires vespa and telemetry-phoenix
-(not shown as columns here) in addition to agents.
+on agents and vespa.
 
 ---
 
@@ -1411,7 +1387,7 @@ This guide covers comprehensive UV workspace package development with layered ar
 3. **Dependency Management**: Layer-specific dependencies and workspace-level dependencies
 4. **Building**: Distribution packages with wheels and source distributions in dependency order
 5. **Testing**: Per-layer and integration testing strategies
-6. **Versioning**: Semantic versioning and release process for all 13 packages
+6. **Versioning**: Semantic versioning and release process for all 12 packages
 7. **Best Practices**: Layer organization, imports, documentation, CI/CD
 
 **Key Principles for Layered Architecture:**
@@ -1422,7 +1398,7 @@ This guide covers comprehensive UV workspace package development with layered ar
 
 - **Implementation Layer** (telemetry-phoenix, agents, vespa, synthetic, finetuning): Depends on core and/or foundation
 
-- **Application Layer** (runtime, dashboard): Depends on lower layers as needed
+- **Application Layer** (runtime): Depends on lower layers as needed
 
 - Use `uv sync` for workspace-wide changes across all layers
 

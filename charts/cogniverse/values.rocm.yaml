@@ -232,9 +232,6 @@ runtime:
   backend: rocm
   tunableOp: true
 
-dashboard:
-  backend: rocm
-
 llm:
   engine: vllm
   model: google/gemma-4-e4b-it

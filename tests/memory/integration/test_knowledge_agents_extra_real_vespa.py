@@ -19,8 +19,8 @@ against real Mem0 + Vespa. This file fills in:
 
 The DSPy LLM modules are stubbed where each agent uses one — these
 tests assert the persistence + traversal wires, not the LLM synthesis
-quality (which is already covered in the agent unit tests and dashboard
-A/B suites).
+quality (which is already covered in the agent unit tests and A/B
+suites).
 """
 
 from __future__ import annotations

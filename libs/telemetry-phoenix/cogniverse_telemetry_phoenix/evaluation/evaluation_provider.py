@@ -466,7 +466,7 @@ class PhoenixEvaluationProvider(EvaluationProvider):
                 asyncio.get_running_loop()
             except RuntimeError:
                 # No running loop — caller is sync. Run to completion so a
-                # write failure raises to the caller (the dashboard shows it)
+                # write failure raises to the caller (the UI shows it)
                 # instead of reporting success for an unpersisted evaluation.
                 asyncio.run(add_annotation())
             else:

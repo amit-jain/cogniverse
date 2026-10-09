@@ -7,13 +7,16 @@ the endpoint reports for the model it serves, derives that remainder, and
 fits the assembled messages into it by dropping whole few-shot
 demonstrations. A request that still overflows with no demonstrations left
 raises with the window, the reservation, the measured input and the number
-of demonstrations dropped.
+of demonstrations dropped. ``fitting_demonstrations`` sizes a compiled
+program's demonstrations to the window before the program is sent at all.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Sequence
 
@@ -30,6 +33,7 @@ Messages = list[dict[str, Any]]
 TokenCounter = Callable[[Messages], int]
 
 CONTEXT_WINDOW_TIMEOUT_SECONDS = 5.0
+TOKENIZE_TIMEOUT_SECONDS = 30.0
 
 # A window is a property of a deployment, so it is read once per
 # (endpoint, model) and held for the process. Ingestion builds a fresh LM per
@@ -48,6 +52,10 @@ def clear_context_window_memo() -> None:
 
 class ContextWindowUnavailableError(RuntimeError):
     """The endpoint does not report a context window for the model it serves."""
+
+
+class TokenCountUnavailableError(RuntimeError):
+    """The endpoint cannot count a request with the tokenizer it serves."""
 
 
 class PromptBudgetExceededError(RuntimeError):
@@ -199,6 +207,76 @@ def litellm_message_counter(model: str) -> TokenCounter:
     return count
 
 
+def served_message_counter(
+    api_base: str,
+    model: str,
+    *,
+    retries: int = 1,
+    timeout_seconds: float = TOKENIZE_TIMEOUT_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> TokenCounter:
+    """Count chat messages with the tokenizer and chat template ``model`` is
+    served with, through the endpoint's ``POST /tokenize``.
+
+    litellm counts a model it has no tokenizer for with OpenAI's
+    ``cl100k_base``. For the gemma student that undercounts transcript text
+    by about a quarter, so a request sized to the window by litellm's count is
+    refused. vLLM's ``/tokenize`` renders the messages with the served chat
+    template and counts them with the served tokenizer: its ``count`` is the
+    ``prompt_tokens`` the completion reports. A count is idempotent and a
+    fitting pass asks hundreds, so an unreachable endpoint or a 5xx answer is
+    asked again up to ``retries`` times, after 1 s, 2 s, 4 s ... (the
+    endpoint's ``num_retries``, as its LM calls are retried). Raises
+    ``TokenCountUnavailableError`` when the endpoint still cannot answer, or
+    answers 4xx or without an integer count; a count by another tokenizer is
+    the defect this counter exists to close.
+    """
+
+    from cogniverse_foundation.dspy.model_format import bare_model_name
+
+    root = endpoint_root(api_base)
+    url = f"{root}/tokenize"
+    served = bare_model_name(model)
+    unavailable = (
+        f"so the request cannot be counted with the tokenizer {model} is served with"
+    )
+    http = httpx.Client(headers=dict(inference_headers(root)), timeout=timeout_seconds)
+
+    def ask(messages: Messages) -> httpx.Response:
+        attempt = 0
+        while True:
+            try:
+                response = http.post(url, json={"model": served, "messages": messages})
+            except httpx.HTTPError as exc:
+                if attempt == retries:
+                    raise TokenCountUnavailableError(
+                        f"{url} is unreachable, {unavailable}"
+                    ) from exc
+            else:
+                if response.status_code < 500 or attempt == retries:
+                    return response
+            attempt += 1
+            sleep(float(2 ** (attempt - 1)))
+
+    def count(messages: Messages) -> int:
+        response = ask(messages)
+        if response.status_code != 200:
+            raise TokenCountUnavailableError(
+                f"{url} answered HTTP {response.status_code}, {unavailable}"
+            )
+        try:
+            tokens = response.json().get("count")
+        except (ValueError, AttributeError):
+            tokens = None
+        if isinstance(tokens, bool) or not isinstance(tokens, int):
+            raise TokenCountUnavailableError(
+                f"{url} answered without an integer count, {unavailable}"
+            )
+        return tokens
+
+    return count
+
+
 def extract_context_window(body: Any) -> int | None:
     """The ``max_model_len`` an OpenAI-compatible ``/v1/models`` body reports."""
 
@@ -336,3 +414,47 @@ def _read_context_window(
         served,
     )
     return ResolvedContextWindow(tokens=served, source="served")
+
+
+def fitting_demonstrations(
+    demos: Sequence[Any],
+    *,
+    budget: TokenBudget,
+    render: Callable[[Sequence[Any], Any], Messages],
+    count_tokens: TokenCounter,
+    calls: Sequence[Any],
+) -> int:
+    """How many of ``demos``, kept from the front, fit ``budget`` in every
+    one of ``calls``.
+
+    ``render(demos, call)`` assembles the chat request ``call`` sends with
+    those demonstrations. A longer prefix never costs fewer tokens, so the
+    prefix only shrinks: each call is counted once at the longest prefix every
+    earlier call fit, and a call that overflows it bisects below it. Calls
+    are taken longest request first, so the prefix usually settles on the
+    first. Zero when a call overflows with no demonstrations: none is then the
+    only prefix that can be sent.
+    """
+
+    if not calls:
+        raise ValueError("fitting demonstrations needs at least one call")
+    ranked = sorted(
+        calls, key=lambda call: -len(json.dumps(render([], call), default=str))
+    )
+
+    def fits(kept: int, call: Any) -> bool:
+        return count_tokens(render(demos[:kept], call)) <= budget.input_budget
+
+    longest = len(demos)
+    for call in ranked:
+        if fits(longest, call):
+            continue
+        low, high = 0, longest - 1
+        while low < high:
+            middle = (low + high + 1) // 2
+            if fits(middle, call):
+                low = middle
+            else:
+                high = middle - 1
+        longest = low
+    return longest

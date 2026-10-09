@@ -19,11 +19,14 @@ from cogniverse_foundation.config.token_budget import (
     PromptBudgetExceededError,
     ResolvedContextWindow,
     TokenBudget,
+    TokenCountUnavailableError,
     extract_context_window,
     fetch_context_window,
     fit_messages,
+    fitting_demonstrations,
     litellm_message_counter,
     resolve_context_window,
+    served_message_counter,
     split_demonstrations,
 )
 
@@ -211,6 +214,131 @@ class TestFitMessagesToTheServedWindow:
         assert exc.value.reserved_output == 2048
         assert exc.value.input_tokens == 2100
         assert exc.value.dropped_demos == 2
+
+
+@pytest.mark.unit
+class TestFittingDemonstrations:
+    """A compiled program keeps the longest prefix of its demonstrations that
+    fits the student's window with every input it will be called with."""
+
+    # The served student: gemma behind --max-model-len 8192 with the
+    # primary endpoint's max_tokens=1000 reservation.
+    BUDGET = TokenBudget(
+        model="openai/google/gemma-4-e4b-it",
+        context_window=8192,
+        reserved_output=1000,
+    )
+
+    @staticmethod
+    def _render(demos, call):
+        # A 300-word preamble, each demonstration as a user/assistant pair,
+        # then the live turn of ``call`` words.
+        return [
+            {"role": "system", "content": _words(300)},
+            *[
+                message
+                for size in demos
+                for message in (
+                    {"role": "user", "content": _words(size)},
+                    {"role": "assistant", "content": _words(50)},
+                )
+            ],
+            {"role": "user", "content": _words(call)},
+        ]
+
+    def test_demonstrations_are_kept_from_the_front_while_they_fit(self):
+        # 300 + 4 x (1500 + 50) + 200 = 6700 fits the 7192 input budget;
+        # five make 8250.
+        kept = fitting_demonstrations(
+            [1500] * 16,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=_count_words,
+            calls=[200],
+        )
+        assert kept == 4
+
+    def test_the_longest_call_decides(self):
+        # With a 2000-word live turn: 300 + 2 x 1550 + 2000 = 5400, three
+        # demonstrations 6950, four 8500 > 7192.
+        kept = fitting_demonstrations(
+            [1500] * 16,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=_count_words,
+            calls=[200, 2000, 50],
+        )
+        assert kept == 3
+
+    def test_every_demonstration_is_kept_when_all_fit(self):
+        kept = fitting_demonstrations(
+            [100] * 16,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=_count_words,
+            calls=[200],
+        )
+        assert kept == 16
+
+    def test_a_call_that_overflows_alone_keeps_no_demonstrations(self):
+        kept = fitting_demonstrations(
+            [10] * 4,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=_count_words,
+            calls=[200, 7000],
+        )
+        assert kept == 0
+
+    def test_no_calls_is_refused(self):
+        with pytest.raises(ValueError) as exc:
+            fitting_demonstrations(
+                [10],
+                budget=self.BUDGET,
+                render=self._render,
+                count_tokens=_count_words,
+                calls=[],
+            )
+        assert str(exc.value) == "fitting demonstrations needs at least one call"
+
+    def test_each_call_is_counted_once_when_every_demonstration_fits(self):
+        """A served counter pays a round-trip per count, so a prefix that
+        every call fits is confirmed with one count per call."""
+        counted = []
+
+        def count(messages):
+            counted.append(len(messages))
+            return _count_words(messages)
+
+        kept = fitting_demonstrations(
+            [100] * 16,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=count,
+            calls=list(range(10, 310)),
+        )
+        assert kept == 16
+        assert len(counted) == 300
+
+    def test_a_call_that_lowers_the_prefix_does_not_raise_it_for_later_calls(self):
+        # 300 + n x 1550 + call: the 2000-word call keeps three, the
+        # 200-word call alone would keep four.
+        counted = []
+
+        def count(messages):
+            counted.append(len(messages))
+            return _count_words(messages)
+
+        kept = fitting_demonstrations(
+            [1500] * 16,
+            budget=self.BUDGET,
+            render=self._render,
+            count_tokens=count,
+            calls=[200, 2000],
+        )
+        assert kept == 3
+        # 2000 first (longest request): 16, 8, 4, 2, 3 -> 3; then 200 at 3.
+        assert counted == [34, 18, 10, 6, 8, 8]
 
 
 @pytest.mark.unit
@@ -589,3 +717,193 @@ def _serve_openai(models_body: dict):
     received: dict = {}
     server, base_url = _start({"models_body": models_body, "received": received})
     return server, base_url, received
+
+
+class _TokenizeHandler(BaseHTTPRequestHandler):
+    """A ``POST /tokenize`` that counts one token per whitespace-separated
+    word of every message, plus four per message for the chat template."""
+
+    status: int = 200
+    body: dict | None = None
+    received: list = []
+    # Statuses answered before ``status``, one per request, in order.
+    failures: list = []
+
+    def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler contract
+        length = int(self.headers.get("Content-Length") or 0)
+        request = json.loads(self.rfile.read(length))
+        type(self).received.append((self.path, request))
+        if type(self).failures:
+            failed = type(self).failures.pop(0)
+            encoded = b"upstream unavailable"
+            self.send_response(failed)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+            return
+        payload = type(self).body
+        if payload is None:
+            count = sum(
+                4 + len(str(message["content"]).split())
+                for message in request["messages"]
+            )
+            payload = {"count": count, "max_model_len": 8192, "tokens": []}
+        encoded = json.dumps(payload).encode()
+        self.send_response(type(self).status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def log_message(self, *args):
+        return
+
+
+def _serve_tokenize(
+    status: int = 200, body: dict | None = None, failures: list | None = None
+):
+    received: list = []
+    handler = type(
+        "Handler",
+        (_TokenizeHandler,),
+        {
+            "status": status,
+            "body": body,
+            "received": received,
+            "failures": list(failures or []),
+        },
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}/v1", received
+
+
+@pytest.mark.unit
+class TestServedMessageCounter:
+    """The student is counted by the tokenizer and chat template it serves."""
+
+    MESSAGES = [
+        {"role": "system", "content": "Enhance the query."},
+        {"role": "user", "content": "servo torque at 1,250 rpm"},
+    ]
+
+    def test_counts_through_the_endpoint_s_tokenize_route(self):
+        server, api_base, received = _serve_tokenize()
+        try:
+            count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+            assert count(self.MESSAGES) == 4 + 3 + 4 + 5
+        finally:
+            server.shutdown()
+        assert received == [
+            (
+                "/tokenize",
+                {"model": "google/gemma-4-e4b-it", "messages": self.MESSAGES},
+            )
+        ]
+
+    def test_an_unreachable_endpoint_refuses_to_count(self):
+        server, api_base, _ = _serve_tokenize()
+        server.shutdown()
+        server.server_close()
+        count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+        with pytest.raises(TokenCountUnavailableError) as exc:
+            count(self.MESSAGES)
+        root = api_base.removesuffix("/v1")
+        assert str(exc.value) == (
+            f"{root}/tokenize is unreachable, so the request cannot be counted "
+            "with the tokenizer openai/google/gemma-4-e4b-it is served with"
+        )
+
+    def test_an_endpoint_without_the_route_refuses_to_count(self):
+        server, api_base, received = _serve_tokenize(
+            status=404, body={"detail": "Not Found"}
+        )
+        slept: list = []
+        try:
+            count = served_message_counter(
+                api_base, "openai/google/gemma-4-e4b-it", retries=1, sleep=slept.append
+            )
+            with pytest.raises(TokenCountUnavailableError) as exc:
+                count(self.MESSAGES)
+        finally:
+            server.shutdown()
+        # A missing route is not transient: it is asked once.
+        assert (len(received), slept) == (1, [])
+        root = api_base.removesuffix("/v1")
+        assert str(exc.value) == (
+            f"{root}/tokenize answered HTTP 404, so the request cannot be "
+            "counted with the tokenizer openai/google/gemma-4-e4b-it is served with"
+        )
+
+    def test_an_answer_without_a_count_refuses_to_count(self):
+        server, api_base, _ = _serve_tokenize(body={"tokens": [1, 2, 3]})
+        try:
+            count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+            with pytest.raises(TokenCountUnavailableError) as exc:
+                count(self.MESSAGES)
+        finally:
+            server.shutdown()
+        root = api_base.removesuffix("/v1")
+        assert str(exc.value) == (
+            f"{root}/tokenize answered without an integer count, so the request "
+            "cannot be counted with the tokenizer openai/google/gemma-4-e4b-it "
+            "is served with"
+        )
+
+    def test_a_transient_gateway_failure_is_retried(self):
+        """One count of hundreds meeting a 502 from the endpoint's gateway is
+        asked again after a pause, as the LM's own calls are."""
+        server, api_base, received = _serve_tokenize(failures=[502])
+        slept: list = []
+        try:
+            count = served_message_counter(
+                api_base, "openai/google/gemma-4-e4b-it", retries=1, sleep=slept.append
+            )
+            assert count(self.MESSAGES) == 4 + 3 + 4 + 5
+        finally:
+            server.shutdown()
+        assert (len(received), slept) == (2, [1.0])
+
+    def test_a_failure_that_outlasts_the_retries_refuses_to_count(self):
+        server, api_base, received = _serve_tokenize(failures=[503, 502, 502])
+        slept: list = []
+        try:
+            count = served_message_counter(
+                api_base, "openai/google/gemma-4-e4b-it", retries=2, sleep=slept.append
+            )
+            with pytest.raises(TokenCountUnavailableError) as exc:
+                count(self.MESSAGES)
+        finally:
+            server.shutdown()
+        assert (len(received), slept) == (3, [1.0, 2.0])
+        root = api_base.removesuffix("/v1")
+        assert str(exc.value) == (
+            f"{root}/tokenize answered HTTP 502, so the request cannot be "
+            "counted with the tokenizer openai/google/gemma-4-e4b-it is served with"
+        )
+
+    def test_concurrent_counts_each_get_their_own_request_s_count(self):
+        server, api_base, received = _serve_tokenize()
+        count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+        threads = 16
+        barrier = threading.Barrier(threads)
+        results: dict[int, int] = {}
+
+        def worker(index: int) -> None:
+            messages = [{"role": "user", "content": _words(index + 1)}]
+            barrier.wait()
+            results[index] = count(messages)
+
+        try:
+            pool = [
+                threading.Thread(target=worker, args=(index,))
+                for index in range(threads)
+            ]
+            for thread in pool:
+                thread.start()
+            for thread in pool:
+                thread.join()
+        finally:
+            server.shutdown()
+        assert results == {index: 4 + index + 1 for index in range(threads)}
+        assert len(received) == threads

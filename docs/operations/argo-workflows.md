@@ -250,12 +250,18 @@ argo submit -n cogniverse \
 # Full --mode choice list accepted by `cogniverse_runtime.optimization_cli`
 # (see libs/runtime/cogniverse_runtime/optimization_cli.py build_parser()):
 #   cleanup, triggered, simba, workflow, gateway-thresholds,
-#   online-routing-eval, profile, entity-extraction, synthetic,
-#   rollback, ab-compare, egress-netpol, monthly-reports
+#   online-routing-eval, profile, entity-extraction, synthetic, routing,
+#   unified, rollback, ab-compare, egress-netpol, monthly-reports
 #
 # The runtime's POST /admin/tenant/{id}/optimize endpoint only allows the
 # subset it considers safe for on-demand, per-tenant triggering:
-#   gateway-thresholds, simba, workflow, profile, entity-extraction
+#   gateway-thresholds, simba, workflow, profile, entity-extraction,
+#   llm-annotate, synthetic, routing, unified
+#
+# The synthetic, routing, workflow and unified modes take run options as
+# JSON in the template's `options` parameter (the CLI's --options), e.g.
+#   -p options='{"count":200,"strategy":"diverse","human_review":true}'
+#   -p options='{"max_iterations":50,"use_synthetic_data":false,"dataset_name":"golden-acme:acme"}'
 ```
 
 For on-demand optimization via the runtime API:
@@ -268,10 +274,14 @@ curl -X POST http://localhost:8000/admin/tenant/acme_corp/optimize \
 
 ### Check Results
 
-The `run-optimizer` template declares no Argo output parameters — results live in the pod's stdout (each `optimization_cli` mode logs a JSON result dict) and in whatever `ArtifactManager` persisted for the tenant.
+The `run-optimizer` template runs the CLI with `--outcome-file /tmp/outcome.json` and declares that file as its `outcome` output parameter (empty when the run wrote none): the JSON result dict every `optimization_cli` mode prints, or `{"status": "failed", "error": "<type>: <message>"}` for a run that raised. Argo keeps it on the node after the pod and its log are gone, failed runs included; the runtime reads a synthetic run's results from it. Anything else the run produced lives in whatever `ArtifactManager` persisted for the tenant.
 
 ```bash
-# Read the run's log output (JSON result dict from optimization_cli)
+# Read the run's outcome document
+argo get <workflow-name> -n cogniverse -o json \
+  | jq -r '.status.nodes[] | select(.templateName == "run-optimizer") | .outputs.parameters[] | select(.name == "outcome") | .value'
+
+# Read the run's log output while the pod exists
 argo logs <workflow-name> -n cogniverse
 
 # Confirm the run succeeded
@@ -366,7 +376,7 @@ curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deplo
   -d '{"tenant_id": "newcorp_inc"}'
 ```
 
-Profile configs read and written by these admin endpoints go through `ConfigManager` with `service="backend"` (the default `service` for profile CRUD in `libs/runtime/cogniverse_runtime/routers/admin.py`) — the same config-service scope the dashboard's backend-profile views read from.
+Profile configs read and written by these admin endpoints go through `ConfigManager` with `service="backend"` (the default `service` for profile CRUD in `libs/runtime/cogniverse_runtime/routers/admin.py`) — the same config-service scope the web client's Backend profiles view reads from.
 
 ---
 
@@ -463,7 +473,7 @@ argo cron suspend cogniverse-daily-gateway -n cogniverse
 
 ### Synthetic Data Generation (`{release}-synthetic-generation`, default Saturday 1 AM UTC)
 
-Chart `CronWorkflow` (`argo.optimization.syntheticGeneration`, schedule `0 1 * * 6`) runs `optimization_cli --mode synthetic --tenant-id default --agents query_enhancement,profile,routing,entity_extraction`. These are the optimizer outputs with active training-data consumers. `SyntheticDataService` generates tenant-grounded examples and writes pending approval batches to Phoenix; approved rows later enter the tenant-qualified training dataset consumed by the matching optimizer.
+Chart `CronWorkflow` (`argo.optimization.syntheticGeneration`, schedule `0 1 * * 6`) runs `optimization_cli --mode synthetic --tenant-id default --agents query_enhancement,profile,routing,entity_extraction`. These are the optimizer outputs with active training-data consumers. `SyntheticDataService` generates tenant-grounded examples (50 per optimizer unless the run's `options` say otherwise) and submits each optimizer's batch for review: examples at or above the auto-approval threshold enter the tenant-qualified training dataset at once, the rest wait in the approval store until a reviewer approves them; the matching optimizer trains on the approved rows.
 
 ```bash
 kubectl get cronworkflow cogniverse-synthetic-generation -n cogniverse
@@ -539,7 +549,9 @@ All scheduled and on-demand optimization ultimately runs one `--mode` of `cogniv
 | `online-routing-eval` | Persists per-span routing/confidence scores as telemetry annotations (no artifact) | `cogniverse.routing` spans (via `OnlineEvaluator`) |
 | `profile` | `ProfileSelectionAgent`'s DSPy module | `cogniverse.profile_selection` spans |
 | `entity-extraction` | `EntityExtractionModule`'s DSPy module | `cogniverse.entity_extraction` spans |
-| `synthetic` | Generates training examples for other modes via `SyntheticDataService` | none (LLM-generated) |
+| `synthetic` | Generates training examples for other modes via `SyntheticDataService` and submits them for review (auto-approving those at or above the threshold) | none (LLM-generated) |
+| `routing` | `gateway-thresholds`, `entity-extraction` and `profile` in one pod | their spans |
+| `unified` | `routing`, then `workflow` | their spans |
 | `triggered` | Strategy distillation from the trigger dataset (`strategies_distilled` output) | golden/trigger dataset |
 | `rollback` | Restores a tenant's active prompts/demos artifacts to a prior snapshotted version (self-reversible — snapshots the current version first) | `ArtifactManager` version history |
 | `ab-compare` | Runs `RLMABRunner` over a Phoenix queries dataset to compare two RLM configurations ("arms"), emitting an `rlm.ab_compare` span per row | a saved Phoenix dataset (`query`/`context` columns) |
@@ -560,12 +572,12 @@ argo submit -n cogniverse \
   -p lookback-hours=48
 
 # Or via the runtime API (creates and tracks the Argo Workflow for you;
-# restricted to gateway-thresholds, simba, workflow, profile, entity-extraction)
+# restricted to the modes GET /admin/tenant/optimize-modes lists)
 curl -X POST http://localhost:8000/admin/tenant/acme_corp/optimize \
   -H 'Content-Type: application/json' \
   -d '{"mode": "simba"}'
 
-# Poll the on-demand run's status (dashboard uses this to render progress)
+# Poll the on-demand run's status (the web client uses this to render progress)
 curl http://localhost:8000/admin/tenant/acme_corp/optimize/runs/<workflow-name>
 ```
 

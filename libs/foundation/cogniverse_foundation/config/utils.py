@@ -9,7 +9,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import (
@@ -297,6 +297,16 @@ class ConfigUtils:
             f"Merged backend config for tenant '{self.tenant_id}': "
             f"{len(self._backend_config.profiles)} profiles available"
         )
+
+    def backend_profiles(self) -> Dict[str, BackendProfileConfig]:
+        """The tenant's profile catalog: the shipped profiles and the system
+        tenant's stored ones, with the tenant's stored profiles merged on top.
+
+        Reads only the backend configs, not the routing or telemetry ones
+        ``get`` loads with them.
+        """
+        self._ensure_backend_config()
+        return dict(self._backend_config.profiles)
 
     @property
     def inference_service_urls(self) -> dict[str, str]:

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.utils.cluster_events import InProcessClusterEvents
+
 
 @pytest.fixture(autouse=True)
 def _default_telemetry_singleton():
@@ -58,23 +60,6 @@ def harness_key_config_store(monkeypatch):
     return store
 
 
-class InProcessClusterEvents:
-    """The cluster-events channel with this process as its only worker: each
-    event runs its handler here and answers as one acknowledgement."""
-
-    worker_id = "unit-worker"
-
-    def __init__(self, handlers):
-        self._handlers = handlers
-        self.published: list = []
-
-    async def publish(self, kind, payload, *, timeout_s):
-        import asyncio
-
-        self.published.append((kind, payload))
-        return {self.worker_id: await asyncio.to_thread(self._handlers[kind], payload)}
-
-
 @pytest.fixture
 def in_process_cluster_events(monkeypatch):
     """Wire tenant deletes, tier sets and session closes to an in-process
@@ -91,6 +76,19 @@ def in_process_cluster_events(monkeypatch):
     )
     monkeypatch.setattr(tenant_manager, "_cluster_events", events)
     monkeypatch.setattr(admin, "_cluster_events", events)
+    return events
+
+
+@pytest.fixture
+def in_process_config_events(monkeypatch):
+    """Wire config and profile writes to an in-process config events
+    channel."""
+    from cogniverse_runtime.cluster_events import CONFIG_EVENT_HANDLERS
+    from cogniverse_runtime.routers import admin, config_entries
+
+    events = InProcessClusterEvents(CONFIG_EVENT_HANDLERS)
+    monkeypatch.setattr(admin, "_config_events", events)
+    monkeypatch.setattr(config_entries, "_config_events", events)
     return events
 
 

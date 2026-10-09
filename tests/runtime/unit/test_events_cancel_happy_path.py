@@ -144,7 +144,7 @@ async def test_get_queue_info_for_populated_queue_returns_shape(routes) -> None:
     await queue.enqueue(
         create_status_event("wf-info", "acme:acme", TaskState.WORKING, phase="plan")
     )
-    await store.read("wf-info", subscriber="dashboard")
+    await store.read("wf-info", subscriber="web")
     read = await store.read("wf-info", count=0)
 
     response = await client.get("/events/queues/wf-info")

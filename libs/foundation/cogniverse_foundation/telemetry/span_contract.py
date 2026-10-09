@@ -14,8 +14,12 @@ every operation type instead of a bespoke read path per span kind.
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
-from typing import Any, Mapping, Optional
+import logging
+from typing import Any, Callable, Mapping, Optional
+
+logger = logging.getLogger(__name__)
 
 # Operation type values — the discriminator written to the `operation` attribute
 # (also carried by the span name). Consumers filter on these.
@@ -135,8 +139,64 @@ RELEVANCE_SCORES = {
 }
 
 
+# A reviewer's verdict on a whole conversation, read back by the trajectory
+# converter (cogniverse_finetuning trace_converter) under this name.
+SESSION_EVALUATION = "session_evaluation"
+SESSION_ID_META_KEY = "session_id"
+SESSION_OUTCOMES = ("success", "partial", "failure")
+
+
 class SpanNotInProjectError(LookupError):
     """The span to annotate is not a span of the project being written."""
+
+
+# Seconds a span takes to become readable beyond its exporter's schedule
+# delay: the export itself and the backend's ingestion.
+SPAN_INGEST_MARGIN_S = 5.0
+_SPAN_POLL_FIRST_S = 0.1
+_SPAN_POLL_MAX_S = 1.0
+
+
+def span_readable_within_s(batch_config: Any) -> float:
+    """Seconds after a span ends by which it is readable from its project:
+    the exporter's ``schedule_delay_millis`` plus ``SPAN_INGEST_MARGIN_S``."""
+    return batch_config.schedule_delay_millis / 1000 + SPAN_INGEST_MARGIN_S
+
+
+async def _await_spans_in_project(
+    provider: Any,
+    project: str,
+    span_ids: list,
+    readable_within_s: float,
+    refusal: Callable[[list], str],
+) -> None:
+    """Return once every one of ``span_ids`` is readable from ``project``.
+
+    A client holds a span's id as soon as the span ends, before the exporter
+    has sent it, so spans no project holds yet are looked up again, with
+    backoff, for ``readable_within_s``. Raises ``SpanNotInProjectError`` with
+    ``refusal(spans)`` at once when another project holds any of them, or
+    naming those no project holds by then; a failed lookup raises as it is.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + readable_within_s
+    pause = _SPAN_POLL_FIRST_S
+    pending = list(span_ids)
+    while True:
+        holders = await provider.traces.span_projects(pending)
+        foreign = [span for span in pending if holders[span] not in (None, project)]
+        if foreign:
+            raise SpanNotInProjectError(refusal(foreign))
+        pending = [span for span in pending if holders[span] is None]
+        if not pending:
+            return
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise SpanNotInProjectError(
+                f"{refusal(pending)} after {readable_within_s:g}s"
+            )
+        await asyncio.sleep(min(pause, remaining))
+        pause = min(pause * 2, _SPAN_POLL_MAX_S)
 
 
 async def persist_result_relevance(
@@ -145,16 +205,20 @@ async def persist_result_relevance(
     span_id: Optional[str],
     result_id: str,
     relevance_label: str,
+    *,
+    readable_within_s: float,
 ) -> float:
     """Write a ``result_relevance`` annotation on search span ``span_id`` of
     ``project`` and return its score. Each result keeps its own annotation;
     rating a result again replaces its earlier rating.
 
-    The span is read back from ``project`` first: the backend keys
-    annotations by span id alone, so writing without that check would let a
-    caller annotate another project's span. Raises ``ValueError`` on a missing
-    span id or an unknown label and ``SpanNotInProjectError`` when the project
-    holds no such span.
+    The span is looked up first: the backend keys annotations by span id
+    alone, so writing without that check would let a caller annotate another
+    project's span. A span no project holds yet is waited for up to
+    ``readable_within_s`` (see ``span_readable_within_s``), since a search
+    hands out its span id before the span is exported. Raises ``ValueError``
+    on a missing span id or an unknown label and ``SpanNotInProjectError``
+    when the span is another project's or still nowhere after the wait.
     """
     if not span_id:
         raise ValueError(
@@ -163,13 +227,13 @@ async def persist_result_relevance(
         )
     if relevance_label not in RELEVANCE_SCORES:
         raise ValueError(f"unknown relevance label: {relevance_label!r}")
-    spans = await provider.traces.get_spans(
-        project=project,
-        filters={"span_id": [span_id]},
-        limit=1,
+    await _await_spans_in_project(
+        provider,
+        project,
+        [span_id],
+        readable_within_s,
+        lambda spans: f"span {spans[0]} is not in project {project}",
     )
-    if spans.empty or span_id not in set(spans["context.span_id"]):
-        raise SpanNotInProjectError(f"span {span_id} is not in project {project}")
 
     score = RELEVANCE_SCORES[relevance_label]
     await provider.annotations.add_annotation(
@@ -182,6 +246,54 @@ async def persist_result_relevance(
         identifier=str(result_id),
     )
     return score
+
+
+async def persist_session_evaluation(
+    provider: Any,
+    project: str,
+    session_id: str,
+    span_ids: list,
+    outcome: str,
+    score: float,
+    *,
+    readable_within_s: float,
+) -> list:
+    """Write a ``session_evaluation`` annotation (``outcome`` as its label,
+    ``score`` in 0-1) on each of ``span_ids``, the spans of one conversation,
+    in ``project`` and return the span ids written, sorted. Evaluating the
+    conversation again replaces its earlier verdict on each span.
+
+    Every span is looked up before any is written, and waited for, as
+    ``persist_result_relevance`` does. Raises ``ValueError`` on an unknown
+    outcome, a score outside 0-1 or no span ids, and ``SpanNotInProjectError``
+    naming the spans another project holds, or no project holds after the
+    wait.
+    """
+    if outcome not in SESSION_OUTCOMES:
+        raise ValueError(f"unknown session outcome: {outcome!r}")
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"session score must be between 0 and 1, got {score}")
+    wanted = sorted(set(span_ids))
+    if not wanted:
+        raise ValueError("no spans name the conversation to evaluate")
+    await _await_spans_in_project(
+        provider,
+        project,
+        wanted,
+        readable_within_s,
+        lambda spans: f"spans {', '.join(spans)} are not in project {project}",
+    )
+    for span_id in wanted:
+        await provider.annotations.add_annotation(
+            span_id=span_id,
+            name=SESSION_EVALUATION,
+            label=outcome,
+            score=score,
+            metadata={SESSION_ID_META_KEY: session_id, "num_spans": len(wanted)},
+            project=project,
+            identifier=session_id,
+        )
+    return wanted
 
 
 _ATTR_PREFIX = "attributes."
@@ -279,6 +391,51 @@ def search_result_row(result: Any) -> dict:
         "score": score_f,
         "content": content,
     }
+
+
+def current_span_id() -> Optional[str]:
+    """16-hex id of the active telemetry span, or None when none is active
+    (telemetry off leaves an invalid span current).
+
+    A search stamps it on its output so a client can annotate this exact
+    search span (``result_relevance``, ``result_click``). Read it on the
+    coroutine that holds the span: a worker thread started by ``to_thread``
+    does not carry the span context.
+    """
+    from opentelemetry import trace
+
+    context = trace.get_current_span().get_span_context()
+    if context and context.is_valid:
+        return f"{context.span_id:016x}"
+    return None
+
+
+def record_search_io_on_current_span(query: str, results: list, modality: str) -> None:
+    """Record a search's query, modality and result rows on the active span.
+
+    The span whose id a search hands its client: the triplet miner reads the
+    anchor (``input.value``), the candidates (``output.value``, one
+    ``search_result_row`` per result) and the client's relevance annotations
+    from that one span. Modality rides on a plain ``modality`` attribute;
+    Phoenix folds ``input.*`` sub-keys into ``input.value``. Nothing is
+    recorded when no span is active, and a failure to record is logged rather
+    than failing the search.
+    """
+    from opentelemetry import trace
+
+    span = trace.get_current_span()
+    if not span.get_span_context().is_valid:
+        return
+    try:
+        record_span_io(
+            span,
+            input_value=query,
+            output=[search_result_row(result) for result in results],
+            operation=OP_SEARCH,
+            modality=modality,
+        )
+    except Exception as exc:
+        logger.warning("search span %s io not recorded: %s", modality, exc)
 
 
 def _reconstruct_attributes(row: Any) -> dict:

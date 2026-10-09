@@ -48,7 +48,6 @@ The **cogniverse-sdk** package is the **pure foundation** of the Cogniverse syst
 flowchart TB
     subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
         Runtime["<span style='color:#000'>cogniverse-runtime</span>"]
-        Dashboard["<span style='color:#000'>cogniverse-dashboard</span>"]
     end
 
     subgraph ImplLayer["<span style='color:#000'>Implementation Layer</span>"]
@@ -74,7 +73,6 @@ flowchart TB
 
     style AppLayer fill:#90caf9,stroke:#1565c0,color:#000
     style Runtime fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
     style ImplLayer fill:#ffcc80,stroke:#ef6c00,color:#000
     style Agents fill:#ffcc80,stroke:#ef6c00,color:#000
     style Vespa fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -88,7 +86,7 @@ flowchart TB
     style SDK fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-**SDK is the foundation** - every other workspace package that touches backends, config, schemas, or workflow/adapter storage depends on it directly (`agents`, `core`, `dashboard`, `evaluation`, `finetuning`, `foundation`, `runtime`, `synthetic`, `vespa`), but it depends on nothing except numpy. (`cli`, `messaging`, and `telemetry-phoenix` have no direct dependency on `cogniverse-sdk`.)
+**SDK is the foundation** - every other workspace package that touches backends, config, schemas, or workflow/adapter storage depends on it directly (`agents`, `core`, `evaluation`, `finetuning`, `foundation`, `runtime`, `synthetic`, `vespa`), but it depends on nothing except numpy. (`cli`, `messaging`, and `telemetry-phoenix` have no direct dependency on `cogniverse-sdk`.)
 
 ---
 

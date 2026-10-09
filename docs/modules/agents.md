@@ -226,6 +226,16 @@ resolver seam — it resolves through `BackendRegistry` on every call — and
 `_search_backend(query_dict)` runs one search with that instance leased for
 the call. `AudioAnalysisAgent` and `SearchService` use the same two methods.
 
+**Recorded searches**: every text search the agent runs records a
+`search_service.search` span (`search_span`, the span `SearchService.search`
+records) under the request's tenant, with the user's query as `query`, the
+rewrite it searched as `enhanced_query`, and the profile, strategy (`default`
+when none was requested), `top_k` and result rows. A single-profile or
+relationship-aware search records one span, an ensemble one per profile, and a
+multi-query fusion one span holding the fused results. The evaluation views
+and the optimization framework read these spans; a failure to record the
+result rows is logged and never fails the search.
+
 **Profile resolution**: profiles, models and encoder services come from the
 config of `SearchAgentDeps.tenant_id` — the tenant's own profiles merged over
 the system's — and from the system tenant when it is unset. The dispatcher
@@ -570,7 +580,7 @@ result = await gateway._process_impl(
 
 ```mermaid
 flowchart TB
-    Dashboard["<span style='color:#000'>Dashboard / Client</span>"] -->|HTTP POST /tasks/send| Orchestrator["<span style='color:#000'>OrchestratorAgent<br/>(DSPy Planner)</span>"]
+    Client["<span style='color:#000'>Client</span>"] -->|HTTP POST /tasks/send| Orchestrator["<span style='color:#000'>OrchestratorAgent<br/>(DSPy Planner)</span>"]
 
     Orchestrator -->|A2A| QE["<span style='color:#000'>QueryEnhancementAgent</span>"]
     Orchestrator -->|A2A| EE["<span style='color:#000'>EntityExtractionAgent</span>"]
@@ -578,7 +588,7 @@ flowchart TB
     Orchestrator -->|A2A| SA["<span style='color:#000'>SearchAgent</span>"]
     Orchestrator -->|A2A| SU["<span style='color:#000'>SummarizerAgent</span>"]
 
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style Client fill:#90caf9,stroke:#1565c0,color:#000
     style Orchestrator fill:#ce93d8,stroke:#7b1fa2,color:#000
     style QE fill:#ffcc80,stroke:#ef6c00,color:#000
     style EE fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -1509,8 +1519,10 @@ async def _process_impl(
 
     query = input.query
 
-    # Planning
-    plan = await self._create_plan(query)
+    # Planning, with the agents that can serve this tenant
+    plan = await self._create_plan(
+        query, available_agents=await self._planning_agents(tenant_id)
+    )
 
     # Action
     agent_results = await self._execute_plan(plan)
@@ -1532,52 +1544,59 @@ async def _process_impl(
     )
 ```
 
-**`_create_plan(query, conversation_context, gateway_context) -> OrchestrationPlan`**
+**`_planning_agents(tenant_id) -> List[str]`**
 
-Planning Phase: Create execution plan using LLM reasoning with dynamic agent discovery.
+The registered agents a plan for the tenant may use. A retrieval agent — one
+whose configured `modalities` and `capabilities` make it the retrieval agent
+for a modality (`search_agent` for video, `image_search_agent`,
+`audio_analysis_agent`, `document_agent`) — is left out when none of the
+modalities it retrieves is served by the tenant's servable profiles
+(`servable_tenant_profiles`, mapped through `MODALITY_PROFILE_TYPES`). A
+video-only tenant is therefore never planned an image or audio search. A
+store or registry outage raises `RuntimeError` naming the tenant instead of
+planning against a guess.
+
+**`_create_plan(query, conversation_context, gateway_context, *, available_agents) -> OrchestrationPlan`**
+
+Planning Phase: the DSPy planner proposes an agent sequence from
+`available_agents` (the `_planning_agents` list).
 
 ```text
 async def _create_plan(
-    self, query: str, conversation_context: str = "", gateway_context: str = ""
+    self,
+    query: str,
+    conversation_context: str = "",
+    gateway_context: str = "",
+    *,
+    available_agents: List[str],
 ) -> OrchestrationPlan:
-    """
-    Create execution plan using dynamic agent discovery from AgentRegistry.
-
-    Args:
-        query: User query to analyze
-        conversation_context: Formatted previous conversation turns
-        gateway_context: Classification context from gateway agent
-
-    Returns:
-        OrchestrationPlan with agent sequence and parallelization
-    """
-    # Dynamic agent discovery from registry (no hardcoded enum)
-    registered_agents = self.registry.list_agents()
-    available_agents = ", ".join(registered_agents)
+    registered_agents = list(available_agents)
 
     result = await self.call_dspy(
         self.dspy_module,
         output_field="agent_sequence",
         query=query,
-        available_agents=available_agents,
+        available_agents=", ".join(registered_agents),
         conversation_context=conversation_context,
         gateway_context=gateway_context,
     )
 
     # Normalize the LM output into an executable plan:
-    #   - "name" / "name_agent" aliases resolve to the registered name
-    #   - unknown agents are dropped (warning logged)
+    #   - "name" / "name_agent" aliases resolve to the offered name
+    #   - an agent not offered is dropped and listed in unavailable_agents
     #   - a repeated agent keeps its first step only (results are keyed
     #     by agent name)
     #   - parallel_steps / dependency indices are remapped from the raw
     #     sequence to the surviving step positions
-    #   - an empty result falls back to a single search_agent step
+    #   - an empty result falls back to a single search_agent step when
+    #     search_agent was offered
     ...
     return OrchestrationPlan(
         query=query,
         steps=steps,
         parallel_groups=parallel_groups,
         reasoning=result.reasoning,
+        unavailable_agents=unavailable_agents,
     )
 ```
 
@@ -1638,9 +1657,20 @@ async def _execute_plan(
 
 **`_aggregate_results(query: str, agent_results: Dict) -> Dict[str, Any]`**
 
-Cross-modal fusion of results from all agents. Detects modality per result,
-selects fusion strategy (SCORE_BASED, TEMPORAL, HIERARCHICAL, or SIMPLE),
-and dispatches to the appropriate fusion method.
+Cross-modal fusion of results from all agents. `aggregated_content` — the
+answer a reader sees — is built from each step's own answer text: the `answer`
+the serving runtime stamps on every completed dispatch (a search step's
+includes its hits, each by title and time range), else the step's `message`;
+never a step's payload. A search step's line naming the query it searched (the
+plan's rewrite) is replaced by one naming `query`, the question as asked.
+Enrichment steps (`query_enhancement_agent`, `entity_extraction_agent`,
+`profile_selection_agent`) feed later steps and are fused only when the plan
+produced nothing else. The fusion strategy (SCORE_BASED, TEMPORAL,
+HIERARCHICAL, or SIMPLE) is selected from the query and the fused steps'
+modalities: SIMPLE leads with the synthesized answers (a summary, a report)
+and follows with the search steps' hits, each group in execution order; SCORE_BASED puts each
+under `**<Agent>** (<modality>, confidence <share>)`, highest first;
+HIERARCHICAL groups them under `## <Modality> results` headings.
 
 `status` is the orchestration's outcome and the one every consumer reads:
 `failed` when no step produced an answer, `partial` when a step failed or
@@ -2214,7 +2244,7 @@ class DetailedReportAgent(
 | `detailed_findings` | List[Dict] | Detailed analysis results |
 | `visual_analysis` | List[Dict] | VLM visual insights |
 | `technical_details` | List[Dict] | Technical breakdown |
-| `recommendations` | List[str] | Actionable recommendations |
+| `recommendations` | List[str] | Actionable recommendations: the report LM writes one per line and each line, less a bullet or number, is one item, commas and parentheses included |
 | `confidence_assessment` | Dict[str, float] | Per-dimension confidence scores (keys: overall, data_quality, completeness, visual_analysis, technical_analysis) |
 | `thinking_process` | Dict | Thinking phase details |
 | `metadata` | Dict | Additional metadata |
@@ -2345,6 +2375,7 @@ class DocumentAgent(MemoryAwareMixin, A2AAgent[DocumentSearchInput, DocumentSear
 | Field | Type | Description |
 |-------|------|-------------|
 | `query` | str | Search query |
+| `tenant_id` | Optional[str] | Tenant whose project the process span is recorded in |
 | `strategy` | str | Strategy: visual, text, hybrid, auto |
 | `limit` | int | Number of results (default: 20) |
 
@@ -2353,6 +2384,11 @@ class DocumentAgent(MemoryAwareMixin, A2AAgent[DocumentSearchInput, DocumentSear
 |-------|------|-------------|
 | `results` | List[DocumentResult] | Search results with page info |
 | `count` | int | Total result count |
+| `span_id` | Optional[str] | Id of the `DocumentAgent.process` span, which records the query, modality `document` and one row per hit (`document_id`, score, content, title); `None` when telemetry is off |
+
+The runtime dispatches a document search through `process`, with its
+telemetry manager attached, and its envelope carries `span_id`, so a client
+rates the hits against that span (`POST /ag-ui/results/relevance`).
 
 **Usage:**
 
@@ -2763,7 +2799,7 @@ for result in results:
 
 Enhances user queries by adding synonyms, context, and related terms to improve search recall. It takes the sampled source text alongside the query, and the DSPy prompt requires `expansion_terms` to be token-grounded in that text while synonyms remain free-form. Every non-stopword alphanumeric token in an expansion term must appear in the sampled source text; multi-word phrases are allowed when each substantive token is grounded. Runs a DSPy `QueryEnhancementModule` and returns the enhanced query alongside the expansion terms it generated.
 
-The `cogniverse.query_enhancement` span always includes `enhancement.path` in the declared span contract. `lm` marks a genuine enhancement; `heuristic_fallback` marks the heuristic expansion used when the LM echoes the query or returns empty fields.
+The `cogniverse.query_enhancement` span always includes `enhancement.path` in the declared span contract. `lm` marks a genuine enhancement; `heuristic_fallback` marks the heuristic used when the LM call fails, echoes the query or leaves `enhanced_query` blank (blank `expansion_terms` is a valid LM answer). The heuristic only spells out an acronym the query contains and otherwise returns the query unchanged, so it never adds words that change what is searched.
 
 **Constructor:** `QueryEnhancementAgent(deps: QueryEnhancementDeps, port: int = 8012)` (standalone A2A server default; runs in-process on port 8000 in `cogniverse_runtime`)
 
@@ -2798,7 +2834,10 @@ Advertised client tools select workspace mode. The agent suspends with
 `pending_tool_calls` and `continuation_state`; replayed observations match calls
 by ID. `WORKSPACE_MAX_ROUNDS` is the shared workspace default and limit (8); an explicit
 `max_iterations` can lower it.
-`WORKSPACE_ACTION_MAX_ATTEMPTS` bounds malformed-action retries (3). Failed
+`WORKSPACE_ACTION_MAX_ATTEMPTS` bounds malformed-action retries (3). Each
+step either calls one advertised tool (its JSON arguments; the step's summary
+may be blank) or finishes with a summary of the completed work; a finish with a
+blank summary is a malformed action and is retried. Failed
 steps expose `success=False` and `error` with an empty summary. Context reads
 run in workers; sandbox staging directories are removed on success, failure,
 and cancellation.
@@ -4072,7 +4111,7 @@ endpoint through the gateway (task `rlm_inference`). Routing is resolved once
 and shared by both arms, so the gateway returns the same model for each — the
 comparison still isolates the RLM machinery, now measured against the
 production (routed) path. `optimization_cli.run_ab_compare` passes both, so the
-dashboard's A/B tile reflects what production actually runs.
+web client's RLM A/B view reflects what production actually runs.
 
 ### Deep synthesis workflow
 
@@ -5031,7 +5070,7 @@ An `OrchestratorAgent` run reports its progress as a workflow task on the
 runtime's shared task event store, so any runtime process streams, lists and
 cancels it:
 
-- **Multiple Subscribers**: Dashboard + CLI can watch the same workflow simultaneously
+- **Multiple Subscribers**: Web client + CLI can watch the same workflow simultaneously
 - **Phase Events**: Each phase boundary is a `StatusEvent`; the sufficiency-gate `InstrumentedRLM` adds Status/Progress events per REPL iteration
 - **Graceful Cancellation**: A cancelled workflow stops at its next phase boundary
 - **Reconnection with Replay**: Clients can resume from a specific event offset
@@ -5106,8 +5145,8 @@ flowchart TB
     end
 
     subgraph "Review Interface"
-        Dashboard["<span style='color:#000'>Streamlit Dashboard</span>"]
-        Dashboard --> ApprovalAgent
+        WebClient["<span style='color:#000'>Web Client</span>"]
+        WebClient --> ApprovalAgent
     end
 
     subgraph "Training Pipeline"
@@ -5119,7 +5158,7 @@ flowchart TB
     style Extractor fill:#ffcc80,stroke:#ef6c00,color:#000
     style ApprovalAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Storage fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#b0bec5,stroke:#546e7a,color:#000
+    style WebClient fill:#b0bec5,stroke:#546e7a,color:#000
     style Optimizer fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
@@ -5218,7 +5257,7 @@ See [Approval Workflow Module](./approval-workflow.md) for complete documentatio
 
 - ApprovalStorageImpl with Phoenix integration
 - ConfidenceExtractor implementations
-- Dashboard integration
+- Web client integration
 - Testing patterns
 
 ---

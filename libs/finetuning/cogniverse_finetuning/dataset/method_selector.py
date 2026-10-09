@@ -541,12 +541,12 @@ class TrainingMethodSelector:
 
         # 4. Submit for approval (MANDATORY - no bypass). Review is
         #    asynchronous: items below the agent's confidence threshold land
-        #    in PENDING_REVIEW for a human to resolve in the dashboard, so we
+        #    in PENDING_REVIEW for a human to resolve in the web client, so we
         #    do NOT block here or treat "0 approved right now" as failure —
         #    training resumes from the persisted batch after human approval.
         logger.info(
             f"Submitting {len(items)} synthetic examples for human approval. "
-            "Pending items await review in the dashboard."
+            "Pending items await review in the web client."
         )
 
         submitted_batch = await self.approval_agent.submit_for_review(batch)

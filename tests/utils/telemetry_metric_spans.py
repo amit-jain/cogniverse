@@ -31,7 +31,8 @@ def record_profile_selection(
     telemetry, tenant_id, modality, duration_ms, *, failed=False
 ):
     """A profile selection span of ``duration_ms`` with the output slot
-    ``ProfileSelectionAgent`` writes."""
+    ``ProfileSelectionAgent`` writes; without a ``modality`` field when
+    ``modality`` is None."""
     tracer = telemetry._get_tracer_for_project(tenant_id, None)
     # Phoenix stores times to the microsecond; a whole-microsecond start
     # keeps the stored duration exact.
@@ -42,7 +43,7 @@ def record_profile_selection(
         input_value="a query",
         output={
             "selected_profile": f"{modality}_profile",
-            "modality": modality,
+            **({"modality": modality} if modality is not None else {}),
             "complexity": "simple",
             "intent": "search",
             "confidence": 0.9,
@@ -246,3 +247,19 @@ def record_routing(
     if parent:
         parent.end(end_time=start + int(duration_ms * MS))
     return f"{span.get_span_context().span_id:016x}"
+
+
+def record_ab_compare(telemetry, tenant_id, result, queries_dataset, *, minutes_ago):
+    """An ``rlm.ab_compare`` span started ``minutes_ago``, with the attributes
+    ``emit_ab_compare_span`` writes for ``result``."""
+    from cogniverse_foundation.telemetry.span_metrics import AB_COMPARE_SPAN_NAME
+
+    tracer = telemetry._get_tracer_for_project(tenant_id, None)
+    start = time.time_ns() // 1000 * 1000 - int(minutes_ago * 60_000) * MS
+    span = tracer.start_span(AB_COMPARE_SPAN_NAME, start_time=start)
+    for key, value in result.to_telemetry_dict().items():
+        if value is not None:
+            span.set_attribute(f"openinference.{key}", value)
+    span.set_attribute("openinference.tenant_id", tenant_id)
+    span.set_attribute("openinference.queries_dataset", queries_dataset)
+    span.end(end_time=start + MS)

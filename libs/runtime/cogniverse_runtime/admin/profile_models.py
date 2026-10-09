@@ -134,6 +134,13 @@ class ProfileCreateResponse(BaseModel):
     tenant_schema_name: Optional[str] = Field(
         None, description="Tenant-specific schema name (if deployed)"
     )
+    schema_deploy_error: Optional[str] = Field(
+        None,
+        description=(
+            "Why a requested schema deploy did not complete; the profile is "
+            "stored either way"
+        ),
+    )
     created_at: str = Field(..., description="Creation timestamp (ISO 8601)")
     version: int = Field(..., description="Config version number")
 
@@ -202,6 +209,16 @@ class ProfileTemplateListResponse(BaseModel):
     tenant_id: str = Field(..., description="Tenant identifier")
     templates: List[ProfileTemplate] = Field(
         ..., description="Shipped profiles, by name"
+    )
+    profile_types: List[str] = Field(..., description="The types a profile may declare")
+    embedding_types: List[str] = Field(
+        ..., description="The embedding types a profile may declare"
+    )
+    model_loaders: List[str] = Field(
+        ..., description="The model loaders ingestion embeds with"
+    )
+    process_types: List[str] = Field(
+        ..., description="The process types a profile may name"
     )
 
 

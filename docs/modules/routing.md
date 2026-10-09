@@ -114,7 +114,7 @@ flowchart TB
 
     Queue["<span style='color:#000'>AnnotationQueue<br/>pending → assigned → completed</span>"]
 
-    AutoAnnotator["<span style='color:#000'>LLMAutoAnnotator<br/>LLM labels: CORRECT_ROUTING / WRONG_ROUTING /<br/>AMBIGUOUS / INSUFFICIENT_INFO<br/>(or human review via dashboard)</span>"]
+    AutoAnnotator["<span style='color:#000'>LLMAutoAnnotator<br/>LLM labels: CORRECT_ROUTING / WRONG_ROUTING /<br/>AMBIGUOUS / INSUFFICIENT_INFO<br/>(or human review via web client)</span>"]
 
     Storage["<span style='color:#000'>RoutingAnnotationStorage /<br/>OrchestrationAnnotationStorage</span>"]
 
@@ -214,7 +214,7 @@ class RoutingConfigUnified:
 
     # GLiNER configuration. gliner_model, gliner_threshold, and gliner_device ARE
     # seeded into GatewayDeps by the dispatcher (_get_or_build_gateway_agent), so
-    # the tenant's dashboard settings reach the live gateway; the optimization
+    # the tenant's routing config reaches the live gateway; the optimization
     # artifact loaded afterward still overrides gliner_threshold. gliner_device
     # moves a locally-loaded GLiNER onto the given torch device (ignored for the
     # remote gliner sidecar).
@@ -334,8 +334,11 @@ single DSPy `ChainOfThought` module, with a heuristic fallback. This is a separa
 
 - `QueryEnhancementModule`: `dspy.ChainOfThought(QueryEnhancementSignature)` producing `enhanced_query`,
   `expansion_terms`, `synonyms`, `context`, `confidence`, `reasoning`
-- Falls back to a heuristic expander when the LLM call raises, returns empty fields, or **echoes the input
-  verbatim** (an echo would otherwise poison the SIMBA training set with identity pairs)
+- Falls back to a heuristic expander when the LLM call raises, leaves `enhanced_query` blank, or **echoes the
+  input verbatim** (an echo would otherwise poison the SIMBA training set with identity pairs). Blank
+  `expansion_terms`, `synonyms` or `context` are valid LM answers. The heuristic keeps the query's meaning:
+  it appends only the spelled-out form of an acronym the query contains (`ML` -> `machine learning`) and
+  otherwise returns the query unchanged; synonyms are reported, never appended
 - `QueryEnhancementOutput.path_used` (and the A2A envelope's `path_used`) names which path answered:
   `lm` or `heuristic_fallback`, empty when the query was empty and no enhancement ran. The same value
   is the span's `enhancement.path` attribute
@@ -375,9 +378,12 @@ a keyword/word-count heuristic fallback.
 
 - `ProfileSelectionModule`: `dspy.ChainOfThought(ProfileSelectionSignature)` producing `selected_profile`,
   `confidence`, `reasoning`, `query_intent`, `modality`, `complexity`
-- Default candidate profiles (`ProfileSelectionDeps.available_profiles`): `video_colpali_smol500_mv_frame`,
-  `video_colqwen_omni_mv_chunk_30s`, `video_xclip_sv_chunk_6s`
-- Overrides the LM's `modality` field with the modality encoded in the chosen profile name for consistency
+- Candidate profiles: the request's `available_profiles` when it names them, otherwise the tenant's servable
+  profiles (`tenant_usable_profile_names`, see [foundation](foundation.md)), which include the built-in profile
+  whose schema registration deployed
+- Overrides the LM's `modality` field with the type the chosen profile declares in the tenant's catalog
+  (`ConfigUtils.backend_profiles()`), the same catalog the candidates come from; the candidate pool is
+  resolved off the serving loop
 - Generates up to 3 alternative `ProfileCandidate` entries (`profile_name`, `score`, `reasoning`)
 - Applies per-tenant memory injection (`MemoryAwareMixin`) to the prompt while preserving the caller's original
   query in the response
@@ -528,7 +534,9 @@ orchestration-workflow-level annotations, under `ORCHESTRATION_ANNOTATION_NAME`
 the label, score and reasoning and adds `human_reviewed: true`, `requires_review: false`,
 `approved_by` and `approval_timestamp` to the metadata, returning the stored annotation. A
 span without an annotation raises `LLMAnnotationNotFoundError`; one labelled by someone other
-than the LLM raises `NotAnLLMAnnotationError`. `store_llm_annotation` and
+than the LLM raises `NotAnLLMAnnotationError`; one the LLM flagged for review
+(`requires_review: true`) raises `LLMAnnotationNeedsReviewError`, since a reviewer labels it
+instead. `store_llm_annotation` and
 `store_human_annotation` replace any earlier label of the span (Phoenix keeps one annotation
 per span and name).
 
@@ -595,13 +603,9 @@ def __init__(
     max_annotations_per_batch: Optional[int] = None,
 ):
     """model/api_base/api_key come from the passed-in LLMEndpointConfig —
-    there are no ANNOTATION_MODEL/ANNOTATION_API_BASE env vars. The dashboard's
-    routing_evaluation tab lets an operator override model/api_base/api_key via
-    session state, falling back to the tenant's configured primary LLM.
-    max_annotations_per_batch (from AnnotationThresholdsConfig, default 10) caps
-    how many requests a single batch_annotate call sends to the LM; None
-    processes every request. The dashboard tab passes
-    automation_rules.annotation_thresholds.max_annotations_per_batch."""
+    there are no ANNOTATION_MODEL/ANNOTATION_API_BASE env vars.
+    max_annotations_per_batch caps how many requests a single batch_annotate
+    call sends to the LM; None processes every request."""
 
 def annotate(self, annotation_request: AnnotationRequest) -> AutoAnnotation:
     """
@@ -683,7 +687,11 @@ async def extract_training_data_from_phoenix(
     """
 ```
 
-Used by `libs/dashboard/cogniverse_dashboard/tabs/optimization.py`.
+`to_blob()` serializes a trained model (XGBoost's JSON model format plus its
+profile names) and `load_blob(blob)` restores it, so a model is stored without
+pickling. The runtime's `/admin/tenant/{tenant_id}/profile-selection/*` routes
+train it on the tenant's spans, store it in the tenant's artifact store and serve
+predictions from it.
 
 ---
 
@@ -756,7 +764,7 @@ The sequence behind the diagram above, spelled out step by step:
    - `OrchestrationEvaluator` (`WorkflowExecution` extraction + parallel-efficiency scoring)
 3. **Annotation**
    - `AnnotationQueue`: pending → assigned → completed
-   - `LLMAutoAnnotator.annotate` (LLM auto-label) or human review (dashboard)
+   - `LLMAutoAnnotator.annotate` (LLM auto-label) or human review (web client)
    - `RoutingAnnotationStorage` / `OrchestrationAnnotationStorage` (persist)
 4. **Meta-model decisions (XGBoost)**
    - `TrainingDecisionModel.should_train` — is training worth it?
@@ -962,7 +970,7 @@ config.optimizer_floors = {
 config.gliner_device = "cuda"
 ```
 
-`enable_fast_path` is editable via the dashboard's config-management tab, round-tripped by
+`enable_fast_path` is editable via the web client's Configuration view, round-tripped by
 `to_dict`/`from_dict`, and seeded into `GatewayDeps` by the dispatcher: when `False`, `GatewayAgent._is_complex`
 returns `True` for every query, so the fast path is skipped and everything is orchestrated.
 
@@ -985,7 +993,7 @@ breaker-open state.
 
 ### Monitoring
 
-**Real telemetry span attributes** (emitted by `GatewayAgent._emit_gateway_span` / `_emit_routing_span`):
+**Real telemetry span attributes** (emitted by `GatewayAgent._emit_gateway_span` / `_emit_routing_span`). Both spans start when `_process_impl` began classifying (`started_ns`), so their duration is the decision's latency:
 
 ```python
 import time

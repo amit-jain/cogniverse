@@ -16,6 +16,7 @@ import json
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -34,13 +35,26 @@ from cogniverse_finetuning.dataset.embedding_extractor import TripletExtractor
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.telemetry.registry import get_telemetry_registry
-from cogniverse_foundation.telemetry.span_contract import RESULT_RELEVANCE
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_foundation.telemetry.span_contract import (
+    RESULT_RELEVANCE,
+    span_readable_within_s,
+)
+from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_PERSIST_FAILURE_CAPACITY,
+    CONVERSATION_SAVE_LEASE_S,
+    AgentDispatcher,
+)
 from cogniverse_runtime.routers import ag_ui, agents, openai_compat
-from cogniverse_runtime.session_state import ContinuationStore
+from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
 from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.approval_review import run_in_own_loop
 from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.span_export import (
+    answers,
+    await_span_lookups,
+    held_span_export,
+    span_lookups,
+)
 from tests.utils.stub_search import (
     REPO_ROOT,
     answer_with,
@@ -49,14 +63,16 @@ from tests.utils.stub_search import (
     stub_encoder_factory,
 )
 from tests.utils.web_client import (
+    browse_as,
     build_web_client,
     install_web_client,
     recording_telemetry_sink,
     serve_app,
     serve_web,
 )
+from tests.utils.web_ops import harness_key_admin
 
-pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast, pytest.mark.no_shared_vespa]
 
 KEY = "web-relevance-harness-key"
 OTHER_KEY = "web-relevance-other-harness-key"
@@ -145,15 +161,29 @@ def runtime_url(telemetry, workflow_state_redis_url):
 
     dispatcher._get_search_agent = search_agent
 
+    # No conversation memory is configured: each run's turn takes its place in
+    # the ledger and is not stored.
+    dispatcher._conversation_store_factory = lambda tenant_id: None
+
     @asynccontextmanager
     async def lifespan(_app):
         redis = await connect_shared_state_redis(workflow_state_redis_url)
+        prefix = f"test:relevance:{uuid.uuid4().hex}"
         openai_compat.set_continuation_store(
-            ContinuationStore(redis, key_prefix=f"test:relevance:{uuid.uuid4().hex}")
+            ContinuationStore(redis, key_prefix=prefix)
+        )
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                redis,
+                save_lease_s=CONVERSATION_SAVE_LEASE_S,
+                failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
+                key_prefix=f"{prefix}:conversation",
+            )
         )
         try:
             yield
         finally:
+            dispatcher.set_conversation_ledger(None)
             openai_compat.set_continuation_store(None)
             await redis.aclose()
 
@@ -162,8 +192,7 @@ def runtime_url(telemetry, workflow_state_redis_url):
     app.include_router(agents.router, prefix="/agents")
     agents.set_agent_registry(registry)
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
-    openai_compat.set_key_resolver(None)
-    with serve_app(app) as url:
+    with harness_key_admin(app, config_manager), serve_app(app) as url:
         yield url
     openai_compat.set_dispatcher_provider(None)
     openai_compat.set_api_keys({})
@@ -188,7 +217,7 @@ def built_client(tmp_path_factory):
 def web_url(built_client, runtime_url, tenants):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -203,16 +232,17 @@ def browser():
 
 
 @pytest.fixture()
-def page(browser):
+def page(browser, tenants):
     context = browser.new_context()
+    browse_as(context, tenants[0])
     page = context.new_page()
     yield page
     context.close()
 
 
-def _search(telemetry, tenant_id, hits=HITS):
+def _search(telemetry, tenant_id, hits=HITS, *, flush=True):
     """Run a search for ``tenant_id`` through a SearchAgent; returns the id of
-    the span it recorded."""
+    the span it recorded. ``flush`` exports the span before returning."""
     agent = build_stub_search_agent(tenant_id, hits)
     agent.set_telemetry_manager(telemetry)
     output = run_in_own_loop(
@@ -222,7 +252,8 @@ def _search(telemetry, tenant_id, hits=HITS):
             )
         )
     )
-    telemetry.force_flush(timeout_millis=10000)
+    if flush:
+        telemetry.force_flush(timeout_millis=10000)
     return output.span_id
 
 
@@ -293,6 +324,22 @@ def _annotation_writes(proxy, since):
     ]
 
 
+def _span_is_exported(telemetry, tenant_id, span_id):
+    provider, project = _provider(telemetry, tenant_id)
+    spans = run_in_own_loop(
+        provider.traces.get_spans(
+            project=project, filters={"span_id": [span_id]}, limit=1
+        )
+    )
+    return list(spans["context.span_id"]) == [span_id]
+
+
+@pytest.fixture()
+def held_export(telemetry, tenants):
+    with held_span_export(telemetry) as batch_config:
+        yield batch_config
+
+
 def _run_search_in_browser(page: Page, web_url: str):
     page.goto(f"{web_url}/#/agents/search_agent")
     chat = page.get_by_placeholder("Ask Search…")
@@ -348,6 +395,37 @@ def test_ratings_from_the_workspace_are_stored_and_mined_as_a_triplet(
     ] == [(QUERY, POS_CONTENT, NEG_CONTENT, span_id)]
 
 
+def test_a_rating_clicked_before_the_search_span_is_exported_is_stored(
+    page, web_url, tenants, telemetry, phoenix_proxy, held_export
+):
+    tenant, _ = tenants
+    results = _run_search_in_browser(page, web_url)
+    positive = results.get_by_role("group", name=f"Relevance of {POS_ID}")
+    with page.expect_request(
+        lambda request: (
+            request.method == "POST" and request.url.endswith("/results/relevance")
+        )
+    ) as sent:
+        positive.get_by_role("button", name="Somewhat Relevant").click()
+    span_id = sent.value.post_data_json["span_id"]
+    assert _span_is_exported(telemetry, tenant, span_id) is False
+    await_span_lookups(
+        phoenix_proxy,
+        span_id,
+        2,
+        answered=lambda: positive.get_by_role("alert").all_inner_texts(),
+    )
+    telemetry.force_flush(timeout_millis=10000)
+
+    expect(positive.get_by_role("button", name="Somewhat Relevant")).to_have_attribute(
+        "aria-pressed", "true", timeout=held_export.schedule_delay_millis
+    )
+    expect(positive.get_by_role("alert")).to_have_count(0)
+    assert _ratings(telemetry, tenant, span_id, 1) == {
+        POS_ID: ("Somewhat Relevant", 0.5)
+    }
+
+
 def test_a_rating_that_was_not_stored_shows_on_its_card(
     page, web_url, tenants, telemetry, phoenix_proxy
 ):
@@ -393,6 +471,8 @@ def test_a_span_of_another_tenant_is_not_rated(
         },
     )
     assert _annotation_writes(phoenix_proxy, requests_before) == []
+    # Another project holds the span, so one lookup settles it: no wait.
+    assert span_lookups(phoenix_proxy, span_id) == 1
     assert _ratings(telemetry, other, span_id, 1, timeout=6) == {}
     # The same rating with the span's own tenant's key is stored.
     stored = _rate(runtime_url, OTHER_KEY, span_id, POS_ID, "Highly Relevant")
@@ -510,3 +590,211 @@ def test_an_unreadable_telemetry_backend_stores_nothing(
     )
     assert _annotation_writes(phoenix_proxy, requests_before) == []
     assert _ratings(telemetry, tenant, span_id, 1, timeout=6) == {}
+
+
+def test_a_rating_sent_before_its_span_is_exported_is_stored(
+    runtime_url, tenants, telemetry, phoenix_proxy, held_export
+):
+    tenant, _ = tenants
+    span_id = _search(telemetry, tenant, flush=False)
+    assert _span_is_exported(telemetry, tenant, span_id) is False
+    requests_before = len(phoenix_proxy.requests)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        rating = pool.submit(_rate, runtime_url, KEY, span_id, POS_ID, "Not Relevant")
+        await_span_lookups(phoenix_proxy, span_id, 2, lambda: answers([rating]))
+        # The waiting rating holds no worker: the route answers meanwhile.
+        started = time.monotonic()
+        refused = _rate(runtime_url, KEY, span_id, POS_ID, "Meh")
+        assert (refused.status_code, time.monotonic() - started < 2) == (400, True)
+        assert answers([rating]) == []
+        telemetry.force_flush(timeout_millis=10000)
+        response = rating.result(timeout=held_export.schedule_delay_millis / 1000)
+
+    assert (response.status_code, response.json()) == (
+        200,
+        {
+            "span_id": span_id,
+            "result_id": POS_ID,
+            "relevance": "Not Relevant",
+            "score": 0.0,
+        },
+    )
+    assert len(_annotation_writes(phoenix_proxy, requests_before)) == 1
+    assert _ratings(telemetry, tenant, span_id, 1) == {POS_ID: ("Not Relevant", 0.0)}
+
+
+def test_ratings_of_a_span_not_yet_exported_each_land_once(
+    runtime_url, tenants, telemetry, phoenix_proxy, held_export
+):
+    tenant, _ = tenants
+    hits = [(f"vid_{i}", 0.9 - i / 10, {"text_content": f"clip {i}"}) for i in range(4)]
+    labels = ["Highly Relevant", "Somewhat Relevant", "Not Relevant", "Not Relevant"]
+    span_id = _search(telemetry, tenant, hits, flush=False)
+    assert _span_is_exported(telemetry, tenant, span_id) is False
+    requests_before = len(phoenix_proxy.requests)
+    # Every result is rated twice at once, as a double click sends it.
+    ratings = [(f"vid_{i}", labels[i]) for i in range(len(hits))] * 2
+
+    # The first lookups are held until there is one per rating: a rating
+    # sends its next lookup only after its first is answered, so all of them
+    # are waiting on the span together.
+    all_waiting = threading.Event()
+    barrier = threading.Barrier(len(ratings), action=all_waiting.set, timeout=60)
+
+    def hold_first_lookups(method, path, body):
+        if path == "/graphql" and span_id.encode() in body and not all_waiting.is_set():
+            barrier.wait()
+        return None
+
+    phoenix_proxy.intercept = hold_first_lookups
+    with ThreadPoolExecutor(max_workers=len(ratings)) as pool:
+        pending = [
+            pool.submit(_rate, runtime_url, KEY, span_id, result_id, label)
+            for result_id, label in ratings
+        ]
+        deadline = time.monotonic() + 60
+        while not all_waiting.is_set():
+            assert answers(pending) == [], "answered before the span was exported"
+            assert time.monotonic() < deadline, "the ratings never all waited"
+            time.sleep(0.05)
+        await_span_lookups(
+            phoenix_proxy, span_id, len(ratings) + 1, lambda: answers(pending)
+        )
+        telemetry.force_flush(timeout_millis=10000)
+        responses = [
+            rating.result(timeout=held_export.schedule_delay_millis / 1000)
+            for rating in pending
+        ]
+    phoenix_proxy.intercept = None
+
+    scores = {"Highly Relevant": 1.0, "Somewhat Relevant": 0.5, "Not Relevant": 0.0}
+    assert [(r.status_code, r.json()) for r in responses] == [
+        (
+            200,
+            {
+                "span_id": span_id,
+                "result_id": result_id,
+                "relevance": label,
+                "score": scores[label],
+            },
+        )
+        for result_id, label in ratings
+    ]
+    assert len(_annotation_writes(phoenix_proxy, requests_before)) == len(ratings)
+    provider, project = _provider(telemetry, tenant)
+    spans = _search_spans(telemetry, tenant, 1)
+    _ratings(telemetry, tenant, span_id, len(hits))
+    rows = run_in_own_loop(
+        provider.annotations.get_annotations(
+            spans_df=spans[spans["context.span_id"] == span_id],
+            project=project,
+            annotation_names=[RESULT_RELEVANCE],
+        )
+    )
+    assert sorted(
+        (TripletExtractor._annotation_result_id(row), row["result.label"])
+        for _, row in rows.iterrows()
+    ) == [(f"vid_{i}", labels[i]) for i in range(len(hits))]
+
+
+@pytest.mark.parametrize(
+    ("fault", "error_type"),
+    [
+        # Phoenix answers every call with 503.
+        (lambda method, path, body: (503, {"detail": "down"}), "HTTPStatusError"),
+        # Phoenix holds the lookup past its deadline.
+        (
+            lambda method, path, body: time.sleep(12) or (200, {"data": {}}),
+            "ReadTimeout",
+        ),
+    ],
+    ids=["down", "hung"],
+)
+def test_a_telemetry_backend_failing_during_the_wait_stores_nothing(
+    runtime_url, tenants, telemetry, phoenix_proxy, held_export, fault, error_type
+):
+    tenant, _ = tenants
+    span_id = _search(telemetry, tenant, flush=False)
+    requests_before = len(phoenix_proxy.requests)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        rating = pool.submit(
+            _rate, runtime_url, KEY, span_id, POS_ID, "Highly Relevant"
+        )
+        await_span_lookups(phoenix_proxy, span_id, 2, lambda: answers([rating]))
+        phoenix_proxy.intercept = fault
+        response = rating.result(timeout=30)
+    phoenix_proxy.intercept = None
+
+    assert (response.status_code, response.json()) == (
+        502,
+        {
+            "error": {
+                "message": f"The relevance of result {POS_ID} was not stored "
+                f"({error_type}). See server logs for detail.",
+                "type": "server_error",
+                "code": "annotation_not_stored",
+                "error_type": error_type,
+            }
+        },
+    )
+    assert _annotation_writes(phoenix_proxy, requests_before) == []
+    telemetry.force_flush(timeout_millis=10000)
+    assert _ratings(telemetry, tenant, span_id, 1, timeout=6) == {}
+
+
+def test_a_span_another_tenant_exports_late_is_not_rated(
+    runtime_url, tenants, telemetry, phoenix_proxy, held_export
+):
+    _, other = tenants
+    span_id = _search(telemetry, other, flush=False)
+    requests_before = len(phoenix_proxy.requests)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        rating = pool.submit(_rate, runtime_url, KEY, span_id, POS_ID, "Not Relevant")
+        await_span_lookups(phoenix_proxy, span_id, 2, lambda: answers([rating]))
+        flushed = time.monotonic()
+        telemetry.force_flush(timeout_millis=10000)
+        response = rating.result(timeout=30)
+        # The span landing in the other tenant's project ends the wait.
+        answered_after_flush = time.monotonic() - flushed
+
+    assert (response.status_code, response.json()) == (
+        404,
+        {
+            "error": {
+                "message": f"Search span {span_id} is not a span of this tenant.",
+                "type": "invalid_request_error",
+                "code": "span_not_found",
+            }
+        },
+    )
+    assert answered_after_flush < span_readable_within_s(BatchExportConfig())
+    assert _annotation_writes(phoenix_proxy, requests_before) == []
+    assert _ratings(telemetry, other, span_id, 1, timeout=6) == {}
+
+
+def test_a_span_no_project_holds_is_refused_after_the_wait(
+    runtime_url, tenants, telemetry, phoenix_proxy
+):
+    span_id = uuid.uuid4().hex[:16]
+    window = span_readable_within_s(telemetry.config.batch_config)
+    requests_before = len(phoenix_proxy.requests)
+
+    started = time.monotonic()
+    response = _rate(runtime_url, KEY, span_id, POS_ID, "Not Relevant")
+    elapsed = time.monotonic() - started
+
+    assert (response.status_code, response.json()) == (
+        404,
+        {
+            "error": {
+                "message": f"Search span {span_id} is not a span of this tenant.",
+                "type": "invalid_request_error",
+                "code": "span_not_found",
+            }
+        },
+    )
+    assert (window <= elapsed < window + 3, window) == (True, 5.5)
+    assert _annotation_writes(phoenix_proxy, requests_before) == []

@@ -61,6 +61,7 @@ from cogniverse_foundation.telemetry.span_contract import (
     read_span_attributes,
     read_span_io,
 )
+from cogniverse_foundation.telemetry.span_metrics import profile_selection_metrics
 
 
 def _memory_config_manager():
@@ -856,6 +857,79 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
         assert attrs["available_profiles"] == ", ".join(available_profiles)
 
     @pytest.mark.asyncio
+    async def test_profile_selection_span_lasts_as_long_as_the_selection(
+        self, real_telemetry
+    ):
+        """The span runs from before the candidates are read to after the
+        answer is built, so the LM call's time is the latency the Profile
+        metrics view reads from it."""
+        import pandas as pd
+
+        from cogniverse_agents.profile_selection_agent import (
+            ProfileSelectionAgent,
+            ProfileSelectionDeps,
+            ProfileSelectionInput,
+        )
+
+        tenant_id = _tenant_id("profile-selection-latency")
+        shipped_profile = _shipped_active_video_profile()
+        available_profiles = [shipped_profile.profile_name]
+        agent = ProfileSelectionAgent(
+            deps=ProfileSelectionDeps(available_profiles=available_profiles),
+            port=19012,
+        )
+        config_manager = _memory_config_manager()
+        config_manager.add_backend_profile(shipped_profile, tenant_id=tenant_id)
+        agent.bind_config_manager(config_manager)
+        agent.set_telemetry_manager(real_telemetry)
+
+        lm_seconds = 0.4
+        lm_call = {}
+
+        async def slow_lm(*_args, **_kwargs):
+            lm_call["started_ns"] = time.time_ns()
+            await asyncio.sleep(lm_seconds)
+            lm_call["ended_ns"] = time.time_ns()
+            result = MagicMock()
+            result.selected_profile = available_profiles[0]
+            result.confidence = "0.8"
+            result.reasoning = "Video query matched colpali profile"
+            result.query_intent = "video_search"
+            result.modality = "video"
+            result.complexity = "simple"
+            return result
+
+        requested_ns = time.time_ns()
+        with patch.object(agent, "call_dspy", new=slow_lm):
+            await agent.process(
+                ProfileSelectionInput(
+                    query="show me cooking videos",
+                    available_profiles=available_profiles,
+                    tenant_id=tenant_id,
+                )
+            )
+        answered_ns = time.time_ns()
+
+        project_name = _project_name(real_telemetry, tenant_id)
+        phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
+        span = _query_phoenix_for_span(
+            SPAN_NAME_PROFILE_SELECTION, project_name, phoenix_url
+        )
+        started_ns = pd.Timestamp(span["start_time"]).value
+        ended_ns = pd.Timestamp(span["end_time"]).value
+        # Phoenix keeps microseconds.
+        assert requested_ns // 1000 * 1000 <= started_ns <= lm_call["started_ns"]
+        assert lm_call["ended_ns"] // 1000 * 1000 <= ended_ns <= answered_ns
+        [metrics] = profile_selection_metrics(pd.DataFrame([span]))
+        assert (metrics["modality"], metrics["count"]) == (shipped_profile.type, 1)
+        assert metrics["p95_ms"] == pytest.approx((ended_ns - started_ns) / 1e6)
+        assert (
+            lm_seconds * 1000
+            <= metrics["p95_ms"]
+            <= answered_ns / 1e6 - (requested_ns // 1000 * 1000) / 1e6
+        )
+
+    @pytest.mark.asyncio
     async def test_orchestrator_emits_custom_span(self, real_telemetry):
         """OrchestratorAgent emits cogniverse.orchestration span."""
         import cogniverse_agents.orchestrator_agent as orchestrator_mod
@@ -901,6 +975,17 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
         mock_cm = MagicMock()
         mock_cm.get_system_config.return_value = _stub_sys_cfg
         mock_cm.get_config.return_value = {}
+        # Planning reads the tenant's servable profiles before the (patched)
+        # plan is made: a tenant with none stored and none deployed.
+        from tests.utils.memory_store import (
+            InMemoryConfigStore,
+            serve_listed_profiles_as_backend_config,
+        )
+
+        mock_cm.list_backend_profiles.return_value = {}
+        serve_listed_profiles_as_backend_config(mock_cm)
+        mock_cm.store = InMemoryConfigStore()
+        mock_cm.store.initialize()
 
         agent = OrchestratorAgent(
             deps=OrchestratorDeps(),

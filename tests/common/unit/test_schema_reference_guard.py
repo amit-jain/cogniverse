@@ -10,10 +10,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
 SCHEMA_REFERENCE_FIXTURES = {
-    "libs/dashboard/cogniverse_dashboard/tabs/optimization.py": (
-        "Pydantic training example type identities",
-        "EntityExtractionExampleSchema ProfileSelectionExampleSchema QueryEnhancementExampleSchema RoutingExperienceSchema",
-    ),
     "libs/foundation/cogniverse_foundation/telemetry/context.py": (
         "Telemetry label when schema context is unavailable",
         "unknown",
@@ -170,18 +166,6 @@ SCHEMA_REFERENCE_FIXTURES = {
         "Missing schema error propagation",
         "video_missing",
     ),
-    "tests/dashboard/integration/test_approval_queue_regeneration_real.py": (
-        "Pydantic training example type identity",
-        "ProfileSelectionExampleSchema",
-    ),
-    "tests/dashboard/unit/test_chat_answer_format.py": (
-        "Synthetic tenant prefix in captured search results",
-        "video_colpali_smol500_mv_frame_flywheel_org_",
-    ),
-    "tests/dashboard/unit/test_optimization_forms.py": (
-        "Pydantic training example type identities",
-        "ProfileSelectionExampleSchema WorkflowExecutionSchema",
-    ),
     "tests/evaluation/conftest.py": (
         "Injected evaluation strategy metadata",
         "video_frame",
@@ -207,8 +191,16 @@ SCHEMA_REFERENCE_FIXTURES = {
         "pg_stat_activity",
     ),
     "tests/runtime/integration/test_approval_routes.py": (
+        "Pydantic training example type identities",
+        "RoutingExperienceSchema WorkflowExecutionSchema",
+    ),
+    "tests/runtime/integration/test_web_agent_workspace.py": (
+        "Profile a search result's ensemble names",
+        "video_videoprism_base_mv_chunk_30s",
+    ),
+    "tests/runtime/integration/test_web_ops_optimization_framework.py": (
         "Pydantic training example type identity",
-        "RoutingExperienceSchema",
+        "QueryEnhancementExampleSchema",
     ),
     "tests/runtime/integration/test_web_ops_approvals.py": (
         "Pydantic training example type identity",
@@ -288,7 +280,8 @@ SCHEMA_REFERENCE_FIXTURES = {
     ),
     "tests/runtime/unit/test_batch_optimization_modes.py": (
         "Missing profile and Pydantic example type fixtures",
-        "ProfileSelectionExampleSchema RoutingExperienceSchema video_orphan",
+        "ProfileSelectionExampleSchema QueryEnhancementExampleSchema "
+        "RoutingExperienceSchema video_orphan",
     ),
     "tests/runtime/unit/test_dispatcher_answer_search_wiring.py": (
         "Injected active video profile",
@@ -297,6 +290,10 @@ SCHEMA_REFERENCE_FIXTURES = {
     "tests/runtime/unit/test_event_loop_offload.py": (
         "Injected profile for the offloaded profile create and update",
         "s",
+    ),
+    "tests/runtime/unit/test_harness_turn.py": (
+        "Tenant-scoped schema in a hit's Vespa document id",
+        "video_colpali_smol500_mv_frame_t_main",
     ),
     "tests/runtime/unit/test_main_startup_schema_removal.py": (
         "Tenant schema names in fabricated drift migration outcomes",
@@ -325,6 +322,10 @@ SCHEMA_REFERENCE_FIXTURES = {
     "tests/synthetic/unit/test_topic_saliency_golden.py": (
         "Recorded video document fixture metadata",
         "video_frames",
+    ),
+    "tests/synthetic/unit/test_uploaded_examples.py": (
+        "Pydantic training example type identity",
+        "QueryEnhancementExampleSchema",
     ),
     "tests/system/conftest.py": (
         "Documented tenant schema prefix",

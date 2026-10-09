@@ -579,74 +579,56 @@ openshell:
       clientTlsSecretName: openshell-client-tls
 
 # ===========================================
-# Dashboard Configuration
+# Web client (the Cogniverse UI)
 # ===========================================
-dashboard:
+web:
   enabled: true
-  # Same backend → image selection as runtime (one image per torch
-  # variant). Dashboard is Streamlit and never runs inference itself,
-  # but the venv transitively imports torch via cogniverse_agents /
-  # cogniverse_evaluation, so the wheel choice still matters for image
-  # size and ABI compatibility.
-  backend: cuda
-  # Fallback only — imagesByBackend below is what actually renders. Kept in
-  # sync with the tag the `cogniverse images` CLI builds (dev).
   image:
-    repository: cogniverse/dashboard-cuda
+    repository: cogniverse/web
     tag: "0.1.0"
     pullPolicy: IfNotPresent
-  imagesByBackend:
-    cpu:
-      repository: cogniverse/dashboard-cpu
-      tag: "0.1.0"
-      pullPolicy: IfNotPresent
-    cuda:
-      repository: cogniverse/dashboard-cuda
-      tag: "0.1.0"
-      pullPolicy: IfNotPresent
-    rocm:
-      repository: cogniverse/dashboard-rocm
-      tag: "0.1.0"
-      pullPolicy: IfNotPresent
 
   replicaCount: 1
 
-  resources:
-    limits:
-      cpu: "2"
-      memory: "2Gi"
-    requests:
-      cpu: "1"
-      memory: "2Gi"
+  # Runtime base URL the web server calls, reaching its /admin routes directly:
+  # it mints each tenant's harness key through /admin/harness/keys. Empty uses
+  # this release's runtime Service.
+  runtimeUrl: ""
+
+  # Extra environment for the web server (name: value), and envFrom sources
+  # (Secrets or ConfigMaps) for configuration such as its user authentication.
+  env: {}
+  envFrom: []
 
   service:
     type: ClusterIP
-    port: 8501
-    nodePort: 28501
+    port: 4000
+    nodePort: 28400
     annotations: {}
 
-  env:
-    STREAMLIT_SERVER_PORT: "8501"
-    STREAMLIT_SERVER_ADDRESS: "0.0.0.0"
-    STREAMLIT_SERVER_ENABLE_CORS: "false"
-    STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION: "true"
+  resources:
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+    requests:
+      cpu: "100m"
+      memory: "512Mi"
 
-  # Health checks
   livenessProbe:
     httpGet:
-      path: /_stcore/health
-      port: 8501
-    initialDelaySeconds: 60
-    periodSeconds: 30
-    timeoutSeconds: 10
+      path: /healthz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 20
+    timeoutSeconds: 5
     failureThreshold: 3
 
   readinessProbe:
     httpGet:
-      path: /_stcore/health
-      port: 8501
-    initialDelaySeconds: 30
-    periodSeconds: 20
+      path: /healthz
+      port: http
+    initialDelaySeconds: 2
+    periodSeconds: 10
     timeoutSeconds: 5
     failureThreshold: 3
 
@@ -712,6 +694,11 @@ phoenix:
     port: 6006
     nodePort: 26006
     annotations: {}
+
+  # The address a browser opens the Phoenix UI at (the runtime's
+  # PHOENIX_UI_URL); the web client's trace and dataset links point at it.
+  # Unset, they are not linked.
+  uiUrl: ""
 
   env:
     PHOENIX_WORKING_DIR: "/phoenix-data"
@@ -1712,6 +1699,9 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    # Server-sent event streams (chat replies, ingest progress) reach the
+    # browser as they are written.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
 
   hosts:
     - host: cogniverse.example.com
@@ -1722,8 +1712,8 @@ ingress:
           port: 8000
         - path: /
           pathType: Prefix
-          service: dashboard
-          port: 8501
+          service: web
+          port: 4000
 
   tls:
     - secretName: cogniverse-tls
@@ -1765,8 +1755,10 @@ config:
 # Init Jobs
 # ===========================================
 initJobs:
-  # Schema deployment job — deploys config.defaultProfiles.video for each
-  # config.tenants entry through the runtime API; no selection deploys none.
+  # Schema deployment job — registers each config.tenants entry
+  # (POST /admin/tenants; 409 already registered proceeds) and deploys
+  # config.defaultProfiles.video for it through the runtime API; no selection
+  # deploys no profile.
   schemaDeployment:
     enabled: true
     resources:
@@ -1798,7 +1790,7 @@ initJobs:
 # Security contexts are set per-component in templates:
 # Vespa: runAsUser 0 (needs root for JVM)
 # LLM builtin: runAsUser 0 (needs root for model storage)
-# Runtime, Dashboard, Phoenix: runAsUser 1000
+# Runtime, Phoenix: runAsUser 1000
 securityContext: {}
 podSecurityContext: {}
 
@@ -1889,8 +1881,8 @@ multiTenant:
 # ===========================================
 # Redis — queues, task state and session state
 # ===========================================
-# The one instance every runtime replica and worker, the ingestors and the
-# dashboard share:
+# The one instance every runtime replica and worker and the ingestors
+# share:
 #   - Ingestion: POST /ingestion/upload XADDs to ``ingest:queue``; ingestor
 #     pods XREADGROUP it through a consumer group for at-least-once delivery
 #     (dead letters in ``ingest:queue:dead``). Workers XADD per-event to

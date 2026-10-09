@@ -17,6 +17,10 @@ import sys
 import pytest
 
 from cogniverse_runtime import optimization_cli as oc
+from cogniverse_runtime.optimization_options import (
+    ModuleRunOptions,
+    SyntheticRunOptions,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -112,6 +116,8 @@ def _expected_lookback_kwargs(worker_attr: str, embedder_url: str | None):
     }
     if worker_attr in _EMBEDDER_URL_WORKERS:
         expected["embedder_url"] = embedder_url
+    if worker_attr == "run_workflow_optimization":
+        expected["max_batches"] = None
     return expected
 
 
@@ -322,6 +328,7 @@ def test_synthetic_default_optimizers_dispatch(monkeypatch):
             "routing",
             "entity_extraction",
         ],
+        "options": SyntheticRunOptions(),
         "telemetry_otlp_endpoint": None,
     }
 
@@ -344,8 +351,142 @@ def test_synthetic_agents_override_optimizers(monkeypatch):
     assert rec.kwargs == {
         "tenant_id": "acme:acme",
         "optimizer_types": ["profile", "routing"],
+        "options": SyntheticRunOptions(),
         "telemetry_otlp_endpoint": None,
     }
+
+
+def test_synthetic_options_reach_the_generator(monkeypatch):
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(oc, "run_synthetic_generation", rec)
+    code = _run_main(
+        monkeypatch,
+        [
+            "--mode",
+            "synthetic",
+            "--tenant-id",
+            "acme",
+            "--agents",
+            "profile",
+            "--options",
+            json.dumps(
+                {
+                    "count": 7,
+                    "vespa_sample_size": 30,
+                    "strategy": "entity_rich",
+                    "max_profiles": 2,
+                    "human_review": False,
+                }
+            ),
+        ],
+    )
+    assert code == 0
+    assert rec.kwargs == {
+        "tenant_id": "acme:acme",
+        "optimizer_types": ["profile"],
+        "options": SyntheticRunOptions(
+            count=7,
+            vespa_sample_size=30,
+            strategy="entity_rich",
+            max_profiles=2,
+            human_review=False,
+        ),
+        "telemetry_otlp_endpoint": None,
+    }
+
+
+def test_workflow_iterations_cap_the_evaluation_batches(monkeypatch):
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(oc, "run_workflow_optimization", rec)
+    code = _run_main(
+        monkeypatch,
+        [
+            "--mode",
+            "workflow",
+            "--tenant-id",
+            "acme",
+            "--options",
+            '{"max_iterations": 7}',
+        ],
+    )
+    assert code == 0
+    assert rec.kwargs == {
+        "tenant_id": "acme:acme",
+        "lookback_hours": 24.0,
+        "telemetry_otlp_endpoint": None,
+        "max_batches": 7,
+    }
+
+
+@pytest.mark.parametrize("mode", ["routing", "unified"])
+def test_module_modes_dispatch_with_their_options(monkeypatch, mode):
+    rec = _Recorder(_OK)
+    monkeypatch.setattr(oc, "run_module_optimization", rec)
+    code = _run_main(
+        monkeypatch,
+        [
+            "--mode",
+            mode,
+            "--tenant-id",
+            "acme",
+            "--lookback-hours",
+            "3",
+            "--embedder-url",
+            "http://denseon.test",
+            "--options",
+            json.dumps(
+                {
+                    "max_iterations": 12,
+                    "use_synthetic_data": False,
+                    "dataset_name": "golden-acme:acme",
+                }
+            ),
+        ],
+    )
+    assert code == 0
+    assert rec.kwargs == {
+        "module": mode,
+        "tenant_id": "acme:acme",
+        "lookback_hours": 3.0,
+        "options": ModuleRunOptions(
+            max_iterations=12,
+            use_synthetic_data=False,
+            dataset_name="golden-acme:acme",
+        ),
+        "telemetry_otlp_endpoint": None,
+        "embedder_url": "http://denseon.test",
+    }
+
+
+@pytest.mark.parametrize(
+    ("mode", "options", "message"),
+    [
+        ("synthetic", '{"count": 0}', "count"),
+        ("synthetic", '{"strategy": "random"}', "strategy"),
+        ("routing", '{"dataset_name": "golden-acme:acme"}', "use_synthetic_data"),
+        ("simba", '{"count": 3}', "Mode 'simba' takes no options"),
+        ("workflow", "not json", "Expecting value"),
+    ],
+)
+def test_invalid_options_exit_2_before_dispatch(
+    monkeypatch, capsys, mode, options, message
+):
+    rec = _Recorder(_OK)
+    for attr in (
+        "run_synthetic_generation",
+        "run_module_optimization",
+        "run_simba_optimization",
+        "run_workflow_optimization",
+    ):
+        monkeypatch.setattr(oc, attr, rec)
+    code = _run_main(
+        monkeypatch, ["--mode", mode, "--tenant-id", "acme", "--options", options]
+    )
+    assert code == 2
+    assert rec.calls == 0
+    error = capsys.readouterr().err
+    assert "error: --options: " in error
+    assert message in error
 
 
 @pytest.mark.parametrize(
@@ -518,10 +659,12 @@ class TestConfigErrorExitsCleanly:
     """A configuration error (BACKEND_URL unset) exits 1 with a one-line
     ``Error:`` message — never a raw traceback."""
 
-    def test_missing_backend_url_exits_with_clean_error(self):
+    def test_missing_backend_url_exits_with_clean_error(self, tmp_path):
         import os
         import subprocess
         import sys as _sys
+
+        outcome = tmp_path / "outcome.json"
 
         env = {
             k: v
@@ -537,6 +680,8 @@ class TestConfigErrorExitsCleanly:
                 "cleanup",
                 "--tenant-id",
                 "acme:acme",
+                "--outcome-file",
+                str(outcome),
             ],
             capture_output=True,
             text=True,
@@ -546,6 +691,13 @@ class TestConfigErrorExitsCleanly:
         assert result.returncode == 1
         assert "Error:" in result.stderr
         assert "Traceback" not in result.stderr
+        # The outcome names the same configuration error, with its type.
+        message = result.stderr.strip().splitlines()[-1].removeprefix("Error: ")
+        assert json.loads(outcome.read_text()) == {
+            "status": "failed",
+            "error": f"CleanupRootError: {message}",
+        }
+        assert message == "log_dir: an explicit directory is required"
 
 
 _DENSEON_URL = "http://cogniverse-denseon:8000"
@@ -655,3 +807,73 @@ def test_cleanup_resolves_environment_once(monkeypatch, tmp_path):
         "config_keep_versions": 6,
     }
     assert reads == dict.fromkeys(values, 1)
+
+
+_MIXED = {
+    "status": "success",
+    "results": {
+        "profile": {"status": "success", "examples_generated": 2},
+        "routing": {"status": "failed", "error": "backend down"},
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_code"), [(_OK, 0), (_MIXED, 1)], ids=["success", "mixed"]
+)
+def test_outcome_file_holds_the_printed_document(
+    monkeypatch, capfd, tmp_path, result, expected_code
+):
+    """Argo keeps the outcome file as the step's output parameter, failed
+    steps included, so a mixed run's per-optimizer results survive its exit 1."""
+    outcome = tmp_path / "outcome.json"
+    monkeypatch.setattr(oc, "run_synthetic_generation", _Recorder(result))
+    code = _run_main(
+        monkeypatch,
+        ["--mode", "synthetic", "--tenant-id", "acme", "--outcome-file", str(outcome)],
+    )
+
+    printed = capfd.readouterr().out
+    assert (code, outcome.read_text(), json.loads(printed)) == (
+        expected_code,
+        json.dumps(result, indent=2, default=str),
+        result,
+    )
+
+
+class _Raising(_Recorder):
+    async def _coro(self):
+        raise RuntimeError("Vespa answered 503 for the backend sample")
+
+
+def test_a_run_that_raises_records_why_in_the_outcome_file(monkeypatch, tmp_path):
+    outcome = tmp_path / "outcome.json"
+    monkeypatch.setattr(oc, "run_synthetic_generation", _Raising(None))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "optimization_cli.py",
+            "--mode",
+            "synthetic",
+            "--tenant-id",
+            "acme",
+            "--outcome-file",
+            str(outcome),
+        ],
+    )
+    with pytest.raises(RuntimeError, match="Vespa answered 503"):
+        oc.main()
+
+    assert json.loads(outcome.read_text()) == {
+        "status": "failed",
+        "error": "RuntimeError: Vespa answered 503 for the backend sample",
+    }
+
+
+def test_a_run_refused_by_its_arguments_writes_no_outcome(monkeypatch, tmp_path):
+    """An argument error exits 2 before any run; the step's outcome reads
+    empty and the runtime names the step's exit instead."""
+    outcome = tmp_path / "outcome.json"
+    code = _run_main(monkeypatch, ["--mode", "simba", "--outcome-file", str(outcome)])
+    assert (code, outcome.exists()) == (2, False)

@@ -74,7 +74,7 @@ async def test_each_tenant_gets_its_own_gateway_with_its_own_thresholds(dispatch
 
 @pytest.mark.asyncio
 async def test_gateway_seeds_gliner_config_from_routing_config(dispatcher):
-    """The tenant's dashboard-editable RoutingConfigUnified GLiNER model and
+    """The tenant's editable RoutingConfigUnified GLiNER model and
     threshold reach the live GatewayDeps (they were ignored before — the gateway
     only ever saw its own defaults plus the optimization artifact)."""
     from cogniverse_foundation.config.unified_config import RoutingConfigUnified

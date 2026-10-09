@@ -282,7 +282,9 @@ async def test_admin_schema_deploy_target_resolution_offloaded(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_profile_create_resolves_its_deploy_backend_offloaded(monkeypatch):
+async def test_admin_profile_create_resolves_its_deploy_backend_offloaded(
+    monkeypatch, in_process_config_events
+):
     """A create that deploys its schema first builds the tenant's ingestion
     backend, which connects to Vespa on a cold cache; inline it froze every
     request on the API loop."""
@@ -328,7 +330,7 @@ async def test_admin_profile_create_resolves_its_deploy_backend_offloaded(monkey
 
 
 @pytest.mark.asyncio
-async def test_admin_profile_create_and_update_offloaded():
+async def test_admin_profile_create_and_update_offloaded(in_process_config_events):
     """A profile write is a compare-and-set read-modify-write that re-reads
     and backs off while other processes write the same backend config; run
     inline it froze every request on the API loop for the whole retry."""

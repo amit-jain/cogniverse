@@ -2,9 +2,9 @@
 
 litellm's import fetches its cost map from raw.githubusercontent.com unless
 ``LITELLM_LOCAL_MODEL_COST_MAP`` is ``True``, so a process without it waits
-on GitHub (up to 5 s) at its first LM call. The runtime and dashboard images
-set it; every chart workload that runs cogniverse code runs one of those two
-images and leaves the image's value alone.
+on GitHub (up to 5 s) at its first LM call. The runtime image sets it; every
+chart workload that runs cogniverse code runs that image and leaves the
+image's value alone.
 """
 
 import shutil
@@ -18,7 +18,6 @@ from cogniverse_cli.images import IMAGE_DOCKERFILES
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_PATH = REPO_ROOT / "charts" / "cogniverse"
 RUNTIME_DOCKERFILE = REPO_ROOT / "libs" / "runtime" / "Dockerfile"
-DASHBOARD_DOCKERFILE = REPO_ROOT / "libs" / "dashboard" / "Dockerfile"
 VARIABLE = "LITELLM_LOCAL_MODEL_COST_MAP"
 
 pytestmark = pytest.mark.skipif(
@@ -41,7 +40,7 @@ def _final_stage_env(dockerfile: Path) -> dict[str, str]:
 def _image_repositories() -> dict[str, set[str]]:
     values = yaml.safe_load((CHART_PATH / "values.yaml").read_text())
     repositories: dict[str, set[str]] = {}
-    for image in ("runtime", "dashboard"):
+    for image in ("runtime",):
         block = values[image]
         repositories[image] = {block["image"]["repository"]} | {
             entry["repository"] for entry in block["imagesByBackend"].values()
@@ -86,24 +85,19 @@ def _rendered_cogniverse_containers(*set_args: str) -> list[tuple[str, dict]]:
 
 
 def test_the_checked_dockerfiles_are_the_ones_the_images_build_from():
-    assert {image: IMAGE_DOCKERFILES[image] for image in ("runtime", "dashboard")} == {
-        "runtime": RUNTIME_DOCKERFILE.relative_to(REPO_ROOT).as_posix(),
-        "dashboard": DASHBOARD_DOCKERFILE.relative_to(REPO_ROOT).as_posix(),
-    }
+    assert IMAGE_DOCKERFILES["runtime"] == (
+        RUNTIME_DOCKERFILE.relative_to(REPO_ROOT).as_posix()
+    )
 
 
 def test_the_runtime_image_sets_the_bundled_cost_map():
     assert _final_stage_env(RUNTIME_DOCKERFILE)[VARIABLE] == "True"
 
 
-def test_the_dashboard_image_sets_the_bundled_cost_map():
-    assert _final_stage_env(DASHBOARD_DOCKERFILE)[VARIABLE] == "True"
-
-
 @pytest.mark.parametrize("backend", ["cpu", "cuda", "rocm"])
 def test_every_cogniverse_workload_runs_an_image_that_sets_it(backend):
     containers = _rendered_cogniverse_containers(
-        f"runtime.backend={backend}", f"dashboard.backend={backend}"
+        f"runtime.backend={backend}",
     )
     owners = {owner for owner, _ in containers}
 
@@ -111,7 +105,6 @@ def test_every_cogniverse_workload_runs_an_image_that_sets_it(backend):
         "Deployment/cogniverse-runtime",
         "Deployment/cogniverse-ingestor",
         "Deployment/cogniverse-quality-monitor",
-        "Deployment/cogniverse-dashboard",
     } <= owners
     # The chart leaves the image's value in force: no container sets it.
     assert [

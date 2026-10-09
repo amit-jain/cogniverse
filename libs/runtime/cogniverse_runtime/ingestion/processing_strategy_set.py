@@ -12,7 +12,7 @@ from typing import Any
 
 from .exceptions import ContentProcessingError, PipelineException
 from .processor_base import BaseStrategy
-from .strategies import DOCUMENT_EXTENSIONS
+from .strategies import AUDIO_EXTENSIONS, DOCUMENT_EXTENSIONS, IMAGE_EXTENSIONS
 
 
 class ProcessingStrategySet:
@@ -408,7 +408,7 @@ class ProcessingStrategySet:
 
         elif "audio_file" in requirements:
             content_path = video_path
-            audio_extensions = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma"}
+            audio_extensions = AUDIO_EXTENSIONS
 
             if content_path.is_dir():
                 audio_files = sorted(
@@ -450,7 +450,7 @@ class ProcessingStrategySet:
             import time as _time
 
             content_path = video_path
-            image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+            image_extensions = IMAGE_EXTENSIONS
 
             if content_path.is_dir():
                 image_files = sorted(

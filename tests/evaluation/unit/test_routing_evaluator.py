@@ -495,8 +495,8 @@ class TestProviderQuery:
 
 
 class TestQueryRoutingSpansAwaited:
-    """query_routing_spans is async; the optimization dashboard tab must await
-    it (via run_async_in_streamlit) before passing the result to
+    """query_routing_spans is async; a caller must await it before passing
+    the result to
     calculate_metrics, which iterates it. This guards the await -> list ->
     metrics sequence the tab performs — the pre-fix bug passed the raw coroutine
     to calculate_metrics, which then failed iterating a coroutine.
@@ -607,7 +607,9 @@ class TestLatencyAndNumpyCoercion:
             "events": [],
         }
         _, metrics = evaluator.evaluate_routing_decision(span)
-        assert metrics["latency_ms"] == 0.0
+        # Neither a usable processing_time nor a start and end: no timing,
+        # rather than a 0 ms decision.
+        assert metrics["latency_ms"] is None
 
     def test_numpy_bool_confidence_is_not_zero(self, mock_provider):
         """A confidence read as np.bool_(True) from a pandas row must map to
@@ -627,3 +629,71 @@ class TestLatencyAndNumpyCoercion:
         }
         _, metrics = evaluator.evaluate_routing_decision(span)
         assert metrics["confidence"] == 1.0
+
+
+def _gateway_routing_span(parent_id, agent, start, duration_ms):
+    """A routing span as Phoenix returns the gateway's: the decision on
+    ``output.value`` with no ``processing_time``, timed by its start and end."""
+    import json
+
+    import pandas as pd
+
+    begin = pd.Timestamp(start, tz="UTC")
+    return {
+        "name": "cogniverse.routing",
+        "parent_id": parent_id,
+        "status_code": "UNSET",
+        "attributes.output.value": json.dumps(
+            {"chosen_agent": agent, "recommended_agent": agent, "confidence": 0.9}
+        ),
+        "start_time": begin,
+        "end_time": begin + pd.Timedelta(milliseconds=duration_ms),
+        "events": [],
+    }
+
+
+class TestDecisionTimeFromTheSpan:
+    def test_a_decision_without_processing_time_takes_its_span_duration(
+        self, mock_provider
+    ):
+        span = _gateway_routing_span("p-1", "search_agent", "2026-10-09 10:00", 412.5)
+
+        _, metrics = _routing_evaluator(mock_provider).evaluate_routing_decision(span)
+
+        assert metrics["latency_ms"] == 412.5
+
+    def test_a_recorded_processing_time_wins_over_the_span_duration(
+        self, mock_provider
+    ):
+        import json
+
+        span = _gateway_routing_span("p-1", "search_agent", "2026-10-09 10:00", 412.5)
+        decision = json.loads(span["attributes.output.value"])
+        span["attributes.output.value"] = json.dumps(
+            {**decision, "processing_time": 37.0}
+        )
+
+        _, metrics = _routing_evaluator(mock_provider).evaluate_routing_decision(span)
+
+        assert metrics["latency_ms"] == 37.0
+
+    def test_the_mean_leaves_out_decisions_with_no_timing(self, mock_provider):
+        untimed = _gateway_routing_span("p-3", "search_agent", "2026-10-09 10:02", 0)
+        del untimed["end_time"]
+        spans = [
+            _gateway_routing_span("p-1", "search_agent", "2026-10-09 10:00", 300.0),
+            _gateway_routing_span("p-2", "summarizer_agent", "2026-10-09 10:01", 500.0),
+            untimed,
+        ]
+
+        metrics = _routing_evaluator(mock_provider).calculate_metrics(spans)
+
+        assert (metrics.total_decisions, metrics.avg_routing_latency) == (3, 400.0)
+
+    def test_no_timed_decision_leaves_the_mean_unset(self, mock_provider):
+        span = _gateway_routing_span("p-1", "search_agent", "2026-10-09 10:00", 0)
+        del span["start_time"]
+
+        metrics = _routing_evaluator(mock_provider).calculate_metrics([span])
+
+        assert (metrics.total_decisions, metrics.avg_routing_latency) == (1, None)

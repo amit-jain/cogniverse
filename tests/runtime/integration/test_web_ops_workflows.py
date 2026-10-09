@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
@@ -36,9 +37,8 @@ from tests.utils.web_client import (
 )
 from tests.utils.web_ops import serve_ops_runtime
 
-pytestmark = [pytest.mark.integration, pytest.mark.no_shared_vespa]
+pytestmark = [pytest.mark.integration, pytest.mark.ci_fast, pytest.mark.no_shared_vespa]
 
-KEY = "web-ops-harness-key"
 LECTURE_REPORT = {
     "workflow_id": "wf-lecture-report",
     "query": "summarize the lecture and write a report",
@@ -59,6 +59,16 @@ MISSING_CLIP = {
     "tasks_completed": 0,
     "pattern": "parallel",
     "error_summary": "search_agent timed out",
+}
+EARLIER_DIGEST = {
+    "workflow_id": "wf-earlier-digest",
+    "query": "digest yesterday's standups",
+    "agent_sequence": ["summarizer_agent"],
+    "execution_order": ["summarizer_agent"],
+    "execution_time": 2.0,
+    "success": True,
+    "tasks_completed": 1,
+    "pattern": "sequential",
 }
 
 
@@ -104,7 +114,7 @@ def runtime_url(phoenix_container, schema_loader, workflow_state_redis_url, tele
 def web_url(built_client, runtime_url, phoenix_proxy):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -206,12 +216,20 @@ def _stored_reviews(tenant: str, want: int, timeout=60.0):
 
 class TestWorkflowReviewsView:
     def test_a_reviewer_rates_a_workflow_and_the_review_lands_on_its_span(
-        self, page, web_url, tenant
+        self, page, web_url, tenant, phoenix_proxy
     ):
         _show(page, web_url, tenant)
+        expect(page.locator(".ops-view > p.muted").first).to_have_text(
+            "Review orchestration workflows to improve future routing and "
+            "orchestration decisions. Your reviews become ground truth for "
+            "optimization."
+        )
         assert _refresh_until(
             page, tenant, 2, [MISSING_CLIP["query"], LECTURE_REPORT["query"]]
         ) == [MISSING_CLIP["query"], LECTURE_REPORT["query"]]
+        expect(
+            _panel(page, tenant).get_by_text("Found 2 workflows.", exact=True)
+        ).to_be_visible()
         rows = _panel(page, tenant).locator("tbody tr")
         expect(rows.nth(0).locator("td").nth(1)).to_have_text(MISSING_CLIP["query"])
         assert [row.locator("td").all_inner_texts()[1:7] for row in rows.all()] == [
@@ -256,17 +274,41 @@ class TestWorkflowReviewsView:
         )
 
         _panel(page, tenant).get_by_label("Reviewer").fill("reviewer@example.com")
-        form.get_by_label("The pattern was optimal").uncheck()
+        form.get_by_role("group", name="Was the pattern optimal?").get_by_label(
+            "No"
+        ).check()
         form.get_by_label("Suggested pattern").select_option("parallel")
         form.get_by_label("Why that pattern").fill("the two steps are independent")
         form.get_by_label("The right agents were used").uncheck()
         form.get_by_label("Missing agents").fill("report_agent")
         form.get_by_label("Unnecessary agents").fill("summarizer_agent")
+        form.get_by_label("The execution order was optimal").uncheck()
+        form.get_by_label("Suggested order").fill("report_agent\nsearch_agent")
+        form.get_by_label("Why that order").fill("outline the report first")
+        form.get_by_label("What went well").fill("the search found the lecture")
+        form.get_by_label("What went wrong").fill("no report was written")
         form.get_by_label("Improvement notes").fill("use the report agent for reports")
+        written = threading.Event()
+
+        def slow_reads_after_the_write(method, path, body):
+            # Phoenix serves a new annotation after an indexing delay; hold
+            # every read after the write so the page cannot lean on one.
+            if method == "POST" and "annotations" in path:
+                written.set()
+            elif written.is_set():
+                time.sleep(8)
+            return None
+
+        phoenix_proxy.intercept = slow_reads_after_the_write
         form.get_by_role("button", name="Save review").click()
         expect(page.get_by_role("status")).to_have_text(
             "Saved the review of wf-lecture-report: poor."
         )
+        # The saved review shows at once, from the save's own answer.
+        expect(_column(page, tenant, 7)).to_have_text(
+            ["—", "poor (0.30) by reviewer@example.com"], timeout=4000
+        )
+        phoenix_proxy.intercept = None
         assert _refresh_until(
             page, tenant, 7, ["—", "poor (0.30) by reviewer@example.com"]
         ) == ["—", "poor (0.30) by reviewer@example.com"]
@@ -288,6 +330,10 @@ class TestWorkflowReviewsView:
                     "unnecessary_agents",
                     "suggested_agents",
                     "execution_order_is_optimal",
+                    "suggested_execution_order",
+                    "execution_order_feedback",
+                    "what_went_well",
+                    "what_went_wrong",
                     "improvement_notes",
                     "annotator_id",
                 )
@@ -304,11 +350,83 @@ class TestWorkflowReviewsView:
                 "missing_agents": "report_agent",
                 "unnecessary_agents": "summarizer_agent",
                 "suggested_agents": "search_agent,report_agent",
-                "execution_order_is_optimal": True,
+                "execution_order_is_optimal": False,
+                "suggested_execution_order": "report_agent,search_agent",
+                "execution_order_feedback": "outline the report first",
+                "what_went_well": "the search found the lecture",
+                "what_went_wrong": "no report was written",
                 "improvement_notes": "use the report agent for reports",
                 "annotator_id": "reviewer@example.com",
             },
         )
+
+    def test_the_window_and_the_cap_choose_the_workflows_and_unsure_is_not_optimal(
+        self, page, web_url, tenant, telemetry
+    ):
+        three_hours_ago = time.time_ns() - 3 * 3600 * 10**9
+
+        class Earlier:
+            """The telemetry manager, starting each span three hours ago."""
+
+            def span(self, name, tenant_id):
+                return telemetry.span(
+                    name, tenant_id=tenant_id, start_time=three_hours_ago
+                )
+
+        run_in_own_loop(
+            OrchestratorAgent._emit_orchestration_span(
+                SimpleNamespace(telemetry_manager=Earlier()),
+                tenant_id=tenant,
+                **EARLIER_DIGEST,
+            )
+        )
+        telemetry.force_flush(timeout_millis=10000)
+        queries = [MISSING_CLIP["query"], LECTURE_REPORT["query"]]
+        _show(page, web_url, tenant)
+        panel = _panel(page, tenant)
+        assert _refresh_until(page, tenant, 2, [*queries, EARLIER_DIGEST["query"]]) == [
+            *queries,
+            EARLIER_DIGEST["query"],
+        ]
+        expect(panel.get_by_text("Found 3 workflows.", exact=True)).to_be_visible()
+
+        panel.get_by_label("Window").select_option("Last hour")
+        assert _refresh_until(page, tenant, 2, queries) == queries
+        expect(panel.get_by_text("Found 2 workflows.", exact=True)).to_be_visible()
+
+        with page.expect_response(
+            lambda r: "orchestration-workflows?lookback_hours=1&limit=1" in r.url
+        ):
+            panel.get_by_label("Max workflows").select_option("1")
+        expect(
+            panel.get_by_text("Found 1 workflow, the newest 1.", exact=True)
+        ).to_be_visible()
+        assert _column(page, tenant, 2).all_inner_texts() == [MISSING_CLIP["query"]]
+
+        panel.get_by_label("Reviewer").fill("reviewer@example.com")
+        panel.get_by_role("button", name="Review wf-missing-clip").click()
+        form = page.get_by_role("form", name="Review of wf-missing-clip")
+        verdict = form.get_by_role("group", name="Was the pattern optimal?")
+        expect(verdict.get_by_role("radio")).to_have_count(3)
+        expect(verdict.get_by_label("Yes")).to_be_checked()
+        verdict.get_by_label("No").check()
+        expect(form.get_by_label("Suggested pattern")).to_be_visible()
+        verdict.get_by_label("Unsure").check()
+        expect(form.get_by_label("Suggested pattern")).to_have_count(0)
+        form.get_by_label("Quality").select_option("acceptable")
+        form.get_by_label("Score (0–1)").fill("0.5")
+        form.get_by_role("button", name="Save review").click()
+        expect(page.get_by_role("status")).to_have_text(
+            "Saved the review of wf-missing-clip: acceptable."
+        )
+        label, score, metadata = _stored_reviews(tenant, 1)["wf-missing-clip"]
+        assert (
+            label,
+            score,
+            metadata["pattern_is_optimal"],
+            metadata.get("suggested_pattern"),
+            metadata.get("pattern_feedback"),
+        ) == ("acceptable", 0.5, False, None, None)
 
 
 class TestConcurrency:
@@ -387,3 +505,44 @@ class TestFaults:
             panel.get_by_text("No orchestration workflows in this window.")
         ).to_have_count(0)
         expect(panel.get_by_role("table", name="Workflows")).to_have_count(0)
+
+    def test_a_review_the_backend_does_not_store_shows_why(
+        self, page, web_url, runtime_url, tenant, phoenix_proxy
+    ):
+        _show(page, web_url, tenant)
+        _refresh_until(
+            page, tenant, 2, [MISSING_CLIP["query"], LECTURE_REPORT["query"]]
+        )
+        _panel(page, tenant).get_by_label("Reviewer").fill("reviewer@example.com")
+        _panel(page, tenant).get_by_role(
+            "button", name="Review wf-lecture-report"
+        ).click()
+        form = page.get_by_role("form", name="Review of wf-lecture-report")
+        form.get_by_label("Quality").select_option("good")
+        form.get_by_label("Score (0–1)").fill("0.8")
+        listed = httpx.get(
+            f"{runtime_url}/admin/tenant/{tenant}/orchestration-workflows",
+            params={"lookback_hours": 1},
+            timeout=60,
+        )
+        [span_id] = [
+            w["span_id"]
+            for w in listed.json()["workflows"]
+            if w["workflow_id"] == "wf-lecture-report"
+        ]
+
+        def fail_annotation_writes(method, path, body):
+            if method == "POST" and "annotations" in path:
+                return (503, {"detail": "down"})
+            return None
+
+        phoenix_proxy.intercept = fail_annotation_writes
+        form.get_by_role("button", name="Save review").click()
+        expect(form.get_by_role("alert")).to_have_text(
+            f"The review of workflow span {span_id} was not stored."
+        )
+        expect(form.get_by_role("group", name="Failure details")).to_have_count(1)
+        expect(form.locator("details pre")).to_have_text(
+            "error annotation_not_stored, failure HTTPStatusError, HTTP 502"
+        )
+        expect(page.get_by_role("status")).to_have_count(0)

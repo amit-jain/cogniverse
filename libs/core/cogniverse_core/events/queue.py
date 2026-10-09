@@ -7,7 +7,7 @@ Checkpoints handle crash recovery; EventQueue handles live streaming.
 
 Design Principles:
 - Backend-agnostic protocols allow swapping implementations
-- Multiple subscribers per task (dashboard + CLI can watch same workflow)
+- Multiple subscribers per task (web client + CLI can watch same workflow)
 - Short-term replay for client reconnection (~30 min TTL)
 - Cancellation signal for aborting long-running operations
 """

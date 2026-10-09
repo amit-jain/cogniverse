@@ -2,8 +2,8 @@
 
 Without this CLI, ``RLMABRunner`` was an orphan class — no production
 code path ever ran the harness, so no Phoenix spans tied by
-``ab_id`` were ever emitted, and the dashboard tile envisioned in the dashboard
-had nothing to read.
+``ab_id`` were ever emitted, and the A/B comparison metrics had nothing to
+read.
 
 This test verifies, against a real Phoenix container:
 
@@ -12,7 +12,7 @@ This test verifies, against a real Phoenix container:
     invoked once per row;
   * each run emits a Phoenix span (``rlm.ab_compare``) carrying the
     shared ``ab_id`` and the comparison attributes — that's the surface
-    the dashboard tile (follow-up commit) will read;
+    the runtime's A/B comparison metrics read;
   * the JSON summary aggregates per-dataset stats (avg deltas,
     fallback rate);
   * argparse rejects malformed invocations.

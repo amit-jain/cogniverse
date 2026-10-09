@@ -32,7 +32,7 @@ flowchart LR
     Foundation["<span style='color:#000'><b>Foundation Layer</b><br/>ConfigManager<br/>unified_config dataclasses<br/>ConfigUtils / BootstrapConfig</span>"]
     Core["<span style='color:#000'><b>Core Layer</b><br/>SchemaRegistry<br/>ProfileValidator<br/>BackendRegistry</span>"]
     Impl["<span style='color:#000'><b>Implementation Layer</b><br/>VespaConfigStore</span>"]
-    Consumers["<span style='color:#000'><b>Consumers</b><br/>Admin REST API<br/>Dashboard<br/>Agents / DSPy</span>"]
+    Consumers["<span style='color:#000'><b>Consumers</b><br/>Admin REST API<br/>Web client<br/>Agents / DSPy</span>"]
 
     SDK --> Foundation
     Foundation --> Core
@@ -221,7 +221,7 @@ Backend profiles are read/written under the config service `"backend"`
 (`ConfigManager`'s backend/profile methods default `service="backend"`)
 by three surfaces: the Python API below, the runtime Admin REST API
 (`/admin/profiles`, see "Backend Configuration API" below), and the
-dashboard's Backend Profile tab (`libs/dashboard/cogniverse_dashboard/tabs/backend_profile.py`).
+[web client](modules/web-client.md)'s Backend profiles view, which calls that REST API.
 
 ### Schema Configuration
 
@@ -782,7 +782,7 @@ manager.update_backend_profile(
 manager.delete_backend_profile(profile_name="custom_profile", tenant_id="acme")
 ```
 
-### REST API and Dashboard
+### REST API and Web Client
 
 The same profile operations are exposed over HTTP by the runtime's Admin
 API (`libs/runtime/cogniverse_runtime/routers/admin.py`, mounted under
@@ -804,9 +804,8 @@ curl -X POST http://localhost:8000/admin/profiles \
   -d '{"profile_name": "custom_profile", "tenant_id": "acme", "schema_name": "custom_schema_acme", "embedding_model": "colpali", "embedding_type": "multi_vector"}'
 ```
 
-The dashboard exposes the same operations through its Backend Profile tab
-(`libs/dashboard/cogniverse_dashboard/tabs/backend_profile.py`), which
-reads/writes profiles via the same `ConfigManager` instance.
+The web client exposes the same operations through its Backend profiles view,
+which calls these routes.
 
 ## Configuration Versioning
 

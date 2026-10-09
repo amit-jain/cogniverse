@@ -1428,7 +1428,7 @@ class TestSpanNameByAgent:
     def test_span_name_format_matches_agent_base_emission(self):
         """End-to-end pin: instantiate a concrete subclass of AgentBase, call
         process() with a spy telemetry manager, and verify the span name is
-        EXACTLY ``f"{ClassName}.process"``. If AgentBase._process_span()
+        EXACTLY ``f"{ClassName}.process"``. If AgentBase.process_span()
         ever changes the format, this test fails and forces an update to
         SPAN_NAME_BY_AGENT in the same commit."""
         import asyncio

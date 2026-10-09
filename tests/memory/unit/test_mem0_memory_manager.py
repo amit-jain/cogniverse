@@ -835,7 +835,7 @@ class TestDropSessionServerSideFilter:
 class TestImportChainWithoutCv2:
     """The memory embedder import chain must not require opencv.
 
-    Pods without video dependencies (dashboard) import
+    Pods without video dependencies import
     ``cogniverse_core.memory.mem0_embedder``, which pulls
     ``cogniverse_core.common.models`` — a package whose modules must keep
     ``cv2`` imports local to the functions that use it.

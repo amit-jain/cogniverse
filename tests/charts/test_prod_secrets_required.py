@@ -36,6 +36,7 @@ def test_prod_values_empty_the_dev_secrets():
     assert prod["phoenix"]["postgres"]["auth"]["password"] == "", (
         "prod must not ship the phoenix postgres password"
     )
+    assert "web" not in prod, "the web server holds no secret for prod to empty"
 
 
 @pytest.mark.unit

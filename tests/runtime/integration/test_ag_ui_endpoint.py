@@ -15,6 +15,8 @@ import logging
 import socket
 import threading
 import time
+import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 import httpx
@@ -27,11 +29,16 @@ from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentO
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.agent_dispatcher import (
+    CONVERSATION_PERSIST_FAILURE_CAPACITY,
+    CONVERSATION_SAVE_LEASE_S,
+    AgentDispatcher,
+)
 from cogniverse_runtime.agent_registry_store import RedisAgentRegistryStore
 from cogniverse_runtime.config_loader import ConfigLoader
 from cogniverse_runtime.routers import ag_ui, openai_compat
-from cogniverse_runtime.session_state import ContinuationStore
+from cogniverse_runtime.session_state import ContinuationStore, ConversationLedger
+from cogniverse_runtime.shared_state import connect_shared_state_redis
 from tests.utils.memory_store import InMemoryConfigStore
 
 pytestmark = [
@@ -51,11 +58,15 @@ STATUS_PHASE = "retrieval"
 STATUS_MESSAGE = "Searching 2 profiles"
 RANK_PHASE = "ranking"
 RANK_MESSAGE = "Ranking 4 hits"
+START_PHASE = "starting"
 RESULTS = [{"id": "video-7", "score": 0.91}, {"id": "video-2", "score": 0.64}]
 TOOL_CALL_ID = "call_ag_ui_write_file"
 THREAD_ID = "thread-1"
 RUN_ID = "run-1"
 DISCONNECT_CANCEL_BUDGET_SECONDS = 3.0
+# How long a gated agent holds its turn for a client that never releases it.
+GATE_SECONDS = 10.0
+INTERLEAVED_RUNS = 8
 
 
 def _token_chunks(text: str, size: int = 11) -> List[str]:
@@ -75,6 +86,8 @@ class AgUiInput(AgentInput):
     tool_results: list = []
     continuation_state: dict = {}
     tool_exchange: list = []
+    top_k: int = 10
+    search_results: list = []
 
 
 class SearchStreamOutput(AgentOutput):
@@ -200,7 +213,98 @@ class SlowAgent(AgentBase[AgUiInput, SlowOutput, AgUiDeps]):
         return SlowOutput(summary="first done")
 
 
+gated_release = threading.Event()
+
+
+class GatedAgent(AgentBase[AgUiInput, SlowOutput, AgUiDeps]):
+    """Reports a phase from the loop and one from a worker thread, then holds
+    the turn until the client releases it."""
+
+    async def _process_impl(self, input: AgUiInput) -> SlowOutput:
+        self.emit_progress(STATUS_PHASE, f"{input.tenant_id} searching")
+        await asyncio.to_thread(
+            self.emit_progress, RANK_PHASE, f"{input.tenant_id} ranking"
+        )
+        released = await asyncio.to_thread(gated_release.wait, GATE_SECONDS)
+        return SlowOutput(summary=f"released={released}")
+
+
+interleave: Dict[str, asyncio.Barrier] = {}
+
+
+class InterleavedAgent(AgentBase[AgUiInput, SlowOutput, AgUiDeps]):
+    """Reports a phase, waits until every concurrent run has reported its
+    own, then reports a second."""
+
+    async def _process_impl(self, input: AgUiInput) -> SlowOutput:
+        self.emit_progress("first", f"{input.tenant_id} first")
+        async with asyncio.timeout(GATE_SECONDS):
+            await interleave["barrier"].wait()
+        self.emit_progress("second", f"{input.tenant_id} second")
+        return SlowOutput(summary=f"{input.tenant_id} done")
+
+
+class FailingAfterStatusAgent(AgentBase[AgUiInput, FailingOutput, AgUiDeps]):
+    async def _process_impl(self, input: AgUiInput) -> FailingOutput:
+        self.emit_progress(STATUS_PHASE, STATUS_MESSAGE)
+        raise RuntimeError(f"secret-backend-detail-{input.query}")
+
+
+class SlowDispatchAgent(AgentBase[AgUiInput, SlowOutput, AgUiDeps]):
+    """Reports a phase, then holds the turn open for 20 s."""
+
+    async def _process_impl(self, input: AgUiInput) -> SlowOutput:
+        slow_agent_events.append("started")
+        self.emit_progress(STATUS_PHASE, STATUS_MESSAGE)
+        try:
+            await asyncio.sleep(20)
+        except asyncio.CancelledError:
+            slow_agent_events.append("cancelled")
+            raise
+        slow_agent_events.append("completed")
+        return SlowOutput(summary="done")
+
+
+THEMES = ["night skyline", "tower lights"]
+DRAFT_SUMMARY = "The tower is lit in three clips."
+parameter_barrier: Dict[str, asyncio.Barrier] = {}
+
+
+class ParametersOutput(AgentOutput):
+    summary: str = ""
+
+
+class ParametersAgent(AgentBase[AgUiInput, ParametersOutput, AgUiDeps]):
+    """Reports the themes and a draft summary it found as partial results,
+    then answers with the run parameters its input received."""
+
+    async def _process_impl(self, input: AgUiInput) -> ParametersOutput:
+        self.emit_progress(
+            "thinking",
+            "Content analysis complete",
+            data={"themes": THEMES, "categories": ["city"], "reasoning": "lit"},
+        )
+        self.emit_progress(
+            "summarization", "Summary generated", data={"summary": DRAFT_SUMMARY}
+        )
+        barrier = parameter_barrier.get("barrier")
+        if barrier is not None:
+            async with asyncio.timeout(GATE_SECONDS):
+                await barrier.wait()
+        return ParametersOutput(
+            summary=json.dumps(
+                {
+                    "top_k": input.top_k,
+                    "search_results": [hit["id"] for hit in input.search_results],
+                },
+                sort_keys=True,
+            )
+        )
+
+
 _AGENT_CLASSES = {
+    "parameters_stream_agent": f"{__name__}:ParametersAgent",
+    "parameters_dispatch_agent": f"{__name__}:ParametersAgent",
     "search_stream_agent": f"{__name__}:SearchStreamAgent",
     "search_dispatch_agent": f"{__name__}:SearchStreamAgent",
     "context_agent": f"{__name__}:ContextAgent",
@@ -208,9 +312,15 @@ _AGENT_CLASSES = {
     "failing_stream_agent": f"{__name__}:FailingAgent",
     "failing_dispatch_agent": f"{__name__}:FailingAgent",
     "slow_agent": f"{__name__}:SlowAgent",
+    "gated_agent": f"{__name__}:GatedAgent",
+    "interleaved_agent": f"{__name__}:InterleavedAgent",
+    "failing_after_status_agent": f"{__name__}:FailingAfterStatusAgent",
+    "slow_dispatch_agent": f"{__name__}:SlowDispatchAgent",
 }
 
 _TOKEN_STREAMING = {
+    "parameters_stream_agent": True,
+    "parameters_dispatch_agent": False,
     "search_stream_agent": True,
     "search_dispatch_agent": False,
     "context_agent": False,
@@ -218,6 +328,10 @@ _TOKEN_STREAMING = {
     "failing_stream_agent": True,
     "failing_dispatch_agent": False,
     "slow_agent": True,
+    "gated_agent": False,
+    "interleaved_agent": False,
+    "failing_after_status_agent": False,
+    "slow_dispatch_agent": False,
 }
 
 
@@ -247,23 +361,32 @@ def config_manager():
 
 @pytest.fixture(scope="module")
 def dispatcher(config_manager):
-    return AgentDispatcher(
+    dispatcher = AgentDispatcher(
         agent_registry=_registry(config_manager),
         config_manager=config_manager,
         schema_loader=None,
     )
+    # No conversation memory is configured: a run's turn takes its place in
+    # the ledger and is not stored (tests/runtime/integration/
+    # test_ag_ui_threads.py stores and reads them back).
+    dispatcher._conversation_store_factory = lambda tenant_id: None
+    return dispatcher
 
 
 @pytest.fixture()
-def ag_ui_app(dispatcher, continuation_store):
+def ag_ui_app(dispatcher, continuation_store, conversation_ledger):
+    dispatcher.set_conversation_ledger(conversation_ledger)
     openai_compat.set_dispatcher_provider(lambda: dispatcher)
     openai_compat.set_api_keys({KEY_A: TENANT_A, KEY_B: TENANT_B})
     openai_compat.set_key_resolver(None)
     openai_compat.set_continuation_store(continuation_store)
     slow_agent_events.clear()
+    gated_release.clear()
+    parameter_barrier.clear()
     app = FastAPI()
     app.include_router(ag_ui.router, prefix="/ag-ui")
     yield app
+    dispatcher.set_conversation_ledger(None)
     openai_compat.set_dispatcher_provider(None)
     openai_compat.set_api_keys({})
     openai_compat.set_continuation_store(None)
@@ -318,6 +441,58 @@ def _text(events: List[Dict[str, Any]]) -> str:
     )
 
 
+@pytest.fixture()
+def live_server(ag_ui_app, dispatcher, workflow_state_redis_url):
+    """``ag_ui_app``'s routes on a real socket, with the dispatcher's
+    conversation ledger opened on the server's own loop (a Redis client
+    serves only the loop it was opened on)."""
+
+    @asynccontextmanager
+    async def ledger_on_server_loop(_app):
+        redis = await connect_shared_state_redis(workflow_state_redis_url)
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                redis,
+                save_lease_s=CONVERSATION_SAVE_LEASE_S,
+                failure_capacity=CONVERSATION_PERSIST_FAILURE_CAPACITY,
+                key_prefix=f"test:conversation:{uuid.uuid4().hex}",
+            )
+        )
+        try:
+            yield
+        finally:
+            await redis.aclose()
+
+    app = FastAPI(lifespan=ledger_on_server_loop)
+    app.include_router(ag_ui.router, prefix="/ag-ui")
+    port = _free_port()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 20
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert server.started, "uvicorn did not start"
+    yield f"http://127.0.0.1:{port}"
+    server.should_exit = True
+    thread.join(timeout=20)
+    assert not thread.is_alive()
+
+
+def _opening_step(agent_name: str) -> List[Dict[str, Any]]:
+    """The step every run opens with, before the agent reports a phase."""
+    return [
+        {"type": "STEP_STARTED", "stepName": START_PHASE},
+        {
+            "type": "CUSTOM",
+            "name": ag_ui.STATUS_EVENT,
+            "value": {"phase": START_PHASE, "message": f"Running {agent_name}"},
+        },
+        {"type": "STEP_FINISHED", "stepName": START_PHASE},
+    ]
+
+
 def _free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -356,6 +531,9 @@ class TestTokenStreamRun:
             "STEP_FINISHED",
             "STEP_STARTED",
             "CUSTOM",
+            "STEP_FINISHED",
+            "STEP_STARTED",
+            "CUSTOM",
             "TEXT_MESSAGE_START",
             *["TEXT_MESSAGE_CONTENT"] * len(_token_chunks(summary)),
             "TEXT_MESSAGE_END",
@@ -368,7 +546,17 @@ class TestTokenStreamRun:
             "threadId": THREAD_ID,
             "runId": RUN_ID,
         }
-        assert events[1:6] == [
+        assert events[1:9] == [
+            {"type": "STEP_STARTED", "stepName": START_PHASE},
+            {
+                "type": "CUSTOM",
+                "name": ag_ui.STATUS_EVENT,
+                "value": {
+                    "phase": START_PHASE,
+                    "message": "Running search_stream_agent",
+                },
+            },
+            {"type": "STEP_FINISHED", "stepName": START_PHASE},
             {"type": "STEP_STARTED", "stepName": STATUS_PHASE},
             {
                 "type": "CUSTOM",
@@ -383,8 +571,8 @@ class TestTokenStreamRun:
                 "value": {"phase": RANK_PHASE, "message": RANK_MESSAGE},
             },
         ]
-        message_id = events[6]["messageId"]
-        assert events[6] == {
+        message_id = events[9]["messageId"]
+        assert events[9] == {
             "type": "TEXT_MESSAGE_START",
             "messageId": message_id,
             "role": "assistant",
@@ -405,6 +593,7 @@ class TestTokenStreamRun:
             "type": "STATE_SNAPSHOT",
             "snapshot": {
                 "agent": "search_stream_agent",
+                "tenant_id": TENANT_A,
                 "result": SearchStreamOutput(
                     summary=summary, results=list(RESULTS)
                 ).model_dump(),
@@ -439,7 +628,9 @@ class TestTokenStreamRun:
 class TestDispatchRun:
     """An agent without answer-token streaming runs on the dispatch path."""
 
-    async def test_the_reply_arrives_as_one_message_and_finishes(self, client):
+    async def test_the_agents_phases_stream_as_steps_before_the_reply(self, client):
+        """The agent's own phases arrive as steps with their status; its
+        token events are not the reply, which is the dispatched answer."""
         response = await client.post(
             "/ag-ui/search_dispatch_agent",
             json=_run([_user(QUERY)]),
@@ -448,19 +639,127 @@ class TestDispatchRun:
 
         events = _events(response.text)
         summary = f"[{TENANT_A}] {SUMMARY_BODY}"
-        assert _types(events) == [
-            "RUN_STARTED",
-            "TEXT_MESSAGE_START",
-            "TEXT_MESSAGE_CONTENT",
-            "TEXT_MESSAGE_END",
+        message_id = events[9]["messageId"]
+        assert events == [
+            {"type": "RUN_STARTED", "threadId": THREAD_ID, "runId": RUN_ID},
+            {"type": "STEP_STARTED", "stepName": START_PHASE},
+            {
+                "type": "CUSTOM",
+                "name": ag_ui.STATUS_EVENT,
+                "value": {
+                    "phase": START_PHASE,
+                    "message": "Running search_dispatch_agent",
+                },
+            },
+            {"type": "STEP_FINISHED", "stepName": START_PHASE},
+            {"type": "STEP_STARTED", "stepName": STATUS_PHASE},
+            {
+                "type": "CUSTOM",
+                "name": ag_ui.STATUS_EVENT,
+                "value": {"phase": STATUS_PHASE, "message": STATUS_MESSAGE},
+            },
+            {"type": "STEP_FINISHED", "stepName": STATUS_PHASE},
+            {"type": "STEP_STARTED", "stepName": RANK_PHASE},
+            {
+                "type": "CUSTOM",
+                "name": ag_ui.STATUS_EVENT,
+                "value": {"phase": RANK_PHASE, "message": RANK_MESSAGE},
+            },
+            {
+                "type": "TEXT_MESSAGE_START",
+                "messageId": message_id,
+                "role": "assistant",
+            },
+            {
+                "type": "TEXT_MESSAGE_CONTENT",
+                "messageId": message_id,
+                "delta": summary,
+            },
+            {"type": "TEXT_MESSAGE_END", "messageId": message_id},
+            {
+                "type": "STATE_SNAPSHOT",
+                "snapshot": {
+                    "agent": "search_dispatch_agent",
+                    "tenant_id": TENANT_A,
+                    "result": {
+                        "status": "success",
+                        "agent": "search_dispatch_agent",
+                        "summary": summary,
+                        "results": RESULTS,
+                        "answer": summary,
+                    },
+                },
+            },
+            {"type": "STEP_FINISHED", "stepName": RANK_PHASE},
+            {
+                "type": "RUN_FINISHED",
+                "threadId": THREAD_ID,
+                "runId": RUN_ID,
+                "outcome": {"type": "success"},
+            },
+        ]
+        assert message_id.startswith("msg-")
+
+    def test_each_phase_reaches_the_client_while_the_turn_still_runs(self, live_server):
+        """The agent holds its turn until the client has seen both of its
+        phases, the one reported from a worker thread included. A run that
+        sent its events only once the turn ended would answer
+        ``released=False``."""
+        events: List[Dict[str, Any]] = []
+        with httpx.stream(
+            "POST",
+            f"{live_server}/ag-ui/gated_agent",
+            json=_run([_user(QUERY)]),
+            headers=_auth(KEY_A),
+            timeout=30.0,
+        ) as response:
+            for line in response.iter_lines():
+                if line.startswith("data: "):
+                    event = json.loads(line[len("data: ") :])
+                    events.append(event)
+                    if (
+                        event["type"] == "CUSTOM"
+                        and event["value"]["phase"] == RANK_PHASE
+                    ):
+                        gated_release.set()
+
+        message_id = events[9]["messageId"]
+        assert events[:9] == [
+            {"type": "RUN_STARTED", "threadId": THREAD_ID, "runId": RUN_ID},
+            *_opening_step("gated_agent"),
+            {"type": "STEP_STARTED", "stepName": STATUS_PHASE},
+            {
+                "type": "CUSTOM",
+                "name": ag_ui.STATUS_EVENT,
+                "value": {"phase": STATUS_PHASE, "message": f"{TENANT_A} searching"},
+            },
+            {"type": "STEP_FINISHED", "stepName": STATUS_PHASE},
+            {"type": "STEP_STARTED", "stepName": RANK_PHASE},
+            {
+                "type": "CUSTOM",
+                "name": ag_ui.STATUS_EVENT,
+                "value": {"phase": RANK_PHASE, "message": f"{TENANT_A} ranking"},
+            },
+        ]
+        assert events[9:12] == [
+            {
+                "type": "TEXT_MESSAGE_START",
+                "messageId": message_id,
+                "role": "assistant",
+            },
+            {
+                "type": "TEXT_MESSAGE_CONTENT",
+                "messageId": message_id,
+                "delta": "released=True",
+            },
+            {"type": "TEXT_MESSAGE_END", "messageId": message_id},
+        ]
+        assert _types(events[12:]) == [
             "STATE_SNAPSHOT",
+            "STEP_FINISHED",
             "RUN_FINISHED",
         ]
-        assert events[2]["delta"] == summary
-        assert events[4]["snapshot"]["agent"] == "search_dispatch_agent"
-        assert events[4]["snapshot"]["result"]["summary"] == summary
-        assert events[4]["snapshot"]["result"]["results"] == RESULTS
-        assert events[5]["outcome"] == {"type": "success"}
+        assert events[13] == {"type": "STEP_FINISHED", "stepName": RANK_PHASE}
 
     async def test_the_conversation_reaches_the_agent_in_dispatch_form(self, client):
         """History, a developer note, an image part and the tool names all
@@ -536,16 +835,21 @@ class TestFrontendToolRoundTrip:
         events = _events(first.text)
         assert _types(events) == [
             "RUN_STARTED",
+            "STEP_STARTED",
+            "CUSTOM",
             "TOOL_CALL_START",
             "TOOL_CALL_ARGS",
             "TOOL_CALL_END",
+            "STEP_FINISHED",
             "RUN_FINISHED",
         ]
-        assert events[1]["toolCallId"] == TOOL_CALL_ID
-        assert events[1]["toolCallName"] == "write_file"
-        assert json.loads(events[2]["delta"]) == {"text": QUERY}
-        assert events[3] == {"type": "TOOL_CALL_END", "toolCallId": TOOL_CALL_ID}
-        assert events[4]["outcome"] == {
+        assert events[1:3] == _opening_step("tool_agent")[:2]
+        assert events[3]["toolCallId"] == TOOL_CALL_ID
+        assert events[3]["toolCallName"] == "write_file"
+        assert json.loads(events[4]["delta"]) == {"text": QUERY}
+        assert events[5] == {"type": "TOOL_CALL_END", "toolCallId": TOOL_CALL_ID}
+        assert events[6] == {"type": "STEP_FINISHED", "stepName": START_PHASE}
+        assert events[7]["outcome"] == {
             "type": "success",
             "pendingToolCallIds": [TOOL_CALL_ID],
         }
@@ -556,7 +860,7 @@ class TestFrontendToolRoundTrip:
                 [
                     _user(QUERY),
                     {
-                        "id": events[1]["parentMessageId"],
+                        "id": events[3]["parentMessageId"],
                         "role": "assistant",
                         "toolCalls": [
                             {
@@ -564,7 +868,7 @@ class TestFrontendToolRoundTrip:
                                 "type": "function",
                                 "function": {
                                     "name": "write_file",
-                                    "arguments": events[2]["delta"],
+                                    "arguments": events[4]["delta"],
                                 },
                             }
                         ],
@@ -595,7 +899,7 @@ class TestFrontendToolRoundTrip:
             json=_run([_user(QUERY)], tools=[WRITE_FILE_TOOL]),
             headers=_auth(KEY_A),
         )
-        args = _events(first.text)[2]["delta"]
+        args = _events(first.text)[4]["delta"]
         replay = [
             _user(QUERY),
             {
@@ -705,8 +1009,15 @@ class TestRunFailures:
         )
 
         events = _events(response.text)
-        assert _types(events) == ["RUN_STARTED", "RUN_ERROR"]
-        assert events[1] == {
+        assert _types(events) == [
+            "RUN_STARTED",
+            "STEP_STARTED",
+            "CUSTOM",
+            "STEP_FINISHED",
+            "RUN_ERROR",
+        ]
+        assert events[1:4] == _opening_step("failing_stream_agent")
+        assert events[4] == {
             "type": "RUN_ERROR",
             "message": (
                 "FailingAgent streaming failed with RuntimeError. See server "
@@ -724,11 +1035,52 @@ class TestRunFailures:
         )
 
         events = _events(response.text)
-        assert _types(events) == ["RUN_STARTED", "RUN_ERROR"]
-        assert events[1]["code"] == "internal_error"
-        assert events[1]["message"].startswith("failing_dispatch_agent failed with ")
-        assert events[1]["message"].endswith(". See server logs for detail.")
+        assert _types(events) == [
+            "RUN_STARTED",
+            "STEP_STARTED",
+            "CUSTOM",
+            "STEP_FINISHED",
+            "RUN_ERROR",
+        ]
+        assert events[1:4] == _opening_step("failing_dispatch_agent")
+        assert events[4] == {
+            "type": "RUN_ERROR",
+            "message": (
+                "failing_dispatch_agent failed with RuntimeError. See server logs "
+                "for detail."
+            ),
+            "code": "internal_error",
+        }
         assert "secret-backend-detail" not in response.text
+
+    async def test_a_dispatch_failing_after_a_phase_ends_on_run_error(self, client):
+        response = await client.post(
+            "/ag-ui/failing_after_status_agent",
+            json=_run([_user(QUERY)]),
+            headers=_auth(KEY_A),
+        )
+
+        assert _events(response.text) == [
+            {"type": "RUN_STARTED", "threadId": THREAD_ID, "runId": RUN_ID},
+            *_opening_step("failing_after_status_agent"),
+            {"type": "STEP_STARTED", "stepName": STATUS_PHASE},
+            {
+                "type": "CUSTOM",
+                "name": ag_ui.STATUS_EVENT,
+                "value": {"phase": STATUS_PHASE, "message": STATUS_MESSAGE},
+            },
+            {"type": "STEP_FINISHED", "stepName": STATUS_PHASE},
+            {
+                "type": "RUN_ERROR",
+                "message": (
+                    "failing_after_status_agent failed with RuntimeError. See "
+                    "server logs for detail."
+                ),
+                "code": "internal_error",
+            },
+        ]
+        assert "secret-backend-detail" not in response.text
+        assert openai_compat.in_flight_count() == 0
 
     async def test_a_dead_continuation_store_fails_the_suspension(self, client, caplog):
         dead = Redis.from_url(
@@ -750,12 +1102,88 @@ class TestRunFailures:
             await dead.aclose()
 
         events = _events(response.text)
-        assert _types(events) == ["RUN_STARTED", "RUN_ERROR"]
-        assert events[1]["code"] == "service_unavailable"
-        assert events[1]["message"] == (
+        assert _types(events) == [
+            "RUN_STARTED",
+            "STEP_STARTED",
+            "CUSTOM",
+            "STEP_FINISHED",
+            "RUN_ERROR",
+        ]
+        assert events[1:4] == _opening_step("tool_agent")
+        assert events[4]["code"] == "service_unavailable"
+        assert events[4]["message"] == (
             "tool_agent failed with SessionStateUnavailable. See server logs for "
             "detail."
         )
+
+    async def test_a_dead_conversation_ledger_fails_the_answered_run_after_its_text(
+        self, client, dispatcher, conversation_ledger
+    ):
+        dead = Redis.from_url(
+            f"redis://127.0.0.1:{_free_port()}",
+            socket_connect_timeout=1.0,
+            socket_timeout=1.0,
+        )
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                dead, save_lease_s=5, failure_capacity=10, key_prefix="test:dead"
+            )
+        )
+        try:
+            response = await client.post(
+                "/ag-ui/search_stream_agent",
+                json=_run([_user(QUERY)]),
+                headers=_auth(KEY_A),
+            )
+        finally:
+            dispatcher.set_conversation_ledger(conversation_ledger)
+            await dead.aclose()
+
+        events = _events(response.text)
+        assert _text(events) == f"[{TENANT_A}] {SUMMARY_BODY}"
+        assert _types(events)[-3:] == ["TEXT_MESSAGE_END", "STEP_FINISHED", "RUN_ERROR"]
+        assert events[-1] == {
+            "type": "RUN_ERROR",
+            "message": "The reply was not saved to this conversation "
+            "(SessionStateUnavailable). See server logs for detail.",
+            "code": "conversation_not_saved",
+        }
+
+    async def test_a_failed_run_keeps_its_own_error_when_the_ledger_is_dead(
+        self, client, dispatcher, conversation_ledger
+    ):
+        dead = Redis.from_url(
+            f"redis://127.0.0.1:{_free_port()}",
+            socket_connect_timeout=1.0,
+            socket_timeout=1.0,
+        )
+        dispatcher.set_conversation_ledger(
+            ConversationLedger(
+                dead, save_lease_s=5, failure_capacity=10, key_prefix="test:dead"
+            )
+        )
+        try:
+            response = await client.post(
+                "/ag-ui/failing_stream_agent",
+                json=_run([_user(QUERY)]),
+                headers=_auth(KEY_A),
+            )
+        finally:
+            dispatcher.set_conversation_ledger(conversation_ledger)
+            await dead.aclose()
+
+        events = _events(response.text)
+        assert events[1:] == [
+            *_opening_step("failing_stream_agent"),
+            {
+                "type": "RUN_ERROR",
+                "message": (
+                    "FailingAgent streaming failed with RuntimeError. See server "
+                    "logs for detail."
+                ),
+                "code": "internal_error",
+            },
+        ]
 
     async def test_an_unwired_dispatcher_is_503(self, client):
         openai_compat.set_dispatcher_provider(None)
@@ -833,31 +1261,89 @@ class TestConcurrentRuns:
             assert other not in response.text
             assert events[0]["runId"] == f"run-{index}"
             assert events[-1]["runId"] == f"run-{index}"
-        message_ids = {_events(response.text)[6]["messageId"] for response in runs}
+        message_ids = {_events(response.text)[9]["messageId"] for response in runs}
         assert len(message_ids) == len(runs)
+        assert openai_compat.in_flight_count() == 0
+
+
+class TestConcurrentDispatchRuns:
+    """Concurrent dispatch-path runs each stream only their own phases."""
+
+    async def test_interleaved_runs_never_carry_each_others_phases(self, client):
+        """Every run reports its first phase and waits at one barrier until
+        all of them have, so the runs are in flight together when each
+        reports its second."""
+        interleave["barrier"] = asyncio.Barrier(INTERLEAVED_RUNS)
+        keys = [KEY_A, KEY_B] * (INTERLEAVED_RUNS // 2)
+        runs = await asyncio.gather(
+            *(
+                client.post(
+                    "/ag-ui/interleaved_agent",
+                    json=_run([_user(QUERY)], runId=f"run-{index}"),
+                    headers=_auth(key),
+                )
+                for index, key in enumerate(keys)
+            )
+        )
+
+        for index, response in enumerate(runs):
+            tenant = TENANT_A if index % 2 == 0 else TENANT_B
+            events = _events(response.text)
+            assert [
+                event["value"] for event in events if event["type"] == "CUSTOM"
+            ] == [
+                {"phase": START_PHASE, "message": "Running interleaved_agent"},
+                {"phase": "first", "message": f"{tenant} first"},
+                {"phase": "second", "message": f"{tenant} second"},
+            ]
+            assert _text(events) == f"{tenant} done"
+            assert (events[0]["runId"], events[-1]["runId"]) == (
+                f"run-{index}",
+                f"run-{index}",
+            )
         assert openai_compat.in_flight_count() == 0
 
 
 class TestDisconnect:
     """A client that hangs up cancels the turn behind its run."""
 
-    @pytest.fixture()
-    def live_server(self, ag_ui_app):
-        port = _free_port()
-        config = uvicorn.Config(
-            ag_ui_app, host="127.0.0.1", port=port, log_level="warning"
-        )
-        server = uvicorn.Server(config)
-        thread = threading.Thread(target=server.run, daemon=True)
-        thread.start()
-        deadline = time.monotonic() + 20
-        while not server.started and time.monotonic() < deadline:
+    def test_disconnect_after_a_phase_cancels_the_dispatched_turn(self, live_server):
+        seen: List[Dict[str, Any]] = []
+        hangup = 0.0
+
+        with httpx.stream(
+            "POST",
+            f"{live_server}/ag-ui/slow_dispatch_agent",
+            json=_run([_user(QUERY)]),
+            headers=_auth(KEY_A),
+            timeout=30.0,
+        ) as response:
+            for line in response.iter_lines():
+                if line.startswith("data: "):
+                    seen.append(json.loads(line[len("data: ") :]))
+                    if len(seen) == 6:
+                        assert openai_compat.in_flight_count() == 1
+                        hangup = time.perf_counter()
+                        break
+
+        assert seen == [
+            {"type": "RUN_STARTED", "threadId": THREAD_ID, "runId": RUN_ID},
+            *_opening_step("slow_dispatch_agent"),
+            {"type": "STEP_STARTED", "stepName": STATUS_PHASE},
+            {
+                "type": "CUSTOM",
+                "name": ag_ui.STATUS_EVENT,
+                "value": {"phase": STATUS_PHASE, "message": STATUS_MESSAGE},
+            },
+        ]
+        deadline = hangup + DISCONNECT_CANCEL_BUDGET_SECONDS
+        while time.perf_counter() < deadline and "cancelled" not in slow_agent_events:
             time.sleep(0.02)
-        assert server.started, "uvicorn did not start"
-        yield f"http://127.0.0.1:{port}"
-        server.should_exit = True
-        thread.join(timeout=20)
-        assert not thread.is_alive()
+        assert slow_agent_events == ["started", "cancelled"]
+        deadline = time.perf_counter() + DISCONNECT_CANCEL_BUDGET_SECONDS
+        while time.perf_counter() < deadline and openai_compat.in_flight_count() != 0:
+            time.sleep(0.02)
+        assert openai_compat.in_flight_count() == 0
 
     def test_disconnect_mid_run_cancels_the_turn(self, live_server):
         seen: List[Dict[str, Any]] = []
@@ -873,17 +1359,20 @@ class TestDisconnect:
             for line in response.iter_lines():
                 if line.startswith("data: "):
                     seen.append(json.loads(line[len("data: ") :]))
-                    if len(seen) == 3:
+                    if len(seen) == 5:
                         assert openai_compat.in_flight_count() == 1
                         hangup = time.perf_counter()
                         break
 
         assert _types(seen) == [
             "RUN_STARTED",
+            "STEP_STARTED",
+            "CUSTOM",
             "TEXT_MESSAGE_START",
             "TEXT_MESSAGE_CONTENT",
         ]
-        assert seen[2]["delta"] == "first "
+        assert seen[1:3] == _opening_step("slow_agent")[:2]
+        assert seen[4]["delta"] == "first "
         deadline = hangup + DISCONNECT_CANCEL_BUDGET_SECONDS
         while time.perf_counter() < deadline and "cancelled" not in slow_agent_events:
             time.sleep(0.02)
@@ -891,4 +1380,166 @@ class TestDisconnect:
         deadline = time.perf_counter() + DISCONNECT_CANCEL_BUDGET_SECONDS
         while time.perf_counter() < deadline and openai_compat.in_flight_count() != 0:
             time.sleep(0.02)
+        assert openai_compat.in_flight_count() == 0
+
+
+PARAMETER_AGENTS = ["parameters_stream_agent", "parameters_dispatch_agent"]
+
+
+def _parameters(**cogniverse: Any) -> Dict[str, Any]:
+    # CopilotKit adds keys of its own beside the client's parameters.
+    return {"cogniverse": cogniverse, "a2uiCatalogAvailable": False}
+
+
+class TestRunParameters:
+    """``forwardedProps.cogniverse`` reaches the agent on either path."""
+
+    @pytest.mark.parametrize("agent_name", PARAMETER_AGENTS)
+    async def test_the_runs_parameters_reach_the_agents_input(self, client, agent_name):
+        response = await client.post(
+            f"/ag-ui/{agent_name}",
+            json=_run(
+                [_user(QUERY)],
+                forwardedProps=_parameters(
+                    top_k=3, search_results=[RESULTS[1], RESULTS[0]]
+                ),
+            ),
+            headers=_auth(KEY_A),
+        )
+
+        assert response.status_code == 200
+        events = _events(response.text)
+        assert _text(events) == (
+            '{"search_results": ["video-2", "video-7"], "top_k": 3}'
+        )
+        assert events[-1]["type"] == "RUN_FINISHED"
+
+    @pytest.mark.parametrize("agent_name", PARAMETER_AGENTS)
+    async def test_a_run_without_parameters_gets_the_agents_defaults(
+        self, client, agent_name
+    ):
+        response = await client.post(
+            f"/ag-ui/{agent_name}",
+            json=_run([_user(QUERY)], forwardedProps={"a2uiCatalogAvailable": True}),
+            headers=_auth(KEY_A),
+        )
+
+        assert _text(_events(response.text)) == '{"search_results": [], "top_k": 10}'
+
+    @pytest.mark.parametrize("agent_name", PARAMETER_AGENTS)
+    async def test_partial_results_show_their_themes_and_summary(
+        self, client, agent_name
+    ):
+        response = await client.post(
+            f"/ag-ui/{agent_name}", json=_run([_user(QUERY)]), headers=_auth(KEY_A)
+        )
+
+        assert [
+            event["value"]
+            for event in _events(response.text)
+            if event["type"] == "CUSTOM"
+        ] == [
+            {"phase": START_PHASE, "message": f"Running {agent_name}"},
+            {
+                "phase": "thinking",
+                "message": "Content analysis complete",
+                "themes": THEMES,
+            },
+            {
+                "phase": "summarization",
+                "message": "Summary generated",
+                "summary": DRAFT_SUMMARY,
+            },
+        ]
+
+    @pytest.mark.parametrize(
+        ("props", "problem"),
+        [
+            (
+                _parameters(top_k=0),
+                "top_k: Input should be greater than or equal to 1",
+            ),
+            (
+                _parameters(top_k=101),
+                "top_k: Input should be less than or equal to 100",
+            ),
+            (_parameters(top_k="5"), "top_k: Input should be a valid integer"),
+            (_parameters(top_k=True), "top_k: Input should be a valid integer"),
+            (
+                _parameters(search_results=[]),
+                "search_results: List should have at least 1 item after "
+                "validation, not 0",
+            ),
+            (
+                _parameters(search_results=["video-7"]),
+                "search_results.0: Input should be a valid dictionary",
+            ),
+            (_parameters(limit=5), "limit: Extra inputs are not permitted"),
+            (
+                {"cogniverse": 5},
+                "value: Input should be a valid dictionary or instance of "
+                "RunParameters",
+            ),
+        ],
+    )
+    async def test_invalid_parameters_are_refused_before_the_run(
+        self, client, props, problem
+    ):
+        response = await client.post(
+            "/ag-ui/parameters_dispatch_agent",
+            json=_run([_user(QUERY)], forwardedProps=props),
+            headers=_auth(KEY_A),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == {
+            "message": f"forwardedProps.cogniverse is invalid: {problem}",
+            "type": "invalid_request_error",
+            "code": "invalid_request",
+        }
+
+    async def test_forwarded_props_that_are_not_an_object_are_refused(self, client):
+        response = await client.post(
+            "/ag-ui/parameters_dispatch_agent",
+            json=_run([_user(QUERY)], forwardedProps=["top_k", 3]),
+            headers=_auth(KEY_A),
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"] == {
+            "message": "forwardedProps must be an object",
+            "type": "invalid_request_error",
+            "code": "invalid_request",
+        }
+
+    @pytest.mark.parametrize("agent_name", PARAMETER_AGENTS)
+    async def test_runs_in_flight_together_each_keep_their_own_parameters(
+        self, client, agent_name
+    ):
+        """Every run waits at one barrier until all are in flight, so each
+        reads its parameters while the others hold theirs."""
+        parameter_barrier["barrier"] = asyncio.Barrier(INTERLEAVED_RUNS)
+        runs = await asyncio.gather(
+            *(
+                client.post(
+                    f"/ag-ui/{agent_name}",
+                    json=_run(
+                        [_user(QUERY)],
+                        runId=f"run-{top_k}",
+                        forwardedProps=_parameters(
+                            top_k=top_k, search_results=[{"id": f"hit-{top_k}"}]
+                        ),
+                    ),
+                    headers=_auth(KEY_A if top_k % 2 else KEY_B),
+                )
+                for top_k in range(1, INTERLEAVED_RUNS + 1)
+            )
+        )
+
+        assert [_text(_events(response.text)) for response in runs] == [
+            json.dumps(
+                {"search_results": [f"hit-{top_k}"], "top_k": top_k}, sort_keys=True
+            )
+            for top_k in range(1, INTERLEAVED_RUNS + 1)
+        ]
         assert openai_compat.in_flight_count() == 0

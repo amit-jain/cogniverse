@@ -738,6 +738,9 @@ class _ApprovedDatasetIntegrityStore(DatasetStore):
     async def delete_dataset(self, name: str) -> bool:
         return await self._delegate.delete_dataset(name=name)
 
+    async def list_datasets(self) -> List[Dict[str, Any]]:
+        return await self._delegate.list_datasets()
+
 
 class ApprovalStorageImpl(ApprovalStorage):
     """
@@ -1375,7 +1378,14 @@ class ApprovalStorageImpl(ApprovalStorage):
                         f"{replacement.item_id!r} in batch {batch_id!r}"
                     )
 
-                items_by_id[original_item_id].status = ApprovalStatus.REJECTED
+                original = items_by_id[original_item_id]
+                original.status = ApprovalStatus.REJECTED
+                # Rejected with feedback, the original's decision lives on its
+                # replacement; its time is when the original was reviewed.
+                if original.reviewed_at is None:
+                    original.reviewed_at = datetime.fromisoformat(
+                        replacement.metadata["decision"]["timestamp"]
+                    )
                 if existing is None:
                     items.append(replacement)
                     items_by_id[replacement.item_id] = replacement
@@ -1713,6 +1723,45 @@ class ApprovalStorageImpl(ApprovalStorage):
                 return True
         return False
 
+    async def get_batches(self) -> List[ApprovalBatch]:
+        """Every approval batch of the tenant, newest first, each with its
+        items in their current state (decided, replaced or pending).
+
+        One project span query serves every batch. A telemetry failure
+        raises; an empty list means the tenant has no batches.
+        """
+        spans_df = await self.provider.traces.get_all_spans(
+            project=self.full_project_name,
+            filters={
+                "name": [
+                    "approval_batch",
+                    "approval_item",
+                    "approval_item_replacement",
+                ]
+            },
+        )
+        if spans_df.empty:
+            return []
+        if "attributes.batch_id" not in spans_df.columns:
+            raise RuntimeError(
+                "Approval span query omitted the batch_id attribute for "
+                f"project {self.full_project_name}"
+            )
+        batch_ids = dict.fromkeys(
+            batch_id
+            for batch_id in spans_df.loc[
+                spans_df["name"] == "approval_batch", "attributes.batch_id"
+            ]
+            if isinstance(batch_id, str) and batch_id
+        )
+        batches = []
+        for batch_id in batch_ids:
+            batch = await self.get_batch(batch_id, spans_df=spans_df)
+            if batch is not None:
+                batches.append(batch)
+        batches.sort(key=lambda batch: batch.created_at, reverse=True)
+        return batches
+
     async def get_pending_batches(
         self, context_filter: Optional[Dict[str, Any]] = None
     ) -> List[ApprovalBatch]:
@@ -1869,6 +1918,17 @@ class ApprovalStorageImpl(ApprovalStorage):
                     project=self.full_project_name,
                     filters={"name": span_names},
                 )
+
+                # Item spans end, and export, before their approval_batch
+                # root; a frame without the root is one Phoenix has not
+                # finished indexing, so it reads as not found yet.
+                if (
+                    batch_id is not None
+                    and not project_spans.empty
+                    and "name" in project_spans.columns
+                    and not (project_spans["name"] == "approval_batch").any()
+                ):
+                    project_spans = project_spans.iloc[0:0]
 
                 if not project_spans.empty:
                     required_columns = {

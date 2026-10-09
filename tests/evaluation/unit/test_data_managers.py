@@ -49,6 +49,7 @@ class TestDatasetManager:
         assert meta["input_keys"] == ["query", "category"]
         assert meta["output_keys"] == ["expected_videos"]
         assert meta["description"] == "unit ds"
+        assert meta["tenant_id"] == "acme:unit"
 
     @pytest.mark.unit
     def test_create_from_queries_requires_query_field(self, manager):

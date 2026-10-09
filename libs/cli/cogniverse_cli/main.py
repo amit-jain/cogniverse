@@ -100,7 +100,7 @@ def _resolve_cli_tenant(tenant: str | None) -> str:
 SERVICE_HEALTH_URLS: dict[str, str] = {
     "Vespa": "http://localhost:19071/state/v1/health",
     "Runtime": "http://localhost:28000/health",
-    "Dashboard": "http://localhost:28501/_stcore/health",
+    "Web": "http://localhost:28400/healthz",
     "Phoenix": "http://localhost:26006/health",
     "LLM": "http://localhost:11434/api/tags",
     "Argo": "https://localhost:2746/api/v1/info",
@@ -109,7 +109,7 @@ SERVICE_HEALTH_URLS: dict[str, str] = {
 SERVICE_ENDPOINTS: dict[str, str] = {
     "Vespa": "http://localhost:8080",
     "Runtime": "http://localhost:28000",
-    "Dashboard": "http://localhost:28501",
+    "Web": "http://localhost:28400",
     "Phoenix": "http://localhost:26006",
     "LLM": "http://localhost:11434",
     "Argo": "http://localhost:2746",
@@ -121,7 +121,7 @@ _SERVICE_KUBECTL_RESOURCE: dict[str, str] = {
     "phoenix": "statefulset/cogniverse-phoenix",
     "llm": "statefulset/cogniverse-llm",
     "runtime": "deployment/cogniverse-runtime",
-    "dashboard": "deployment/cogniverse-dashboard",
+    "web": "deployment/cogniverse-web",
     "argo": "deployment/argo-server",
 }
 
@@ -509,7 +509,6 @@ def up(
     set_values["argo-workflows.crds.install"] = "false"
     if use_k3d:
         set_values["runtime.backend"] = host_backend
-        set_values["dashboard.backend"] = host_backend
     console.print("[cyan]Deploying Helm release...[/cyan]")
     helm_install(
         chart_path,
@@ -1207,7 +1206,7 @@ def index(
 @cli.command()
 @click.argument(
     "service",
-    type=click.Choice(["runtime", "dashboard", "vespa", "phoenix", "llm", "argo"]),
+    type=click.Choice(["runtime", "web", "vespa", "phoenix", "llm", "argo"]),
 )
 @click.option("--follow", "-f", is_flag=True, help="Follow log output.")
 def logs(service: str, follow: bool) -> None:

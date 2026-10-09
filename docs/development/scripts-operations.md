@@ -1,7 +1,7 @@
 # Cogniverse Study Guide: Scripts & Operations Module
 
 **Module Path:** `scripts/`
-**SDK Packages:** Uses all 13 packages (foundation → core → implementation → application)
+**SDK Packages:** Uses all 12 packages (foundation → core → implementation → application)
 
 ---
 
@@ -32,8 +32,6 @@ The Scripts & Operations module provides command-line tools for:
 
 - **Dataset Management**: Managing evaluation datasets
 
-- **Dashboard**: Interactive Streamlit-based analytics UI
-
 ### Key Features
 - **Builder Pattern Ingestion**: Fluent API for configurable pipeline construction
 - **Multi-Profile Support**: Process videos with multiple embedding strategies simultaneously
@@ -41,7 +39,6 @@ The Scripts & Operations module provides command-line tools for:
 - **Async Processing**: Concurrent video processing with configurable limits
 - **Phoenix Integration**: Per-tenant experiment tracking with visual analytics
 - **Schema Management**: JSON-based tenant-specific schema deployment
-- **Interactive Dashboards**: Streamlit tabs for analytics, configuration, and memory management
 - **UV Workspace**: All scripts use `uv run` for SDK package management
 
 ### Script Categories
@@ -78,10 +75,6 @@ scripts/
 │   ├── generate_langextract_training_data.py  # Training data for LangExtract
 │   ├── view_integrated_results.py    # View integrated results
 │   └── vlm_caption_bakeoff.py        # VLM caption comparison
-│
-├── Dashboard & UI
-│   ├── atlas_viewer.py               # Standalone embedding atlas viewer
-│   └── simple_atlas.py               # Simplified atlas viewer
 │
 ├── Utilities & Operations
 │   ├── discover_tenants.py           # Tenant discovery
@@ -441,10 +434,16 @@ runtime admin API so it goes through `SchemaRegistry.deploy_schema` and
 the `VespaBackend.deploy_schemas` merge path.
 
 **In-cluster path:** `charts/cogniverse/templates/init-jobs.yaml`
-deploys `.Values.config.defaultProfiles.video` (none when it is empty) for each
-`.Values.config.tenants` entry by calling the runtime:
+registers each `.Values.config.tenants` entry (200/201 created and 409 already
+registered both proceed; any other status fails the Job attempt) and deploys
+`.Values.config.defaultProfiles.video` (none when it is empty) for it by
+calling the runtime:
 
 ```yaml
+curl -sS -w ' HTTP_STATUS=%{http_code}' -X POST "$RUNTIME_URL/admin/tenants" \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "{{ $tenant.id }}", "created_by": "helm:{{ $.Chart.Name }}"}'
+
 curl -X POST "$RUNTIME_URL/admin/profiles/{{ $profile }}/deploy" \
   -H "Content-Type: application/json" \
   -d '{"tenant_id": "{{ $tenant.id }}", "force": false}'
@@ -670,7 +669,7 @@ uv run python -m cogniverse_runtime.optimization_cli \
       value: "48"
 ```
 
-The dashboard's Optimization tab can also submit a one-off run of the same CLI on demand via
+The web client's Optimization runs view can also submit a one-off run of the same CLI on demand via
 `POST /admin/tenant/{tenant_id}/optimize`, which creates an Argo Workflow from the same template.
 
 **Scheduled Execution:**
@@ -851,52 +850,6 @@ def main():
                 print(f"  {key}: {value}")
         else:
             print(f"\nDataset '{args.info}' not found")
-```
-
----
-
-### 8. cogniverse_dashboard/app.py
-
-**Purpose:** Interactive Streamlit dashboard for analytics, configuration, and system management
-
-**Location:** `libs/dashboard/cogniverse_dashboard/app.py` (3041 lines, multi-tab)
-
-**Dashboard Tabs:** `app.py` builds one `st.tabs([...])` call with all 16 tabs (in this order); each is either rendered inline in `app.py` or delegates to a `render_*_tab()` function under `cogniverse_dashboard.tabs`:
-
-1. **📊 Analytics** — inline. Sub-tabs (its own nested `st.tabs`): Overview, Time Series, Distributions, Heatmaps, Outliers, Trace Explorer, and (if RCA is enabled) Root Cause Analysis. Pulls traces via `st.session_state.analytics.get_traces(project_name=tenant_project)` and renders Plotly charts (latency distribution, error rate, throughput). `get_traces(project_name=tenant_project)` now raises on a Phoenix outage (see `docs/modules/telemetry.md`); the tab catches that and shows `st.error(...)` naming the failure, distinct from the `st.warning("No traces found...")` shown for a genuinely empty result.
-2. **🧪 Evaluation** (`cogniverse_dashboard.tabs.evaluation.render_evaluation_tab`) — experiment list, side-by-side comparison, metric visualization, dataset management.
-3. **🗺️ Embedding Atlas** (`cogniverse_dashboard.tabs.embedding_atlas.render_embedding_atlas_tab`) — lazy-imports `umap` + `embedding-atlas` inside the tab module so the base dashboard image stays lean when those optional libraries aren't installed.
-4. **🎯 Routing Evaluation** (`cogniverse_dashboard.tabs.routing_evaluation.render_routing_evaluation_tab`) — routing accuracy, confusion matrix, golden-dataset comparison, per-query analysis.
-5. **🔄 Orchestration Annotation** (`cogniverse_dashboard.tabs.orchestration_annotation.render_orchestration_annotation_tab`) — human annotation UI for multi-agent orchestration workflows.
-6. **📈 Profile Routing Metrics** (`cogniverse_dashboard.tabs.profile_metrics.render_profile_metrics_tab`).
-7. **🔧 Optimization** — inline. Uploads training-example JSON files, and submits an on-demand optimization run via `POST /admin/tenant/{tenant_id}/optimize` (mode selectable among `gateway-thresholds`, `simba`, `workflow`, `profile`, `entity-extraction`), then polls/cancels/retries the resulting Argo Workflow via `GET/POST {status_url}`.
-8. **🔬 Synthetic Data & Optimization** (`cogniverse_dashboard.tabs.optimization.render_enhanced_optimization_tab`) — synthetic data generation, golden dataset builder, broader optimization controls.
-9. **✅ Approval Queue** (`cogniverse_dashboard.tabs.approval_queue.render_approval_queue_tab`) — human-in-the-loop review for synthetic data and AI-generated outputs.
-10. **📥 Ingestion Testing** — inline. Uploads a test video, selects processing profiles, and calls the video-processing agent over A2A to compare embedding quality/latency across profiles.
-11. **🔍 Interactive Search** — inline. Live multi-turn search against `search_agent` (via `display_streaming_result`), per-result relevance annotation, and session-level evaluation logged through `get_evaluation_provider("phoenix", ...)`.
-12. **💬 Chat** — inline. Posts to `POST /agents/gateway_agent/process` and renders the routed response as a chat transcript.
-13. **⚙️ Configuration** (`cogniverse_dashboard.tabs.config_management.render_config_management_tab`) — create/update/delete configs, profile selection, strategy configuration, schema management; nests the Backend Profile sub-tab (`cogniverse_dashboard.tabs.backend_profile.render_backend_profile_tab`).
-14. **👥 Tenant Management** (`cogniverse_dashboard.tabs.tenant_management.render_tenant_management_tab`).
-15. **🧠 Memory** (`cogniverse_dashboard.tabs.memory_management.render_memory_management_tab`) — memories by tenant, conversation search, memory analytics, cache statistics.
-16. **🅰️🅱️ RLM A/B Compare** (`cogniverse_dashboard.tabs.rlm_ab_compare.render_rlm_ab_compare_tab`) — reads spans emitted by `cogniverse-optim --mode ab-compare` and shows per-row plus aggregate latency/token/judge deltas. Imported lazily so the dashboard still loads when the telemetry-phoenix package is unavailable.
-
-**Dashboard Features:**
-
-- Auto-refresh capability
-
-- Time range filtering
-
-- Tenant isolation
-
-- Export functionality
-
-- Real-time metrics
-
-**Startup:**
-```bash
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
-
-# Then open: http://localhost:8501
 ```
 
 ---
@@ -1301,29 +1254,19 @@ python scripts/manage_datasets.py --tenant-id acme:acme --info golden_eval_v1
 #   description: Golden evaluation dataset v1
 ```
 
-### Example 8: Interactive Dashboard
+### Example 8: Web Client
 
 ```bash
-# Start Phoenix dashboard
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
+# Deployed by `cogniverse up`
+open http://localhost:28400
 
-# Output:
-# You can now view your Streamlit app in your browser.
-#
-#   Local URL: http://localhost:8501
-#   Network URL: http://192.168.1.100:8501
-#
-# Dashboard tabs (top tab bar, left to right):
-# Analytics, Evaluation, Embedding Atlas, Routing Evaluation,
-# Orchestration Annotation, Profile Routing Metrics, Optimization,
-# Synthetic Data & Optimization, Approval Queue, Ingestion Testing,
-# Interactive Search, Chat, Configuration, Tenant Management,
-# Memory, RLM A/B Compare
-
-# Access in browser: http://localhost:8501
-# The sidebar holds tenant selection, time range, and agent status —
-# pick a tab from the top tab bar to explore each feature area.
+# The sidebar lists every agent (chat) and the Operations views:
+# Tenants, Backend profiles, Configuration, Ingestion, Optimization runs,
+# Memory, Approvals, Annotation queue, Workflow reviews, Profile metrics,
+# RLM A/B, Analytics, Evaluation, Embedding atlas, Routing evaluation
 ```
+
+See [Web Client](../modules/web-client.md) to run it locally.
 
 ---
 
@@ -1448,19 +1391,6 @@ tail -f outputs/logs/ingestion_pipeline.log
 # View in Phoenix UI: http://localhost:6006
 ```
 
-**Dashboard Monitoring:**
-```python
-# Real-time metrics in Streamlit dashboard:
-# - Request latency (p50, p95, p99)
-# - Error rate over time
-# - Cache hit rate
-# - Throughput (requests/sec)
-
-# Auto-refresh is off by default; the sidebar checkbox enables it with
-# a configurable interval (5-300s, default 30s):
-st.session_state.auto_refresh = auto_refresh  # from st.checkbox
-```
-
 ### 4. Resource Management
 
 **Memory Management:**
@@ -1576,15 +1506,6 @@ for i in range(0, len(videos), videos_per_batch):
 # 5. Export results before deleting experiments
 ```
 
-**Dashboard:**
-```python
-# 1. Use dedicated server for production dashboard
-# 2. Enable authentication for multi-tenant access
-# 3. Set appropriate auto-refresh intervals
-# 4. Monitor resource usage (CPU, memory)
-# 5. Export metrics regularly for long-term analysis
-```
-
 ### 7. Common Issues and Solutions
 
 **Issue: "Video processing failed: CUDA out of memory"**
@@ -1601,13 +1522,6 @@ docker ps | grep vespa  # Check Vespa container
 cogniverse up  # Start Vespa if not running
 ```
 
-**Issue: "Dashboard not loading: ModuleNotFoundError"**
-```bash
-# Solution: Install all dependencies
-uv pip install -r requirements.txt
-uv pip install streamlit plotly tabulate
-```
-
 ---
 
 ## Summary
@@ -1619,8 +1533,7 @@ The Scripts & Operations module provides comprehensive tooling for:
 3. **Optimization**: Complete DSPy optimization and deployment workflow
 4. **Experimentation**: Phoenix experiments with quality evaluators
 5. **Dataset Management**: CRUD operations for evaluation datasets
-6. **Interactive Dashboard**: Streamlit-based analytics and management UI
-7. **System Setup**: Environment initialization and dependency checking
+6. **System Setup**: Environment initialization and dependency checking
 
 **Key Design Patterns:**
 
@@ -1646,14 +1559,10 @@ The Scripts & Operations module provides comprehensive tooling for:
 
 - Resource-aware concurrency limits
 
-- Interactive Streamlit dashboards
-
 This module serves as the operational backbone of the Cogniverse system, providing production-grade tools for deployment, ingestion, optimization, and monitoring.
 
 ---
 
 **Related Documentation:**
-
-- **[`docs/modules/dashboard.md`](../modules/dashboard.md)**: Detailed Streamlit dashboard components
 
 - **[`docs/development/instrumentation.md`](instrumentation.md)**: Phoenix telemetry and observability

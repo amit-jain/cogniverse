@@ -859,7 +859,7 @@ rules:
 # writes task results back to the cluster after the main container exits.
 # Without this permission the Workflow is marked ``Error`` even when the
 # main container succeeded — a silent corruption of the Succeeded/Failed
-# signal the dashboard polls via GET /admin/tenant/{id}/optimize/runs/{id}.
+# signal the web client polls via GET /admin/tenant/{id}/optimize/runs/{id}.
 - apiGroups: ["argoproj.io"]
   resources: ["workflowtaskresults"]
   verbs: ["create", "patch"]

@@ -4,15 +4,12 @@
 
 - **Foundation Interfaces**: `cogniverse-foundation` (libs/foundation/cogniverse_foundation/telemetry/)
 
-- **Dashboard Tab**: `cogniverse-dashboard` (libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py)
-
 - **Phoenix Plugin**: `cogniverse-telemetry-phoenix` (libs/telemetry-phoenix/)
-**Layer:** Foundation Layer (interfaces and infrastructure) + Dashboard Layer (per-modality tab) + Plugin (Phoenix provider)
+**Layer:** Foundation Layer (interfaces and infrastructure) + Plugin (Phoenix provider)
 
-**Architecture Note:** Cogniverse uses a **plugin-based telemetry architecture** with two layers plus a dashboard consumer:
+**Architecture Note:** Cogniverse uses a **plugin-based telemetry architecture** with two layers:
 1. **Foundation Layer** (`cogniverse-foundation`): Telemetry provider interfaces, infrastructure, manager, and configuration. Zero knowledge of any specific backend.
 2. **Plugin Layer** (`cogniverse-telemetry-phoenix`): Phoenix-specific implementation auto-discovered via Python entry points
-3. **Dashboard Layer** (`cogniverse-dashboard`): Reads spans through the Foundation manager/provider APIs to render the Profile Routing Metrics tab
 
 There is no `cogniverse_core.telemetry` re-export layer — a compatibility
 shim existed briefly during the foundation-package migration but was
@@ -59,9 +56,19 @@ libs/foundation/cogniverse_foundation/telemetry/
   (`UNSET`) counts as a success.
 - `span_contract`: the one span I/O shape every operation uses, and the
   result annotation contract: `RESULT_RELEVANCE`, `RELEVANCE_SCORES` and
-  `persist_result_relevance(provider, project, span_id, result_id, label)`,
-  which checks the span is in `project` (`SpanNotInProjectError` otherwise)
-  and stores the rating under the result's own identifier.
+  `persist_result_relevance(provider, project, span_id, result_id, label,
+  readable_within_s=)`, which checks the span is in `project` and stores the
+  rating under the result's own identifier. A span no project holds yet is
+  looked up again with backoff for `readable_within_s` —
+  `span_readable_within_s(batch_config)`, the exporter's
+  `schedule_delay_millis` plus `SPAN_INGEST_MARGIN_S` (5 s) — since a search
+  hands out its span id before the span is exported; a span another project
+  holds, or none by then, raises `SpanNotInProjectError`.
+  `persist_session_evaluation(provider, project, session_id, span_ids,
+  outcome, score, readable_within_s=)` stores a conversation's verdict
+  (`SESSION_OUTCOMES`) as a `SESSION_EVALUATION` annotation on each of its
+  spans, after finding every one in `project` the same way, keyed by the
+  session so a new verdict replaces it.
   `record_span_io(span, input_value=, output=, operation=, modality=)` writes the
   input on `input.value`, the output as JSON on `output.value`, and the type on
   `operation`; `read_span_io(row)` reads `{input, output, operation, modality}` back and
@@ -69,6 +76,11 @@ libs/foundation/cogniverse_foundation/telemetry/
   from a Phoenix span row. Search (list output) and domain spans like
   `query_enhancement` (dict output) share the same writer and reader, so eval,
   dataset-building, experiments, and optimization read every operation uniformly.
+  `current_span_id()` is the active span's 16-hex id (None with no span), and
+  `record_search_io_on_current_span(query, results, modality)` records a
+  search on the active span (one `search_result_row` per result); the search
+  and document agents stamp both on their process span, whose id a client
+  annotates.
   Query-enhancement spans also carry `enhancement.path` with `lm` for a genuine
   enhancement and `heuristic_fallback` for the heuristic expansion, so served
   rows stay machine-readable when the LM echoes the query or returns empty
@@ -76,19 +88,11 @@ libs/foundation/cogniverse_foundation/telemetry/
   Also holds the annotation constants (`RESULT_RELEVANCE`, `RESULT_CLICK`,
   `RESULT_ID_META_KEY`, `RELEVANCE_POSITIVE_THRESHOLD`,
   `PREFERENCE_CHOSEN_THRESHOLD`) that `TripletExtractor`,
-  `PreferencePairExtractor`, the trace converter, and the dashboard relevance
-  writer all import instead of hardcoding the annotation names, metadata key,
+  `PreferencePairExtractor`, the trace converter, and the relevance writer
+  (`persist_result_relevance`) all use instead of hardcoding the annotation names, metadata key,
   and thresholds at each site.
 
-### 2. Dashboard Layer: Profile Routing Metrics (cogniverse-dashboard)
-```text
-libs/dashboard/cogniverse_dashboard/tabs/
-└── profile_metrics.py       # render_profile_metrics_tab() — per-modality observability
-```
-
-**Purpose:** Per-modality runtime observability surfaced in the dashboard. Reads `cogniverse.profile_selection` spans from Phoenix and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch.
-
-### 3. Plugin Layer: Phoenix Telemetry Provider (cogniverse-telemetry-phoenix)
+### 2. Plugin Layer: Phoenix Telemetry Provider (cogniverse-telemetry-phoenix)
 ```text
 libs/telemetry-phoenix/cogniverse_telemetry_phoenix/
 ├── __init__.py              # Package initialization & exports
@@ -145,7 +149,7 @@ The Telemetry Module provides **multi-tenant observability** infrastructure for 
 - **Lazy Initialization**: Tracer providers created on-demand with LRU caching
 - **Batch Export**: Configurable batch processing for high-throughput span export
 - **Graceful Degradation**: System continues functioning even when telemetry fails
-- **Per-Modality Observability**: Profile routing metrics aggregated from `cogniverse.profile_selection` spans; surfaced in the "Profile Routing Metrics" dashboard tab
+- **Per-Modality Observability**: Profile routing metrics aggregated from `cogniverse.profile_selection` spans; surfaced in the web client's "Profile metrics" view
 - **OpenTelemetry Integration**: Standards-based distributed tracing with Phoenix backend
 
 ### Key Features
@@ -167,7 +171,7 @@ The Telemetry Module provides **multi-tenant observability** infrastructure for 
 
 4. **Per-Modality Observability**
    - `cogniverse.profile_selection` spans emitted by `ProfileSelectionAgent` carry a `profile_selection.modality` attribute
-   - The "Profile Routing Metrics" dashboard tab (`profile_metrics.py`) queries those spans from Phoenix and aggregates P50/P95/P99 latency, success rate, and request count per modality
+   - The runtime's `GET /admin/tenant/{tenant_id}/telemetry/profile-selection` route (`routers/telemetry_metrics.py`), shown in the web client's "Profile metrics" view, queries those spans from Phoenix and aggregates P50/P95/P99 latency, success rate, and request count per modality
    - No separate metrics class required — all observability flows through standard OTel spans
 
 5. **Context Helpers**
@@ -347,9 +351,9 @@ The telemetry system uses a **provider abstraction** that defines interfaces for
 flowchart TB
     subgraph Abstraction["<span style='color:#000'>Foundation Layer - Provider Interfaces</span>"]
         TelemetryProvider["<span style='color:#000'>TelemetryProvider<br/><br/>• initialize(config)<br/>• configure_span_export()<br/>• session_context()</span>"]
-        TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• iter_spans()<br/>• get_all_spans()<br/>• get_span_by_id()</span>"]
+        TraceStore["<span style='color:#000'>TraceStore<br/><br/>• get_spans()<br/>• iter_spans()<br/>• get_all_spans()<br/>• get_span_by_id()<br/>• span_projects()</span>"]
         AnnotationStore["<span style='color:#000'>AnnotationStore<br/><br/>• add_annotation()<br/>• get_annotations()<br/>• log_evaluations()</span>"]
-        DatasetStore["<span style='color:#000'>DatasetStore<br/><br/>• create_dataset()<br/>• get_dataset()<br/>• append_to_dataset()<br/>• delete_dataset()</span>"]
+        DatasetStore["<span style='color:#000'>DatasetStore<br/><br/>• create_dataset()<br/>• get_dataset()<br/>• append_to_dataset()<br/>• list_datasets()<br/>• delete_dataset()</span>"]
     end
 
     TelemetryProvider --> TraceStore
@@ -434,6 +438,11 @@ class TraceStore(ABC):
         self, span_id: str, project: str
     ) -> Optional[Dict[str, Any]]:
         """Get single span by ID."""
+        pass
+
+    @abstractmethod
+    async def span_projects(self, span_ids: Sequence[str]) -> Dict[str, Optional[str]]:
+        """The project holding each span, or None for one no project holds."""
         pass
 ```
 
@@ -533,11 +542,26 @@ class DatasetStore(ABC):
         """
         pass
 
+    @abstractmethod
+    async def list_datasets(self) -> List[Dict[str, Any]]:
+        """Every dataset, as ``{name, example_count, created_at,
+        description}``. Raises DatasetStoreUnavailableError when the store
+        cannot answer."""
+        pass
+
     async def delete_dataset(self, name: str) -> bool:
         """Delete a dataset by name (last-write-wins blob storage deletes
         before create). Returns True if one was deleted, False if none
         existed. Not ``@abstractmethod`` — backends that can't delete raise
         NotImplementedError from the default.
+        """
+        raise NotImplementedError
+
+    async def describe_datasets(self) -> List[DatasetSummary]:
+        """Every stored dataset, newest first, as DatasetSummary(id, name,
+        example_count, created_at, description, tenant_id, metadata).
+        Raises DatasetStoreUnavailableError when the store cannot answer.
+        Not ``@abstractmethod``; the default raises NotImplementedError.
         """
         raise NotImplementedError
 
@@ -551,6 +575,14 @@ class DatasetStore(ABC):
         recreated before the exception propagates.
         """
 ```
+
+A dataset created with `metadata["tenant_id"]` (`DATASET_TENANT_KEY`) is owned by
+that tenant: `PhoenixDatasetStore` creates it with the owner in the dataset's
+Phoenix metadata (GraphQL `createDataset`) and then uploads its rows, deleting it
+again when the upload fails; `describe_datasets` reports the owner as
+`DatasetSummary.tenant_id` (None for a dataset created without one). Creating a
+name that exists appends to it only for its owner; any other tenant gets
+`DatasetOwnedByAnotherTenantError` (a `ValueError`).
 
 `DatasetNotFoundError` (`cogniverse_foundation.telemetry.providers.base`) subclasses
 `ValueError` so existing `except ValueError` callers keep working, while letting
@@ -626,6 +658,23 @@ class TelemetryProvider(ABC):
         phoenix.otel and the OTLP gRPC exporter). The runtime calls it through
         TelemetryManager.preload_span_export before serving, so a tenant's
         first span does not import them on the event loop. Default: no-op."""
+
+    @abstractmethod
+    async def list_projects(self, name_contains: str) -> List[str]:
+        """Names of the projects whose name contains ``name_contains``.
+        Raises when the backend does not answer, never an empty list."""
+
+    @abstractmethod
+    async def project_id(self, name: str) -> Optional[str]:
+        """The backend's id for the project (the one its UI addresses it
+        by), or None when it does not exist. Raises when the backend does not
+        answer. GET /admin/tenant/{tenant}/telemetry/phoenix links to it."""
+
+    @abstractmethod
+    async def delete_project(self, name: str) -> bool:
+        """Delete a project and its spans; False when it does not exist.
+        Raises when the backend does not answer or refuses. A tenant delete
+        removes the tenant's projects through these two."""
 
     @property
     def traces(self) -> TraceStore:
@@ -920,7 +969,7 @@ Get the global telemetry manager instance. On first call, loads config from Conf
 On first call this also applies a `TELEMETRY_OTLP_ENDPOINT` env var override (set by the Helm chart in k3d deployments) if present and different from the loaded config's `otlp_endpoint`, clearing cached tenant providers/tracers so the new endpoint takes effect.
 
 #### `configure_telemetry_endpoints(*, otlp_endpoint, http_endpoint) -> None` (module function)
-Records the Phoenix endpoints a deployment names for the process, for entrypoints that must not build the manager eagerly (`cogniverse-eval` passes `TELEMETRY_OTLP_ENDPOINT` / `TELEMETRY_HTTP_ENDPOINT`). They are applied to the singleton when it is built, or at once to one already built; `None` leaves the stored config's value. `otlp_endpoint` sets `config.otlp_endpoint`, `http_endpoint` sets `provider_config["http_endpoint"]`.
+Records the Phoenix endpoints a deployment names for the process, for entrypoints that must not build the manager eagerly (the runtime, the ingestion worker and `cogniverse-eval` pass `TELEMETRY_OTLP_ENDPOINT` / `TELEMETRY_HTTP_ENDPOINT`). They are applied to the singleton when it is built, or at once to one already built; `None` leaves the stored config's value. `otlp_endpoint` sets `config.otlp_endpoint`, `http_endpoint` sets `provider_config["http_endpoint"]`.
 
 **Example:**
 ```python
@@ -1381,6 +1430,17 @@ project_default = config.get_project_name("acme-corp")
 
 ---
 
+#### `is_tenant_project(name: str, tenant_id: str) -> bool`
+Whether project `name` is the tenant's own project or one of its service projects, by `tenant_project_template` and `tenant_service_template`. `tenant_id` is canonical. A tenant whose id begins another's (`acme:prod` and `acme:prod2`) never claims the other's projects.
+
+```python
+config = TelemetryConfig()
+config.is_tenant_project("cogniverse-acme:prod-routing", "acme:prod")   # True
+config.is_tenant_project("cogniverse-acme:prod2", "acme:prod")          # False
+```
+
+---
+
 #### `should_instrument_component(component: str) -> bool`
 Check if a component should be instrumented based on the configured level.
 
@@ -1409,7 +1469,7 @@ config.should_instrument_component("backend")         # True
 config.should_instrument_component("encoder")         # False (VERBOSE only)
 ```
 
-**Span Name Constants** (`config.py`): standardized span/service names used across agents and the dashboard, so callers don't hardcode string literals:
+**Span Name Constants** (`config.py`): standardized span/service names used across agents and the runtime, so callers don't hardcode string literals:
 
 ```python
 SPAN_NAME_REQUEST = "cogniverse.request"
@@ -1423,8 +1483,8 @@ SPAN_NAME_ENTITY_EXTRACTION = "cogniverse.entity_extraction"
 SERVICE_NAME_ORCHESTRATION = "cogniverse.orchestration"
 ```
 
-`SPAN_NAME_PROFILE_SELECTION` is the constant the Profile Routing Metrics
-dashboard tab (`profile_metrics.py`) filters on server-side via
+`SPAN_NAME_PROFILE_SELECTION` is the constant the runtime's profile-selection
+metrics route (`routers/telemetry_metrics.py`) filters on server-side via
 `provider.traces.get_spans(..., filters={"name": SPAN_NAME_PROFILE_SELECTION})`.
 
 ---
@@ -1799,17 +1859,13 @@ def search_videos_with_telemetry(tenant_id: str, query: str):
 
 ---
 
-### Example 4: Per-Modality Observability via Dashboard
+### Example 4: Per-Modality Observability in the Web Client
 
-Per-modality runtime metrics (P50/P95/P99 latency, success rate, request count) are available in the **Profile Routing Metrics** tab of the Cogniverse dashboard (`libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`).
+Per-modality runtime metrics (P50/P95/P99 latency, success rate, request count) are available in the web client's **Profile metrics** view (`GET /admin/tenant/{tenant}/telemetry/profile-selection`).
 
-The tab queries `cogniverse.profile_selection` spans from Phoenix for the selected tenant and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. No additional code is needed in the application — drive traffic through the routing agent and the dashboard reflects real-time modality breakdown.
+The runtime queries `cogniverse.profile_selection` spans from Phoenix for the selected tenant and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. Each span starts when the agent began selecting (before it reads the candidate profiles and calls the LM) and ends once the answer is built, so its duration is the selection latency. No additional code is needed in the application — drive traffic through the routing agent and the view reflects real-time modality breakdown.
 
-To view:
-```bash
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
-```
-Then select a tenant in the sidebar and open the "Profile Routing Metrics" tab.
+To view, open the web client (http://localhost:28400 under `cogniverse up`), choose **Profile metrics** under Operations, and pick the tenant and window.
 
 ---
 
@@ -2083,7 +2139,7 @@ if stats['failed_initializations'] > 0:
     alert("Telemetry provider initialization failures", severity="error")
 ```
 
-3. **Per-Modality Performance:** Monitor via the "Profile Routing Metrics" dashboard tab, which aggregates P95 latency and success rate per modality from `cogniverse.profile_selection` spans. Set Phoenix alerts for `cogniverse.profile_selection` span P95 duration or error rate thresholds directly in Phoenix.
+3. **Per-Modality Performance:** Monitor via the web client's "Profile metrics" view, which aggregates P95 latency and success rate per modality from `cogniverse.profile_selection` spans. Set Phoenix alerts for `cogniverse.profile_selection` span P95 duration or error rate thresholds directly in Phoenix.
 
 4. **Export Queue Health:**
 ```python
@@ -2297,6 +2353,12 @@ def test_sync_export():
     assert success
 ```
 
+`manager.span(name, tenant_id=..., start_time=time.time_ns())` starts the span
+at a moment already past (nanoseconds since the epoch) and ends it when the
+context exits, so a span written after the work it records still lasts as long
+as that work. The gateway records each routing decision this way, from when
+classification began.
+
 Normal spans remain non-raising when the exporter is unavailable. Synchronous
 worker code emits durable records with
 `manager.span(..., require_export=True)`. Checked exporters use always-on
@@ -2410,7 +2472,7 @@ The Telemetry Module provides **production-ready, multi-tenant observability** w
 
 - Search operations use pre-built context helpers
 
-- Per-modality observability flows through `cogniverse.profile_selection` spans and the Profile Routing Metrics dashboard tab
+- Per-modality observability flows through `cogniverse.profile_selection` spans and the web client's Profile metrics view
 
 - Phoenix provides analytics and visualization
 
@@ -2429,7 +2491,5 @@ The Telemetry Module provides **production-ready, multi-tenant observability** w
 - Manager: `libs/foundation/cogniverse_foundation/telemetry/manager.py`
 
 - Config: `libs/foundation/cogniverse_foundation/telemetry/config.py`
-
-- Per-Modality Dashboard: `libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`
 
 - Context: `libs/foundation/cogniverse_foundation/telemetry/context.py`

@@ -1,6 +1,7 @@
 """Unit tests for ProfileSelectionAgent"""
 
 import asyncio
+import dataclasses
 import json
 import logging
 import time
@@ -11,6 +12,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 import dspy
 import pytest
 
+from cogniverse_agents import profile_selection_agent
 from cogniverse_agents.profile_selection_agent import (
     ProfileCandidate,
     ProfileSelectionAgent,
@@ -20,6 +22,7 @@ from cogniverse_agents.profile_selection_agent import (
     ProfileSelectionOutput,
     ProfileSelectionSignature,
 )
+from cogniverse_foundation.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
     SystemConfig,
@@ -32,8 +35,13 @@ from tests.agents.unit._recording_telemetry import (
 from tests.utils.memory_store import (
     InMemoryConfigStore,
     register_deployed_schema,
+    serve_listed_profiles_as_backend_config,
+    store_profile_types,
 )
 from tests.utils.vespa_test_helpers import shipped_profile
+
+# When the selection under test began, as the agent's clock reads it.
+SELECTION_STARTED_NS = 1_760_000_000_123_456_789
 
 
 def _messages(caplog, logger_name: str) -> list[str]:
@@ -99,13 +107,11 @@ def profile_agent():
                 for profile in tenant_profiles.values()
             }
         )
-        agent._config_manager.get_backend_profile.side_effect = (
-            lambda profile_name, tenant_id: tenant_profiles.get(profile_name)
-        )
         for profile in tenant_profiles.values():
             register_deployed_schema(
                 agent._config_manager, "test_tenant", profile.schema_name
             )
+        serve_listed_profiles_as_backend_config(agent._config_manager)
         agent.telemetry_manager = RecordingTelemetryManager()
         return agent
 
@@ -261,8 +267,9 @@ class TestProfileSelectionAgent:
     async def test_process_uses_selected_live_profile_type(
         self, profile_agent, configured_modality
     ):
-        profile_agent._config_manager.get_backend_profile.side_effect = (
-            lambda profile_name, tenant_id: SimpleNamespace(type=configured_modality)
+        listed = profile_agent._config_manager.list_backend_profiles.return_value
+        listed["video_colpali_base"] = dataclasses.replace(
+            listed["video_colpali_base"], type=configured_modality
         )
         profile_agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -285,14 +292,8 @@ class TestProfileSelectionAgent:
             if configured_modality == "text"
             else f"{configured_modality}_search"
         )
-        # The selected profile's configured type first, then each candidate's
-        # for the alternatives ranking.
-        assert profile_agent._config_manager.get_backend_profile.call_args_list == [
-            call("video_colpali_base", "test_tenant:test_tenant"),
-            call("video_colpali_base", "test_tenant:test_tenant"),
-            call("video_colpali_large", "test_tenant:test_tenant"),
-            call("image_colpali_base", "test_tenant:test_tenant"),
-        ]
+        # No other candidate declares the selected profile's type.
+        assert result.alternatives == []
 
     @pytest.mark.asyncio
     async def test_live_profile_lookup_does_not_block_event_loop(self, profile_agent):
@@ -307,13 +308,13 @@ class TestProfileSelectionAgent:
             )
         )
 
-        def slow_profile_read(*_args):
-            time.sleep(0.2)
-            return SimpleNamespace(type="video")
+        read_config = profile_agent._config_manager.get_backend_config.side_effect
 
-        profile_agent._config_manager.get_backend_profile.side_effect = (
-            slow_profile_read
-        )
+        def slow_profile_read(*args, **kwargs):
+            time.sleep(0.2)
+            return read_config(*args, **kwargs)
+
+        profile_agent._config_manager.get_backend_config.side_effect = slow_profile_read
         heartbeat_elapsed = None
         started = time.monotonic()
 
@@ -344,7 +345,7 @@ class TestProfileSelectionAgent:
                 complexity="medium",
             )
         )
-        profile_agent._config_manager.get_backend_profile.side_effect = RuntimeError(
+        profile_agent._config_manager.get_backend_config.side_effect = RuntimeError(
             "profile store unavailable"
         )
 
@@ -431,12 +432,9 @@ class TestProfileSelectionAgent:
             )
         )
 
-        profile_agent._config_manager.get_backend_profile.side_effect = (
-            lambda profile_name, tenant_id: (
-                SimpleNamespace(type="video")
-                if profile_name.startswith("custom_profile_")
-                else None
-            )
+        store_profile_types(
+            profile_agent._config_manager,
+            {"custom_profile_1": "video", "custom_profile_2": "video"},
         )
         result = await profile_agent._process_impl(
             ProfileSelectionInput(
@@ -490,9 +488,12 @@ class TestProfileSelectionAgent:
                 ): "http://localhost:8000"
             }
         )
-        profile_agent._config_manager.get_backend_profile.side_effect = (
-            lambda profile_name, tenant_id: tenant_profiles.get(profile_name)
-        )
+        # Only this tenant's stored profiles have deployed schemas: a deployed
+        # schema no stored profile reads is served by the shipped profile
+        # declaring it, which would put the absent profile's back in.
+        store = InMemoryConfigStore()
+        store.initialize()
+        profile_agent._config_manager.store = store
         for profile in tenant_profiles.values():
             register_deployed_schema(
                 profile_agent._config_manager, "test_tenant", profile.schema_name
@@ -632,13 +633,11 @@ class TestProfileSelectionAgent:
     def test_candidate_profile_types_read_the_configured_type(self, profile_agent):
         """With a config manager the declared profile type is authoritative;
         a candidate the tenant has not configured is unclassified."""
-        configured = {
-            "video_colpali_base": SimpleNamespace(type="video"),
-            "video_transcripts_text": SimpleNamespace(type="text"),
-        }
-        profile_agent._config_manager.get_backend_profile.side_effect = (
-            lambda profile_name, tenant_id: configured.get(profile_name)
+        store_profile_types(
+            profile_agent._config_manager,
+            {"video_colpali_base": "video", "video_transcripts_text": "text"},
         )
+        profile_agent._config_manager.get_backend_config.reset_mock()
 
         types = profile_agent._candidate_profile_types(
             ["video_colpali_base", "video_transcripts_text", "unregistered_mv"],
@@ -649,10 +648,11 @@ class TestProfileSelectionAgent:
             "video_colpali_base": "video",
             "video_transcripts_text": "text",
         }
-        assert profile_agent._config_manager.get_backend_profile.call_args_list == [
-            call("video_colpali_base", "test_tenant:test_tenant"),
-            call("video_transcripts_text", "test_tenant:test_tenant"),
-            call("unregistered_mv", "test_tenant:test_tenant"),
+        # One read of the tenant's config (and the system tenant's it
+        # inherits) types every candidate.
+        assert profile_agent._config_manager.get_backend_config.call_args_list == [
+            call("test_tenant:test_tenant"),
+            call(SYSTEM_TENANT_ID),
         ]
 
     def test_a_failing_config_manager_read_propagates_instead_of_serving_deps(
@@ -668,10 +668,8 @@ class TestProfileSelectionAgent:
     def test_candidate_profile_types_come_only_from_the_tenant_config(
         self, profile_agent
     ):
-        profile_agent._config_manager.get_backend_profile.side_effect = (
-            lambda name, tenant: (
-                SimpleNamespace(type="video") if name == "video_colpali_base" else None
-            )
+        store_profile_types(
+            profile_agent._config_manager, {"video_colpali_base": "video"}
         )
 
         types = profile_agent._candidate_profile_types(
@@ -719,10 +717,17 @@ class TestProfileSelectionAgent:
         assert len(skills[0]["examples"]) > 0
 
     @pytest.mark.asyncio
-    async def test_span_emitted_with_tenant_id(self, profile_agent):
-        """Span is emitted with cogniverse.profile_selection name when tenant_id is set."""
+    async def test_span_emitted_with_tenant_id(self, profile_agent, monkeypatch):
+        """Span is emitted with cogniverse.profile_selection name when tenant_id
+        is set, starting when the selection started."""
         telemetry = RecordingTelemetryManager()
         profile_agent.telemetry_manager = telemetry
+        monkeypatch.setattr(
+            profile_selection_agent,
+            "time",
+            SimpleNamespace(time_ns=lambda: SELECTION_STARTED_NS),
+            raising=False,
+        )
 
         captured = {}
         candidate_profiles = ["video_colpali_base", "video_colpali_large"]
@@ -755,6 +760,7 @@ class TestProfileSelectionAgent:
             {
                 "name": "cogniverse.profile_selection",
                 "tenant_id": "test_tenant:test_tenant",
+                "start_time": SELECTION_STARTED_NS,
             }
         ]
         assert captured["available_profiles"] == ", ".join(candidate_profiles)
@@ -787,6 +793,7 @@ class TestProfileSelectionAgent:
                     modality="video",
                     complexity="simple",
                     confidence=0.85,
+                    started_ns=time.time_ns(),
                 )
             )
         assert _messages(caplog, "cogniverse_agents.profile_selection_agent") == [
@@ -819,10 +826,18 @@ class TestProfileSelectionAgent:
 
     @pytest.mark.asyncio
     @pytest.mark.expects_telemetry_loss_warning
-    async def test_span_failure_warns_and_request_succeeds(self, profile_agent, caplog):
+    async def test_span_failure_warns_and_request_succeeds(
+        self, profile_agent, caplog, monkeypatch
+    ):
         """A telemetry enqueue failure never fails the request; it is a WARNING."""
         telemetry = FailingTelemetryManager(RuntimeError("telemetry down"))
         profile_agent.telemetry_manager = telemetry
+        monkeypatch.setattr(
+            profile_selection_agent,
+            "time",
+            SimpleNamespace(time_ns=lambda: SELECTION_STARTED_NS),
+            raising=False,
+        )
 
         profile_agent.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -847,6 +862,7 @@ class TestProfileSelectionAgent:
             {
                 "name": "cogniverse.profile_selection",
                 "tenant_id": "test_tenant:test_tenant",
+                "start_time": SELECTION_STARTED_NS,
             }
         ]
         assert _messages(caplog, "cogniverse_agents.profile_selection_agent") == [
@@ -985,8 +1001,9 @@ class TestProfileMembershipGuard:
             )
         )
         agent._config_manager = Mock()
-        agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
-            type="video"
+        store_profile_types(
+            agent._config_manager,
+            {"video_colpali_base": "video", "text_bge_base": "text"},
         )
         agent._generate_alternatives = lambda *a, **k: []
 
@@ -1022,8 +1039,9 @@ class TestProfileMembershipGuard:
             )
         )
         agent._config_manager = Mock()
-        agent._config_manager.get_backend_profile.return_value = SimpleNamespace(
-            type="text"
+        store_profile_types(
+            agent._config_manager,
+            {"video_colpali_base": "video", "text_bge_base": "text"},
         )
         agent._generate_alternatives = lambda *a, **k: []
 

@@ -56,7 +56,10 @@ from cogniverse_core.registries.backend_registry import (
     leased_backend,
 )
 from cogniverse_foundation.config.utils import get_config
-from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.manager import (
+    configure_telemetry_endpoints,
+    get_telemetry_manager,
+)
 
 # Import routers
 from cogniverse_runtime.admin import tenant_manager
@@ -84,11 +87,14 @@ from cogniverse_runtime.routers import (
     ingestion,
     knowledge,
     openai_compat,
+    optimization_framework,
+    optimization_report,
     orchestration_annotations,
     routing_decisions,
     search,
     telemetry_metrics,
     tenant,
+    training_examples,
     wiki,
 )
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
@@ -820,7 +826,10 @@ def _configure_library_module_defaults(
     configure_memory_manager_tenant_cache_capacity(tenant_cache_capacity)
     configure_backend_registry_tenant_cache_capacity(tenant_cache_capacity)
     configure_entry_point_registry_tenant_cache_capacity(tenant_cache_capacity)
-    get_telemetry_manager(config_manager, otlp_endpoint=telemetry_otlp_endpoint)
+    configure_telemetry_endpoints(
+        otlp_endpoint=telemetry_otlp_endpoint, http_endpoint=telemetry_http_endpoint
+    )
+    get_telemetry_manager(config_manager)
 
 
 WIKI_MANAGER_CACHE_CAPACITY = 64
@@ -1178,6 +1187,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     admin.set_schema_loader(schema_loader)
     tenant.set_config_manager(config_manager)
     approvals.set_config_manager(config_manager)
+    training_examples.set_config_manager(config_manager)
     _log_workflow_submission_status()
 
     # Wire ingestion and search routers via FastAPI dependency overrides
@@ -1280,7 +1290,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     system_config = config_manager.get_system_config()
 
     # Store SystemConfig with env var overrides so all components
-    # (search backend, agents, dashboard) read the correct service URLs.
+    # (search backend, agents) read the correct service URLs.
     # Env vars are set by the deployment layer (Helm template).
     updated = False
     if os.environ.get("BACKEND_URL"):
@@ -1405,6 +1415,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     )
     openai_compat.set_continuation_store(ContinuationStore(shared_state_redis))
+    from cogniverse_runtime.atlas_projection import (
+        ProjectionCache,
+        set_projection_cache,
+    )
+
+    set_projection_cache(ProjectionCache(shared_state_redis))
     # Workflow and ingestion progress, cancellations and the active-task index
     # (/events) live in the same Redis; this process's poller renews the leases
     # of the tasks it runs and delivers their cancellations.
@@ -1696,7 +1712,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 12. Start the OpenShell gateway health probe (only when sandbox is not
     # disabled). Each probe records availability + latency as a Phoenix span
-    # (openshell.gateway_health) so the dashboard can surface gateway state.
+    # (openshell.gateway_health) so gateway state is visible in Phoenix.
     gateway_probe = None
     if sandbox_policy is not SandboxPolicy.DISABLED:
         from cogniverse_runtime.openshell_health import GatewayHealthProbe
@@ -1848,6 +1864,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     admin.set_cluster_events(cluster_events)
     app.state.cluster_events = cluster_events
     logger.info("Cluster events subscribed as %s", replica_id)
+    # Config saves, restores and imports, and profile creates, updates and
+    # deletes, reach every runtime worker and every ingestion worker on the
+    # config events channel.
+    from cogniverse_runtime.cluster_events import (
+        CONFIG_EVENT_CHANNEL,
+        CONFIG_EVENT_HANDLERS,
+    )
+
+    config_events = ClusterEvents(
+        redis_url,
+        replica_id,
+        CONFIG_EVENT_HANDLERS,
+        channel=CONFIG_EVENT_CHANNEL,
+    )
+    await config_events.start()
+    config_entries.set_config_events(config_events)
+    admin.set_config_events(config_events)
+    logger.info("Config events subscribed as %s", replica_id)
     a2a_protocol = await _build_shared_a2a_protocol(
         agent_registry=agent_registry,
         dispatcher=dispatcher,
@@ -1906,6 +1940,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tenant_manager.set_task_event_store(None)
     admin.set_cluster_events(None)
     await cluster_events.close()
+    config_entries.set_config_events(None)
+    admin.set_config_events(None)
+    await config_events.close()
     agents.set_conversation_ledger(None)
     openai_compat.set_continuation_store(None)
     events.set_task_event_store(None)
@@ -1938,6 +1975,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(sandbox_manager.close)
     except Exception as exc:
         logger.warning("SandboxManager close failed during shutdown: %s", exc)
+    set_projection_cache(None)
     await shared_state_redis.aclose()
     logger.info("Cogniverse Runtime shut down successfully")
 
@@ -2033,6 +2071,12 @@ app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 app.include_router(approvals.router, prefix="/admin/tenant", tags=["approvals"])
 app.include_router(
+    training_examples.router, prefix="/admin/tenant", tags=["training-examples"]
+)
+app.include_router(
+    optimization_report.router, prefix="/admin/tenant", tags=["optimization-report"]
+)
+app.include_router(
     orchestration_annotations.router,
     prefix="/admin/tenant",
     tags=["orchestration-annotations"],
@@ -2045,6 +2089,11 @@ app.include_router(
 )
 app.include_router(
     embedding_atlas.router, prefix="/admin/tenant", tags=["embedding-atlas"]
+)
+app.include_router(
+    optimization_framework.router,
+    prefix="/admin/tenant",
+    tags=["optimization-framework"],
 )
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])

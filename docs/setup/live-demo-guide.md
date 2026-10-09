@@ -9,7 +9,7 @@ A hands-on companion to [Intelligent Query Routing](../architecture/intelligent-
 ### Environment Setup
 
 ```bash
-# Clone and install (UV workspace — resolves all 13 packages)
+# Clone and install (UV workspace — resolves all 12 packages)
 git clone <repo-url> && cd cogniverse
 uv sync
 
@@ -45,28 +45,27 @@ graph TB
     subgraph "Kubernetes (k3d) Stack"
         VESPA["<span style='color:#000'>Vespa<br/>:8080 Query/Doc<br/>:19071 Config<br/>:19092 Metrics</span>"]
         RUNTIME["<span style='color:#000'>Runtime (FastAPI)<br/>container :8000<br/>host :28000</span>"]
-        DASHBOARD["<span style='color:#000'>Dashboard (Streamlit)<br/>container :8501<br/>host :28501</span>"]
+        WEB["<span style='color:#000'>Web client (Node)<br/>container :4000<br/>host :28400</span>"]
         PHOENIX["<span style='color:#000'>Phoenix (Arize)<br/>container :6006, OTLP gRPC :4317<br/>host :26006, :4317</span>"]
         OLLAMA["<span style='color:#000'>Ollama<br/>:11434</span>"]
     end
 
     RUNTIME -->|"Query/Ingest"| VESPA
     RUNTIME -->|"Telemetry (OTLP gRPC :4317)"| PHOENIX
-    DASHBOARD -->|"API calls"| RUNTIME
-    DASHBOARD -->|"Experiments"| PHOENIX
+    WEB -->|"AG-UI runs, admin API"| RUNTIME
     RUNTIME -->|"LLM inference"| OLLAMA
 
-    USER(("<span style='color:#000'>User</span>")) --> DASHBOARD
+    USER(("<span style='color:#000'>User</span>")) --> WEB
     USER --> RUNTIME
 
     style VESPA fill:#90caf9,stroke:#1565c0,color:#000
     style RUNTIME fill:#a5d6a7,stroke:#388e3c,color:#000
-    style DASHBOARD fill:#ffcc80,stroke:#ef6c00,color:#000
+    style WEB fill:#ffcc80,stroke:#ef6c00,color:#000
     style PHOENIX fill:#ce93d8,stroke:#7b1fa2,color:#000
     style OLLAMA fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
-Runtime, Dashboard, and Phoenix each listen on the port shown above
+Runtime, the web client, and Phoenix each listen on the port shown above
 *inside* their container. `cogniverse up` creates the k3d cluster with a
 host-port mapping per service (`libs/cli/cogniverse_cli/cluster.py`
 `DEFAULT_PORTS`), so from your host machine you reach them on different,
@@ -84,7 +83,7 @@ All commands below assume the stack is running via `cogniverse up` (k3d) and use
 | **Vespa** | 19071 | Config Server API | (same as above) |
 | **Vespa** | 19092 | Metrics endpoint (container-only, not published by the k3d loadbalancer) | — |
 | **Runtime** | 28000 | Unified FastAPI (search, ingest, agents, events, tenant admin) — container port 8000 | `curl http://localhost:28000/health` |
-| **Dashboard** | 28501 | Streamlit UI — container port 8501 | `curl http://localhost:28501/_stcore/health` |
+| **Web client** | 28400 | The Cogniverse UI — container port 4000 | `curl http://localhost:28400/healthz` |
 | **Phoenix** | 26006 | Evaluation & observability UI — container port 6006 | — |
 | **Phoenix** | 4317 | OTLP gRPC span receiver (Runtime sends telemetry here directly) | — |
 | **Ollama** | 11434 | Local LLM inference | `curl http://localhost:11434/api/tags` |
@@ -553,36 +552,31 @@ uv run python scripts/run_experiments_with_visualization.py \
 
 ---
 
-## 8. Dashboard & Observability
+## 8. Web Client & Observability
 
-### Launch the Dashboard
+### Open the Web Client
 
 ```bash
-# Via k3d (already running if you did `cogniverse up`) — host port 28501
-# Or locally against a running Runtime (uses container port 8501 directly):
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
+# Via k3d (already running if you did `cogniverse up`) — host port 28400
+open http://localhost:28400
 ```
 
-Open `http://localhost:28501` (k3d) or `http://localhost:8501` (local
-streamlit) — a tenant must be selected in the sidebar first (there is no
-default tenant). The dashboard is a flat set of 16 top-level tabs:
+To run it locally against a running Runtime, see
+[Web Client](../modules/web-client.md#local-development).
 
-- **📊 Analytics** — Phoenix telemetry visualization (traces, latency, outliers)
-- **🧪 Evaluation** — Experiment results and metric comparison
-- **🗺️ Embedding Atlas** — Vector space visualization
-- **🎯 Routing Evaluation** — Routing/gateway performance metrics
-- **🔄 Orchestration Annotation** — Multi-agent orchestration review and labeling
-- **📈 Profile Routing Metrics** — Per-profile routing performance
-- **🔧 Optimization** — Upload training examples, trigger optimizer runs
-- **🔬 Synthetic Data & Optimization** — Synthetic dataset generation for optimizers
-- **✅ Approval Queue** — Human-in-the-loop review for pending changes
-- **📥 Ingestion Testing** — Interactive video upload and pipeline processing
-- **🔍 Interactive Search** — Live search testing across ranking strategies
-- **💬 Chat** — Conversational search via the routing layer
-- **⚙️ Configuration** — System config viewer/editor
-- **👥 Tenant Management** — Organization/tenant CRUD
-- **🧠 Memory** — Agent memory inspection
-- **🅰️🅱️ RLM A/B Compare** — Latency/token/judge deltas from `optimization_cli --mode ab-compare` runs
+The sidebar lists every registered agent; picking one opens a chat with it,
+streaming the reply and rendering its results (search hits, the coding agent's
+files, an orchestration's per-agent hits) beside the conversation. Chat runs
+in the tenant of the web server's harness key. The Operations section manages
+the runtime, each view picking its tenant:
+
+- **Tenants** and **Backend profiles** — organization, tenant and profile management
+- **Configuration** — system, tenant and agent configs with version history, export and import
+- **Ingestion** — upload a file and follow the ingest live
+- **Optimization runs** — start, follow, cancel and retry optimization runs
+- **Memory** — inspect, search, add and delete memories
+- **Approvals**, **Annotation queue**, **Workflow reviews** — human review of generated data, routing decisions and orchestration workflows
+- **Analytics**, **Evaluation**, **Embedding atlas**, **Routing evaluation**, **Profile metrics**, **RLM A/B** — telemetry views
 
 ### Runtime API Explorer
 
@@ -1097,7 +1091,7 @@ flowchart TD
     end
 
     subgraph "Observe (Section 8)"
-        DASH["<span style='color:#000'>Dashboard + Phoenix<br/>→ telemetry, annotations</span>"]
+        DASH["<span style='color:#000'>Web client + Phoenix<br/>→ telemetry, annotations</span>"]
     end
 
     subgraph "User Interfaces (Sections 11-15)"
@@ -1184,8 +1178,8 @@ cogniverse index ./libs --type code --tenant acme:production
 # 9. Interactive coding agent
 cogniverse code --codebase ./libs --tenant acme:production
 
-# 10. Open dashboard
-open http://localhost:28501
+# 10. Open the web client
+open http://localhost:28400
 ```
 
 ---

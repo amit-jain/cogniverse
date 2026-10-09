@@ -62,14 +62,14 @@ on AMD or CPU-only hosts and ~700 MB of useless NVIDIA libraries on machines
 without an NVIDIA GPU. See ["PyTorch backend selection"](#2a-pytorch-backend-selection)
 below for the full story.
 
-**Workspace contents** (installed in editable mode, all 13 packages —
+**Workspace contents** (installed in editable mode, all 12 packages —
 `cogniverse-cli` comes from the `dev` dependency group, which `uv sync`
 installs by default alongside the rest):
 
 - Foundation Layer: `cogniverse_sdk` (libs/sdk/), `cogniverse_foundation` (libs/foundation/)
 - Core Layer: `cogniverse_core`, `cogniverse_evaluation`, `cogniverse_telemetry_phoenix`
 - Implementation Layer: `cogniverse_agents`, `cogniverse_vespa`, `cogniverse_synthetic`, `cogniverse_finetuning`
-- Application Layer: `cogniverse_runtime`, `cogniverse_dashboard`, `cogniverse_cli`, `cogniverse_messaging`
+- Application Layer: `cogniverse_runtime`, `cogniverse_cli`, `cogniverse_messaging`
 
 ### 2a. PyTorch backend selection
 
@@ -231,7 +231,7 @@ Cogniverse uses a **UV workspace** with a layered architecture:
 
 ```text
 cogniverse/
-├── libs/                         # UV Workspace Packages (13 total)
+├── libs/                         # UV Workspace Packages (12 total)
 │   # FOUNDATION LAYER (Pure Interfaces)
 │   ├── sdk/                      # cogniverse_sdk
 │   │   ├── pyproject.toml
@@ -290,11 +290,6 @@ cogniverse/
 │   │   └── cogniverse_runtime/
 │   │       ├── routers/          # FastAPI routers
 │   │       └── ingestion/        # Video processing pipeline
-│   ├── dashboard/                # cogniverse_dashboard
-│   │   ├── pyproject.toml
-│   │   └── cogniverse_dashboard/
-│   │       ├── app.py            # Main Streamlit application
-│   │       └── utils/            # Utilities (Phoenix launcher, data manager)
 │   ├── cli/                      # cogniverse_cli — the `cogniverse` CLI
 │   │   ├── pyproject.toml
 │   │   └── cogniverse_cli/
@@ -349,7 +344,6 @@ flowchart TB
 
     subgraph Application["<span style='color:#000'>Application Layer</span>"]
         Runtime["<span style='color:#000'>cogniverse_runtime<br/>FastAPI Server</span>"]
-        Dashboard["<span style='color:#000'>cogniverse_dashboard<br/>Streamlit UI</span>"]
     end
 
     subgraph Services["<span style='color:#000'>Docker Services</span>"]
@@ -373,8 +367,6 @@ flowchart TB
     Vespa --> Runtime
     Synthetic --> Runtime
     Finetuning --> Runtime
-    Core_pkg --> Dashboard
-    Evaluation --> Dashboard
 
     Runtime --> VespaDB
     Runtime --> PhoenixSvc
@@ -395,7 +387,6 @@ flowchart TB
     style Synthetic fill:#ffcc80,stroke:#ef6c00,color:#000
     style Finetuning fill:#ffcc80,stroke:#ef6c00,color:#000
     style Runtime fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
     style VespaDB fill:#b0bec5,stroke:#546e7a,color:#000
     style PhoenixSvc fill:#b0bec5,stroke:#546e7a,color:#000
     style Ollama fill:#b0bec5,stroke:#546e7a,color:#000
@@ -409,7 +400,8 @@ flowchart TB
 |---------|------|---------|
 | **Vespa HTTP** | 8080 | Document feed & search |
 | **Vespa Config** | 19071 | Schema deployment |
-| **Phoenix Web** | 6006 | Dashboard & experiments |
+| **Phoenix Web** | 6006 | Traces & experiments |
+| **Web client** | 4000 (k3d NodePort 28400) | The Cogniverse UI ([Web Client](../modules/web-client.md)) |
 | **Phoenix Collector** | 4317 | OTLP span collection (gRPC) |
 | **Ollama** | 11434 | LLM inference API |
 | **vLLM ASR (Whisper)** | 29005† | OpenAI-compat ASR (`/v1/audio/transcriptions`, `/health`) |
@@ -480,11 +472,10 @@ EOF
 # List installed packages
 uv pip list | grep cogniverse
 
-# Expected output (all 13 workspace packages):
+# Expected output (all 12 workspace packages):
 # cogniverse-agents               0.1.0
 # cogniverse-cli                  0.1.0
 # cogniverse-core                 0.1.0
-# cogniverse-dashboard            0.1.0
 # cogniverse-evaluation           0.1.0
 # cogniverse-finetuning           0.1.0
 # cogniverse-foundation           0.1.0
@@ -655,7 +646,7 @@ uv run ruff format .
 ### Package Import Verification
 
 ```bash
-# Verify package imports work correctly for all 13 workspace packages
+# Verify package imports work correctly for all 12 workspace packages
 uv run python -c "
 # Foundation Layer
 from cogniverse_sdk.interfaces.backend import Backend
@@ -677,12 +668,8 @@ from cogniverse_synthetic.service import SyntheticDataService
 from cogniverse_runtime.main import app
 from cogniverse_cli.main import cli
 from cogniverse_messaging.gateway import MessagingGateway
-import cogniverse_dashboard
-# cogniverse_dashboard is a package import; the Streamlit app itself is
-# run directly, not imported as a script:
-#   uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 
-print('All 13 workspace packages imported successfully!')
+print('All 12 workspace packages imported successfully!')
 "
 ```
 
@@ -738,7 +725,7 @@ uv build
 
 ## Common Import Patterns
 
-After installation, use these import patterns for all 13 workspace packages:
+After installation, use these import patterns for all 12 workspace packages:
 
 ```python
 # ===== FOUNDATION LAYER =====
@@ -796,11 +783,6 @@ from cogniverse_synthetic.generators.workflow import WorkflowGenerator
 # Runtime - Server and Ingestion
 from cogniverse_runtime.main import app
 from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
-
-# Dashboard - installed like every other workspace package; the
-# Streamlit app itself is run directly, not executed as a script:
-#   uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
-import cogniverse_dashboard
 
 # CLI - the `cogniverse` command (installed via the `dev` dependency group)
 from cogniverse_cli.main import cli

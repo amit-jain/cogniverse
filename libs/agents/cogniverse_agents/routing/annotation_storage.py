@@ -44,6 +44,11 @@ class NotAnLLMAnnotationError(ValueError):
     """The span's annotation was not made by the LLM annotator."""
 
 
+class LLMAnnotationNeedsReviewError(ValueError):
+    """The LLM flagged its annotation for review, so a reviewer labels the
+    span rather than approving the annotation as it is."""
+
+
 def _routing_get(span_row: "pd.Series", field: str, default: Any = None) -> Any:
     """Read a routing.* span attribute. Phoenix nests dotted attributes into an
     ``attributes.routing`` dict column; fall back to a flat column if present."""
@@ -216,8 +221,9 @@ class AnnotationStorage:
         ``annotator_id``, keeping its label, confidence and reasoning.
 
         Returns the approved annotation. Raises
-        ``LLMAnnotationNotFoundError`` when the span has no annotation and
-        ``NotAnLLMAnnotationError`` when a person made it.
+        ``LLMAnnotationNotFoundError`` when the span has no annotation,
+        ``NotAnLLMAnnotationError`` when a person made it and
+        ``LLMAnnotationNeedsReviewError`` when the LLM flagged it for review.
         """
         logger.info(f"✅ Approving LLM annotation for span {span_id}")
 
@@ -230,6 +236,11 @@ class AnnotationStorage:
             raise NotAnLLMAnnotationError(
                 f"the {self.annotation_name} of span {span_id} was made by "
                 f"{annotation['metadata'].get('annotator')!r}, not the LLM"
+            )
+        if annotation["metadata"].get("requires_review") is True:
+            raise LLMAnnotationNeedsReviewError(
+                f"the LLM flagged the {self.annotation_name} of span {span_id} "
+                "for review"
             )
         metadata = {
             **annotation["metadata"],
@@ -376,7 +387,7 @@ class AnnotationStorage:
         # Annotations live in Phoenix's separate annotation store, not on the
         # span attributes — fetch them and join to spans by span_id. The old
         # read of ``attributes.annotation.label`` was never populated, so the
-        # feedback loop and dashboard always saw zero annotations.
+        # feedback loop and the UI always saw zero annotations.
         annotations_df = await self.provider.annotations.get_annotations(
             spans_df=spans_df,
             project=self.project_name,

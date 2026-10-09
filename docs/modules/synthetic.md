@@ -164,7 +164,7 @@ Each entry in `dropped_examples` carries `candidate`, `reason`, and `category`.
 | `ungrounded_source` | The sampled text supported no grounded example |
 | `ungrounded_output` | The model's output was not grounded in the source topic |
 | `invalid_label` | The model's label failed a shape or vocabulary rule |
-| `duplicate_label` | The candidate repeats a label already accepted |
+| `duplicate_label` | The candidate repeats a query already accepted |
 | `unexpected_error` | An exception the generator did not anticipate |
 
 A generator declares the category at the point it refuses a candidate, by
@@ -178,6 +178,8 @@ holds the four deliberate categories; `ContentRejection` refuses
 trace of the sampled backend rows. Each trace item carries `profile_name`,
 `schema_name`, `source_id`, `segment_id`, and `description`, so callers can
 recompute the same saliency pass against the exact text the generator used.
+`metadata.generation_time_ms` is the wall time of the whole `generate()` call in
+milliseconds.
 
 Direct construction of routing, profile-selection, and query-enhancement
 generators exposes a positive, finite `production_label_timeout_seconds`
@@ -309,7 +311,11 @@ Bare identifier-like hex strings, including `_seg_` suffixed forms, are
 ignored. Pure non-speech annotations are also ignored in topic, expansion, and
 source-text paths; mixed speech strings remain intact. The query-enhancement
 generator then truncates the surviving topic to four words before building its
-query set.
+query set. A sampled item whose text has no candidate word longer than three
+characters outside its topic (a one-word transcript such as `Yeah`) is skipped
+with a warning; generation raises `sampled_content contains no usable topic
+text` only when no sampled item is usable, naming the topics without expansion
+terms.
 
 ### ProfileGenerator
 
@@ -376,9 +382,10 @@ configured schemas. The production selector still chooses one backend profile,
 so the example records that profile's single configured modality and the
 selector's exact query intent rather than inventing combined categorical
 values. The service selects at most one profile per modality before sampling,
-even when two higher-scoring profiles share a modality. Generation fails when
-either the configured profiles or the sampled source content contains fewer
-than two modalities. Requests above the unique cross-modal combination count
+even when two higher-scoring profiles share a modality. Sampled items without a
+topic are skipped with a warning. Generation fails when either the configured
+profiles or the remaining sampled source content contains fewer than two
+modalities. Requests above the unique cross-modal combination count
 return the surviving floor-sized subset and only raise when the floor cannot be
 met.
 Generator instances are initialized once per service even when concurrent
@@ -431,15 +438,18 @@ async def generate_examples(documents: list[dict], entity_extractor, routing_dec
 Each routing example is grounded in one sampled item. Generation keeps drawing
 candidates in their returned order until it either fills the requested count or
 hits a 5x candidate budget. That surplus buys room for a few duplicate
-canonical labels without letting the 3-call routing path spin forever. A
+queries without letting the 3-call routing path spin forever. A
 document item therefore cannot receive entities from a video item or a video
 route, and the same invariant holds for every supported modality. Reusing a
-source is permitted only when it produces a distinct `(query, entities,
-chosen_agent)` label; a full target-sized streak of duplicate canonical labels
-ends the run early, and an exact repeated label never gets fabricated into a
-new example.
+source is permitted only when it produces a new query: a query drawn again is
+dropped as a duplicate even when the entity agent or the gateway labels it
+differently this time, so the service never receives one query twice. A full
+target-sized streak of duplicate queries ends the run early, and a repeated
+query never gets fabricated into a new example.
 Routing truncates the extracted topic to 20 words before entity labeling and
-query generation. Entity texts are deduplicated case-insensitively while
+query generation. Sampled items without a topic are skipped with a warning
+before candidates are drawn; generation raises `sampled routing content
+requires a non-empty topic` only when no sampled item has one. Entity texts are deduplicated case-insensitively while
 preserving the first surface form, so the stored example and generated query
 use the same entity set.
 
@@ -539,10 +549,10 @@ The supported pairs are `video`/`VIDEO`, `document`/`DOCUMENT`, `image`/`IMAGE`,
 types are opaque storage identifiers and never participate in modality
 inference. Agent sequences use only enabled agent IDs from configuration;
 missing, malformed, mismatched, unsupported, or unmapped modalities raise.
-Each sample also requires a non-empty topic or title. The shared topic helper
-uses the same descriptive-first order as the other generators, ignores bare
-identifier-like hex strings, and keeps the workflow contract by raising
-`ValueError` when no descriptive text exists.
+The shared topic helper uses the same descriptive-first order as the other
+generators and ignores bare identifier-like hex strings. A sample without a
+topic is skipped with a warning; generation raises `sampled workflow content
+requires a non-empty topic` only when no sample has one.
 Each source yields at most three unique plans: search, summarize, and analyze.
 Requests above the unique source-plan capacity return the surviving floor-sized
 subset instead of duplicating a query with a different workflow identifier; the
@@ -946,7 +956,6 @@ cogniverse_synthetic/
 flowchart TB
     subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
         Runtime["<span style='color:#000'>cogniverse-runtime</span>"]
-        Dashboard["<span style='color:#000'>cogniverse-dashboard</span>"]
     end
 
     subgraph ImplLayer["<span style='color:#000'>Implementation Layer</span>"]
@@ -972,7 +981,6 @@ flowchart TB
 
     style AppLayer fill:#90caf9,stroke:#1565c0,color:#000
     style Runtime fill:#64b5f6,stroke:#1565c0,color:#000
-    style Dashboard fill:#64b5f6,stroke:#1565c0,color:#000
     style ImplLayer fill:#ffcc80,stroke:#ef6c00,color:#000
     style Synthetic fill:#ffb74d,stroke:#ef6c00,color:#000
     style Agents fill:#ffb74d,stroke:#ef6c00,color:#000
@@ -988,7 +996,7 @@ flowchart TB
 
 **Dependencies:** `cogniverse-sdk`, `cogniverse-foundation`, `cogniverse-core`, `dspy-ai`, `pydantic`, `httpx`, `fastapi`
 
-**Dependents:** `cogniverse-runtime`, `cogniverse-agents`, `cogniverse-finetuning` (declared workspace dependencies); `cogniverse-dashboard` also imports it directly at runtime for the optimization and approval-queue tabs
+**Dependents:** `cogniverse-runtime`, `cogniverse-agents`, `cogniverse-finetuning` (declared workspace dependencies)
 
 ---
 

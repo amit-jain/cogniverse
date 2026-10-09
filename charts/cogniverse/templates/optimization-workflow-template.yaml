@@ -51,6 +51,11 @@ spec:
       value: ""
     - name: trigger-dataset
       value: ""
+    # The run options of the synthetic, routing, workflow and unified modes
+    # as JSON (cogniverse_runtime.optimization_options); empty for the
+    # mode's defaults.
+    - name: options
+      value: ""
   volumes:
   - name: config
     configMap:
@@ -121,6 +126,9 @@ spec:
       - name: src-scripts
         mountPath: /app/scripts
       {{- end }}
+  # The run's outcome document is the output parameter ``outcome``: the CLI
+  # writes it to /tmp/outcome.json, Argo keeps it on the node after the pod
+  # is gone, failed runs included. Empty when the run wrote none.
   - name: run-optimizer
     inputs:
       parameters:
@@ -131,6 +139,14 @@ spec:
         value: ""
       - name: trigger-dataset
         value: ""
+      - name: options
+        value: ""
+    outputs:
+      parameters:
+      - name: outcome
+        valueFrom:
+          path: /tmp/outcome.json
+          default: ""
     container:
       image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
       imagePullPolicy: {{ $workflowImage.pullPolicy }}
@@ -146,6 +162,10 @@ spec:
         - "{{`{{inputs.parameters.agents}}`}}"
         - "--trigger-dataset"
         - "{{`{{inputs.parameters.trigger-dataset}}`}}"
+        - "--options"
+        - "{{`{{inputs.parameters.options}}`}}"
+        - "--outcome-file"
+        - "/tmp/outcome.json"
       env:
       - name: BACKEND_URL
         value: "http://{{ $fullName }}-vespa"

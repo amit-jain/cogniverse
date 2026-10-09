@@ -7,7 +7,9 @@ are required; their absence fails the test.
 
 from __future__ import annotations
 
+import json
 import shutil
+import signal
 import socket
 import subprocess
 import threading
@@ -15,7 +17,7 @@ import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Iterator, List, Tuple
+from typing import Iterator, List, Mapping, Tuple
 
 import uvicorn
 
@@ -24,6 +26,8 @@ from tests.utils.node_env import node_env
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLIENT_DIR = REPO_ROOT / "clients" / "web"
 MIN_NODE_MAJOR = 22
+# Starts of the web server tried before a lost port race fails the test.
+PORT_ATTEMPTS = 5
 CLIENT_FILES = (
     "package.json",
     "package-lock.json",
@@ -89,62 +93,119 @@ def build_web_client(root: Path) -> Path:
     return root
 
 
+class WebServer:
+    """A running web server process: its base URL, and ``kill`` to end it
+    with SIGKILL, as a node loss or OOM kill ends a pod."""
+
+    def __init__(self, url: str, proc: subprocess.Popen) -> None:
+        self.url = url
+        self.proc = proc
+        self.killed = False
+
+    def kill(self) -> None:
+        self.proc.kill()
+        assert self.proc.wait(timeout=20) == -signal.SIGKILL
+        self.killed = True
+
+
 @contextmanager
-def serve_web(
+def web_server_process(
     client_dir: Path,
     runtime_url: str,
-    key: str,
     *,
     telemetry_url: str,
     built: bool = False,
-) -> Iterator[str]:
+    env: Mapping[str, str] | None = None,
+) -> Iterator[WebServer]:
     """Run the client's Node server: the built ``dist`` entry when ``built``,
-    otherwise the sources through tsx. Yields its base URL.
+    otherwise the sources through tsx, with ``env`` added to its environment.
+    Yields the running server. The server acts for each tenant with a harness
+    key it mints through the runtime. A server the test did not kill must exit
+    cleanly when it is stopped.
 
     ``telemetry_url`` points CopilotKit's telemetry sink at a local recorder
     so a test never reports to CopilotKit's servers.
     """
     node = _node()
-    port = free_port()
     entry = (
         ["dist/server/index.js"]
         if built
         else ["--import", "tsx", "src/server/index.ts"]
     )
-    proc = subprocess.Popen(
-        [node, *entry],
-        cwd=client_dir,
-        env=node_env(
-            node,
-            COGNIVERSE_RUNTIME_URL=runtime_url,
-            COGNIVERSE_API_KEY=key,
-            PORT=str(port),
-            COPILOTKIT_TELEMETRY_URL=telemetry_url,
-        ),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    # Drained on a thread so a chatty server never blocks on a full pipe.
-    output: List[str] = []
-    reader = threading.Thread(
-        target=lambda: output.extend(iter(proc.stdout.readline, "")), daemon=True
-    )
-    reader.start()
-    ready = f"cogniverse-web listening on http://127.0.0.1:{port}\n"
-    deadline = time.monotonic() + 60
-    while ready not in output and proc.poll() is None:
-        assert time.monotonic() < deadline, f"the web server did not start: {output}"
-        time.sleep(0.05)
-    assert ready in output, f"the web server exited: {output}"
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        proc.terminate()
-        assert proc.wait(timeout=20) == 0, (
-            f"the web server did not exit cleanly: {output}"
+    # A free port can be taken by another process before the server binds
+    # it; the server then exits with EADDRINUSE and starts on another port.
+    for _ in range(PORT_ATTEMPTS):
+        port = free_port()
+        proc = subprocess.Popen(
+            [node, *entry],
+            cwd=client_dir,
+            env=node_env(
+                node,
+                COGNIVERSE_RUNTIME_URL=runtime_url,
+                PORT=str(port),
+                COPILOTKIT_TELEMETRY_URL=telemetry_url,
+                **(env or {}),
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
+        # Drained on a thread so a chatty server never blocks on a full pipe.
+        output: List[str] = []
+        reader = threading.Thread(
+            target=lambda proc=proc, output=output: output.extend(
+                iter(proc.stdout.readline, "")
+            ),
+            daemon=True,
+        )
+        reader.start()
+        ready = f"cogniverse-web listening on http://127.0.0.1:{port}\n"
+        deadline = time.monotonic() + 60
+        while ready not in output and proc.poll() is None:
+            assert time.monotonic() < deadline, (
+                f"the web server did not start: {output}"
+            )
+            time.sleep(0.05)
+        if ready in output:
+            break
         reader.join(timeout=10)
+        if not any("EADDRINUSE" in line for line in output):
+            break
+    assert ready in output, f"the web server exited: {output}"
+    server = WebServer(f"http://127.0.0.1:{port}", proc)
+    try:
+        yield server
+    finally:
+        if not server.killed:
+            proc.terminate()
+            assert proc.wait(timeout=20) == 0, (
+                f"the web server did not exit cleanly: {output}"
+            )
+        reader.join(timeout=10)
+
+
+@contextmanager
+def serve_web(
+    client_dir: Path,
+    runtime_url: str,
+    *,
+    telemetry_url: str,
+    built: bool = False,
+    env: Mapping[str, str] | None = None,
+) -> Iterator[str]:
+    """``web_server_process``, yielding only its base URL."""
+    with web_server_process(
+        client_dir, runtime_url, telemetry_url=telemetry_url, built=built, env=env
+    ) as server:
+        yield server.url
+
+
+def browse_as(context, tenant: str) -> None:
+    """Open every page of the Playwright ``context`` with ``tenant`` as the
+    web client's active tenant."""
+    context.add_init_script(
+        f"localStorage.setItem('cogniverse.tenant', {json.dumps(tenant)})"
+    )
 
 
 @contextmanager

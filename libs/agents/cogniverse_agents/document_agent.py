@@ -25,6 +25,10 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.models.model_loaders import get_or_load_model
 from cogniverse_core.query.encoders import QueryEncoderFactory
+from cogniverse_foundation.telemetry.span_contract import (
+    current_span_id,
+    record_search_io_on_current_span,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +56,7 @@ class DocumentSearchInput(AgentInput):
     """Type-safe input for document search"""
 
     query: str = Field(..., description="Search query")
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier")
     strategy: str = Field("auto", description="Strategy: visual, text, hybrid, auto")
     limit: int = Field(20, description="Number of results")
 
@@ -63,6 +68,11 @@ class DocumentSearchOutput(AgentOutput):
         default_factory=list, description="Search results"
     )
     count: int = Field(0, description="Number of results")
+    span_id: Optional[str] = Field(
+        None,
+        description="Telemetry span id (16-hex) of this search, which a client "
+        "annotates to rate its results; None when telemetry is off",
+    )
 
 
 class DocumentAgentDeps(AgentDeps):
@@ -711,15 +721,33 @@ class DocumentAgent(
         Returns:
             DocumentSearchOutput with results and count
         """
+        # Read on this coroutine, which holds the process span; the search
+        # itself runs blocking work on worker threads that do not carry it.
+        span_id = current_span_id()
         self.emit_progress("strategy_selection", "Selecting search strategy...")
         results = await self.search_documents(
             query=input.query,
             strategy=input.strategy,
             limit=input.limit,
         )
+        record_search_io_on_current_span(
+            input.query,
+            [
+                {
+                    "document_id": result.document_id,
+                    "score": result.relevance_score,
+                    "content": result.content_preview or result.title,
+                    "source_title": result.title,
+                }
+                for result in results
+            ],
+            "document",
+        )
 
         self.emit_progress("complete", "Document search complete.")
-        return DocumentSearchOutput(results=results, count=len(results))
+        return DocumentSearchOutput(
+            results=results, count=len(results), span_id=span_id
+        )
 
     def _dspy_to_a2a_output(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """Convert DSPy result to A2A output format."""

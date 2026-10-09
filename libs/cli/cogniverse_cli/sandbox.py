@@ -188,7 +188,7 @@ def start_gateway() -> bool:
     port 8080 (the OpenShell default) in any session where ``cogniverse
     up`` has been run, which makes the bare ``openshell gateway start``
     fail with a port-in-use error. 28080 is in the same range as the
-    other cogniverse-bound host ports (28000-28501) and free under k3d.
+    other cogniverse-bound host ports (28000-28400) and free under k3d.
     Honors ``OPENSHELL_GATEWAY_HOST_PORT`` for environments that need a
     different mapping.
     """

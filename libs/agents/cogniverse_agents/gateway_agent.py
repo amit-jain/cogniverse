@@ -11,6 +11,7 @@ Extracted from ComprehensiveRouter's fast path in routing/router.py.
 import asyncio
 import logging
 import re
+import time
 from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple
 
 from pydantic import Field
@@ -654,8 +655,10 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         generation_type: str,
         routed_to: str,
         confidence: float,
+        started_ns: int,
     ) -> None:
-        """Emit a cogniverse.gateway telemetry span."""
+        """Emit a cogniverse.gateway telemetry span covering the decision
+        from ``started_ns`` (``time.time_ns()`` when it began) to now."""
         if not self.telemetry_manager:
             logger.warning(
                 "%s has no telemetry_manager; gateway span not emitted (tenant=%s)",
@@ -668,6 +671,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             with self.telemetry_manager.span(
                 name="cogniverse.gateway",
                 tenant_id=tenant_id,
+                start_time=started_ns,
             ) as span:
                 record_span_io(
                     span,
@@ -699,10 +703,14 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         routed_to: str,
         confidence: float,
         reasoning: str,
+        started_ns: int,
         thresholds: Optional["_RoutingThresholds"] = None,
         entity_extraction_failed: bool = False,
     ) -> None:
         """Emit a cogniverse.routing span with the gateway's decision.
+
+        The span runs from ``started_ns`` (``time.time_ns()`` when the
+        decision began) to now, so its duration is the decision's latency.
 
         Downstream telemetry consumers (RoutingEvaluator, AnnotationAgent)
         filter on the `cogniverse.routing` span name and read
@@ -721,6 +729,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             with self.telemetry_manager.span(
                 "cogniverse.routing",
                 tenant_id=tenant_id,
+                start_time=started_ns,
             ) as span:
                 record_span_io(
                     span,
@@ -757,6 +766,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
     async def _process_impl(self, input: GatewayInput) -> GatewayOutput:
         """Classify and route a query."""
 
+        started_ns = time.time_ns()
         self.emit_progress("classify", "Classifying query")
 
         # Capture the threshold pair once so a mid-request TTL reload can't tear
@@ -820,6 +830,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             generation_type=generation_type,
             routed_to=routed_to,
             confidence=overall_confidence,
+            started_ns=started_ns,
         )
         self._emit_routing_span(
             tenant_id=tenant_id,
@@ -830,6 +841,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             routed_to=routed_to,
             confidence=overall_confidence,
             reasoning=reasoning,
+            started_ns=started_ns,
             thresholds=thresholds,
             entity_extraction_failed=entity_extraction_failed,
         )

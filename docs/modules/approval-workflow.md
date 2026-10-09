@@ -65,8 +65,8 @@ flowchart TB
     end
 
     subgraph "Review Interface"
-        Dashboard["<span style='color:#000'>Streamlit Dashboard</span>"]
-        Dashboard --> ApprovalAgent
+        WebClient["<span style='color:#000'>Web client Approvals view<br/>(runtime approval routes)</span>"]
+        WebClient --> ApprovalAgent
     end
 
     subgraph "Training Pipeline"
@@ -83,7 +83,7 @@ flowchart TB
     style Annotations fill:#a5d6a7,stroke:#388e3c,color:#000
     style Datasets fill:#a5d6a7,stroke:#388e3c,color:#000
     style Redis fill:#90caf9,stroke:#1565c0,color:#000
-    style Dashboard fill:#b0bec5,stroke:#546e7a,color:#000
+    style WebClient fill:#b0bec5,stroke:#546e7a,color:#000
     style Optimizer fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
@@ -285,6 +285,7 @@ All public `ApprovalStorageImpl` methods are asynchronous:
 | `update_item(item, batch_id=None)` | Write the `item_status_update` annotation for the resolved item span |
 | `replace_item(batch_id, original, replacement)` | Select and export one canonical regenerated replacement |
 | `get_pending_batches(context_filter=None)` | Return batches whose current reconstructed view still contains pending items |
+| `get_batches()` | Return every batch of the tenant, newest first, reconstructed from one project span query; raises on a telemetry failure |
 | `record_decision(decision, item)` | Emit an optional standalone decision span without changing item status |
 | `get_item_span_id(item_id, batch_id=None)` | Resolve an original or replacement span ID, scoped to the batch when supplied |
 | `log_approval_decision(span_id, item_id, approved, feedback=None, reviewer=None, decision_timestamp=None)` | Persist reviewer history as a `human_approval` annotation |
@@ -390,7 +391,9 @@ the owning export task before its protected body can continue, and raises with
 the tenant, batch, and original item identifiers. Duplicate or conflicting
 events, non-canonical JSON, duplicate JSON keys, malformed fields, identity or
 digest mismatches, naive timestamps, and non-finite confidence all raise
-instead of producing a partial batch view.
+instead of producing a partial batch view. In the batch view an original with a
+replacement event reads `rejected`, with `reviewed_at` the timestamp of the
+decision its replacement records when no annotation gives it one.
 Redis and Phoenix connection or timeout failures raise with the tenant, batch,
 and original item identifiers.
 
@@ -672,6 +675,29 @@ Both raise `ValueError` for data no synthetic schema describes, and
 `parse_corrections` raises for an empty object or a field the schema does not
 let a reviewer change.
 
+`cogniverse_synthetic.approval.uploads` validates training examples an
+operator wrote for one optimizer:
+
+```python
+from cogniverse_synthetic.approval.uploads import (
+    parse_uploaded_examples,
+    upload_templates,
+)
+
+templates = upload_templates()  # {optimizer: {schema, fields, required, example}}
+records = parse_uploaded_examples("query_enhancement", examples)
+```
+
+`parse_uploaded_examples` checks each example against the optimizer's schema
+and the approved-training contract and returns the records, or raises
+`UploadedExamplesError` whose `errors` name every invalid example; nothing is
+returned for a partly invalid upload. An upload holds at most
+`MAX_UPLOADED_EXAMPLES` (100). `HumanApprovalAgent.submit_reviewed_batch(batch,
+reviewer=..., feedback=...)` saves such a batch awaiting review, waits until
+the store serves it, then approves each item by that reviewer into the
+tenant's approved training dataset in order; a failure after the save raises `ReviewedBatchIncompleteError` naming
+the items already approved, and the rest stay in the review queue.
+
 `HumanApprovalAgent` persists a successful regeneration through
 `ApprovalStorage.replace_item()`. The replacement event contains the exact
 batch, original, and replacement IDs plus the canonical Redis-selected record
@@ -811,60 +837,35 @@ async def review_pending_items(
             await agent.apply_decision(batch.batch_id, decision)
 ```
 
-#### Streamlit Dashboard
+#### Web Client Approvals View
 
-Located at `libs/dashboard/cogniverse_dashboard/tabs/approval_queue.py`:
+The web client's **Approvals** view (`clients/web/src/client/ops/ApprovalsView.tsx`)
+reviews a tenant's queue through the runtime's approval routes
+(`libs/runtime/cogniverse_runtime/routers/approvals.py`):
 
-```bash
-# Run dashboard
-uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501  # approval queue is a tab inside the main dashboard
-```
+| Route | Purpose |
+|---|---|
+| `GET /admin/tenant/{tenant}/approvals` | The tenant's items awaiting review, each with its batch, schema and correctable fields |
+| `POST /admin/tenant/{tenant}/approvals/{batch}/{item}` | Approve or reject one item (`approved`, `reviewer`, `feedback`, `corrections`) |
 
 **Features**:
 
-- Four sub-tabs: Pending Review, Approved Items, Rejected Items, Statistics
-- Pending items are loaded from the agent's persisted approval store
-  (`agent.get_pending_items(context_filter)`, filtered by `current_tenant`). Each returned
-  item carries its owning batch as `metadata.approval_batch_id`, so the dashboard applies
-  the review decision to the batch that owns that item. An uninitialized approval agent is
-  an explicit configuration error; session state is not used as a substitute store.
-- Review individual items with confidence score, retry count, and generation metadata
-- Synthetic generation is submitted only for optimizers with a finetuning
-  consumer: `profile` maps to `profile_selection`, `query_enhancement` maps to
-  `query_enhancement`, `routing` maps to `routing`, and `entity_extraction` maps
-  to `entity_extraction`. The mapped value is persisted as both
-  `ApprovalBatch.context.agent_type` and
-  `ReviewItem.metadata.agent_type`; every other optimizer is rejected before
-  the batch reaches Phoenix.
-- Approve with optional feedback text. The immutable dataset record is written first under
-  the renewable Redis lock, followed by the reviewer decision and approved-status annotations. Only
-  after all three succeed does the dashboard store the canonical item returned by persistence
-  in local session state. A fresh request after a lost response reuses the exact dataset row
-  and its first decision timestamp instead of appending a duplicate or inventing a new local
-  review time.
-- Reject with optional feedback and a schema-specific JSON correction object. The form
-  accepts the canonical fields documented in the dashboard module for profile selection,
-  query enhancement, entity extraction, routing, and workflow examples. Unknown schemas,
-  obsolete fields, malformed entity objects, and relationships whose endpoints are absent
-  from the corrected entity list are rejected before persistence, leaving the item pending.
-- Rejection calls `HumanApprovalAgent.apply_decision()` with the item's owning batch ID. The
-  regenerated replacement is persisted to Redis and Phoenix before the dashboard removes the
-  rejected original. The replacement reappears in the pending list with status `regenerated`
-  until a reviewer approves or rejects it. Both approval interfaces replace their local batch
-  entry with the exact item returned by persistence; they never construct an approved or
-  regenerated substitute locally. A boundary failure or an unexpected returned status leaves
-  the original pending.
-- The dashboard entry point reads `REDIS_URL` once at startup and injects that exact value
-  into Streamlit session state. The approval tab does not read the process environment and
-  refuses to construct approval storage when the injected value is absent.
-- Dashboard-generated batch IDs combine the optimizer name with a UUID, so concurrent
-  submissions cannot address the same Phoenix batch. Retrieval collapses byte-identical
-  retry roots and item spans, while conflicting retry records raise as corrupted approval
-  state.
-- Approved/rejected items and the confidence-distribution chart are tracked in the
-  Streamlit session for the duration of the session (not re-queried from storage)
-- Auto-approval threshold is resolved from `ApprovalConfig` via
-  `HumanApprovalAgent.from_approval_config()`
+- Choose the tenant and **Show review queue**; enter a **Reviewer** name, which
+  every decision records. The view counts the items awaiting review.
+- Each item shows its batch, schema, status, confidence, creation time, the
+  generator's reasoning, the entity self-consistency check's agreement per
+  sampled mention (flagging mentions that need review), and the example data.
+- **Approve** writes the item into the training dataset.
+- A rejection needs **Feedback**. When a schema describes the item, the
+  **Corrections (JSON)** field holds its correctable fields; only changed
+  fields are sent. The reject button reads **Reject and regenerate** (the
+  item is regenerated and the replacement awaits review), **Reject with
+  corrections** (a workflow record: the corrections are merged and need at
+  least one change) or **Reject** (no schema: the item is rejected).
+- A decision another reviewer already made is refused (`409`), an item no
+  longer pending answers `404`, and a decision that does not finish in time
+  answers `504`; the view shows the runtime's reason and the item stays as the
+  store has it.
 
 ## Integration with Synthetic Data Generation
 
@@ -1027,7 +1028,7 @@ stateDiagram-v2
 
 ### Integration Tests
 
-The real-boundary suite covers Phoenix, Redis, dashboard regeneration,
+The real-boundary suite covers Phoenix, Redis, regeneration,
 orchestrator resume, fine-tuning consumption, runtime compilation, and optimizer
 consumption:
 
@@ -1038,7 +1039,6 @@ JAX_PLATFORM_NAME=cpu timeout 3600 uv run pytest \
     tests/agents/integration/test_approval_dataset_lock_real_redis.py \
     tests/agents/integration/test_replacement_record_store_real_redis.py \
     tests/agents/integration/test_decision_orchestrator_approval_roundtrip_real.py \
-    tests/dashboard/integration/test_approval_queue_regeneration_real.py \
     tests/finetuning/integration/test_approved_dataset_roundtrip_real.py \
     tests/runtime/integration/test_approved_synthetic_compile_real.py \
     tests/runtime/integration/test_optimization_cli_approved_data_real.py \
@@ -1068,7 +1068,6 @@ JAX_PLATFORM_NAME=cpu timeout 3600 uv run pytest \
 # - Duplicate, conflicting, malformed, naive-timestamp, and non-finite records fail
 # - Redis failure propagation without fabricated success
 # - Regenerated items resume the same workflow without re-running generation
-# - Dashboard approve/reject handlers reload the exact persisted Phoenix item
 # - Fine-tuning and runtime consumers reject malformed canonical records
 # - Approved examples compile into real DSPy modules and feed optimizer input
 ```
@@ -1089,7 +1088,7 @@ wait_for_telemetry_processing(delay=2.0, description="annotation indexing")
 ### Unit Tests
 
 The focused suite covers interfaces, storage failures, confidence extraction,
-workflow state, dashboard behavior, and the optimizer submission mapping:
+workflow state, and the optimizer submission mapping:
 
 ```bash
 # Run approval unit tests
@@ -1097,17 +1096,14 @@ uv run pytest \
     tests/routing/unit/synthetic/test_approval_system.py \
     tests/agents/unit/test_approval_storage_outage.py \
     tests/agents/unit/test_decision_orchestrator.py \
-    tests/dashboard/unit/test_approval_queue.py \
-    tests/dashboard/unit/test_optimization_forms.py \
     tests/synthetic/unit/test_confidence_extractor.py \
     -v --tb=long > /tmp/approval_workflow_unit.log 2>&1
 ```
 
 ## Configuration
 
-The dashboard approval queue requires `REDIS_URL`. `app.py` reads it at application startup
-and stores it in `st.session_state["redis_url"]`; `_initialize_approval_agent()` consumes only
-that injected value.
+The runtime's approval routes require `REDIS_URL`. The runtime lays it over `SystemConfig.redis_url`
+at startup; `ApprovalStorageImpl.from_system_config()` raises `ValueError` without it.
 
 ```bash
 export REDIS_URL="redis://redis:6379/0"
@@ -1115,7 +1111,7 @@ export REDIS_URL="redis://redis:6379/0"
 
 ### Telemetry Endpoints
 
-The dashboard resolves both endpoints from the current `SystemConfig` rather
+`ApprovalStorageImpl.from_system_config()` resolves both endpoints from the current `SystemConfig` rather
 than from a separate telemetry configuration block:
 
 ```python
@@ -1254,5 +1250,3 @@ See source files for detailed docstrings:
 
 - `libs/synthetic/cogniverse_synthetic/dspy_modules.py` —
   `ValidatedSyntheticExampleRegenerator`
-
-- `libs/dashboard/cogniverse_dashboard/tabs/approval_queue.py` — `render_approval_queue_tab`

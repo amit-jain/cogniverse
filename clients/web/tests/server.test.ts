@@ -1,62 +1,56 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/server/app';
 import { ConfigError, loadConfig, type ServerConfig } from '../src/server/config';
-import { RuntimeUnavailableError, cogniverseAgents, listAgents } from '../src/server/runtime';
-
-const servers: Server[] = [];
-afterEach(async () => {
-  await Promise.all(servers.splice(0).map((s) => new Promise((r) => s.close(r))));
-});
-
-/** A real HTTP server standing in for the runtime's agent list. */
-async function runtimeServer(
-  handler: (req: IncomingMessage, res: ServerResponse) => void,
-): Promise<string> {
-  const server = createServer(handler);
-  servers.push(server);
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-}
-
-/** A port nothing listens on. */
-async function deadUrl(): Promise<string> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const { port } = server.address() as AddressInfo;
-  await new Promise((r) => server.close(r));
-  return `http://127.0.0.1:${port}`;
-}
+import { RuntimeUnavailableError, agentsStatus, cogniverseAgents, listAgents } from '../src/server/runtime';
+import { TENANT_HEADER, TenantAuthUnavailableError, TenantKeys, UnknownTenantError } from '../src/server/tenants';
+import { deadUrl, json, runtimeServer, withAdmin } from './fakeRuntime';
 
 function config(runtimeUrl: string): ServerConfig {
-  return { runtimeUrl, apiKey: 'sk-test', port: 4000, host: '127.0.0.1', clientDir: '/nonexistent' };
+  return { runtimeUrl, port: 4000, host: '127.0.0.1', clientDir: '/nonexistent', harnessKeyTtlS: 3600 };
 }
 
 describe('loadConfig', () => {
   it('reads and normalises the environment', () => {
     expect(
       loadConfig(
-        { COGNIVERSE_RUNTIME_URL: ' http://rt:8000/api// ', COGNIVERSE_API_KEY: ' sk-1 ', PORT: '5173' },
+        { COGNIVERSE_RUNTIME_URL: ' http://rt:8000/api// ', PORT: '5173' },
         '/srv/client',
       ),
     ).toEqual({
       runtimeUrl: 'http://rt:8000/api',
-      apiKey: 'sk-1',
       port: 5173,
       host: '127.0.0.1',
       clientDir: '/srv/client',
+      harnessKeyTtlS: 3600,
     });
+    expect(
+      loadConfig({ COGNIVERSE_RUNTIME_URL: 'http://rt', COGNIVERSE_WEB_HARNESS_KEY_TTL_S: '120' }, '/c')
+        .harnessKeyTtlS,
+    ).toBe(120);
   });
 
-  it('names every missing variable', () => {
-    expect(() => loadConfig({ COGNIVERSE_API_KEY: '  ' }, '/c')).toThrow(
-      new ConfigError('Missing required environment: COGNIVERSE_RUNTIME_URL, COGNIVERSE_API_KEY.'),
+  it('rejects a harness key ttl that is not a whole number of seconds within a week', () => {
+    const env = { COGNIVERSE_RUNTIME_URL: 'http://rt' };
+    for (const ttl of ['0', '-5', '604801', '1.5', 'hour', ''])
+      expect(() => loadConfig({ ...env, COGNIVERSE_WEB_HARNESS_KEY_TTL_S: ttl }, '/c')).toThrow(
+        new ConfigError(
+          `COGNIVERSE_WEB_HARNESS_KEY_TTL_S must be a whole number of seconds from 1 to 604800, got ${ttl}.`,
+        ),
+      );
+  });
+
+  it('names the missing runtime URL', () => {
+    expect(() => loadConfig({ COGNIVERSE_RUNTIME_URL: '  ' }, '/c')).toThrow(
+      new ConfigError('Missing required environment: COGNIVERSE_RUNTIME_URL.'),
     );
   });
 
   it('rejects a port that is not a port', () => {
-    const env = { COGNIVERSE_RUNTIME_URL: 'http://rt', COGNIVERSE_API_KEY: 'k' };
+    const env = { COGNIVERSE_RUNTIME_URL: 'http://rt' };
     for (const port of ['0', '70000', '80.5', 'web'])
       expect(() => loadConfig({ ...env, PORT: port }, '/c')).toThrow(
         new ConfigError(`PORT must be an integer port number, got ${port}.`),
@@ -104,28 +98,348 @@ describe('listAgents', () => {
 });
 
 describe('cogniverseAgents', () => {
-  it('points each agent at its /ag-ui route with the harness key', () => {
-    const agents = cogniverseAgents(config('http://rt:8000'), ['search_agent', 'a/b']);
+  it("points each agent at its /ag-ui route and runs it with the tenant's key", async () => {
+    const seen: string[] = [];
+    const [route, admin] = withAdmin(['acme:prod'], (req, res) => {
+      seen.push(`${req.method} ${req.url} ${req.headers.authorization}`);
+      json(res, 200, {});
+    });
+    const url = await runtimeServer(route);
+    const keys = new TenantKeys(config(url), fetch, 'web-test');
+    const agents = cogniverseAgents(config(url), ['search_agent', 'a/b'], keys, 'acme:prod');
     expect(Object.keys(agents)).toEqual(['search_agent', 'a/b']);
-    expect(agents.search_agent.url).toBe('http://rt:8000/ag-ui/search_agent');
-    expect(agents['a/b'].url).toBe('http://rt:8000/ag-ui/a%2Fb');
-    expect(agents.search_agent.headers).toEqual({ Authorization: 'Bearer sk-test' });
+    expect(agents.search_agent.url).toBe(`${url}/ag-ui/search_agent`);
+    expect(agents['a/b'].url).toBe(`${url}/ag-ui/a%2Fb`);
+    expect(agents.search_agent.headers).toEqual({ [TENANT_HEADER]: 'acme:prod' });
+    await agents.search_agent.fetch(agents.search_agent.url, { method: 'POST' });
+    expect(seen).toEqual([`POST /ag-ui/search_agent ${admin.bearer('acme:prod')}`]);
+    expect(admin.calls).toEqual(['probe acme:prod', 'mint acme:prod web-test']);
+  });
+
+  it('refuses a run that names no tenant without calling the runtime', async () => {
+    const [route, admin] = withAdmin([]);
+    const url = await runtimeServer(route);
+    const agents = cogniverseAgents(config(url), ['search_agent'], new TenantKeys(config(url)), undefined);
+    const response = await agents.search_agent.fetch(agents.search_agent.url, { method: 'POST' });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Choose a tenant before talking to an agent.' });
+    expect(agents.search_agent.headers).toEqual({});
+    expect(admin.calls).toEqual([]);
   });
 });
 
-describe('GET /api/agents', () => {
+describe('TenantKeys', () => {
+  it('mints one key per tenant however many first requests race for it', async () => {
+    const [route, admin] = withAdmin(['acme:prod', 'beta:dev']);
+    const url = await runtimeServer(route);
+    const keys = new TenantKeys(config(url), fetch, 'web-test');
+    const tenants = Array.from({ length: 12 }, (_, i) => (i % 2 ? 'acme:prod' : 'beta:dev'));
+    const issued = await Promise.all(tenants.map((tenant) => keys.keyFor(tenant)));
+    expect(new Set(issued.filter((_, i) => tenants[i] === 'acme:prod'))).toEqual(
+      new Set([admin.bearer('acme:prod').slice(7)]),
+    );
+    expect(new Set(issued.filter((_, i) => tenants[i] === 'beta:dev'))).toEqual(
+      new Set([admin.bearer('beta:dev').slice(7)]),
+    );
+    expect(admin.tenantOf(`Bearer ${await keys.keyFor('acme:prod')}`)).toBe('acme:prod');
+    expect([...admin.calls].sort()).toEqual([
+      'mint acme:prod web-test',
+      'mint beta:dev web-test',
+      'probe acme:prod',
+      'probe beta:dev',
+    ]);
+  });
+
+  it('refuses an unregistered tenant and mints nothing for it', async () => {
+    const [route, admin] = withAdmin(['acme:prod']);
+    const url = await runtimeServer(route);
+    const keys = new TenantKeys(config(url));
+    await expect(keys.keyFor('acme:typo')).rejects.toThrow(
+      new UnknownTenantError('Tenant acme:typo is not registered. Register it with POST /admin/tenants first.'),
+    );
+    expect(admin.calls).toEqual(['probe acme:typo']);
+  });
+
+  it('mints a key while the tenant registry cannot be read, and refuses what it rejects', async () => {
+    const [route, admin] = withAdmin(['acme:prod']);
+    const url = await runtimeServer((req, res) => {
+      if (req.url === '/admin/tenants/acme%3Aprod')
+        return json(res, 503, { detail: 'Tenant registry temporarily unavailable' });
+      if (req.url === '/admin/tenants/bad%20id') return json(res, 400, { detail: 'Invalid tenant_id' });
+      if (req.url === '/admin/tenants/gone%3Aroute') return json(res, 404, { detail: 'Not Found' });
+      route(req, res);
+    });
+    const keys = new TenantKeys(config(url), fetch, 'web-test');
+    expect(admin.tenantOf(`Bearer ${await keys.keyFor('acme:prod')}`)).toBe('acme:prod');
+    await expect(keys.keyFor('bad id')).rejects.toThrow(
+      new TenantAuthUnavailableError('The runtime could not confirm tenant bad id (HTTP 400: Invalid tenant_id).'),
+    );
+    await expect(keys.keyFor('gone:route')).rejects.toThrow(
+      new TenantAuthUnavailableError('The runtime could not confirm tenant gone:route (HTTP 404: Not Found).'),
+    );
+    expect(admin.calls).toEqual(['mint acme:prod web-test']);
+  });
+
+  it("names the key store's failure and the runtime that did not answer", async () => {
+    const [route] = withAdmin(['acme:prod']);
+    const url = await runtimeServer((req, res) => {
+      if (req.url === '/admin/harness/keys')
+        return json(res, 503, {
+          detail: { error: 'harness_key_store_unavailable', message: 'The harness key store did not answer; retry.' },
+        });
+      route(req, res);
+    });
+    await expect(new TenantKeys(config(url)).keyFor('acme:prod')).rejects.toThrow(
+      new TenantAuthUnavailableError(
+        'The runtime did not issue a harness key for tenant acme:prod (HTTP 503: The harness key store did not answer; retry.).',
+      ),
+    );
+    const dead = await deadUrl();
+    await expect(new TenantKeys(config(dead)).keyFor('acme:prod')).rejects.toThrow(
+      new TenantAuthUnavailableError(`The Cogniverse runtime at ${dead} did not answer (TypeError).`),
+    );
+  });
+
+  it('retries a request the runtime rejects with a newly minted key, once', async () => {
+    const rejected = new Set<string>();
+    const [route, admin] = withAdmin(['acme:prod'], (req, res) => {
+      if (rejected.has(req.headers.authorization!)) return json(res, 401, { error: { message: 'Invalid API key' } });
+      json(res, 200, { auth: admin.tenantOf(req.headers.authorization) });
+    });
+    const url = await runtimeServer(route);
+    const keys = new TenantKeys(config(url), fetch, 'web-test');
+    const agent = cogniverseAgents(config(url), ['search_agent'], keys, 'acme:prod').search_agent;
+    expect(await (await agent.fetch(agent.url, { method: 'POST', body: '{}' })).json()).toEqual({ auth: 'acme:prod' });
+    rejected.add(admin.bearer('acme:prod'));
+    const retried = await agent.fetch(agent.url, { method: 'POST', body: '{}' });
+    expect([retried.status, await retried.json()]).toEqual([200, { auth: 'acme:prod' }]);
+    expect(rejected.has(admin.bearer('acme:prod'))).toBe(false);
+    // A key the runtime rejects again is not retried a second time.
+    rejected.add(admin.bearer('acme:prod'));
+    rejected.add(`Bearer key-acme:prod-3`);
+    const refused = await agent.fetch(agent.url, { method: 'POST', body: '{}' });
+    expect(refused.status).toBe(401);
+    expect(admin.calls.filter((call) => call.startsWith('mint'))).toEqual([
+      'mint acme:prod web-test',
+      'mint acme:prod web-test',
+      'mint acme:prod web-test',
+    ]);
+  });
+
+  it('revokes every key it minted', async () => {
+    const [route, admin] = withAdmin(['acme:prod', 'beta:dev']);
+    const url = await runtimeServer(route);
+    const keys = new TenantKeys(config(url), fetch, 'web-test');
+    await keys.keyFor('acme:prod');
+    await keys.keyFor('beta:dev');
+    await keys.revokeAll();
+    expect(admin.calls.filter((call) => call.startsWith('revoke')).sort()).toEqual(['revoke hash-1', 'revoke hash-2']);
+    await keys.keyFor('acme:prod');
+    expect(admin.calls.at(-1)).toBe('mint acme:prod web-test');
+  });
+});
+
+describe('TenantKeys renewal', () => {
+  const TTL_S = 100;
+  const T0 = 1_000_000;
+
+  function renewing(url: string, clock: { now: number }) {
+    return new TenantKeys({ ...config(url), harnessKeyTtlS: TTL_S }, fetch, 'web-test', () => clock.now);
+  }
+
+  it('mints with the configured ttl and renews once less than half of it remains', async () => {
+    const [route, admin] = withAdmin(['acme:prod']);
+    const url = await runtimeServer(route);
+    const clock = { now: T0 };
+    const keys = renewing(url, clock);
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-1');
+    clock.now = T0 + (TTL_S / 2) * 1000;
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-1');
+    clock.now += 1;
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-2');
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-2');
+    expect(admin.ttls).toEqual([TTL_S, TTL_S]);
+    // The superseded key is left to expire, never revoked by the renewal.
+    expect(admin.calls).toEqual([
+      'probe acme:prod',
+      'mint acme:prod web-test',
+      'probe acme:prod',
+      'mint acme:prod web-test',
+    ]);
+  });
+
+  it('renews with one mint however many requests find the key due at once', async () => {
+    const [route, admin] = withAdmin(['acme:prod']);
+    let held: (() => void) | undefined;
+    let arrived: () => void = () => {};
+    const renewalArrived = new Promise<void>((resolve) => (arrived = resolve));
+    const url = await runtimeServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/admin/harness/keys' && admin.ttls.length === 1) {
+        held = () => route(req, res);
+        arrived();
+        return;
+      }
+      route(req, res);
+    });
+    const clock = { now: T0 };
+    const keys = renewing(url, clock);
+    await keys.keyFor('acme:prod');
+    clock.now = T0 + (TTL_S / 2) * 1000 + 1;
+    const first = Array.from({ length: 6 }, () => keys.keyFor('acme:prod'));
+    await renewalArrived;
+    // More requests arrive while the renewal is held at the runtime.
+    const late = Array.from({ length: 6 }, () => keys.keyFor('acme:prod'));
+    held!();
+    expect(await Promise.all([...first, ...late])).toEqual(Array(12).fill('key-acme:prod-2'));
+    expect(admin.calls.filter((call) => call.startsWith('mint'))).toEqual([
+      'mint acme:prod web-test',
+      'mint acme:prod web-test',
+    ]);
+  });
+
+  it('fails a renewal the runtime refuses like a first mint, keeps the old key, and retries', async () => {
+    const [route, admin] = withAdmin(['acme:prod']);
+    let refuse = false;
+    let refused = 0;
+    const url = await runtimeServer((req, res) => {
+      if (refuse && req.method === 'POST' && req.url === '/admin/harness/keys') {
+        refused += 1;
+        return json(res, 503, {
+          detail: { error: 'harness_key_store_unavailable', message: 'The harness key store did not answer; retry.' },
+        });
+      }
+      route(req, res);
+    });
+    const clock = { now: T0 };
+    const keys = renewing(url, clock);
+    await keys.keyFor('acme:prod');
+    refuse = true;
+    clock.now = T0 + (TTL_S / 2) * 1000 + 1;
+    const failure = new TenantAuthUnavailableError(
+      'The runtime did not issue a harness key for tenant acme:prod (HTTP 503: The harness key store did not answer; retry.).',
+    );
+    const outcomes = await Promise.allSettled(Array.from({ length: 4 }, () => keys.keyFor('acme:prod')));
+    expect(outcomes).toEqual(Array(4).fill({ status: 'rejected', reason: failure }));
+    expect(refused).toBe(1);
+    await expect(keys.keyFor('acme:prod')).rejects.toThrow(failure);
+    expect(refused).toBe(2);
+    refuse = false;
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-2');
+    // The still-valid key was held throughout: stopping revokes it with the new one.
+    await keys.revokeAll();
+    expect(admin.calls.filter((call) => call.startsWith('revoke')).sort()).toEqual(['revoke hash-1', 'revoke hash-2']);
+  });
+
+  it('a request refused with a key superseded while it was in flight retries with the current one', async () => {
+    let refuseHeld: (() => void) | undefined;
+    let arrived: () => void = () => {};
+    const heldArrived = new Promise<void>((resolve) => (arrived = resolve));
+    const seen: string[] = [];
+    const [route, admin] = withAdmin(['acme:prod'], (req, res) => {
+      seen.push(req.headers.authorization!);
+      if (req.headers.authorization === 'Bearer key-acme:prod-1') {
+        refuseHeld = () => json(res, 401, { error: { message: 'Invalid API key' } });
+        arrived();
+        return;
+      }
+      json(res, 200, { auth: req.headers.authorization });
+    });
+    const url = await runtimeServer(route);
+    const clock = { now: T0 };
+    const keys = renewing(url, clock);
+    const agent = cogniverseAgents(config(url), ['search_agent'], keys, 'acme:prod').search_agent;
+    const inFlight = agent.fetch(agent.url, { method: 'POST', body: '{}' });
+    await heldArrived;
+    clock.now = T0 + (TTL_S / 2) * 1000 + 1;
+    expect(await keys.keyFor('acme:prod')).toBe('key-acme:prod-2');
+    refuseHeld!();
+    const response = await inFlight;
+    expect([response.status, await response.json()]).toEqual([200, { auth: 'Bearer key-acme:prod-2' }]);
+    expect(seen).toEqual(['Bearer key-acme:prod-1', 'Bearer key-acme:prod-2']);
+    // The renewed key is kept: the refusal of the superseded one mints nothing.
+    expect(admin.calls.filter((call) => call.startsWith('mint'))).toEqual([
+      'mint acme:prod web-test',
+      'mint acme:prod web-test',
+    ]);
+  });
+
+  it('revokes only the keys that have not expired, and forgets the expired ones', async () => {
+    const [route, admin] = withAdmin(['acme:prod', 'beta:dev']);
+    const url = await runtimeServer(route);
+    const clock = { now: T0 };
+    const keys = renewing(url, clock);
+    await keys.keyFor('acme:prod');
+    clock.now = T0 + 60_000;
+    await keys.keyFor('acme:prod');
+    clock.now = T0 + 120_000;
+    await keys.keyFor('acme:prod');
+    await keys.keyFor('beta:dev');
+    // hash-1 expired at T0 + 100 s; hash-2 (until T0 + 160 s), hash-3 and hash-4 have not.
+    expect((keys as unknown as { minted: { keyHash: string }[] }).minted.map((m) => m.keyHash)).toEqual([
+      'hash-2',
+      'hash-3',
+      'hash-4',
+    ]);
+    clock.now = T0 + 160_000;
+    await keys.revokeAll();
+    expect(admin.calls.filter((call) => call.startsWith('revoke')).sort()).toEqual(['revoke hash-3', 'revoke hash-4']);
+  });
+});
+
+describe('agentsStatus', () => {
+  it("reports each agent online when the runtime serves and the registry has it", async () => {
+    const url = await runtimeServer((req, res) => {
+      if (req.url === '/health') return json(res, 200, { status: 'degraded' });
+      if (req.url === '/agents/search_agent')
+        return json(res, 200, { name: 'search_agent', health_status: 'healthy' });
+      if (req.url === '/agents/gone_agent') return json(res, 404, { detail: "Agent 'gone_agent' not found" });
+      json(res, 500, {});
+    });
+    expect(await agentsStatus(config(url), ['search_agent', 'gone_agent', 'broken_agent'])).toEqual({
+      runtime: 'degraded',
+      agents: [
+        { name: 'search_agent', status: 'online', health: 'healthy' },
+        { name: 'gone_agent', status: 'offline', message: 'Not registered.' },
+        { name: 'broken_agent', status: 'offline', message: 'HTTP 500.' },
+      ],
+    });
+  });
+
+  it('reports every agent offline while the runtime is unhealthy', async () => {
+    const seen: string[] = [];
+    const url = await runtimeServer((req, res) => {
+      seen.push(req.url!);
+      json(res, 503, { status: 'unhealthy', reason: 'Backend unreachable' });
+    });
+    expect(await agentsStatus(config(url), ['search_agent'])).toEqual({
+      runtime: 'unhealthy',
+      reason: 'Backend unreachable',
+      agents: [{ name: 'search_agent', status: 'offline', message: 'The runtime is unhealthy: Backend unreachable.' }],
+    });
+    expect(seen).toEqual(['/health']);
+  });
+
+  it('answers 502 naming the runtime when it is down', async () => {
+    const url = await deadUrl();
+    const response = await createApp(config(url)).request('/ui-api/agents/status');
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: `The Cogniverse runtime at ${url} did not answer (TypeError).` });
+  });
+});
+
+describe('GET /ui-api/agents', () => {
   it('relays the registry', async () => {
     const url = await runtimeServer((_req, res) =>
       res.end(JSON.stringify({ agents: ['search_agent'] })),
     );
-    const response = await createApp(config(url)).request('/api/agents');
+    const response = await createApp(config(url)).request('/ui-api/agents');
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ agents: ['search_agent'] });
   });
 
   it('answers 502 with the reason when the runtime is down', async () => {
     const url = await deadUrl();
-    const response = await createApp(config(url)).request('/api/agents');
+    const response = await createApp(config(url)).request('/ui-api/agents');
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({
       error: `The Cogniverse runtime at ${url} did not answer (TypeError).`,
@@ -134,7 +448,7 @@ describe('GET /api/agents', () => {
 });
 
 describe('runtime proxy', () => {
-  it('forwards method, path, query, body and the harness key', async () => {
+  it('forwards method, path, query and body, and no key, to an admin route', async () => {
     const seen: unknown[] = [];
     const url = await runtimeServer((req, res) => {
       let body = '';
@@ -154,7 +468,7 @@ describe('runtime proxy', () => {
         res.end(JSON.stringify({ detail: 'Tenant acme:prod already exists' }));
       });
     });
-    const response = await createApp(config(url)).request('/api/runtime/admin/tenants?dry=1', {
+    const response = await createApp(config(url)).request('/ui-api/runtime/admin/tenants?dry=1', {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: 'session=x' },
       body: JSON.stringify({ tenant_id: 'acme:prod' }),
@@ -163,7 +477,7 @@ describe('runtime proxy', () => {
       {
         method: 'POST',
         url: '/admin/tenants?dry=1',
-        auth: 'Bearer sk-test',
+        auth: undefined,
         type: 'application/json',
         cookie: undefined,
         body: '{"tenant_id":"acme:prod"}',
@@ -187,6 +501,9 @@ describe('runtime proxy', () => {
       ['GET', '/admin/tenants/acme:prod/../../harness/keys'],
       ['GET', '/admin/tenants/acme:prod%2F..%2F..%2Fharness%2Fkeys'],
       ['POST', '/admin/tenant/acme:prod/optimize/runs/x%2F..%2F..%2F..%2Fharness%2Fkeys'],
+      ['POST', '/admin/tenant/acme:prod/optimize/report/extra'],
+      ['POST', '/admin/tenant/acme:prod/training-examples/extra'],
+      ['POST', '/agents/detailed_report_agent/process'],
       ['GET', '/admin/tenant/acme:prod/jobs'],
       ['GET', '/events/workflows/wf-1'],
       ['POST', '/v1/chat/completions'],
@@ -197,17 +514,25 @@ describe('runtime proxy', () => {
       ['POST', '/agents/register'],
       ['POST', '/admin/tenant/acme:prod/approvals/batch_1'],
       ['POST', '/admin/tenant/acme:prod/approvals/batch_1/item/extra'],
+      ['GET', '/admin/tenant/acme:prod/approvals/export'],
+      ['POST', '/admin/tenant/acme:prod/approvals/batch_1/item/regenerate/extra'],
       ['POST', '/agents/annotations/queue/enqueue'],
       ['GET', '/agents/annotations/queue/span-1'],
       ['GET', '/admin/tenant/acme:prod/orchestration-workflows/abc123'],
       ['POST', '/admin/tenant/acme:prod/orchestration-workflows/abc123/annotation/extra'],
       ['POST', '/ag-ui/search_agent'],
       ['POST', '/ag-ui/results/relevance/extra'],
+      ['POST', '/ag-ui/coding_agent'],
+      ['POST', '/ag-ui/threads/t1/evaluation/extra'],
+      ['GET', '/ag-ui/threads/t1'],
+      ['GET', '/ingestion/profiles/extra'],
       ['GET', '/admin/tenant/acme:prod/telemetry/spans'],
       ['POST', '/admin/tenant/acme:prod/routing-decisions/abc123/delete'],
       ['GET', '/admin/tenant/acme:prod/routing-decisions/abc123'],
+      ['GET', '/admin/tenant/acme:prod/routing-decisions/annotation-candidates/extra'],
+      ['GET', '/admin/tenant/acme:prod/routing-decisions/statistics'],
     ]) {
-      const response = await app.request(`/api/runtime${path}`, { method });
+      const response = await app.request(`/ui-api/runtime${path}`, { method });
       expect(response.status).toBe(404);
     }
     expect(calls).toBe(0);
@@ -215,10 +540,11 @@ describe('runtime proxy', () => {
 
   it('forwards every route the operations views call', async () => {
     const seen: string[] = [];
-    const url = await runtimeServer((req, res) => {
+    const [route] = withAdmin(['acme:prod'], (req, res) => {
       seen.push(`${req.method} ${req.url}`);
       res.end('{}');
     });
+    const url = await runtimeServer(route);
     const app = createApp(config(url));
     const calls = [
       ['GET', '/admin/organizations'],
@@ -228,6 +554,7 @@ describe('runtime proxy', () => {
       ['DELETE', '/admin/tenants/acme:prod'],
       ['PUT', '/admin/tenants/acme:prod/tier'],
       ['GET', '/admin/router-tiers'],
+      ['GET', '/admin/base-schemas'],
       ['GET', '/admin/profiles?tenant_id=acme:prod'],
       ['PUT', '/admin/profiles/p1'],
       ['POST', '/admin/profiles/p1/deploy'],
@@ -241,6 +568,7 @@ describe('runtime proxy', () => {
       ['GET', '/admin/config/export?tenant_id=acme:prod&include_history=false'],
       ['POST', '/admin/config/import'],
       ['GET', '/admin/config/stats'],
+      ['GET', '/admin/config/health'],
       ['GET', '/admin/tenant/acme:prod/telemetry/root-causes?lookback_hours=24&include_slow=true&slow_percentile=95'],
       ['GET', '/admin/tenant/acme:prod/embeddings/atlas?profile=document_text_semantic&limit=500'],
       ['POST', '/ingestion/upload?force=true'],
@@ -252,14 +580,21 @@ describe('runtime proxy', () => {
       ['GET', '/admin/tenant/acme:prod/optimize/runs/wf-1'],
       ['POST', '/admin/tenant/acme:prod/optimize/runs/wf-1/cancel'],
       ['POST', '/admin/tenant/acme:prod/optimize/runs/wf-1/retry'],
+      ['POST', '/admin/tenant/acme:prod/optimize/report'],
+      ['GET', '/admin/tenant/training-example-templates'],
+      ['POST', '/admin/tenant/acme:prod/training-examples'],
       ['GET', '/agents/'],
       ['GET', '/admin/tenant/acme:prod/memories/stats?agent_name=search_agent'],
+      ['GET', '/admin/tenant/acme:prod/memories/health?agent_name=search_agent'],
       ['GET', '/admin/tenant/acme:prod/memories?agent_name=search_agent&limit=200&q=dark'],
       ['POST', '/admin/tenant/acme:prod/memories'],
       ['DELETE', '/admin/tenant/acme:prod/memories/m1?agent_name=search_agent'],
       ['DELETE', '/admin/tenant/acme:prod/memories?agent_name=search_agent'],
       ['GET', '/admin/tenant/acme:prod/approvals'],
       ['POST', '/admin/tenant/acme:prod/approvals/batch_1/batch_1_routing'],
+      ['GET', '/admin/tenant/acme:prod/approvals/history'],
+      ['GET', '/admin/tenant/acme:prod/approvals/stats'],
+      ['POST', '/admin/tenant/acme:prod/approvals/batch_1/batch_1_workflow/regenerate'],
       ['GET', '/agents/annotations/labels'],
       ['GET', '/agents/annotations/queue'],
       ['POST', '/agents/annotations/queue/span-1/assign'],
@@ -267,19 +602,102 @@ describe('runtime proxy', () => {
       ['GET', '/admin/tenant/acme:prod/orchestration-workflows?lookback_hours=24'],
       ['POST', '/admin/tenant/acme:prod/orchestration-workflows/abc123/annotation'],
       ['POST', '/ag-ui/results/relevance'],
+      ['POST', '/ag-ui/summarizer_agent'],
+      ['POST', '/ag-ui/threads/thread-1/evaluation'],
+      ['GET', '/ingestion/profiles?tenant_id=acme:prod'],
       ['GET', '/admin/tenant/acme:prod/telemetry/profile-selection?lookback_hours=24'],
       ['GET', '/admin/tenant/acme:prod/telemetry/rlm-ab?lookback_hours=168'],
       ['GET', '/admin/tenant/acme:prod/telemetry/traces?lookback_hours=24&operation=search&profile=a&profile=b'],
+      ['GET', '/admin/tenant/acme:prod/telemetry/traces?start=2026-10-01T00%3A00%3A00.000Z&end=2026-10-02T00%3A00%3A00.000Z'],
+      ['GET', '/admin/tenant/acme:prod/telemetry/phoenix'],
       ['GET', '/admin/tenant/acme:prod/evaluation/golden?lookback_hours=168'],
+      ['GET', '/admin/tenant/acme:prod/evaluation/datasets'],
+      ['POST', '/admin/tenant/acme:prod/embeddings/atlas/umap'],
+      ['DELETE', '/admin/tenant/acme:prod/embeddings/atlas/umap?profile=notes'],
+      ['POST', '/admin/tenant/acme:prod/embeddings/atlas/export'],
+      ['GET', '/admin/tenant/acme:prod/evaluation/dataset?dataset_id=RGF0YXNldDox&lookback_hours=168'],
       ['GET', '/admin/tenant/acme:prod/routing-decisions?lookback_hours=24'],
       ['POST', '/admin/tenant/acme:prod/routing-decisions/abc123/approve'],
       ['PUT', '/admin/tenant/acme:prod/routing-decisions/abc123/label'],
+      ['GET', '/admin/tenant/acme:prod/routing-decisions/annotation-candidates?lookback_hours=24&confidence_threshold=0.6&max_annotations=20'],
+      ['GET', '/admin/tenant/acme:prod/routing-decisions/label-statistics'],
+      ['GET', '/admin/tenant/acme:prod/orchestration-workflows?lookback_hours=24&limit=20'],
     ];
     for (const [method, path] of calls) {
-      const response = await app.request(`/api/runtime${path}`, { method });
+      const response = await app.request(`/ui-api/runtime${path}`, {
+        method,
+        headers: { [TENANT_HEADER]: 'acme:prod' },
+      });
       expect(response.status).toBe(200);
     }
     expect(seen).toEqual(calls.map(([method, path]) => `${method} ${path}`));
+  });
+
+  it("sends an /ag-ui route with the named tenant's key, and none without a tenant", async () => {
+    const seen: string[] = [];
+    const [route, admin] = withAdmin(['acme:prod', 'beta:dev'], (req: IncomingMessage, res: ServerResponse) => {
+      seen.push(`${req.method} ${req.url} ${admin.tenantOf(req.headers.authorization)}`);
+      json(res, 200, { stored: true });
+    });
+    const url = await runtimeServer(route);
+    const app = createApp(config(url));
+    const rate = (headers: Record<string, string>) =>
+      app.request('/ui-api/runtime/ag-ui/results/relevance', { method: 'POST', headers, body: '{}' });
+    const [acme, beta] = await Promise.all([rate({ [TENANT_HEADER]: 'acme:prod' }), rate({ [TENANT_HEADER]: 'beta:dev' })]);
+    expect([acme.status, beta.status]).toEqual([200, 200]);
+    expect(seen.sort()).toEqual([
+      'POST /ag-ui/results/relevance acme:prod',
+      'POST /ag-ui/results/relevance beta:dev',
+    ]);
+    const anonymous = await rate({});
+    expect(anonymous.status).toBe(400);
+    expect(await anonymous.json()).toEqual({ error: 'Choose a tenant before talking to an agent.' });
+    const unknown = await rate({ [TENANT_HEADER]: 'acme:typo' });
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toEqual({
+      error: 'Tenant acme:typo is not registered. Register it with POST /admin/tenants first.',
+    });
+    expect(seen).toHaveLength(2);
+  });
+
+  it('forwards the optimization framework routes and no sibling of them', async () => {
+    const seen: string[] = [];
+    const url = await runtimeServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      res.end('{}');
+    });
+    const app = createApp(config(url));
+    const calls = [
+      ['GET', '/admin/tenant/acme:prod/search-annotations?lookback_hours=24'],
+      ['GET', '/admin/tenant/acme:prod/search-annotations/count?lookback_days=90'],
+      ['POST', '/admin/tenant/acme:prod/search-annotations/0123456789abcdef'],
+      ['POST', '/admin/tenant/acme:prod/golden-dataset'],
+      ['GET', '/admin/tenant/acme:prod/synthetic/settings'],
+      ['GET', '/admin/tenant/acme:prod/optimize/runs/manual-optimize-synthetic-x/synthetic'],
+      ['GET', '/admin/tenant/acme:prod/datasets'],
+      ['POST', '/admin/tenant/acme:prod/datasets'],
+      ['GET', '/admin/tenant/acme:prod/profile-selection/analysis?lookback_days=30'],
+      ['POST', '/admin/tenant/acme:prod/profile-selection/train'],
+      ['GET', '/admin/tenant/acme:prod/profile-selection/model'],
+      ['POST', '/admin/tenant/acme:prod/profile-selection/predict'],
+      ['GET', '/admin/tenant/acme:prod/optimization-metrics?lookback_days=7'],
+    ];
+    for (const [method, path] of calls) {
+      const response = await app.request(`/ui-api/runtime${path}`, { method });
+      expect(response.status).toBe(200);
+    }
+    expect(seen).toEqual(calls.map(([method, path]) => `${method} ${path}`));
+    for (const path of [
+      '/admin/tenant/acme:prod/search-annotations/a/b',
+      '/admin/tenant/acme:prod/synthetic/generate',
+      '/admin/tenant/acme:prod/optimize/runs/wf-1/synthetic/x',
+      '/admin/tenant/acme:prod/profile-selection/delete',
+      '/synthetic/generate',
+    ]) {
+      const response = await app.request(`/ui-api/runtime${path}`, { method: 'POST' });
+      expect(response.status).toBe(404);
+    }
+    expect(seen).toHaveLength(calls.length);
   });
 
   it('streams server-sent events as the runtime sends them', async () => {
@@ -289,7 +707,7 @@ describe('runtime proxy', () => {
       res.write('data: {"state":"running"}\n\n');
       release = () => res.end('data: {"state":"done"}\n\n');
     });
-    const response = await createApp(config(url)).request('/api/runtime/ingestion/job-1/events');
+    const response = await createApp(config(url)).request('/ui-api/runtime/ingestion/job-1/events');
     expect(response.headers.get('content-type')).toBe('text/event-stream');
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
@@ -304,10 +722,38 @@ describe('runtime proxy', () => {
 
   it('answers 502 naming the runtime when it is down', async () => {
     const url = await deadUrl();
-    const response = await createApp(config(url)).request('/api/runtime/admin/organizations');
+    const response = await createApp(config(url)).request('/ui-api/runtime/admin/organizations');
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({
       error: `The Cogniverse runtime at ${url} did not answer (TypeError).`,
     });
+  });
+});
+
+describe('GET /healthz', () => {
+  it('answers without calling the runtime', async () => {
+    const response = await createApp(config(await deadUrl())).request('/healthz');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: 'ok' });
+  });
+
+  it('is not shadowed by the built client', async () => {
+    const clientDir = mkdtempSync(path.join(tmpdir(), 'cogniverse-web-'));
+    writeFileSync(path.join(clientDir, 'index.html'), '<html>client</html>');
+    const app = createApp({ ...config(await deadUrl()), clientDir });
+    const health = await app.request('/healthz');
+    expect(health.headers.get('content-type')).toMatch(/^application\/json/);
+    expect(await health.json()).toEqual({ status: 'ok' });
+    const page = await app.request('/tenants');
+    expect(await page.text()).toBe('<html>client</html>');
+  });
+});
+
+describe('server routes', () => {
+  it('serves nothing under /api, which the ingress gives to the runtime', async () => {
+    const url = await runtimeServer((_req, res) => res.end(JSON.stringify({ agents: ['x'] })));
+    const app = createApp(config(url));
+    for (const route of ['/api/agents', '/api/copilotkit/info', '/api/runtime/agents/'])
+      expect((await app.request(route)).status).toBe(404);
   });
 });

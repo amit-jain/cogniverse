@@ -126,7 +126,7 @@ gateway agent refreshes on a `GATEWAY_ARTIFACT_TTL_S` interval).
   `ExperimentMetrics` row.
 - **Canary Rollout + Rollback**: `ArtifactManager`'s three-slot (`active`/`canary`/`retired`) state machine and
   the `--mode rollback` CLI restore previously-snapshotted prompt/demo versions.
-- **On-Demand Workflows**: the dashboard (or any client) triggers `POST /admin/tenant/{id}/optimize`, which
+- **On-Demand Workflows**: the web client (or any client) triggers `POST /admin/tenant/{id}/optimize`, which
   submits an Argo Workflow referencing the `cogniverse-optimization-runner` `WorkflowTemplate`.
 - **Scheduled Workflows**: helm-chart `CronWorkflow`s run `gateway-thresholds`/`entity-extraction`/`simba`/
   `profile`/`workflow` weekly, `gateway-thresholds` daily, `cleanup` daily, `synthetic` weekly, a forced
@@ -153,11 +153,11 @@ from cogniverse_synthetic import OPTIMIZER_REGISTRY
 
 ```mermaid
 flowchart TB
-    Dashboard["<span style='color:#000'>Dashboard / any client<br/>POST /admin/tenant/{id}/optimize</span>"]
+    WebClient["<span style='color:#000'>Web client / any client<br/>POST /admin/tenant/{id}/optimize</span>"]
     QM["<span style='color:#000'>QualityMonitor<br/>quality_monitor_cli --once<br/>submits raw Argo Workflow on quality drop</span>"]
     Cron["<span style='color:#000'>Helm CronWorkflows<br/>agent-optimization (weekly) / daily-gateway /<br/>daily-cleanup / synthetic-generation / monthly-reports</span>"]
 
-    Dashboard --> OptCLI
+    WebClient --> OptCLI
     QM --> OptCLI
     Cron --> OptCLI
 
@@ -173,7 +173,7 @@ flowchart TB
     Meta --> AM
     Strategy --> Mem0["<span style='color:#000'>Mem0MemoryManager<br/>Vespa memory</span>"]
 
-    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style WebClient fill:#90caf9,stroke:#1565c0,color:#000
     style QM fill:#90caf9,stroke:#1565c0,color:#000
     style Cron fill:#90caf9,stroke:#1565c0,color:#000
     style OptCLI fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -259,7 +259,7 @@ def _compute_gateway_thresholds(spans_df) -> dict:
 
 **On-Demand Submission:**
 ```python
-# Dashboard or any client submits via runtime API:
+# Web client or any client submits via runtime API:
 # POST /admin/tenant/{tenant_id}/optimize
 # Body: {"mode": "gateway-thresholds", "lookback_hours": 48}
 # Synthetic training data for chosen optimizer types, queued for review:
@@ -306,7 +306,11 @@ async def run_profile_optimization(
     2. Derive (query, available_profiles) -> selected_profile labels from those
        rows with derive_profile_labels: the tenant's SearchService runs every
        query against each profile from
-       tenant_usable_profile_names(ConfigManager, tenant_id) at top_k=10. A
+       tenant_usable_profile_names(ConfigManager, tenant_id) at top_k=10. Each
+       candidate's schema and type are read from the tenant's profile catalog
+       (ConfigUtils.backend_profiles: shipped and system profiles with the
+       tenant's stored profiles on top), the catalog search resolves it from,
+       so a shipped profile the tenant serves but never stored is resolved. A
        result matches an expected video when the basename of its title,
        extension stripped, equals the expected id; the title field is the one
        the profile's schema names under document_mapping.title (video_title,
@@ -410,10 +414,19 @@ not the SIMBA algorithm.
 `_create_teleprompter(len(trainset), metric=_query_enhancement_metric)`; records the metric cannot score
 (no source text and no grounding context) are ordered after every scoreable record so the bootstrap walk
 reaches them only when the scoreable records did not fill the demos, and their count is reported as
-`unscoreable_examples`. Every holdout record is an evaluation probe. `_query_enhancement_quality` scores a module's own output for the probe inputs (1.0 when
+`unscoreable_examples`. The compiled candidate is then cut to fit the student before it is scored:
+`_student_demo_budget` reads the optimization endpoint's served window (`max_model_len`, else its declared
+`context_window`) less its `max_tokens`, with `served_message_counter` counting requests by the tokenizer
+and chat template the endpoint serves, and `_bound_candidate_demos` keeps each predictor's longest
+prefix of demonstrations whose request fits that allowance with every distinct served input of the
+trainset and holdout, under both the chat adapter the run scores with and the `LenientJSONAdapter` the
+runtime serves with. The cut program is what is scored, saved and served; a window that cannot be read
+fails the run with nothing persisted, as does an endpoint that cannot count a request (`TokenCountUnavailableError`). Every holdout record is an evaluation probe. `_query_enhancement_quality` scores a module's own output for the probe inputs (1.0 when
 the enhanced query differs from the query, has expansion terms and, given a grounding context, names one
-of its entities; else 0.0). The base module, the persisted artifact and the compiled candidate are scored
-on the same holdout and `_select_simba_artifact` decides: `promote` persists the candidate (it beats the
+of its entities; else 0.0). `_query_enhancement_scores` runs a module once per distinct
+(`query`, `source_text`, `grounding_context`) and counts that score once per holdout record carrying it,
+so a call served hundreds of times costs one LM request and keeps its weight in the mean. The base module,
+the persisted artifact and the compiled candidate are scored on the same holdout and `_select_simba_artifact` decides: `promote` persists the candidate (it beats the
 served module by the tenant's `optimization_improvement_threshold`), `keep` leaves the artifact, `rollback`
 persists the base state over an artifact that scores below base, `reject` persists nothing. A persisted
 artifact whose state is the base module's (`_current_score`) takes the baseline score instead of being
@@ -571,7 +584,7 @@ confidence calibration), persisting scores as telemetry annotations for drift de
 
 **CLI mode:** `--mode triggered`
 
-Invoked by `QualityMonitor` (not the dashboard — `triggered` is excluded from `_MANUAL_OPTIMIZE_MODES`)
+Invoked by `QualityMonitor` (not an on-demand submission — `triggered` is excluded from `_MANUAL_OPTIMIZE_MODES`)
 when golden/live evaluation detects degradation. `QualityMonitor` builds and submits its own raw Argo
 `Workflow` manifest (not the shared `cogniverse-optimization-runner` `WorkflowTemplate`) running:
 
@@ -894,7 +907,7 @@ Returns `{summary: ..., backup_versions: {prompts: int?, demos: int?}}` — pass
 
 Runs `RLMABRunner` (`cogniverse_agents.inference.ab_harness`) over a Phoenix dataset of `(query, context)`
 rows, comparing a with-RLM and without-RLM arm per row, and emits a `rlm.ab_compare` Phoenix span per row
-with the harness's `to_telemetry_dict()` as attributes for a dashboard tile to aggregate.
+with the harness's `to_telemetry_dict()` as attributes for the web client's RLM A/B view to aggregate.
 
 ```bash
 uv run python -m cogniverse_runtime.optimization_cli \
@@ -984,10 +997,20 @@ Result dict shape: `{log_retention_days, memory_retention_days, memory_cleanup: 
 
 ### 18. **`--mode synthetic` (Synthetic Data Generation)**
 
-`run_synthetic_generation(tenant_id, optimizer_types=None, count=50)` generates training data for one or
-more optimizer types (default `["query_enhancement", "profile", "workflow"]`) via
-`SyntheticDataService`. Non-empty output is persisted as an `ApprovalBatch` of
-pending `ReviewItem` records through `ApprovalStorageImpl`.
+`run_synthetic_generation(tenant_id, optimizer_types=None, options=None)` generates training data for one or
+more optimizer types (default: every type in `APPROVED_TRAINING_AGENT_BY_OPTIMIZER`) via
+`SyntheticDataService`. `options` is a `SyntheticRunOptions`
+(`cogniverse_runtime.optimization_options`, the CLI's `--options` JSON): `count`
+(default 50), `vespa_sample_size`, `strategy`, `max_profiles` and `human_review`
+(default true). `submit_synthetic_outcome` turns each type's non-empty output into an
+`ApprovalBatch` and hands it to `HumanApprovalAgent.submit_for_review` over
+`ApprovalStorageImpl`: items at or above `ApprovalConfig.confidence_threshold` are
+approved into the tenant's approved synthetic dataset at once, the rest stay pending
+review; without human review every item is approved. Each type's result carries
+`batch_id`, `examples_generated`, `auto_approved`, `pending_review`,
+`avg_confidence`, `schema_name`, `selected_profiles`, `profile_selection_reasoning`
+and `generation_time_ms`, which `GET /admin/tenant/{tenant_id}/optimize/runs/{name}/synthetic`
+reads back from the run.
 
 The result retains one entry per requested optimizer. Its aggregate status is
 `failed` when any entry is `failed` or `error`, including a partial run where
@@ -1023,6 +1046,25 @@ uv run python -m cogniverse_runtime.optimization_cli \
 
 ---
 
+### 18a. **`--mode routing` / `--mode unified` (module optimization)**
+
+`run_module_optimization(module, tenant_id, lookback_hours, options)` runs a
+module's steps in one pod (`optimization_options.MODULE_STEPS`): `routing` runs
+`gateway-thresholds`, `entity-extraction` and `profile`; `unified` runs those, then
+`workflow`. `options` is a `ModuleRunOptions`: `max_iterations` caps each DSPy
+compile's bootstrap rounds (`_create_teleprompter(max_rounds=...)`) and the workflow
+optimizer's 50-span evaluation batches (`run_workflow_optimization(max_batches=...)`,
+also what `--mode workflow --options` sets); `use_synthetic_data=false` keeps
+approved synthetic examples out of the entity-extraction and profile compiles; and
+`dataset_name` (only without synthetic data) names a telemetry dataset of the
+tenant (`<name>-<tenant>`, `query`/`expected_videos` rows) that is the profile
+step's ground truth in place of the uploaded one. The result is
+`{status, module, failed_steps, results: {step: result}}`; any failed step fails it.
+
+**File:** `libs/runtime/cogniverse_runtime/optimization_cli.py::run_module_optimization`
+
+---
+
 ### 19. **`--mode monthly-reports`**
 
 Generates usage + performance JSON for the prior period (default 30 days).
@@ -1052,7 +1094,7 @@ Returns `{period, generated_at, output_dir, files_written: [usage_path, perf_pat
 ### Example 1: On-Demand Gateway Threshold Optimization
 
 ```bash
-# Submit gateway-threshold optimization via the runtime API (dashboard or CLI):
+# Submit gateway-threshold optimization via the runtime API (web client or CLI):
 curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize \
   -H "Content-Type: application/json" \
   -d '{"mode": "gateway-thresholds"}'
@@ -1065,12 +1107,19 @@ curl http://localhost:8000/admin/tenant/acme:production/optimize/runs/opt-gatewa
 
 # Terminate a running Workflow:
 curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize/runs/opt-gateway-acme-.../cancel
-# Returns: {"phase": "Failed", "message": "Terminated by user", ...}
+# Returns the run as Argo holds it right after the terminate, e.g. {"phase": "Running", ...};
+# once Argo finishes it, status and the run list report it as {"phase": "Cancelled", ...}
 
 # Retry a failed Workflow (restarts only the failed nodes, reuses successful ones):
 curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize/runs/opt-gateway-acme-.../retry
 # Returns: {"phase": "Running", ...}
 ```
+
+A finished run that was shut down (its Workflow's `spec.shutdown` is set)
+reports phase `Cancelled` in the status and run-list endpoints: Argo itself
+ends a run cancelled while it waited on the tenant mutex `Succeeded` (its step
+`Skipped`) and one cancelled while running `Failed`. A cancelled run is not
+retried; start a new one.
 
 The status, cancel, and retry endpoints scope each action to the path
 tenant. Before returning status or issuing the terminate/retry, the runtime
@@ -1088,7 +1137,7 @@ daily) use the same template, so the image/env/resource/mutex spec lives in
 one place (``charts/cogniverse/templates/optimization-workflow-template.yaml``).
 
 The WorkflowTemplate declares a **per-tenant mutex** so multiple submits
-for the same tenant serialise (prevents the dashboard Run button from
+for the same tenant serialise (prevents repeated on-demand submits from
 stacking pods); different tenants optimize independently.
 
 On-demand runs take the modes in `_MANUAL_OPTIMIZE_MODES`
@@ -1229,7 +1278,7 @@ uv run python -m cogniverse_runtime.quality_monitor_cli \
 **Optimization is on-demand, not a long-running service.**
 
 ```bash
-# Trigger via dashboard UI button or direct API call:
+# Trigger via the web client or direct API call:
 curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize \
   -d '{"mode": "gateway-thresholds"}'
 
@@ -1333,7 +1382,7 @@ reflective recompile of an all-failure agent (not by data size), never for the p
 
 #### Argo Workflows Integration
 
-**On-demand submission** (dashboard or any client):
+**On-demand submission** (web client or any client):
 
 ```bash
 curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize \
@@ -1380,13 +1429,13 @@ annotations and re-enable the affected CronWorkflows.
 `WorkflowTemplate`) running `--mode triggered` whenever golden/live evaluation detects a quality drop for
 one or more agents — see [Triggered Optimization](#8-triggered-optimization-quality-monitor-driven) above.
 
-#### UI Dashboard Integration
+#### Web Client Integration
 
-The optimization infrastructure integrates with the Streamlit dashboard:
+The optimization infrastructure integrates with the web client:
 
-**Module Optimization Tab:**
+**Optimization Runs View:**
 
-- Submit on-demand runs for the 6 dashboard-exposed modes (`gateway-thresholds`, `simba`, `workflow`, `profile`, `entity-extraction`, `llm-annotate`)
+- Submit on-demand runs in any mode the runtime accepts (`GET /admin/tenant/optimize-modes`)
 
 - Monitor workflow progress (phase, started/finished timestamps)
 
@@ -1398,9 +1447,9 @@ The optimization infrastructure integrates with the Streamlit dashboard:
 
 2. **Automatic (Quality-triggered)**: `QualityMonitor` submits `--mode triggered` on detected degradation
 
-3. **Manual (Dashboard-triggered)**: dashboard button calls `POST /admin/tenant/{id}/optimize` → submits an Argo Workflow on demand
+3. **Manual (on demand)**: the web client calls `POST /admin/tenant/{id}/optimize` → submits an Argo Workflow on demand
 
-See `docs/development/ui-dashboard.md` for full UI documentation.
+See [Web Client](web-client.md) for full UI documentation.
 
 ---
 
@@ -1479,7 +1528,7 @@ def test_compute_gateway_thresholds():
 
 - **Integration tests**: rollback round-trip, cleanup vacuum, monthly reports, triggered optimization + distillation, A/B comparison, artifact manager canary FSM
 
-- **End-to-end tests**: batch optimization, optimizer artifact persistence, signature variants, dashboard optimization tab
+- **End-to-end tests**: batch optimization, optimizer artifact persistence, signature variants
 
 ---
 
@@ -1866,7 +1915,7 @@ uv run python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds -
 
 ### Output Artifacts
 
-After optimization, artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`:
+After optimization, artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`, in datasets named `dspy-{kind}-{tenant_id}-{key}` (`kind` one word) by `artifact_dataset_name` in `cogniverse_foundation.telemetry.providers.base`; `is_artifact_dataset(name, tenant_id)` reads the name back, and the runtime's evaluation dataset listing leaves these out:
 
 - Every artifact dataset writes `metadata.created_at` as a timezone-aware
   UTC ISO-8601 timestamp, including stable and versioned prompts,
@@ -1952,6 +2001,6 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 
 - `libs/runtime/cogniverse_runtime/quality_monitor_cli.py` - Quality-triggered optimization driver
 
-- `libs/runtime/cogniverse_runtime/routers/tenant.py` - Dashboard-triggered optimization API endpoints
+- `libs/runtime/cogniverse_runtime/routers/tenant.py` - On-demand optimization API endpoints
 
 - `libs/synthetic/cogniverse_synthetic/` - Synthetic training data generation service + REST API

@@ -453,57 +453,75 @@ def test_query_generator_uses_configured_module_and_retry_limit() -> None:
     assert query_generator.generate.__class__.__name__ == "Predict"
 
 
-async def test_generation_rejects_content_without_canonical_topic() -> None:
+async def test_generation_skips_content_without_canonical_topic(caplog) -> None:
+    class _TopicQueryGenerator:
+        max_retries = 3
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(
+                query=f"find {kwargs['topics']}",
+                reasoning=f"Used {kwargs['topics']} from this source item.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
     generator = RoutingGenerator(
         entity_extractor=_extract_entities,
         routing_decider=_route_query,
         optimizer_config=_routing_generator().optimizer_config,
     )
+    generator.query_generator = _TopicQueryGenerator()
 
-    # With saliency, need 2+ valid records; then one invalid triggers per-record check
-    with pytest.raises(
-        ValueError, match="^sampled routing content requires a non-empty topic$"
-    ):
-        await generator.generate(
+    with caplog.at_level("WARNING", logger="cogniverse_synthetic.generators.routing"):
+        examples = await generator.generate(
             sampled_content=[
-                # Invalid record first - selected in attempt 0
                 {
                     "schema_name": "document_text",
                     "embedding_type": "single_vector",
                 },
-                # Valid records needed for saliency (>= 2 with topic text)
                 {"topic": "TensorFlow tutorial video"},
                 {"topic": "PyTorch deep learning guide"},
             ],
-            target_count=1,
+            target_count=2,
             tenant_id="acme:routing",
         )
 
+    assert [
+        (example.query, example.enhanced_query, example.chosen_agent)
+        for example in examples
+    ] == [
+        (
+            "find TensorFlow tutorial video",
+            "find TensorFlow(TECHNOLOGY) tutorial video",
+            "video_search_agent",
+        ),
+        (
+            "find PyTorch deep learning guide",
+            "find PyTorch(TECHNOLOGY) deep learning guide",
+            "video_search_agent",
+        ),
+    ]
+    assert [record.getMessage() for record in caplog.records] == [
+        "Skipping sampled routing item without a topic"
+    ]
 
-async def test_query_generation_rejects_missing_source_topic() -> None:
-    # With saliency, need 2+ valid records; then one invalid triggers per-record check
-    with pytest.raises(
-        ValueError,
-        match="^sampled routing content requires a non-empty topic$",
-    ):
+
+async def test_generation_rejects_batch_without_any_canonical_topic() -> None:
+    with pytest.raises(ValueError) as error:
         await RoutingGenerator(
             entity_extractor=_extract_entities,
             routing_decider=_route_query,
             optimizer_config=_routing_generator().optimizer_config,
         ).generate(
             sampled_content=[
-                # Invalid record first - selected in attempt 0
-                {
-                    "schema_name": "document_text",
-                    "embedding_type": "single_vector",
-                },
-                # Valid records needed for saliency (>= 2 with topic text)
-                {"topic": "TensorFlow tutorial video"},
-                {"topic": "PyTorch deep learning guide"},
+                {"topic": "tutorial video"},
+                {"topic": "tutorial video"},
             ],
             target_count=1,
             tenant_id="acme:routing",
         )
+
+    assert str(error.value) == "sampled routing content requires a non-empty topic"
 
 
 async def test_generation_uses_canonical_topic_string_for_query_generation() -> None:
@@ -758,16 +776,16 @@ async def test_generation_drops_repeated_canonical_routing_label() -> None:
         "find TensorFlow machine learning framework tutorial"
     )
     assert duplicate_drops[0].reason == (
-        "RoutingGenerator generated duplicate canonical label "
-        "(query='find TensorFlow machine learning framework tutorial', "
-        "entities=(('TensorFlow', 'TECHNOLOGY'),), "
+        "RoutingGenerator generated duplicate query "
+        "'find TensorFlow machine learning framework tutorial' "
+        "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
         "chosen_agent='video_search_agent')"
     )
 
 
 @pytest.mark.asyncio
 async def test_generation_fills_quota_after_one_duplicate() -> None:
-    """Duplicate canonical labels are dropped and replaced from the surplus."""
+    """Duplicate queries are dropped and replaced from the surplus."""
 
     class _SequenceQueryGenerator:
         max_retries = 3
@@ -810,7 +828,7 @@ async def test_generation_fills_quota_after_one_duplicate() -> None:
     # TensorFlow only in record 0 so saliency preserves it (high IDF).
     # Record 1 has no extractable entity, so entity extraction fails for it
     # and the generator cycles back to record 0. The sequence query generator
-    # returns the same grounded query twice → duplicate canonical label → dropped.
+    # returns the same grounded query twice → duplicate query → dropped.
     examples = await generator.generate(
         sampled_content=[
             {"description": "TensorFlow machine learning framework tutorial"},
@@ -851,16 +869,16 @@ async def test_generation_fills_quota_after_one_duplicate() -> None:
         "find TensorFlow machine learning framework tutorial"
     ]
     assert duplicate_drops[0].reason == (
-        "RoutingGenerator generated duplicate canonical label "
-        "(query='find TensorFlow machine learning framework tutorial', "
-        "entities=(('TensorFlow', 'TECHNOLOGY'),), "
+        "RoutingGenerator generated duplicate query "
+        "'find TensorFlow machine learning framework tutorial' "
+        "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
         "chosen_agent='video_search_agent')"
     )
 
 
 @pytest.mark.asyncio
 async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
-    """After target_count consecutive duplicate canonical labels, the draw stops."""
+    """After target_count consecutive duplicate queries, the draw stops."""
 
     class _SequenceQueryGenerator:
         max_retries = 3
@@ -933,9 +951,9 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
         "find TensorFlow machine learning framework tutorial"
     ] * 5
     assert duplicate_drops[-1].reason == (
-        "RoutingGenerator generated duplicate canonical label "
-        "(query='find TensorFlow machine learning framework tutorial', "
-        "entities=(('TensorFlow', 'TECHNOLOGY'),), "
+        "RoutingGenerator generated duplicate query "
+        "'find TensorFlow machine learning framework tutorial' "
+        "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
         "chosen_agent='video_search_agent')"
     )
 
@@ -982,24 +1000,24 @@ def test_duplicate_label_filter_golden() -> None:
     expected_errors = [
         None,
         (
-            "RoutingGenerator generated duplicate canonical label "
-            "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+            "RoutingGenerator generated duplicate query 'find TensorFlow' "
+            "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
             "chosen_agent='video_search_agent')"
         ),
         None,
         (
-            "RoutingGenerator generated duplicate canonical label "
-            "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+            "RoutingGenerator generated duplicate query 'find TensorFlow' "
+            "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
             "chosen_agent='video_search_agent')"
         ),
         (
-            "RoutingGenerator generated duplicate canonical label "
-            "(query='find PyTorch', entities=(('PyTorch', 'TECHNOLOGY'),), "
+            "RoutingGenerator generated duplicate query 'find PyTorch' "
+            "(entities=(('PyTorch', 'TECHNOLOGY'),), "
             "chosen_agent='video_search_agent')"
         ),
         (
-            "RoutingGenerator generated duplicate canonical label "
-            "(query='find TensorFlow', entities=(('TensorFlow', 'TECHNOLOGY'),), "
+            "RoutingGenerator generated duplicate query 'find TensorFlow' "
+            "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
             "chosen_agent='video_search_agent')"
         ),
     ]
@@ -1029,6 +1047,105 @@ def test_duplicate_label_filter_golden() -> None:
 
     # Assert final streak count
     assert filter_.duplicate_streak == 3
+
+
+def test_duplicate_label_filter_drops_a_query_labelled_differently() -> None:
+    """A query is one training example: drawn again with other entities or
+    another gateway decision, it is still the same query."""
+    filter_ = DuplicateLabelFilter()
+    first = ("find TensorFlow", (("TensorFlow", "TECHNOLOGY"),), "video_search_agent")
+    relabelled = (
+        "find TensorFlow",
+        (("TensorFlow", "ORGANIZATION"),),
+        "document_agent",
+    )
+
+    decisions = [filter_.check(label, 5) for label in (first, relabelled)]
+
+    assert [
+        (decision, str(error) if error else None) for decision, error in decisions
+    ] == [
+        ("keep", None),
+        (
+            "drop",
+            "RoutingGenerator generated duplicate query 'find TensorFlow' "
+            "(entities=(('TensorFlow', 'ORGANIZATION'),), "
+            "chosen_agent='document_agent')",
+        ),
+    ]
+    assert filter_.seen_labels == {first}
+
+
+async def test_a_query_the_gateway_routes_differently_twice_is_kept_once() -> None:
+    """The gateway may route one query to different agents on two draws; the
+    second draw is a duplicate query, dropped and replaced from the surplus,
+    so the service never receives the same query twice."""
+
+    class _SequenceQueryGenerator:
+        max_retries = 3
+
+        def __init__(self) -> None:
+            self.outputs = iter(
+                [
+                    "find TensorFlow machine learning framework tutorial",
+                    "find TensorFlow machine learning framework tutorial",
+                    "find TensorFlow machine learning framework tutorial benchmarks",
+                ]
+            )
+
+        def __call__(self, **kwargs):
+            return SimpleNamespace(
+                query=next(self.outputs),
+                reasoning="Sequence attempt.",
+                _retry_count=0,
+                _max_retries=3,
+            )
+
+    agents = iter(["video_search_agent", "document_agent", "video_search_agent"])
+
+    async def _wavering_route(query: str, tenant_id: str):
+        return {"query": query, "routed_to": next(agents), "confidence": 0.73}
+
+    generator = RoutingGenerator(
+        entity_extractor=_extract_entities,
+        routing_decider=_wavering_route,
+        optimizer_config=_routing_generator().optimizer_config,
+    )
+    generator.query_generator = _SequenceQueryGenerator()
+    tracker = GenerationTracker(optimizer="routing", target_count=2, floor_count=1)
+
+    examples = await generator.generate(
+        sampled_content=[
+            {"description": "TensorFlow machine learning framework tutorial"},
+            {"description": "cooking recipes and kitchen tips video"},  # No entity
+        ],
+        target_count=2,
+        tenant_id="acme:routing",
+        generation_tracker=tracker,
+        generation_floor_count=1,
+    )
+
+    assert [(example.query, example.chosen_agent) for example in examples] == [
+        ("find TensorFlow machine learning framework tutorial", "video_search_agent"),
+        (
+            "find TensorFlow machine learning framework tutorial benchmarks",
+            "video_search_agent",
+        ),
+    ]
+    assert [
+        (drop.category, drop.candidate, drop.reason)
+        for drop in tracker.dropped_examples
+        if drop.category == "duplicate_label"
+    ] == [
+        (
+            "duplicate_label",
+            "find TensorFlow machine learning framework tutorial",
+            "RoutingGenerator generated duplicate query "
+            "'find TensorFlow machine learning framework tutorial' "
+            "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
+            "chosen_agent='document_agent')",
+        )
+    ]
 
 
 async def test_generation_preserves_actual_gateway_routing_decision() -> None:

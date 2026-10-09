@@ -10,11 +10,24 @@ from __future__ import annotations
 import json
 import uuid
 
+import httpx
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
 
+from cogniverse_foundation.config.agent_config import (
+    AgentConfig,
+    DSPyModuleType,
+    ModuleConfig,
+    OptimizerType,
+)
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.sections import (
+    ENVIRONMENTS,
+    ROUTING_MODES,
+    SEARCH_BACKENDS,
+)
 from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+from cogniverse_foundation.telemetry.config import TelemetryConfig, TelemetryLevel
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.web_client import (
@@ -22,11 +35,9 @@ from tests.utils.web_client import (
     recording_telemetry_sink,
     serve_web,
 )
-from tests.utils.web_ops import serve_ops_runtime
+from tests.utils.web_ops import register_tenant, serve_ops_runtime
 
 pytestmark = [pytest.mark.integration, pytest.mark.ci_fast]
-
-KEY = "web-ops-harness-key"
 
 
 @pytest.fixture(scope="module")
@@ -60,7 +71,7 @@ def tenant():
 def web_url(built_client, runtime_url):
     with recording_telemetry_sink() as (sink_url, received):
         with serve_web(
-            built_client, runtime_url, KEY, telemetry_url=sink_url, built=True
+            built_client, runtime_url, telemetry_url=sink_url, built=True
         ) as url:
             yield url
         assert received == []
@@ -106,6 +117,7 @@ def _config_view(page: Page, web_url: str, tenant: str | None = None) -> None:
     expect(page.get_by_role("heading", name="Configuration", level=1)).to_be_visible()
     expect(page.get_by_role("form", name="Edit System config")).to_be_visible()
     if tenant:
+        register_tenant(tenant)
         chooser = page.get_by_role("form", name="Choose tenant")
         chooser.get_by_label("Tenant ID").fill(tenant)
         chooser.get_by_role("button", name="Show configs").click()
@@ -130,7 +142,7 @@ class TestSectionForms:
             default.routing_mode
         )
 
-        form.get_by_label("routing_mode", exact=True).fill("direct")
+        form.get_by_label("routing_mode", exact=True).select_option("direct")
         form.get_by_label("min_unique_queries", exact=True).fill("9")
         form.get_by_label("enable_fast_path", exact=True).uncheck()
         form.get_by_label("optimizer_floors", exact=True).fill(
@@ -187,6 +199,24 @@ class TestSectionForms:
             )
             is None
         )
+
+    def test_reload_discards_unsaved_edits(self, page, web_url, tenant):
+        _config_view(page, web_url, tenant)
+        form = _routing_form(page, tenant)
+        default = RoutingConfigUnified(tenant_id=tenant)
+        form.get_by_label("min_unique_queries", exact=True).fill("77")
+        form.get_by_label("routing_mode", exact=True).select_option("direct")
+        page.get_by_role("region", name=f"Routing config of {tenant}").get_by_role(
+            "button", name="Reload"
+        ).click()
+        form = _routing_form(page, tenant)
+        expect(form.get_by_label("min_unique_queries", exact=True)).to_have_value(
+            str(default.min_unique_queries)
+        )
+        expect(form.get_by_label("routing_mode", exact=True)).to_have_value(
+            default.routing_mode
+        )
+        expect(form.get_by_text("Not saved yet; showing the defaults.")).to_be_visible()
 
     def test_an_agent_config_is_created_for_the_named_agent(
         self, page, web_url, tenant, reader
@@ -277,7 +307,7 @@ class TestHistoryAndTransfer:
         _config_view(page, web_url, tenant)
         for version, mode in enumerate(["direct", "adaptive"], start=1):
             form = _routing_form(page, tenant)
-            form.get_by_label("routing_mode", exact=True).fill(mode)
+            form.get_by_label("routing_mode", exact=True).select_option(mode)
             form.get_by_role("button", name="Save").click()
             expect(page.get_by_role("status")).to_have_text(
                 f"Saved Routing config of {tenant} as version {version}."
@@ -313,7 +343,7 @@ class TestHistoryAndTransfer:
     ):
         _config_view(page, web_url, tenant)
         form = _routing_form(page, tenant)
-        form.get_by_label("routing_mode", exact=True).fill("adaptive")
+        form.get_by_label("routing_mode", exact=True).select_option("adaptive")
         form.get_by_label("min_unique_queries", exact=True).fill("11")
         form.get_by_role("button", name="Save").click()
         expect(page.get_by_role("status")).to_have_text(
@@ -349,6 +379,399 @@ class TestHistoryAndTransfer:
         assert (copied.routing_mode, copied.min_unique_queries) == ("adaptive", 11)
 
 
+def _system_version(reader) -> int:
+    return reader.store.get_config(
+        "_system", ConfigScope.SYSTEM, "system", "system_config"
+    ).version
+
+
+def _local_time(page: Page, iso: str) -> str:
+    return page.evaluate("(iso) => new Date(iso).toLocaleString()", iso)
+
+
+class TestSystemAndTelemetryForms:
+    def test_the_system_form_saves_urls_models_and_a_listed_environment(
+        self, page, web_url, reader, system_restored
+    ):
+        base = _system_version(reader)
+        _config_view(page, web_url)
+        form = page.get_by_role("form", name="Edit System config")
+        expect(
+            form.get_by_label("search_backend", exact=True).locator("option")
+        ).to_have_text(list(SEARCH_BACKENDS))
+        expect(
+            form.get_by_label("environment", exact=True).locator("option")
+        ).to_have_text(list(ENVIRONMENTS))
+        form.get_by_label("summarizer_agent_url", exact=True).fill(
+            "http://summarizer.web:8004"
+        )
+        form.get_by_label("llm_model", exact=True).fill("Qwen/Qwen2.5-7B-Instruct")
+        form.get_by_label("base_url", exact=True).fill("http://llm.web:8101/v1")
+        form.get_by_label("telemetry_url", exact=True).fill("http://phoenix.web:6006")
+        form.get_by_label("telemetry_collector_endpoint", exact=True).fill(
+            "phoenix.web:4317"
+        )
+        form.get_by_label("environment", exact=True).select_option("staging")
+        form.get_by_role("button", name="Save").click()
+        expect(page.get_by_role("status")).to_have_text(
+            f"Saved System config as version {base + 1}."
+        )
+        stored = reader.get_system_config()
+        assert (
+            stored.summarizer_agent_url,
+            stored.llm_model,
+            stored.base_url,
+            stored.telemetry_url,
+            stored.telemetry_collector_endpoint,
+            stored.environment,
+            stored.search_backend,
+        ) == (
+            "http://summarizer.web:8004",
+            "Qwen/Qwen2.5-7B-Instruct",
+            "http://llm.web:8101/v1",
+            "http://phoenix.web:6006",
+            "phoenix.web:4317",
+            "staging",
+            "vespa",
+        )
+
+    def test_a_backend_port_outside_1_to_65535_is_refused_before_saving(
+        self, page, web_url, reader, system_restored
+    ):
+        base = _system_version(reader)
+        _config_view(page, web_url)
+        form = page.get_by_role("form", name="Edit System config")
+        port = form.get_by_label("backend_port", exact=True)
+        expect(port).to_have_attribute("placeholder", "1–65535")
+        for refused in ("0", "70000"):
+            port.fill(refused)
+            form.get_by_role("button", name="Save").click()
+            expect(form.get_by_role("alert")).to_have_text(
+                "backend_port must be between 1 and 65535."
+            )
+        assert _system_version(reader) == base
+
+    def test_a_telemetry_edit_lands_with_its_provider_and_endpoints(
+        self, page, web_url, tenant, reader
+    ):
+        _config_view(page, web_url, tenant)
+        form = page.get_by_role("form", name=f"Edit Telemetry config of {tenant}")
+        expect(form.get_by_text("Not saved yet; showing the defaults.")).to_be_visible()
+        provider = form.get_by_label("provider", exact=True)
+        expect(provider.locator("option")).to_have_text(["(none)", "phoenix"])
+        expect(provider).to_have_value("")
+        form.get_by_label("enabled", exact=True).uncheck()
+        form.get_by_label("level", exact=True).select_option("verbose")
+        form.get_by_label("otlp_enabled", exact=True).uncheck()
+        form.get_by_label("otlp_endpoint", exact=True).fill("collector.web:4317")
+        provider.select_option("phoenix")
+        form.get_by_label("provider_config", exact=True).fill(
+            json.dumps({"http_endpoint": "http://phoenix.web:6006"})
+        )
+        form.get_by_role("button", name="Save").click()
+        expect(page.get_by_role("status")).to_have_text(
+            f"Saved Telemetry config of {tenant} as version 1."
+        )
+        stored = reader.get_telemetry_config(tenant)
+        default = TelemetryConfig()
+        assert (
+            stored.enabled,
+            stored.level,
+            stored.otlp_enabled,
+            stored.otlp_endpoint,
+            stored.provider,
+            stored.provider_config,
+            stored.service_name,
+            stored.max_cached_tenants,
+        ) == (
+            False,
+            TelemetryLevel.VERBOSE,
+            False,
+            "collector.web:4317",
+            "phoenix",
+            {"http_endpoint": "http://phoenix.web:6006"},
+            default.service_name,
+            default.max_cached_tenants,
+        )
+        form = page.get_by_role("form", name=f"Edit Telemetry config of {tenant}")
+        expect(form.get_by_label("provider", exact=True)).to_have_value("phoenix")
+        expect(form.get_by_label("level", exact=True)).to_have_value("verbose")
+
+    def test_routing_auto_optimisation_settings_land(
+        self, page, web_url, tenant, reader
+    ):
+        _config_view(page, web_url, tenant)
+        form = _routing_form(page, tenant)
+        expect(
+            form.get_by_label("routing_mode", exact=True).locator("option")
+        ).to_have_text(list(ROUTING_MODES))
+        form.get_by_label("enable_auto_optimization", exact=True).uncheck()
+        form.get_by_label("optimization_interval_seconds", exact=True).fill("900")
+        form.get_by_label("min_samples_for_optimization", exact=True).fill("50")
+        form.get_by_role("button", name="Save").click()
+        expect(page.get_by_role("status")).to_have_text(
+            f"Saved Routing config of {tenant} as version 1."
+        )
+        stored = reader.get_routing_config(tenant)
+        assert (
+            stored.enable_auto_optimization,
+            stored.optimization_interval_seconds,
+            stored.min_samples_for_optimization,
+            stored.routing_mode,
+        ) == (False, 900, 50, RoutingConfigUnified(tenant_id=tenant).routing_mode)
+
+
+class TestAgentConfigEdit:
+    def test_an_existing_agent_config_gets_module_params_and_an_optimizer(
+        self, page, web_url, tenant, reader
+    ):
+        reader.set_agent_config(
+            tenant,
+            "summarizer_agent",
+            AgentConfig(
+                agent_name="summarizer_agent",
+                agent_version="2.0.0",
+                agent_description="Summarises",
+                agent_url="http://summarizer:8004",
+                capabilities=["summarize"],
+                skills=[],
+                module_config=ModuleConfig(
+                    module_type=DSPyModuleType.PREDICT, signature="text -> summary"
+                ),
+            ),
+        )
+        _config_view(page, web_url, tenant)
+        agents = page.get_by_role("region", name=f"Agents of {tenant}")
+        expect(agents.get_by_text("Configured: summarizer_agent.")).to_be_visible()
+        chooser = agents.get_by_role("form", name="Choose agent")
+        chooser.get_by_label("Agent").fill("summarizer_agent")
+        chooser.get_by_role("button", name="Edit agent config").click()
+
+        form = page.get_by_role(
+            "form", name=f"Edit Agent summarizer_agent config of {tenant}"
+        )
+        expect(form.get_by_text("Version 1, saved ")).to_be_visible()
+        expect(form.get_by_label("agent_description", exact=True)).to_have_value(
+            "Summarises"
+        )
+        module = form.get_by_role("group", name="module_config")
+        expect(module.get_by_label("signature", exact=True)).to_have_value(
+            "text -> summary"
+        )
+        module.get_by_label("custom_params", exact=True).fill(
+            json.dumps({"max_sentences": 4})
+        )
+        optimizer = form.get_by_role("group", name="optimizer_config")
+        expect(optimizer.get_by_label("optimizer_type", exact=True)).to_have_count(0)
+        optimizer.get_by_label("Set optimizer_config").check()
+        expect(optimizer.get_by_label("optimizer_type", exact=True)).to_have_value(
+            OptimizerType.BOOTSTRAP_FEW_SHOT.value
+        )
+        expect(optimizer.get_by_label("num_trials", exact=True)).to_have_value("10")
+        optimizer.get_by_label("optimizer_type", exact=True).select_option("mipro_v2")
+        optimizer.get_by_label("num_trials", exact=True).fill("5")
+        optimizer.get_by_label("teacher_settings", exact=True).fill(
+            json.dumps({"temperature": 0.2})
+        )
+        form.get_by_role("button", name="Save").click()
+        expect(page.get_by_role("status")).to_have_text(
+            f"Saved Agent summarizer_agent config of {tenant} as version 2."
+        )
+        stored = reader.get_agent_config(tenant, "summarizer_agent")
+        assert (
+            stored.agent_version,
+            stored.module_config.signature,
+            stored.module_config.custom_params,
+            stored.optimizer_config.optimizer_type,
+            stored.optimizer_config.num_trials,
+            stored.optimizer_config.max_bootstrapped_demos,
+            stored.optimizer_config.teacher_settings,
+            stored.optimizer_config.custom_params,
+        ) == (
+            "2.0.0",
+            "text -> summary",
+            {"max_sentences": 4},
+            OptimizerType.MIPRO_V2,
+            5,
+            4,
+            {"temperature": 0.2},
+            {},
+        )
+
+        # The agent's editor stays open after the save, reading the stored one.
+        expect(form.get_by_text("Version 2, saved ")).to_be_visible()
+        optimizer = form.get_by_role("group", name="optimizer_config")
+        expect(optimizer.get_by_label("optimizer_type", exact=True)).to_have_value(
+            "mipro_v2"
+        )
+        expect(optimizer.get_by_label("teacher_settings", exact=True)).to_have_value(
+            json.dumps({"temperature": 0.2}, indent=2)
+        )
+        optimizer.get_by_label("Set optimizer_config").uncheck()
+        form.get_by_role("button", name="Save").click()
+        expect(page.get_by_role("status")).to_have_text(
+            f"Saved Agent summarizer_agent config of {tenant} as version 3."
+        )
+        assert (
+            reader.get_agent_config(tenant, "summarizer_agent").optimizer_config is None
+        )
+        expect(form.get_by_text("Version 3, saved ")).to_be_visible()
+        expect(optimizer.get_by_label("optimizer_type", exact=True)).to_have_count(0)
+
+
+class TestHistoryScopes:
+    def test_the_system_history_reads_the_system_config_and_shows_both_times(
+        self, page, web_url, tenant, reader, runtime_url, system_restored
+    ):
+        reader.set_config_value(
+            tenant,
+            ConfigScope.SYSTEM,
+            "tenant_instructions",
+            "system_prompt",
+            {"text": "Answer briefly.", "updated_at": "2026-10-08T00:00:00+00:00"},
+        )
+        current = reader.get_system_config()
+        current.application_name = f"history-{uuid.uuid4().hex[:6]}"
+        reader.set_system_config(current)
+        where = {"scope": "system", "service": "system", "config_key": "system_config"}
+        system_history = httpx.get(
+            f"{runtime_url}/admin/config/history", params=where, timeout=60
+        ).json()
+
+        _config_view(page, web_url, tenant)
+        stored = page.get_by_role("region", name="Stored configs of the system")
+        stored.get_by_role(
+            "button", name="History of system/system/system_config"
+        ).click()
+        history = stored.get_by_role(
+            "region", name="History of system/system/system_config"
+        )
+        latest = system_history["versions"][0]
+        summaries = history.locator("summary")
+        expect(summaries).to_have_count(len(system_history["versions"]))
+        expect(summaries.nth(0)).to_have_text(
+            f"Version {latest['version']}, created "
+            f"{_local_time(page, latest['created_at'])}, updated "
+            f"{_local_time(page, latest['updated_at'])} (current)"
+        )
+        summaries.nth(0).click()
+        expect(history.locator("pre").nth(0)).to_contain_text(
+            f'"application_name": "{current.application_name}"'
+        )
+
+        own = page.get_by_role("region", name=f"Stored configs of {tenant}")
+        own.get_by_role(
+            "button", name="History of system/tenant_instructions/system_prompt"
+        ).click()
+        instructions = own.get_by_role(
+            "region", name="History of system/tenant_instructions/system_prompt"
+        )
+        expect(instructions.locator("summary")).to_have_count(1)
+        instructions.locator("summary").click()
+        expect(instructions.locator("pre")).to_contain_text('"text": "Answer briefly."')
+
+
+class TestImportPreview:
+    def test_an_export_of_every_version_is_previewed_then_imported(
+        self, page, web_url, tenant, reader, tmp_path
+    ):
+        _config_view(page, web_url, tenant)
+        for version, mode in enumerate(["direct", "adaptive"], start=1):
+            form = _routing_form(page, tenant)
+            form.get_by_label("routing_mode", exact=True).select_option(mode)
+            form.get_by_role("button", name="Save").click()
+            expect(page.get_by_role("status")).to_have_text(
+                f"Saved Routing config of {tenant} as version {version}."
+            )
+        transfer = page.get_by_role("region", name=f"Export and import for {tenant}")
+        group = transfer.get_by_role("group", name="Export configs")
+        group.get_by_label("Include every version").check()
+        with page.expect_download() as download:
+            group.get_by_role("button", name="Export configs").click()
+        saved = tmp_path / "history.json"
+        download.value.save_as(saved)
+        exported = json.loads(saved.read_text())
+        assert exported["include_history"] is True
+        assert [
+            (c["scope"], c["version"], c["config_value"]["routing_mode"])
+            for c in exported["configs"]
+        ] == [("routing", 1, "direct"), ("routing", 2, "adaptive")]
+
+        target = f"webcfg{uuid.uuid4().hex[:8]}:main"
+        _config_view(page, web_url, target)
+        importer = page.get_by_role(
+            "region", name=f"Export and import for {target}"
+        ).get_by_role("form", name="Import configs")
+        expect(importer.get_by_role("button", name="Import configs")).to_be_disabled()
+        importer.get_by_label("Export file").set_input_files(str(saved))
+        preview = importer.get_by_role("region", name="Import preview")
+        expect(preview.locator("p")).to_have_text(
+            f"2 configs exported from {tenant}; importing writes each into {target}."
+        )
+        expect(preview.locator("tbody td")).to_have_text(
+            ["routing", "gateway_agent", "routing_config", "1"]
+            + ["routing", "gateway_agent", "routing_config", "2"]
+        )
+        assert reader.store.list_configs(tenant_id=target) == []
+        importer.get_by_role("button", name="Import configs").click()
+        expect(page.get_by_role("status")).to_have_text(
+            f"Imported 2 configs into {target}."
+        )
+        assert reader.get_routing_config(target).routing_mode == "adaptive"
+
+    def test_a_file_that_is_not_json_is_refused_on_choosing_it(
+        self, page, web_url, tenant, reader, tmp_path
+    ):
+        bad = tmp_path / "bad.json"
+        bad.write_text('{"configs": [')
+        _config_view(page, web_url, tenant)
+        importer = page.get_by_role(
+            "region", name=f"Export and import for {tenant}"
+        ).get_by_role("form", name="Import configs")
+        importer.get_by_label("Export file").set_input_files(str(bad))
+        expect(importer.get_by_role("alert")).to_have_text(
+            "bad.json is not valid JSON."
+        )
+        expect(importer.get_by_role("region", name="Import preview")).to_have_count(0)
+        expect(importer.get_by_role("button", name="Import configs")).to_be_disabled()
+        assert reader.store.list_configs(tenant_id=tenant) == []
+
+
+class TestStoreStats:
+    def test_the_store_panel_shows_the_backend_and_its_counts(
+        self, page, web_url, runtime_url
+    ):
+        stats = httpx.get(f"{runtime_url}/admin/config/stats", timeout=60).json()
+        assert stats["storage_backend"] == "vespa"
+        _config_view(page, web_url)
+        health = page.get_by_role("region", name="Config store").locator(
+            'dl[aria-label="Config store health"]'
+        )
+        expect(health.locator("dd")).to_have_text(
+            ["VespaConfigStore", "healthy: it answers queries"]
+        )
+        assert httpx.get(f"{runtime_url}/admin/config/health", timeout=60).json() == {
+            "store": "VespaConfigStore",
+            "healthy": True,
+        }
+        panel = page.get_by_role("region", name="Config store").locator(
+            'dl[aria-label="Config store facts"]'
+        )
+        expect(panel.locator("dd").first).to_have_text("vespa")
+        terms = panel.locator("dt").all_inner_texts()
+        values = panel.locator("dd").all_inner_texts()
+        assert dict(zip(terms, values, strict=True)) == {
+            "Backend": "vespa",
+            "Configs": str(stats["total_configs"]),
+            "Versions": str(stats["total_versions"]),
+            "Tenants": str(stats["total_tenants"]),
+            "By scope": ", ".join(
+                f"{scope}: {count}"
+                for scope, count in sorted(stats["configs_per_scope"].items())
+            ),
+        }
+
+
 class TestConcurrency:
     def test_a_save_over_another_operators_save_is_refused(
         self, browser, web_url, tenant, reader
@@ -359,8 +782,8 @@ class TestConcurrency:
             for page in pages:
                 _config_view(page, web_url, tenant)
             first, second = (_routing_form(page, tenant) for page in pages)
-            first.get_by_label("routing_mode", exact=True).fill("direct")
-            second.get_by_label("routing_mode", exact=True).fill("adaptive")
+            first.get_by_label("routing_mode", exact=True).select_option("direct")
+            second.get_by_label("routing_mode", exact=True).select_option("adaptive")
             first.get_by_role("button", name="Save").click()
             expect(pages[0].get_by_role("status")).to_have_text(
                 f"Saved Routing config of {tenant} as version 1."
@@ -384,7 +807,7 @@ class TestFaultContract:
         )
         with recording_telemetry_sink() as (sink_url, _):
             with serve_web(
-                built_client, dead_runtime, KEY, telemetry_url=sink_url, built=True
+                built_client, dead_runtime, telemetry_url=sink_url, built=True
             ) as url:
                 page.goto(f"{url}/#/ops/config")
                 expect(
@@ -395,7 +818,10 @@ class TestFaultContract:
                 expect(stored.get_by_role("table")).to_have_count(0)
                 expect(
                     page.get_by_role("region", name="Config store").get_by_role("alert")
-                ).to_have_text(unreachable)
+                ).to_have_text([unreachable, unreachable])
+                expect(
+                    page.locator('dl[aria-label="Config store health"]')
+                ).to_have_count(0)
                 expect(
                     page.get_by_role("form", name="Edit System config")
                 ).to_have_count(0)

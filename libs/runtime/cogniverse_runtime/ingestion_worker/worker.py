@@ -26,9 +26,11 @@ import contextlib
 import logging
 import math
 import os
+import re
 import signal
 import socket
 import threading
+import uuid
 from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
@@ -38,6 +40,11 @@ import redis.asyncio as aioredis
 
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.schema_deploy_lease import LeaseWaitTimeout
+from cogniverse_runtime.cluster_events import (
+    CONFIG_EVENT_CHANNEL,
+    CONFIG_EVENT_HANDLERS,
+    ClusterEvents,
+)
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 from cogniverse_runtime.ingestion_worker import idempotency, queue
 from cogniverse_runtime.ingestion_worker.queue import IngestJob
@@ -112,6 +119,19 @@ async def _note_graph_failure(
         f"{GRAPH_REDRIVE_KEY_PREFIX}{job.message_id}",
         mapping={"at_ms": await _server_time_ms(redis), "cause": cause},
     )
+
+
+# An absolute filesystem path with at least one directory, not part of a URL.
+_LOCAL_PATH = re.compile(r"(?<![\w.:/-])/(?:[^\s'\"(),;/]+/)+([^\s'\"(),;/]*)")
+
+
+def _without_local_paths(text: str) -> str:
+    """``text`` with every absolute path reduced to its file name.
+
+    A status event's error reaches clients; where the worker localised the
+    upload or kept its scratch is not theirs to see.
+    """
+    return _LOCAL_PATH.sub(r"\1", text)
 
 
 def _raise_if_pipeline_failed(result: object) -> None:
@@ -912,7 +932,7 @@ async def _run_job(
                 terminal_event = {
                     "state": "retrying",
                     "ingest_id": job.ingest_id,
-                    "error": str(exc),
+                    "error": _without_local_paths(str(exc)),
                     "error_type": type(exc).__name__,
                 }
                 job_span.set_attribute("job.outcome", "retrying")
@@ -931,7 +951,7 @@ async def _run_job(
                 terminal_event = {
                     "state": "failed",
                     "ingest_id": job.ingest_id,
-                    "error": error_text,
+                    "error": _without_local_paths(error_text),
                     "error_type": type(exc).__name__,
                 }
                 job_span.set_attribute("job.outcome", "failed")
@@ -985,7 +1005,9 @@ async def _run_job(
     )
     await _cleanup_step("ack", queue.ack(redis, config.consumer_group, job.message_id))
     if cleanup_errors:
-        terminal_event["cleanup_error"] = "; ".join(cleanup_errors)
+        terminal_event["cleanup_error"] = _without_local_paths(
+            "; ".join(cleanup_errors)
+        )
 
     await queue.publish_status(redis, job.ingest_id, terminal_event)
 
@@ -1084,6 +1106,18 @@ async def _claim_loop(
                 await asyncio.sleep(2.0)
 
 
+def config_event_subscriber(redis_url: str, consumer_id: str) -> ClusterEvents:
+    """This worker process's subscription to the config events channel: a
+    config or backend profile written through the runtime is dropped from
+    what the process holds before the write answers."""
+    return ClusterEvents(
+        redis_url,
+        f"ingestion:{consumer_id}:{os.getpid()}:{uuid.uuid4().hex[:8]}",
+        CONFIG_EVENT_HANDLERS,
+        channel=CONFIG_EVENT_CHANNEL,
+    )
+
+
 async def run(
     stop: Optional[asyncio.Event] = None,
     processor=None,
@@ -1128,49 +1162,54 @@ async def run(
         )
         return
 
-    redis = await get_redis(config.redis_url)
-    global _task_events
-    _task_events = TaskEventStore(redis)
-    _task_events.start()
-    if processor is None:
-        processor = partial(
-            _default_processor,
-            service_urls=config.inference_service_urls,
-            mark_graph_pending=partial(_mark_graph_pending, redis),
-            graph_deadline_s=config.graph_deadline_s,
-            media_config=media_config,
-        )
-    logger.info(
-        "Worker %s started: group=%s redis=%s reaper=%s",
-        config.consumer_id,
-        config.consumer_group,
-        config.redis_url,
-        "on" if config.reaper_enabled else "off",
-    )
-    reaper_task = None
+    config_events = config_event_subscriber(config.redis_url, config.consumer_id)
+    await config_events.start()
     try:
-        if config.reaper_enabled:
-            from cogniverse_runtime.ingestion_worker.reaper import reaper_loop
-
-            reaper_task = asyncio.create_task(
-                reaper_loop(redis, config, stop, processor=processor)
+        redis = await get_redis(config.redis_url)
+        global _task_events
+        _task_events = TaskEventStore(redis)
+        _task_events.start()
+        if processor is None:
+            processor = partial(
+                _default_processor,
+                service_urls=config.inference_service_urls,
+                mark_graph_pending=partial(_mark_graph_pending, redis),
+                graph_deadline_s=config.graph_deadline_s,
+                media_config=media_config,
             )
-        await _claim_loop(
-            redis,
-            config,
-            stop,
-            processor=processor,
-            telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+        logger.info(
+            "Worker %s started: group=%s redis=%s reaper=%s",
+            config.consumer_id,
+            config.consumer_group,
+            config.redis_url,
+            "on" if config.reaper_enabled else "off",
         )
+        reaper_task = None
+        try:
+            if config.reaper_enabled:
+                from cogniverse_runtime.ingestion_worker.reaper import reaper_loop
+
+                reaper_task = asyncio.create_task(
+                    reaper_loop(redis, config, stop, processor=processor)
+                )
+            await _claim_loop(
+                redis,
+                config,
+                stop,
+                processor=processor,
+                telemetry_otlp_endpoint=telemetry_otlp_endpoint,
+            )
+        finally:
+            logger.info("Worker %s stopping", config.consumer_id)
+            if reaper_task is not None:
+                reaper_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await reaper_task
+            await _task_events.close()
+            _task_events = None
+            await close_redis()
     finally:
-        logger.info("Worker %s stopping", config.consumer_id)
-        if reaper_task is not None:
-            reaper_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await reaper_task
-        await _task_events.close()
-        _task_events = None
-        await close_redis()
+        await config_events.close()
 
 
 def _install_signal_handlers(stop: asyncio.Event) -> None:

@@ -457,9 +457,10 @@ class ProfileGenerator(BaseGenerator):
                 )
             topic = self._extract_topic(item, saliency=saliency)
             if topic is None:
-                raise ValueError(
-                    f"Sampled {modality} content requires a non-empty topic or title"
+                logger.warning(
+                    "Skipping sampled %s item without a topic or title", modality
                 )
+                continue
             topics = samples_by_modality.setdefault(modality, [])
             if topic not in topics:
                 topics.append(topic)

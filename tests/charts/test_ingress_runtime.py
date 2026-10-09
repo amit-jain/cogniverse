@@ -18,6 +18,8 @@ import httpx
 import pytest
 import yaml
 
+from tests.utils.web_image import build_web_image, run_web_container
+
 REPO = Path(__file__).resolve().parents[2]
 CHART = REPO / "charts/cogniverse"
 TENANT = "prodfixclients:ingress"
@@ -117,7 +119,7 @@ def test_in_cluster_callers_address_the_runtime_without_the_public_prefix(profil
     documents = _documents(profile)
     assert _container_env(documents, "runtime")["COGNIVERSE_ROOT_PATH"] == "/api"
     assert (
-        _container_env(documents, "dashboard")["RUNTIME_URL"]
+        _container_env(documents, "web")["COGNIVERSE_RUNTIME_URL"]
         == "http://cogniverse-runtime:8000"
     )
 
@@ -180,7 +182,7 @@ def test_one_runtime_process_serves_the_public_prefix_and_the_bare_path(
 ):
     """Both entry points resolve every router and every mounted sub-app.
 
-    The ingress forwards ``/api/...`` unrewritten while the dashboard, the CLI
+    The ingress forwards ``/api/...`` unrewritten while the web client, the CLI
     and the e2e suite reach the Service on the bare path, so the same process
     answers both shapes of every route.
     """
@@ -358,10 +360,15 @@ def _proxy_config(ingress, ports, listen_port):
     return yaml.safe_dump({"http": {"routers": routers, "services": services}})
 
 
+@pytest.fixture(scope="module")
+def web_image():
+    return build_web_image()
+
+
 @pytest.fixture(params=["values.prod.yaml", "values.k3s.yaml"])
-def ingress_stack(request, tmp_path, a2a_redis_url):
+def ingress_stack(request, tmp_path, a2a_redis_url, web_image):
     ingress, env = _render(request.param)
-    runtime_port, dashboard_port, proxy_port = (_free_port() for _ in range(3))
+    runtime_port, web_port, proxy_port = (_free_port() for _ in range(3))
     rule = ingress["spec"]["rules"][0]
     controller = ingress["spec"]["ingressClassName"]
     config = tmp_path / ("nginx.conf" if controller == "nginx" else "traefik.yaml")
@@ -370,7 +377,7 @@ def ingress_stack(request, tmp_path, a2a_redis_url):
             ingress,
             {
                 "cogniverse-runtime": runtime_port,
-                "cogniverse-dashboard": dashboard_port,
+                "cogniverse-web": web_port,
             },
             proxy_port,
         )
@@ -393,23 +400,13 @@ def ingress_stack(request, tmp_path, a2a_redis_url):
             )
         )
         _wait_http(f"http://127.0.0.1:{runtime_port}/health/live", runtime)
-        dashboard = stack.enter_context(
-            _process(
-                [
-                    sys.executable,
-                    "-m",
-                    "streamlit",
-                    "run",
-                    "libs/dashboard/cogniverse_dashboard/app.py",
-                    f"--server.port={dashboard_port}",
-                    "--server.address=127.0.0.1",
-                    "--server.headless=true",
-                    "--browser.gatherUsageStats=false",
-                ],
-                tmp_path / "dashboard.log",
+        stack.enter_context(
+            run_web_container(
+                f"http://127.0.0.1:{runtime_port}",
+                web_port,
+                tag=web_image,
             )
         )
-        _wait_http(f"http://127.0.0.1:{dashboard_port}/", dashboard)
         name = f"cogniverse-ingress-test-{os.getpid()}-{proxy_port}"
         container_command = [
             "docker",
@@ -441,7 +438,13 @@ def ingress_stack(request, tmp_path, a2a_redis_url):
             url = f"http://127.0.0.1:{proxy_port}"
             headers = {"Host": rule["host"], "Authorization": "Bearer ingress-test-key"}
             _wait_http(url + "/", proxy, headers)
-            yield url, headers, runtime
+            yield (
+                url,
+                headers,
+                runtime,
+                f"http://127.0.0.1:{runtime_port}",
+                f"http://127.0.0.1:{web_port}",
+            )
         finally:
             removed = subprocess.run(
                 ["docker", "rm", "-f", name], capture_output=True, text=True, timeout=30
@@ -450,8 +453,8 @@ def ingress_stack(request, tmp_path, a2a_redis_url):
 
 
 @pytest.mark.asyncio
-async def test_ingress_serves_runtime_models_docs_and_dashboard(ingress_stack):
-    url, headers, _ = ingress_stack
+async def test_ingress_serves_runtime_models_docs_and_the_web_client(ingress_stack):
+    url, headers, _, _, web_url = ingress_stack
     async with httpx.AsyncClient(base_url=url, headers=headers) as client:
         response = await client.get("/api/health/live")
         assert response.status_code == 200
@@ -491,10 +494,26 @@ async def test_ingress_serves_runtime_models_docs_and_dashboard(ingress_stack):
         openapi = await client.get("/api/openapi.json")
         assert openapi.status_code == 200
         assert openapi.json()["servers"] == [{"url": "/api"}]
-        dashboard = await client.get("/")
-        assert dashboard.status_code == 200
-        assert "<title>Streamlit</title>" in dashboard.text
-        assert '<div id="root"></div>' in dashboard.text
+        page = await client.get("/")
+        assert page.status_code == 200
+        assert "<title>Cogniverse</title>" in page.text
+        assert '<div id="root"></div>' in page.text
+        health = await client.get("/healthz")
+        assert health.json() == {"status": "ok"}
+        # The web server's own API is outside the runtime's prefix, so the
+        # ingress hands it to the web server, which relays the runtime's agent
+        # list. This runtime has no agent registry wired and answers 500; the
+        # web server reports that, where the runtime itself would answer 404.
+        agents = await client.get("/ui-api/agents")
+        direct = httpx.get(f"{web_url}/ui-api/agents", timeout=10)
+        assert (agents.status_code, agents.json()) == (
+            direct.status_code,
+            direct.json(),
+        )
+        assert agents.status_code == 502
+        assert agents.json() == {
+            "error": "The Cogniverse runtime answered the agent list with HTTP 500."
+        }
 
 
 async def _subscriber_count(client, task, expected):
@@ -514,7 +533,7 @@ async def _subscriber_count(client, task, expected):
 async def test_ingress_disconnect_cancels_only_its_concurrent_subscription(
     ingress_stack,
 ):
-    url, headers, _ = ingress_stack
+    url, headers, *_ = ingress_stack
     ready = asyncio.Barrier(3)
     close_left, close_right = asyncio.Event(), asyncio.Event()
 
@@ -565,7 +584,7 @@ async def test_ingress_disconnect_cancels_only_its_concurrent_subscription(
 async def test_ingress_runtime_failure_breaks_stream_and_returns_gateway_error(
     ingress_stack,
 ):
-    url, headers, runtime = ingress_stack
+    url, headers, runtime, runtime_url, _ = ingress_stack
     async with httpx.AsyncClient(base_url=url, headers=headers, timeout=10) as client:
         async with client.stream("GET", "/api/events/workflows/fault") as response:
             assert response.status_code == 200
@@ -581,9 +600,14 @@ async def test_ingress_runtime_failure_breaks_stream_and_returns_gateway_error(
                     pass
         health = await client.get("/api/health/live")
         assert health.status_code == 502
-        dashboard = await client.get("/")
-        assert dashboard.status_code == 200
-        assert "<title>Streamlit</title>" in dashboard.text
+        page = await client.get("/")
+        assert page.status_code == 200
+        assert "<title>Cogniverse</title>" in page.text
+        agents = await client.get("/ui-api/agents")
+        assert agents.status_code == 502
+        assert agents.json() == {
+            "error": f"The Cogniverse runtime at {runtime_url} did not answer (TypeError)."
+        }
 
 
 async def _serve_runtime(port, a2a_redis_url):

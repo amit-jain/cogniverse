@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Alert, Panel, useAction, useLoad } from './common';
-import { runtimeJson, seg } from './http';
+import { ViewErrorBoundary } from './ErrorBoundary';
+import { failureDetail, runtimeJson, seg } from './http';
 import { LookbackSelect } from './metrics';
 import { TenantChooser } from './tenants';
 
@@ -32,6 +33,10 @@ interface Workflow {
 
 const QUALITY_LABELS = ['failed', 'poor', 'acceptable', 'good', 'excellent'];
 const PATTERNS = ['parallel', 'sequential', 'conditional', 'mixed'];
+const VERDICTS = ['Yes', 'No', 'Unsure'] as const;
+type Verdict = (typeof VERDICTS)[number];
+/** The most workflows the list route returns. */
+const MAX_WORKFLOWS = 500;
 
 /** The non-blank entries of ``text`` split on commas and line breaks. */
 export function splitList(text: string): string[] {
@@ -41,42 +46,65 @@ export function splitList(text: string): string[] {
     .filter(Boolean);
 }
 
+/** The loaded workflows with each review this page saved in place of the
+ * loaded one, which the telemetry backend may not serve yet. */
+export function withSavedReviews<T extends { span_id: string }>(loaded: T[], saved: Record<string, T>): T[] {
+  return loaded.map((workflow) => saved[workflow.span_id] ?? workflow);
+}
+
 function workflowsPath(tenant: string): string {
   return `/admin/tenant/${seg(tenant)}/orchestration-workflows`;
 }
 
 export function WorkflowReviewsView() {
+  return (
+    <ViewErrorBoundary view="Workflow reviews">
+      <WorkflowReviews />
+    </ViewErrorBoundary>
+  );
+}
+
+function WorkflowReviews() {
   const [tenant, setTenant] = useState('');
   const [lookback, setLookback] = useState(24);
+  const [limit, setLimit] = useState(50);
   const [reviewer, setReviewer] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
-  const [version, setVersion] = useState(0);
+  const [saved, setSaved] = useState<Record<string, Workflow>>({});
   const [notice, setNotice] = useState('');
   return (
     <div className="ops-view">
+      <p className="muted">
+        Review orchestration workflows to improve future routing and orchestration decisions. Your reviews become
+        ground truth for optimization.
+      </p>
       <TenantChooser
         action="Show workflows"
         onChoose={(chosen) => {
           setTenant(chosen);
           setSelected(null);
+          setSaved({});
           setNotice('');
         }}
       />
       {notice && <Alert tone="ok">{notice}</Alert>}
       {tenant && (
         <Workflows
-          key={`${tenant}-${lookback}-${version}`}
+          key={`${tenant}-${lookback}-${limit}`}
           tenant={tenant}
+          saved={saved}
           lookback={lookback}
           onLookback={setLookback}
+          limit={limit}
+          onLimit={setLimit}
           reviewer={reviewer}
           onReviewer={setReviewer}
           selected={selected}
           onSelect={setSelected}
-          onReviewed={(message) => {
-            setNotice(message);
+          onReviewed={(reviewed) => {
+            setNotice(`Saved the review of ${reviewed.workflow_id}: ${reviewed.review?.label}.`);
+            setSaved((previous) => ({ ...previous, [reviewed.span_id]: reviewed }));
             setSelected(null);
-            setVersion((n) => n + 1);
           }}
         />
       )}
@@ -86,8 +114,11 @@ export function WorkflowReviewsView() {
 
 function Workflows({
   tenant,
+  saved,
   lookback,
   onLookback,
+  limit,
+  onLimit,
   reviewer,
   onReviewer,
   selected,
@@ -95,37 +126,57 @@ function Workflows({
   onReviewed,
 }: {
   tenant: string;
+  saved: Record<string, Workflow>;
   lookback: number;
   onLookback: (hours: number) => void;
+  limit: number;
+  onLimit: (limit: number) => void;
   reviewer: string;
   onReviewer: (reviewer: string) => void;
   selected: string | null;
   onSelect: (spanId: string) => void;
-  onReviewed: (notice: string) => void;
+  onReviewed: (reviewed: Workflow) => void;
 }) {
   const workflows = useLoad(
     (signal) =>
-      runtimeJson<{ workflows: Workflow[] }>(`${workflowsPath(tenant)}?lookback_hours=${lookback}`, {
+      runtimeJson<{ workflows: Workflow[] }>(`${workflowsPath(tenant)}?lookback_hours=${lookback}&limit=${limit}`, {
         signal,
       }).then((body) => body.workflows),
-    [tenant, lookback],
+    [tenant, lookback, limit],
   );
-  const chosen = workflows.data?.find((workflow) => workflow.span_id === selected);
+  const shown = workflows.data && withSavedReviews(workflows.data, saved);
+  const chosen = shown?.find((workflow) => workflow.span_id === selected);
   return (
     <>
       <Panel title={`Workflows of ${tenant}`} actions={<button onClick={workflows.reload}>Refresh</button>}>
         <div className="inline-form">
           <LookbackSelect value={lookback} onChange={onLookback} />
           <label>
+            Max workflows
+            <select value={limit} onChange={(e) => onLimit(Number(e.target.value))}>
+              {[1, 5, 10, 20, 50, 100, 200, MAX_WORKFLOWS].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             Reviewer
             <input value={reviewer} onChange={(e) => onReviewer(e.target.value)} placeholder="you@example.com" />
           </label>
         </div>
         {workflows.error && <Alert>{workflows.error}</Alert>}
-        {workflows.data && workflows.data.length === 0 && (
+        {shown && shown.length === 0 && (
           <p className="muted">No orchestration workflows in this window.</p>
         )}
-        {workflows.data && workflows.data.length > 0 && (
+        {shown && shown.length > 0 && (
+          <p className="muted">
+            Found {shown.length} workflow{shown.length === 1 ? '' : 's'}
+            {shown.length === limit ? `, the newest ${limit}` : ''}.
+          </p>
+        )}
+        {shown && shown.length > 0 && (
           <table aria-label="Workflows">
             <thead>
               <tr>
@@ -140,7 +191,7 @@ function Workflows({
               </tr>
             </thead>
             <tbody>
-              {workflows.data.map((workflow) => (
+              {shown.map((workflow) => (
                 <tr key={workflow.span_id} className={workflow.span_id === selected ? 'selected' : undefined}>
                   <td>{new Date(workflow.start_time).toLocaleString()}</td>
                   <td>{workflow.query}</td>
@@ -178,11 +229,11 @@ function ReviewForm({
   tenant: string;
   workflow: Workflow;
   reviewer: string;
-  onReviewed: (notice: string) => void;
+  onReviewed: (reviewed: Workflow) => void;
 }) {
   const [label, setLabel] = useState('');
   const [score, setScore] = useState('');
-  const [patternOptimal, setPatternOptimal] = useState(true);
+  const [patternVerdict, setPatternVerdict] = useState<Verdict>('Yes');
   const [suggestedPattern, setSuggestedPattern] = useState('');
   const [patternFeedback, setPatternFeedback] = useState('');
   const [agentsCorrect, setAgentsCorrect] = useState(true);
@@ -195,7 +246,9 @@ function ReviewForm({
   const [wentWrong, setWentWrong] = useState('');
   const [notes, setNotes] = useState('');
   const action = useAction();
+  const [detail, setDetail] = useState<string | null>(null);
   const optional = (text: string) => (text.trim() ? text.trim() : null);
+  const suggestsPattern = patternVerdict === 'No';
   return (
     <Panel title={`Review ${workflow.workflow_id}`}>
       <dl className="facts">
@@ -217,6 +270,7 @@ function ReviewForm({
         aria-label={`Review of ${workflow.workflow_id}`}
         onSubmit={(e) => {
           e.preventDefault();
+          setDetail(null);
           action.run(async () => {
             if (!reviewer.trim()) throw new Error('Enter your name as the reviewer first.');
             const body = {
@@ -224,9 +278,9 @@ function ReviewForm({
               annotator: reviewer.trim(),
               quality_label: label,
               quality_score: Number(score),
-              pattern_is_optimal: patternOptimal,
-              suggested_pattern: patternOptimal ? null : optional(suggestedPattern),
-              pattern_feedback: patternOptimal ? null : optional(patternFeedback),
+              pattern_is_optimal: patternVerdict === 'Yes',
+              suggested_pattern: suggestsPattern ? optional(suggestedPattern) : null,
+              pattern_feedback: suggestsPattern ? optional(patternFeedback) : null,
               agents_are_correct: agentsCorrect,
               missing_agents: agentsCorrect ? [] : splitList(missing),
               unnecessary_agents: agentsCorrect ? [] : splitList(unnecessary),
@@ -237,11 +291,17 @@ function ReviewForm({
               what_went_wrong: optional(wentWrong),
               improvement_notes: optional(notes),
             };
-            const reviewed = await runtimeJson<Workflow>(
-              `${workflowsPath(tenant)}/${seg(workflow.span_id)}/annotation`,
-              { method: 'POST', body },
-            );
-            onReviewed(`Saved the review of ${reviewed.workflow_id}: ${reviewed.review?.label}.`);
+            try {
+              onReviewed(
+                await runtimeJson<Workflow>(`${workflowsPath(tenant)}/${seg(workflow.span_id)}/annotation`, {
+                  method: 'POST',
+                  body,
+                }),
+              );
+            } catch (error) {
+              setDetail(failureDetail(error));
+              throw error;
+            }
           });
         }}
       >
@@ -264,11 +324,21 @@ function ReviewForm({
             <input required type="number" min={0} max={1} step={0.05} value={score} onChange={(e) => setScore(e.target.value)} />
           </label>
         </div>
-        <label className="check">
-          <input type="checkbox" checked={patternOptimal} onChange={(e) => setPatternOptimal(e.target.checked)} />
-          The pattern was optimal
-        </label>
-        {!patternOptimal && (
+        <fieldset>
+          <legend>Was the pattern optimal?</legend>
+          {VERDICTS.map((verdict) => (
+            <label key={verdict} className="check">
+              <input
+                type="radio"
+                name="pattern-verdict"
+                checked={patternVerdict === verdict}
+                onChange={() => setPatternVerdict(verdict)}
+              />
+              {verdict}
+            </label>
+          ))}
+        </fieldset>
+        {suggestsPattern && (
           <div className="inline-form">
             <label>
               Suggested pattern
@@ -335,6 +405,12 @@ function ReviewForm({
           {action.pending ? 'Saving…' : 'Save review'}
         </button>
         {action.error && <Alert>{action.error}</Alert>}
+        {action.error && detail && (
+          <details open aria-label="Failure details">
+            <summary>Details</summary>
+            <pre className="traceback">{detail}</pre>
+          </details>
+        )}
       </form>
     </Panel>
   );

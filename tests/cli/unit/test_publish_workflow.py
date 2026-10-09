@@ -178,7 +178,7 @@ def test_dry_run_input_names_the_tag_ref_it_needs():
 
 def test_the_release_install_names_only_the_wheels():
     """The wheel install adds no pre-release flag or extra requirement, and the
-    runtime and dashboard READMEs document none for graphql-core."""
+    runtime README documents none for graphql-core."""
     steps = {step.get("name"): step for step in _workflow()["jobs"]["test"]["steps"]}
     [install] = [
         line.strip()
@@ -188,6 +188,6 @@ def test_the_release_install_names_only_the_wheels():
 
     assert "--prerelease" not in install
     assert install.endswith('"${wheels[@]}"')
-    for readme in ("runtime", "dashboard"):
+    for readme in ("runtime",):
         text = (WORKFLOW.parents[2] / "libs" / readme / "README.md").read_text()
         assert "graphql-core" not in text, readme

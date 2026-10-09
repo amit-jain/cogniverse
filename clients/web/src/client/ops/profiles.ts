@@ -55,7 +55,47 @@ export function fieldsFromTemplate(config: JsonObject): ProfileFields {
   };
 }
 
-/** The distinct non-empty values of ``key`` across shipped profiles, sorted. */
-export function shippedValues(templates: { config: JsonObject }[], key: string): string[] {
-  return [...new Set(templates.map((t) => text(t.config[key])).filter(Boolean))].sort();
+/** A blank profile's form: the shipped frame-based ColPali layout to edit
+ * from, with an empty model-specific block. */
+export const BLANK_PROFILE: ProfileFields = {
+  type: 'video',
+  description: '',
+  schemaName: '',
+  embeddingModel: '',
+  embeddingType: 'multi_vector',
+  modelLoader: 'colpali',
+  processType: '',
+  pipeline: jsonText({
+    extract_keyframes: true,
+    transcribe_audio: false,
+    generate_descriptions: false,
+    keyframe_fps: 0.5,
+  }),
+  strategies: jsonText({
+    segmentation: { class: 'FrameSegmentationStrategy', params: { fps: 0.5, max_frames: 100 } },
+    embedding: { class: 'MultiVectorEmbeddingStrategy', params: {} },
+  }),
+  schemaConfig: jsonText({
+    schema_name: 'video_colpali_smol500_mv_frame',
+    model_name: 'TomoroAI/tomoro-colqwen3-embed-4b',
+    embedding_dim: 320,
+    binary_dim: 40,
+  }),
+  modelSpecific: '{}',
+  extraConfig: '',
+};
+
+/** The values the create form's choice fields take, as the runtime lists
+ * them beside the shipped profiles. */
+export interface ProfileChoices {
+  profile_types: string[];
+  embedding_types: string[];
+  model_loaders: string[];
+  process_types: string[];
+}
+
+/** ``options`` with ``current`` first when it is set and not one of them,
+ * so a value a shipped profile carries stays selectable. */
+export function withCurrent(options: string[], current: string): string[] {
+  return current && !options.includes(current) ? [current, ...options] : options;
 }

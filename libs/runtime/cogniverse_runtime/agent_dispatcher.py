@@ -41,6 +41,8 @@ from cogniverse_core.common.tenant_utils import (
     require_tenant_id,
 )
 from cogniverse_core.conversation import (
+    RUN_CANCELLED_ROLE,
+    RUN_CANCELLED_TEXT,
     ConversationStore,
     is_transient_turn_write_error,
 )
@@ -244,6 +246,17 @@ async def _end_workflow_quietly(queue: RedisTaskEventQueue, event) -> None:
             exc,
             exc.__cause__,
         )
+
+
+class ConversationMemoryUnavailable(RuntimeError):
+    """No conversation memory is configured for the tenant."""
+
+
+def _still_saving(unsettled: List[int]) -> str:
+    return (
+        f"{len(unsettled)} earlier turn(s) still saving after "
+        f"{CONVERSATION_SAVE_TIMEOUT_S:.0f}s"
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -823,8 +836,8 @@ class AgentDispatcher:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         deps = GatewayDeps(gliner_inference_url=self._resolve_gliner_url())
-        # Seed GLiNER config from the tenant's routing config (dashboard-editable
-        # base values); the optimization artifact loaded below overrides the
+        # Seed GLiNER config from the tenant's routing config (UI-editable base
+        # values); the optimization artifact loaded below overrides the
         # fields it tunes, so tuned tenants keep their compiled thresholds.
         routing_cfg = self._config_manager.get_routing_config(tenant_id)
         deps.gliner_model_name = routing_cfg.gliner_model
@@ -1983,21 +1996,7 @@ class AgentDispatcher:
         carries under ``conversation``, so a caller can tell a context with no
         prior turns from one whose turns were not read.
         """
-        ledger = self._require_conversation_ledger()
-        unsettled = await ledger.wait_settled(
-            tenant_id,
-            context_id,
-            await ledger.pending(tenant_id, context_id),
-            CONVERSATION_SAVE_TIMEOUT_S,
-        )
-        if unsettled:
-            logger.warning(
-                "Conversation saves for context %s did not settle within "
-                "%.1fs; reading history without %d turn(s)",
-                context_id,
-                CONVERSATION_SAVE_TIMEOUT_S,
-                len(unsettled),
-            )
+        unsettled = await self._wait_for_conversation_saves(tenant_id, context_id)
 
         async def _load() -> List[Dict[str, str]]:
             store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
@@ -2023,15 +2022,113 @@ class AgentDispatcher:
             return ConversationHistory(
                 turns=turns,
                 state=CONVERSATION_HISTORY_INCOMPLETE,
-                reason=(
-                    f"{len(unsettled)} earlier turn(s) still saving after "
-                    f"{CONVERSATION_SAVE_TIMEOUT_S:.0f}s"
-                ),
+                reason=_still_saving(unsettled),
             )
         return ConversationHistory(turns=turns)
 
-    async def _schedule_conversation_save(
+    async def _wait_for_conversation_saves(
+        self, tenant_id: str, context_id: str
+    ) -> List[int]:
+        """Wait, within one save budget, for the context's turns still being
+        saved on any process; returns the positions that did not settle."""
+        ledger = self._require_conversation_ledger()
+        unsettled = await ledger.wait_settled(
+            tenant_id,
+            context_id,
+            await ledger.pending(tenant_id, context_id),
+            CONVERSATION_SAVE_TIMEOUT_S,
+        )
+        if unsettled:
+            logger.warning(
+                "Conversation saves for context %s did not settle within "
+                "%.1fs; reading history without %d turn(s)",
+                context_id,
+                CONVERSATION_SAVE_TIMEOUT_S,
+                len(unsettled),
+            )
+        return unsettled
+
+    async def read_conversation(
+        self, tenant_id: str, context_id: str
+    ) -> ConversationHistory:
+        """Every turn of a context a person is shown, oldest first: its user
+        and assistant turns and each cancelled run's ``run_cancelled`` marker.
+
+        Waits for the context's pending saves as a dispatch does. The state
+        is ``incomplete`` when a save is still pending after the budget or a
+        turn of the context was lost and not recovered.
+
+        Raises:
+            SessionStateUnavailable: the ledger is missing or unreachable.
+            ConversationMemoryUnavailable: no conversation memory is
+                configured for the tenant.
+            Exception: the store read failed or exceeded
+                CONVERSATION_LOAD_TIMEOUT_S, with the failing exception.
+        """
+        unsettled = await self._wait_for_conversation_saves(tenant_id, context_id)
+
+        async def _read() -> List[Dict[str, str]]:
+            store = await asyncio.to_thread(self._build_conversation_store, tenant_id)
+            if store is None:
+                raise ConversationMemoryUnavailable(
+                    f"no conversation memory is configured for tenant {tenant_id}"
+                )
+            return await asyncio.to_thread(store.get_thread, context_id)
+
+        turns = await asyncio.wait_for(_read(), timeout=CONVERSATION_LOAD_TIMEOUT_S)
+        if unsettled:
+            return ConversationHistory(
+                turns=turns,
+                state=CONVERSATION_HISTORY_INCOMPLETE,
+                reason=_still_saving(unsettled),
+            )
+        lost = await self._require_conversation_ledger().failure(tenant_id, context_id)
+        if lost is not None:
+            return ConversationHistory(
+                turns=turns,
+                state=CONVERSATION_HISTORY_INCOMPLETE,
+                reason=f"a turn was not saved ({lost.error_type})",
+            )
+        return ConversationHistory(turns=turns)
+
+    async def record_conversation_turn(
         self, tenant_id: str, context_id: str, query: str, result: Dict[str, Any]
+    ) -> "asyncio.Task[None]":
+        """Save one turn its caller ran with its own history.
+
+        The turn takes its position in the context before this returns and is
+        written in the background, exactly as a server-managed turn is; a
+        ``result`` without an answer saves the user turn alone.
+
+        Raises:
+            SessionStateUnavailable: the ledger is missing or unreachable.
+        """
+        return await self._schedule_conversation_save(
+            tenant_id, context_id, query, result
+        )
+
+    async def record_cancelled_turn(
+        self, tenant_id: str, context_id: str, query: str
+    ) -> "asyncio.Task[None]":
+        """Save the user message of a run cancelled before its reply, with a
+        ``run_cancelled`` marker in the reply's place, as
+        :meth:`record_conversation_turn` saves an answered turn.
+
+        Raises:
+            SessionStateUnavailable: the ledger is missing or unreachable.
+        """
+        return await self._schedule_conversation_save(
+            tenant_id, context_id, query, {}, cancelled=True
+        )
+
+    async def _schedule_conversation_save(
+        self,
+        tenant_id: str,
+        context_id: str,
+        query: str,
+        result: Dict[str, Any],
+        *,
+        cancelled: bool = False,
     ) -> "asyncio.Task[None]":
         """Give this turn its position, then persist it in the background.
 
@@ -2046,7 +2143,13 @@ class AgentDispatcher:
         position = await ledger.accept(tenant_id, context_id)
         task = self._spawn_background(
             self._save_conversation_turns(
-                ledger, tenant_id, context_id, query, result, position
+                ledger,
+                tenant_id,
+                context_id,
+                query,
+                result,
+                position,
+                cancelled=cancelled,
             )
         )
         self._conversation_saves.add(task)
@@ -2107,6 +2210,8 @@ class AgentDispatcher:
         query: str,
         result: Dict[str, Any],
         position: int,
+        *,
+        cancelled: bool = False,
     ) -> None:
         """Append the user + assistant turns off the event loop, time-bounded.
 
@@ -2131,7 +2236,8 @@ class AgentDispatcher:
         same text every dispatch consumer renders. An envelope with no answer
         (an error, or a turn :meth:`_stamp_answer` could not extract) persists
         the user turn alone, so history never carries text the assistant did
-        not say.
+        not say. A ``cancelled`` turn stores the user turn and a
+        ``run_cancelled`` marker in the reply's place.
         """
         answer = result.get("answer")
         assistant_text = answer if isinstance(answer, str) else ""
@@ -2147,6 +2253,16 @@ class AgentDispatcher:
             await self._append_conversation_turn(
                 store, context_id, "user", query, position, deadline
             )
+            if cancelled:
+                await self._append_conversation_turn(
+                    store,
+                    context_id,
+                    RUN_CANCELLED_ROLE,
+                    RUN_CANCELLED_TEXT,
+                    position + 1,
+                    deadline,
+                )
+                return
             if not assistant_text:
                 return
             try:
@@ -2785,6 +2901,9 @@ class AgentDispatcher:
         agent = agent_cls(deps=deps_cls(**deps_kwargs), **collaborators)
         if agent._config_manager is None:
             agent.bind_config_manager(self._config_manager)
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        agent.telemetry_manager = get_telemetry_manager()
         return agent, typed_input_from_context(
             input_cls, query=query, tenant_id=tenant_id, context=context
         )
@@ -2873,12 +2992,13 @@ class AgentDispatcher:
 
         result_list = output.results
         result_count = len(result_list)
-        effective_query = output.enhanced_query or resolved_query
 
+        # The reply names the question as the caller asked it; the rewrite the
+        # search ran is reported under query_rewrite.
         if result_count > 0:
-            message = f"Found {result_count} results for '{effective_query}'"
+            message = f"Found {result_count} results for '{query}'"
         else:
-            message = f"No results found for '{effective_query}'"
+            message = f"No results found for '{query}'"
 
         response: Dict[str, Any] = {
             "status": "success",
@@ -2920,10 +3040,15 @@ class AgentDispatcher:
         the agent resolves its LM endpoint and builds its DSPy modules. Callers
         on the event loop run it in a worker thread.
         """
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
         deps = deps_cls(
             tenant_id=tenant_id, **self._agent_behavior_kwargs(tenant_id, agent_name)
         )
-        return agent_cls(deps=deps, config_manager=self._config_manager)
+        agent = agent_cls(deps=deps, config_manager=self._config_manager)
+        # Each run is traced in the agent's process span.
+        agent.telemetry_manager = get_telemetry_manager()
+        return agent
 
     def _agent_behavior_kwargs(self, tenant_id: str, agent_name: str) -> Dict[str, Any]:
         """Per-tenant thinking/visual toggles for an answer agent's Deps.
@@ -3748,6 +3873,7 @@ class AgentDispatcher:
         from cogniverse_agents.summarizer_agent import (
             SummarizerAgent,
             SummarizerDeps,
+            SummarizerInput,
             SummaryRequest,
         )
 
@@ -3784,7 +3910,8 @@ class AgentDispatcher:
             search_results=grounding.hits,
             **request_kwargs,
         )
-        result = await agent.summarize(request)
+        with agent.process_span(SummarizerInput(query=query, tenant_id=tenant_id)):
+            result = await agent.summarize(request)
 
         return {
             "status": "success",
@@ -4095,7 +4222,9 @@ class AgentDispatcher:
         from cogniverse_agents.document_agent import (
             DocumentAgent,
             DocumentAgentDeps,
+            DocumentSearchInput,
         )
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
         from cogniverse_runtime.admin.tenant_manager import get_backend
 
         # Tenant schemas deploy on first ingest, so a tenant that ingested
@@ -4116,19 +4245,25 @@ class AgentDispatcher:
             deployed_document_schemas=tuple(deployed_document_schemas),
         )
         agent = DocumentAgent(deps=deps)
+        # The search runs in the agent's process span, whose id the envelope
+        # carries so a client can rate the hits.
+        agent.telemetry_manager = get_telemetry_manager()
         await asyncio.to_thread(
             self._init_agent_memory, agent, "document_agent", tenant_id
         )
 
-        results = await agent.search_documents(query=query, limit=top_k)
+        output = await agent.process(
+            DocumentSearchInput(query=query, limit=top_k, tenant_id=tenant_id)
+        )
 
-        result_list = [r.model_dump() for r in results]
+        result_list = [r.model_dump() for r in output.results]
         return {
             "status": "success",
             "agent": "document_agent",
             "message": f"Found {len(result_list)} documents for '{query}'",
             "results_count": len(result_list),
             "results": result_list,
+            "span_id": output.span_id,
         }
 
     async def _execute_deep_research_task(
@@ -4165,6 +4300,11 @@ class AgentDispatcher:
                 agent = DeepResearchAgent(
                     deps=deps, search_fn=search_fn, config_manager=self._config_manager
                 )
+                from cogniverse_foundation.telemetry.manager import (
+                    get_telemetry_manager,
+                )
+
+                agent.telemetry_manager = get_telemetry_manager()
                 await asyncio.to_thread(
                     self._init_agent_memory, agent, "deep_research_agent", tenant_id
                 )

@@ -250,36 +250,20 @@ semanticRouter:
       type: NodePort
       nodePort: 28081
 
-dashboard:
-  replicaCount: 1
-  backend: cpu
-  imagesByBackend:
-    cpu:
-      repository: cogniverse/dashboard-cpu
-      tag: "0.1.0-dev"
-      pullPolicy: Never
-    cuda:
-      repository: cogniverse/dashboard-cuda
-      tag: "0.1.0-dev"
-      pullPolicy: Never
-    rocm:
-      repository: cogniverse/dashboard-rocm
-      tag: "0.1.0-dev"
-      pullPolicy: Never
+web:
+  image:
+    repository: cogniverse/web
+    tag: "0.1.0-dev"
+    pullPolicy: Never
   service:
     type: NodePort
-  resources:
-    requests:
-      cpu: "500m"
-      memory: "4Gi"
-    limits:
-      cpu: "2"
-      memory: "4Gi"
 
 phoenix:
   replicaCount: 1
   service:
     type: NodePort
+  # The NodePort `cogniverse up` publishes on the host.
+  uiUrl: "http://localhost:26006"
   persistence:
     storageClass: "local-path"
     size: "10Gi"
@@ -330,8 +314,8 @@ ingress:
           port: 8000
         - path: /
           pathType: Prefix
-          service: dashboard
-          port: 8501
+          service: web
+          port: 4000
   tls: []
 
 config:
@@ -340,8 +324,8 @@ config:
       name: "Default Tenant"
 
 initJobs:
-  # Post-install hook: deploys config.defaultProfiles.video's schema for each
-  # config.tenants entry once the runtime is healthy.
+  # Post-install hook: registers each config.tenants entry and deploys
+  # config.defaultProfiles.video's schema for it once the runtime is healthy.
   schemaDeployment:
     enabled: true
   modelPulling:

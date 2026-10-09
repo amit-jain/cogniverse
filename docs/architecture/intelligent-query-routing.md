@@ -198,7 +198,7 @@ Routing and orchestration quality is improved offline, not inline with the per-q
 | `run_gateway_thresholds_optimization` | `cogniverse.gateway` | `GatewayAgent.fast_path_confidence_threshold`, recalibrated deterministically from classification accuracy (`_compute_gateway_thresholds`) — not a DSPy signature compile |
 | `run_workflow_optimization` | `cogniverse.orchestration` | Workflow templates + agent performance profiles, via `OrchestrationEvaluator` extracting `WorkflowExecution` records and feeding `WorkflowIntelligence` — deterministic template mining, not DSPy prompt compilation |
 
-None of these jobs compile `ComposableQueryAnalysisModule`, `dspy_relationship_router.py`'s modules, or `AdaptiveThresholdSignature`. `BootstrapFewShot` is the only DSPy teleprompter actually instantiated anywhere in the codebase — `dspy.SIMBA`, `dspy.GEPA`, and `dspy.MIPROv2` appear only in docstrings and dashboard UI copy (e.g. the optimization tab's "Auto DSPy Optimizer Selection: GEPA/Bootstrap/SIMBA/MIPRO" description), not as instantiated optimizers. GRPO (Group Relative Policy Optimization) is likewise referenced in the dashboard's optimization tab as a candidate future technique, not an implemented optimizer.
+None of these jobs compile `ComposableQueryAnalysisModule`, `dspy_relationship_router.py`'s modules, or `AdaptiveThresholdSignature`. `BootstrapFewShot` is the only DSPy teleprompter actually instantiated anywhere in the codebase — `dspy.SIMBA`, `dspy.GEPA`, and `dspy.MIPROv2` appear only in docstrings, not as instantiated optimizers.
 
 See [Evaluation & Optimization Loop](./evaluation-optimization-loop.md) for the golden-set-driven prompt optimization pipeline that separately re-optimizes search/summarizer/report-generation agents via quality-monitor triggers.
 
@@ -258,7 +258,7 @@ When `GatewayAgent` classifies a query as `complexity="complex"`:
 1. `GatewayAgent._process_impl()` returns `complexity="complex"` (triggered by any one of the six signals below, via `_is_complex`)
 2. `_execute_orchestration_task` instantiates `OrchestratorAgent` with the `AgentRegistry` and `ConfigManager`
 3. `OrchestratorAgent._process_impl()` plans a workflow using DSPy, executes agents via A2A HTTP, and aggregates results
-4. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the dashboard's Orchestration tab
+4. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the web client's Workflow reviews view
 
 ### Complexity Classification
 
@@ -277,7 +277,7 @@ When `GatewayAgent` classifies a query as `complexity="complex"`:
 
 ```mermaid
 sequenceDiagram
-    participant U as User / Dashboard
+    participant U as User / Web client
     participant O as OrchestratorAgent
     participant WP as DSPy OrchestrationModule
     participant TS as Topological Sort

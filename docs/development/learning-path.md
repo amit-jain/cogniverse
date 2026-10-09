@@ -12,13 +12,12 @@
 
 ## Dependency Graph
 
-13 packages in the UV workspace. Arrows point from a package to what it depends on.
+12 packages in the UV workspace. Arrows point from a package to what it depends on.
 
 ```mermaid
 flowchart TD
     subgraph APP["Application Layer"]
         runtime["cogniverse-runtime"]
-        dashboard["cogniverse-dashboard"]
         finetuning["cogniverse-finetuning"]
     end
 
@@ -48,12 +47,6 @@ flowchart TD
     runtime --> core
     runtime -.->|optional| vespa
     runtime -.->|optional| agents
-    dashboard --> sdk
-    dashboard --> core
-    dashboard --> agents
-    dashboard --> evaluation
-    dashboard --> vespa
-    dashboard --> telemetry
     finetuning --> sdk
     finetuning --> core
     finetuning --> agents
@@ -85,7 +78,7 @@ flowchart TD
     classDef coreLayer fill:#81d4fa,stroke:#0288d1,color:#000
     classDef foundLayer fill:#b0bec5,stroke:#546e7a,color:#000
 
-    class runtime,dashboard,finetuning appLayer
+    class runtime,finetuning appLayer
     class cli,messaging toolLayer
     class agents,vespa,synthetic implLayer
     class core,evaluation,telemetry coreLayer
@@ -219,17 +212,16 @@ See [modules/agents.md](../modules/agents.md) for the complete roster with capab
 
 ---
 
-### Step 8: Runtime & Dashboard (Days 17-20)
+### Step 8: Runtime & Web Client (Days 17-20)
 
-**Packages**: `cogniverse-runtime`, `cogniverse-dashboard`
+**Packages**: `cogniverse-runtime`
 
-**Documentation**: [modules/runtime.md](../modules/runtime.md) | [modules/dashboard.md](../modules/dashboard.md)
+**Documentation**: [modules/runtime.md](../modules/runtime.md) | [modules/web-client.md](../modules/web-client.md)
 
 **Key Files**:
 
 - `libs/runtime/cogniverse_runtime/main.py` — FastAPI server
 - `libs/runtime/cogniverse_runtime/ingestion/pipeline.py` — Video ingestion
-- `libs/dashboard/cogniverse_dashboard/app.py` — Streamlit dashboard
 
 ---
 
@@ -358,11 +350,11 @@ Cross-cutting track for the memory/provenance/trust stack and the agents that co
 ### Exercise 2: Trace an Agent Query (A2A Pipeline)
 1. Start: User query to OrchestratorAgent `/tasks/send`
 2. Follow: DSPy planning → A2A dispatch (QueryEnhancement → ProfileSelection → Search) → Result aggregation
-3. Layers: dashboard → orchestrator → agents (via A2A HTTP) → SearchService → vespa
+3. Layers: web client → orchestrator → agents (via A2A HTTP) → SearchService → vespa
 4. Key: `tenant_id` and `session_id` flow per-request through every A2A call
 
 ### Exercise 3: Understand Config Overlay
-1. Start: `ConfigManager.get_backend_config(tenant_id)` — `service` defaults to `"backend"` (same default used by the runtime admin API and the dashboard)
+1. Start: `ConfigManager.get_backend_config(tenant_id)` — `service` defaults to `"backend"` (same default used by the runtime admin API)
 2. Follow: system base (`backend` section of `configs/config.json`) → tenant overrides fetched via `ConfigManager.get_backend_config` → deep-merged per-profile in `ConfigUtils._ensure_backend_config` → profile lookup via `ConfigManager.get_backend_profile`
 3. Files: `foundation/config/manager.py` → `foundation/config/utils.py` (`ConfigUtils._ensure_backend_config`) → `foundation/config/unified_config.py` (`BackendConfig`, `BackendProfileConfig`)
 

@@ -1,0 +1,114 @@
+{{- if .Values.web.enabled }}
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- $runtimeUrl := .Values.web.runtimeUrl | default (printf "http://%s-runtime:%v" $fullName .Values.runtime.service.port) -}}
+{{- range $name := list "COGNIVERSE_RUNTIME_URL" "HOST" "PORT" }}
+{{- if hasKey $.Values.web.env $name }}
+{{- fail (printf "web.env.%s is set by the chart; use web.runtimeUrl or web.service.port" $name) }}
+{{- end }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-web
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+      - name: web
+        image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+        imagePullPolicy: {{ .Values.web.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.web.service.port }}
+        env:
+        - name: COGNIVERSE_RUNTIME_URL
+          value: {{ $runtimeUrl | quote }}
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: {{ .Values.web.service.port | quote }}
+        {{- range $key, $value := .Values.web.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        {{- with .Values.web.envFrom }}
+        envFrom:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.web.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.web.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.web.resources | nindent 10 }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      {{- with .Values.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-web
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  {{- with .Values.web.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.web.service.type }}
+  ports:
+  - port: {{ .Values.web.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+    {{- if eq .Values.web.service.type "NodePort" }}
+    nodePort: {{ .Values.web.service.nodePort }}
+    {{- end }}
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+{{- end }}

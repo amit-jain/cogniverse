@@ -4,7 +4,7 @@ The probe must ACTUALLY check the OTLP collector is reachable. Emitting a span
 proved nothing — TelemetryManager.span() swallows tracer/export errors and
 yields a NoOpSpan, so the old span-based probe never raised and always logged
 "OK" even with Phoenix down, so TELEMETRY_REQUIRED=true never blocked startup
-and dashboards silently went empty. These drive the probe against REAL sockets:
+and trace views silently went empty. These drive the probe against REAL sockets:
 a live listener (reachable) and a closed port (unreachable).
 """
 

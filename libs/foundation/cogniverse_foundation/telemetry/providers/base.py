@@ -10,6 +10,7 @@ import logging
 import weakref
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncIterator, Dict, Generator, List, Optional, Sequence
 
@@ -101,6 +102,12 @@ class TraceStore(ABC):
         Returns:
             Span data as dictionary, None if not found
         """
+        pass
+
+    @abstractmethod
+    async def span_projects(self, span_ids: Sequence[str]) -> Dict[str, Optional[str]]:
+        """The name of the project that holds each of ``span_ids``, whichever
+        project that is, or None for a span the backend does not hold."""
         pass
 
 
@@ -242,6 +249,49 @@ class DatasetReplaceRestoreFailedError(RuntimeError):
         )
 
 
+# The dataset metadata key naming the tenant that owns a dataset.
+DATASET_TENANT_KEY = "tenant_id"
+
+# The optimization artifacts a tenant keeps in the dataset store (prompts,
+# demonstrations, experiment rows, model and config blobs) are datasets named
+# ``{ARTIFACT_DATASET_PREFIX}{kind}-{tenant_id}-{key}``, ``kind`` one word.
+ARTIFACT_DATASET_PREFIX = "dspy-"
+
+
+def artifact_dataset_name(kind: str, tenant_id: str, key: str) -> str:
+    """The name of ``tenant_id``'s artifact dataset ``kind``/``key``."""
+    if not kind or "-" in kind:
+        raise ValueError(f"artifact kind must be one word without '-', got {kind!r}")
+    return f"{ARTIFACT_DATASET_PREFIX}{kind}-{tenant_id}-{key}"
+
+
+def is_artifact_dataset(name: str, tenant_id: str) -> bool:
+    """Whether ``name`` is one of ``tenant_id``'s artifact datasets, as
+    ``artifact_dataset_name`` names them."""
+    if not name.startswith(ARTIFACT_DATASET_PREFIX):
+        return False
+    kind, sep, rest = name[len(ARTIFACT_DATASET_PREFIX) :].partition("-")
+    return bool(kind) and bool(sep) and rest.startswith(f"{tenant_id}-")
+
+
+@dataclass(frozen=True)
+class DatasetSummary:
+    """One stored dataset as a listing describes it.
+
+    ``tenant_id`` is the owning tenant recorded when the dataset was created
+    (``create_dataset`` metadata ``tenant_id``), or None for a dataset created
+    without one.
+    """
+
+    id: str
+    name: str
+    example_count: int
+    created_at: datetime
+    description: str
+    tenant_id: Optional[str]
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
 class DatasetStore(ABC):
     """
     Manage training datasets.
@@ -259,12 +309,24 @@ class DatasetStore(ABC):
         Args:
             name: Dataset name
             data: DataFrame with dataset records
-            metadata: Optional metadata
+            metadata: Optional metadata. ``tenant_id`` names the tenant that
+                owns the dataset; it is recorded on the dataset and reported
+                by ``describe_datasets``.
 
         Returns:
             Dataset identifier
         """
         pass
+
+    async def describe_datasets(self) -> List[DatasetSummary]:
+        """Every stored dataset, newest first.
+
+        Raises:
+            DatasetStoreUnavailableError: The store could not answer.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support describe_datasets"
+        )
 
     @abstractmethod
     async def get_dataset(self, name: str) -> pd.DataFrame:
@@ -297,6 +359,20 @@ class DatasetStore(ABC):
 
         Raises:
             ValueError: If the dataset does not exist
+        """
+        pass
+
+    @abstractmethod
+    async def list_datasets(self) -> List[Dict[str, Any]]:
+        """
+        List the store's datasets.
+
+        Returns:
+            One dict per dataset with ``name``, ``example_count``,
+            ``created_at`` and ``description``.
+
+        Raises:
+            DatasetStoreUnavailableError: If the store could not answer.
         """
         pass
 
@@ -506,6 +582,33 @@ class TelemetryProvider(ABC):
         request is the event loop; importing a backend's exporter stack
         there holds the loop. Startup calls this first. Providers whose
         span export imports nothing lazily keep this default.
+        """
+
+    @abstractmethod
+    async def list_projects(self, name_contains: str) -> List[str]:
+        """Names of the backend's projects whose name contains
+        ``name_contains``.
+
+        Raises:
+            Exception: the backend did not answer; never an empty list.
+        """
+
+    @abstractmethod
+    async def project_id(self, name: str) -> Optional[str]:
+        """The backend's id for the project ``name`` (the one its UI
+        addresses the project by), or None when no such project exists.
+
+        Raises:
+            Exception: the backend did not answer.
+        """
+
+    @abstractmethod
+    async def delete_project(self, name: str) -> bool:
+        """Delete the project ``name`` and its spans. Returns False when no
+        such project exists.
+
+        Raises:
+            Exception: the backend did not answer or refused the delete.
         """
 
     @property

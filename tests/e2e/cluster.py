@@ -23,7 +23,7 @@ E2E_HOST_PORTS = {
     33080: 8080,  # vespa http
     33071: 19071,  # vespa config
     33000: 28000,  # runtime
-    33501: 28501,  # dashboard
+    33400: 28400,  # web
     33006: 26006,  # phoenix ui
     33317: 4317,  # otel grpc
     33434: 11434,  # llm (ollama-compat)
@@ -42,6 +42,9 @@ E2E_HOST_PORTS = {
     33911: 29011,
     33912: 29012,  # video_embed (X-CLIP)
 }
+
+# The Phoenix UI a browser on the host opens; the chart's phoenix.uiUrl.
+E2E_PHOENIX_UI_URL = "http://localhost:33006"
 
 # k3d NodePort URLs — defined in charts/cogniverse/values.yaml
 RUNTIME = "http://localhost:33000"  # runtime.service.nodePort

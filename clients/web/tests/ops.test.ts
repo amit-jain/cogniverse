@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { queueSummary } from '../src/client/ops/AnnotationsView';
-import { changedCorrections } from '../src/client/ops/ApprovalsView';
+import {
+  changedCorrections,
+  confidenceBars,
+  entityLabels,
+  fieldKind,
+  fieldText,
+  generationMetadata,
+  parseField,
+  regenerable,
+  retryCount,
+  selfConsistencyLines,
+  type ReviewedItem,
+} from '../src/client/ops/ApprovalsView';
+import { ingestOutcome, TERMINAL } from '../src/client/ops/IngestionView';
 import { jsonText, parseJsonObject, sameJson } from '../src/client/ops/forms';
-import { splitList } from '../src/client/ops/WorkflowReviewsView';
+import { splitList, withSavedReviews } from '../src/client/ops/WorkflowReviewsView';
 import { matchingPoints } from '../src/client/ops/EmbeddingAtlasView';
 import { errorMessage } from '../src/client/ops/http';
 import { delta, percent } from '../src/client/ops/metrics';
@@ -66,8 +79,15 @@ describe('routes', () => {
       { kind: 'agent' as const, name: 'search_agent' },
       { kind: 'ops' as const, id: 'tenants' },
       { kind: 'agent' as const, name: 'a b/c' },
+      { kind: 'agent' as const, name: 'search_agent', thread: '4b5c6839-4307-44eb-a16f-cac030c76898' },
+      { kind: 'agent' as const, name: 'a b/c', thread: 'x/y z' },
     ])
       expect(parseRoute(routeHash(route))).toEqual(route);
+  });
+
+  it("puts an agent's thread after its name", () => {
+    expect(routeHash({ kind: 'agent', name: 'search_agent', thread: 't-1' })).toBe('#/agents/search_agent/t-1');
+    expect(parseRoute('#/agents/search_agent/t-1')).toEqual({ kind: 'agent', name: 'search_agent', thread: 't-1' });
   });
 
   it('treats an unknown or empty hash as the default agent', () => {
@@ -193,5 +213,168 @@ describe('matchingPoints', () => {
     expect(matchingPoints(points, 'CARVE').map((p) => p.id)).toEqual(['a']);
     expect(matchingPoints(points, 'volcanoes.txt').map((p) => p.id)).toEqual(['b']);
     expect(matchingPoints(points, 'lava')).toEqual([]);
+  });
+});
+
+describe('ingestOutcome', () => {
+  it('treats a cancelled ingest as finished, with its reason', () => {
+    expect([...TERMINAL].sort()).toEqual(['cancelled', 'complete', 'failed']);
+    expect(ingestOutcome({ state: 'cancelled', reason: 'tenant deleted' }, false)).toEqual({
+      text: 'Cancelled: tenant deleted',
+      failed: true,
+    });
+    expect(ingestOutcome({ state: 'cancelled' }, false)).toEqual({ text: 'Cancelled: no reason given', failed: true });
+  });
+
+  it('reports a completion that fed no documents as a failure', () => {
+    expect(
+      ingestOutcome({ state: 'complete', result: { video_id: 'v1', chunks: 2, documents_fed: 0 } }, false),
+    ).toEqual({ text: 'v1: completed without feeding any documents.', failed: true });
+    expect(ingestOutcome({ state: 'complete', result: { video_id: 'v1', chunks: 2 } }, false)).toEqual({
+      text: 'v1: completed without reporting the documents it fed.',
+      failed: true,
+    });
+    expect(
+      ingestOutcome({ state: 'complete', result: { video_id: 'v1', documents_fed: '3' as unknown as number } }, false),
+    ).toEqual({ text: 'v1: completed with an invalid documents_fed ("3").', failed: true });
+  });
+
+  it('reads a re-upload of ingested bytes without counts as already ingested', () => {
+    expect(ingestOutcome({ state: 'complete', result: { video_id: 'v1' } }, true)).toEqual({
+      text: 'v1: already ingested; nothing was fed again.',
+      failed: false,
+    });
+  });
+
+  it('keeps a fed completion, a failure and a retry as they were', () => {
+    expect(
+      ingestOutcome(
+        { state: 'complete', result: { video_id: 'v1', chunks: 3, documents_fed: 3, graph_nodes: 4, graph_edges: 2 } },
+        false,
+      ),
+    ).toEqual({ text: 'v1: 3 chunks, 3 documents fed. Graph: 4 nodes, 2 edges.', failed: false });
+    expect(ingestOutcome({ state: 'failed', error_type: 'IngestPipelineError', error: 'no frames' }, false)).toEqual({
+      text: 'IngestPipelineError: no frames',
+      failed: true,
+    });
+    expect(ingestOutcome({ state: 'running' }, false)).toEqual({ text: '', failed: false });
+  });
+});
+
+describe('selfConsistencyLines', () => {
+  it('gives one line per sampled mention with its agreement and review flag', () => {
+    expect(
+      selfConsistencyLines({
+        self_consistency: {
+          samples: 5,
+          entities: [
+            { text: 'gradient descent', type: 'CONCEPT', agreement: 0.6, needs_review: true },
+            { text: 'lecture', type: 'MEDIA', agreement: 1, needs_review: false },
+          ],
+        },
+      }),
+    ).toEqual([
+      'Agreement (5 samples): gradient descent (CONCEPT) 0.60 — needs review',
+      'Agreement (5 samples): lecture (MEDIA) 1.00',
+    ]);
+    expect(selfConsistencyLines({ agent_type: 'routing' })).toEqual([]);
+  });
+});
+
+describe('review item details', () => {
+  const data = {
+    query: 'find the lecture',
+    entities: [{ text: 'gradient descent', type: 'CONCEPT' }, { text: 'lecture', type: 'MEDIA' }],
+    metadata: { _generation_metadata: { retry_count: 2, reasoning: 'two tries' } },
+  };
+
+  it('reads entities, retries and the generation record from the example', () => {
+    expect(entityLabels(data)).toEqual(['gradient descent (CONCEPT)', 'lecture (MEDIA)']);
+    expect(retryCount(data)).toBe(2);
+    expect(generationMetadata(data)).toEqual({ retry_count: 2, reasoning: 'two tries' });
+  });
+
+  it('reads an example without them as none, zero retries and no record', () => {
+    expect(entityLabels({ query: 'q' })).toEqual([]);
+    expect(retryCount({ query: 'q', metadata: {} })).toBe(0);
+    expect(generationMetadata({ query: 'q' })).toBe(undefined);
+  });
+});
+
+describe('corrections editor fields', () => {
+  it('edits each value as its kind and parses the text back to the same value', () => {
+    const template = {
+      chosen_agent: 'video_search_agent',
+      task_count: 2,
+      success: true,
+      agent_sequence: ['a', 'b'],
+      metadata: { k: 1 },
+    };
+    expect(Object.values(template).map(fieldKind)).toEqual(['text', 'number', 'boolean', 'json', 'json']);
+    for (const [name, value] of Object.entries(template))
+      expect(parseField(name, fieldKind(value), fieldText(value))).toEqual(value);
+  });
+
+  it('names the field whose text is not of its kind', () => {
+    expect(() => parseField('task_count', 'number', 'three')).toThrow(new Error('task_count must be a number.'));
+    expect(() => parseField('task_count', 'number', ' ')).toThrow(new Error('task_count must be a number.'));
+    expect(() => parseField('agent_sequence', 'json', '[a')).toThrow(new Error('agent_sequence is not valid JSON.'));
+  });
+});
+
+describe('review history', () => {
+  const rejected = (schema: string | null, replacement: string | null): ReviewedItem => ({
+    item_id: 'i1',
+    batch_id: 'b1',
+    status: 'rejected',
+    confidence: 0.3,
+    query: 'q',
+    data: {},
+    created_at: null,
+    reviewed_at: null,
+    schema_name: schema,
+    reviewer: 'r',
+    feedback: 'f',
+    corrections: {},
+    replacement_id: replacement,
+    replacement_status: replacement ? 'regenerated' : null,
+  });
+
+  it('offers regeneration only for a schema item nothing replaced', () => {
+    expect(regenerable(rejected('WorkflowExecutionSchema', null))).toBe(true);
+    expect(regenerable(rejected('WorkflowExecutionSchema', 'i2'))).toBe(false);
+    expect(regenerable(rejected(null, null))).toBe(false);
+  });
+
+  it('charts the mean confidence of each group that holds items, in group order', () => {
+    expect(
+      confidenceBars({
+        total: 3,
+        pending: 1,
+        auto_approved: 0,
+        approved: 1,
+        rejected: 1,
+        approval_rate: 1 / 3,
+        average_confidence: { rejected: 0.3, approved: 0.4, pending: 0.7 },
+      }),
+    ).toEqual([
+      { label: 'Awaiting review', value: 0.7 },
+      { label: 'Approved', value: 0.4 },
+      { label: 'Rejected', value: 0.3 },
+    ]);
+  });
+});
+
+describe('withSavedReviews', () => {
+  it('shows a review the page saved over the list it loaded', () => {
+    const loaded = [
+      { span_id: 's1', review: null },
+      { span_id: 's2', review: { label: 'good' } },
+    ];
+    expect(withSavedReviews(loaded, { s1: { span_id: 's1', review: { label: 'poor' } } })).toEqual([
+      { span_id: 's1', review: { label: 'poor' } },
+      { span_id: 's2', review: { label: 'good' } },
+    ]);
+    expect(withSavedReviews(loaded, {})).toEqual(loaded);
   });
 });

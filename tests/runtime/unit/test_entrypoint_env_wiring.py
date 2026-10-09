@@ -251,6 +251,23 @@ def test_quality_monitor_cli_resolves_before_telemetry(monkeypatch):
     assert deno_check._skip_deno_check is True
 
 
+def _recording_config_events(events: list[str]):
+    """The worker's config events subscription, recorded instead of
+    connected."""
+
+    class _ConfigEvents:
+        def __init__(self, redis_url, worker_id, handlers, *, channel):
+            self.redis_url = redis_url
+
+        async def start(self):
+            events.append(f"config-events:start:{self.redis_url}")
+
+        async def close(self):
+            events.append("config-events:close")
+
+    return _ConfigEvents
+
+
 @pytest.mark.asyncio
 async def test_ingestion_worker_resolves_before_telemetry(monkeypatch):
     events: list[str] = []
@@ -304,15 +321,18 @@ async def test_ingestion_worker_resolves_before_telemetry(monkeypatch):
     monkeypatch.setattr(worker, "get_redis", _fake_get_redis)
     monkeypatch.setattr(worker, "close_redis", _fake_close_redis)
     monkeypatch.setattr(worker, "_claim_loop", _fake_claim_loop)
+    monkeypatch.setattr(worker, "ClusterEvents", _recording_config_events(events))
 
     await worker.run(stop=asyncio.Event(), processor=lambda job: {"status": "ok"})
 
     assert events == [
         "resolve",
+        "config-events:start:redis://stub",
         "redis:redis://stub",
         "claim-loop",
         f"telemetry:{{'otlp_endpoint': '{TELEMETRY_OTLP_ENDPOINT}'}}",
         "close",
+        "config-events:close",
     ]
 
 
@@ -413,7 +433,9 @@ async def test_worker_bootstrap_sets_exact_s3_defaults(monkeypatch):
     monkeypatch.setattr(
         worker,
         "WorkerConfig",
-        lambda: SimpleNamespace(redis_url="redis://stub", startup_grace_s=300.0),
+        lambda: SimpleNamespace(
+            redis_url="redis://stub", startup_grace_s=300.0, consumer_id="worker-1"
+        ),
     )
 
     async def _fake_get_redis(url):
@@ -433,6 +455,7 @@ async def test_worker_bootstrap_sets_exact_s3_defaults(monkeypatch):
     monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
     monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
     monkeypatch.setattr(worker, "get_redis", _fake_get_redis)
+    monkeypatch.setattr(worker, "ClusterEvents", _recording_config_events([]))
 
     with pytest.raises(RuntimeError, match="stop after bootstrap"):
         await worker.run(stop=asyncio.Event())
@@ -509,6 +532,85 @@ def test_main_bootstrap_sets_exact_s3_defaults(monkeypatch):
     assert os.environ["AWS_ACCESS_KEY_ID"] == "minio-access"
     assert os.environ["AWS_SECRET_ACCESS_KEY"] == "minio-secret"
     assert prewarm_calls == ["http://minio.internal:9000"]
+
+
+class _StoredTelemetryConfig:
+    """A config store holding a telemetry config with no endpoints of its own
+    beyond the stored OTLP default."""
+
+    def get_telemetry_config(self, tenant_id):
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
+
+        return TelemetryConfig(
+            enabled=True, otlp_enabled=False, otlp_endpoint="stored-phoenix:4317"
+        )
+
+
+@pytest.mark.parametrize(
+    ("otlp_endpoint", "http_endpoint", "expected"),
+    [
+        (
+            "phoenix-otlp:14317",
+            "http://phoenix-http:16006",
+            {
+                "grpc_endpoint": "http://phoenix-otlp:14317",
+                "http_endpoint": "http://phoenix-http:16006",
+            },
+        ),
+        (
+            "phoenix-otlp:4317",
+            None,
+            {
+                "grpc_endpoint": "http://phoenix-otlp:4317",
+                "http_endpoint": "http://phoenix-otlp:6006",
+            },
+        ),
+    ],
+)
+def test_main_bootstrap_reads_telemetry_from_the_deployment_http_endpoint(
+    monkeypatch, otlp_endpoint, http_endpoint, expected
+):
+    """The runtime's telemetry provider reads (projects, spans) from
+    ``TELEMETRY_HTTP_ENDPOINT``; without it, from the OTLP endpoint's host on
+    Phoenix's HTTP port."""
+    from cogniverse_foundation.telemetry import manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+
+    for target in (
+        "cogniverse_agents.text_analysis_agent.configure_tenant_cache_capacity",
+        "cogniverse_core.memory.manager.configure_tenant_cache_capacity",
+        "cogniverse_core.registries.backend_registry.configure_tenant_cache_capacity",
+        "cogniverse_foundation.registry.entry_point_registry.configure_tenant_cache_capacity",
+    ):
+        monkeypatch.setattr(target, lambda *_: None)
+    monkeypatch.setattr(
+        "cogniverse_runtime.entrypoint_env.configure_semantic_embedder_defaults",
+        lambda **k: None,
+    )
+    TelemetryManager.reset()
+    telemetry_manager_module._telemetry_manager = None
+    try:
+        runtime_main._configure_library_module_defaults(
+            config_manager=_StoredTelemetryConfig(),
+            minio_endpoint=None,
+            minio_access_key=None,
+            minio_secret_key=None,
+            telemetry_otlp_endpoint=otlp_endpoint,
+            telemetry_http_endpoint=http_endpoint,
+            semantic_embed_url=None,
+            semantic_embed_model=None,
+            tenant_cache_capacity=23,
+            rlm_promotion_enabled=True,
+            rlm_promotion_fraction=0.75,
+            rlm_skip_deno_check=True,
+        )
+
+        manager = runtime_main.get_telemetry_manager()
+        assert manager.provider_endpoints() == expected
+        assert manager.config.otlp_endpoint == otlp_endpoint
+    finally:
+        TelemetryManager.reset()
+        telemetry_manager_module._telemetry_manager = None
 
 
 @pytest.mark.asyncio

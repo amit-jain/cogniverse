@@ -3,7 +3,7 @@
 Stores a human routing annotation via the public API, then reads it back via
 query_annotated_spans — no mocks. The old read looked for
 ``attributes.annotation.label`` on the span (annotations actually live in
-Phoenix's separate annotation store), so the feedback loop and dashboard always
+Phoenix's separate annotation store), so the feedback loop and the UI always
 saw zero annotations.
 """
 

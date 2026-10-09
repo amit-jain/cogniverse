@@ -1,4 +1,4 @@
-"""E2E test for dashboard-triggered Argo optimization.
+"""E2E test for UI-triggered Argo optimization.
 
 Exercises the full path from runtime → Argo → Workflow pod using the
 live k3d stack. No mocks anywhere — the runtime actually submits to
@@ -482,7 +482,7 @@ class TestManualOptimizationDeepE2E:
             assert dataset_body["data"]["id"] == artifact_id
 
     def test_workflow_mode_runs_to_success_against_real_orchestration_spans(self):
-        """``--mode workflow`` is the second dashboard-exposed mode; it reads
+        """``--mode workflow`` is the second UI-exposed mode; it reads
         orchestration spans from Phoenix via OrchestrationEvaluator and
         persists extracted workflow templates + agent profiles as artifacts.
 

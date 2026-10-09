@@ -49,12 +49,13 @@ class TestDeployedServices:
         assert "paths" in data
         assert "/admin/profiles" in data["paths"]
 
-    def test_dashboard_healthy(self, deployed_stack):
-        """Dashboard Streamlit app responds to health check."""
-        resp = httpx.get(
-            f"{deployed_stack['dashboard_url']}/_stcore/health", timeout=10
-        )
-        assert resp.status_code == 200
+    def test_web_client_healthy(self, deployed_stack):
+        """The web client's server answers its health route and serves the UI."""
+        resp = httpx.get(f"{deployed_stack['web_url']}/healthz", timeout=10)
+        assert (resp.status_code, resp.json()) == (200, {"status": "ok"})
+        page = httpx.get(f"{deployed_stack['web_url']}/", timeout=10)
+        assert page.status_code == 200
+        assert "<title>Cogniverse</title>" in page.text
 
     def test_phoenix_healthy(self, deployed_stack):
         """Phoenix telemetry responds to health check."""

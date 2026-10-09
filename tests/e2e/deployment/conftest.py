@@ -46,7 +46,7 @@ def _probe_existing_runtime() -> httpx.Response | None:
 def refresh_workload_pods_if_devmode(
     namespace: str = "cogniverse", timeout_s: int = 240
 ) -> bool:
-    """Restart runtime + dashboard pods so devMode bind-mounted code is reloaded.
+    """Restart the pods that bind-mount the source so devMode code is reloaded.
 
     k3d + devMode mounts the laptop's ``libs/`` into the pod at ``/app/libs``,
     so file edits are immediately visible on disk — but the pod's Python
@@ -119,7 +119,7 @@ def refresh_workload_pods_if_devmode(
 
     # The rollout-wait targets are the Deployments selected by the SAME
     # devMode-volume predicate that selected the pods for deletion, so every
-    # deleted pod's owner is waited on (runtime, dashboard, quality-monitor).
+    # deleted pod's owner is waited on.
     deploys_json = _kc(
         "get",
         "deploy",
@@ -218,7 +218,7 @@ PORTS = {
     "vespa_http": 51080,
     "vespa_config": 51071,
     "runtime": 51000,
-    "dashboard": 51501,
+    "web": 51400,
     "phoenix": 51006,
     "otel_grpc": 51317,
     "llm": 51434,
@@ -597,7 +597,6 @@ def deployment_helm_inputs(
     helm_set_overrides = {
         "argo-workflows.crds.install": "false",
         "runtime.backend": backend,
-        "dashboard.backend": backend,
         "devMode.enabled": "false",
     }
     helm_set_overrides.update(
@@ -1015,7 +1014,7 @@ def deployed_stack(k3d_cluster):
         ("svc/cogniverse-vespa", f"{PORTS['vespa_http']}:8080"),
         ("svc/cogniverse-vespa", f"{PORTS['vespa_config']}:19071"),
         ("svc/cogniverse-runtime", f"{PORTS['runtime']}:8000"),
-        ("svc/cogniverse-dashboard", f"{PORTS['dashboard']}:8501"),
+        ("svc/cogniverse-web", f"{PORTS['web']}:4000"),
         ("svc/cogniverse-phoenix", f"{PORTS['phoenix']}:6006"),
         ("svc/cogniverse-phoenix", f"{PORTS['otel_grpc']}:4317"),
         ("svc/cogniverse-llm", f"{PORTS['llm']}:11434"),
@@ -1070,7 +1069,7 @@ def deployed_stack(k3d_cluster):
 
     yield {
         "runtime_url": f"http://localhost:{PORTS['runtime']}",
-        "dashboard_url": f"http://localhost:{PORTS['dashboard']}",
+        "web_url": f"http://localhost:{PORTS['web']}",
         "vespa_url": f"http://localhost:{PORTS['vespa_http']}",
         "phoenix_url": f"http://localhost:{PORTS['phoenix']}",
         "llm_url": f"http://localhost:{PORTS['llm']}",

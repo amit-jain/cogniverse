@@ -222,7 +222,7 @@ mode currently defaults to it — see "Optimizer Selection" below.)
   optimizer's job ends when it has written the artefact.
 
 If you find yourself wanting a daemon, the actual gap is more likely
-*observability* (Phoenix tile, dashboard view) or *trigger latency* (poll
+*observability* (Phoenix tile, web client view) or *trigger latency* (poll
 interval, threshold tuning) — fix those, not the execution model.
 
 ### `optimization_cli` modes
@@ -637,7 +637,7 @@ and `AnnotationStorage` — plus two scheduled cycles in
   spans alone, by id in batches of 200. Enqueue timestamps must include an
   ISO-8601 timezone offset; the queue normalizes them to UTC and records assignment,
   deadline, and completion timestamps in UTC.
-- Reviewers work the queue over REST (`assign` / `complete`) or the dashboard;
+- Reviewers work the queue over REST (`assign` / `complete`) or the web client;
   completion claims the request, persists the label durably, and only then marks it
   completed, so a telemetry outage leaves the item open for retry instead of losing the
   label, and of concurrent completions exactly one writes a label.

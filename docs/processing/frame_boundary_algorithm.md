@@ -270,7 +270,7 @@ Once boundary calculation is implemented, frame durations would exhibit these ch
 }
 ```
 
-Backend profiles are read and written through `ConfigManager.get_backend_profile(profile_name, tenant_id, service="backend")` / `add_backend_profile(...)` / `update_backend_profile(...)` (the `service` argument defaults to `"backend"` on all of `ConfigManager`'s profile methods), and are editable from the dashboard's backend-profile tab or the runtime admin API.
+Backend profiles are read and written through `ConfigManager.get_backend_profile(profile_name, tenant_id, service="backend")` / `add_backend_profile(...)` / `update_backend_profile(...)` (the `service` argument defaults to `"backend"` on all of `ConfigManager`'s profile methods), and are editable from the web client's Backend profiles view or the runtime admin API.
 
 As of this writing, `video_colpali_smol500_mv_frame` is the only shipped profile whose segmentation strategy is `FrameSegmentationStrategy` (all other video profiles use `ChunkSegmentationStrategy`, which already produces full `start_time`/`end_time`/`duration` boundaries — see the warning at the top of this document). That profile sets `fps: 0.5`, so in practice keyframe extraction currently runs in **FPS mode**, not histogram mode — the `histogram` extraction path described above is the code's default when `fps` is omitted, but no shipped profile currently selects it.
 

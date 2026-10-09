@@ -274,7 +274,9 @@ BATCH2=(
 # Format: "tests/e2e/test_*.py|one-line reason"
 # >>> e2e-batch-exclusions
 E2E_BATCH_EXCLUSIONS=(
-  "tests/e2e/test_dashboard_e2e.py|browser lane via pytest.mark.browser"
+  "tests/e2e/test_web_client_e2e.py|browser lane via pytest.mark.browser"
+  "tests/e2e/test_web_optimization_e2e.py|browser lane via pytest.mark.browser"
+  "tests/e2e/test_web_optimization_framework_e2e.py|browser lane via pytest.mark.browser"
   "tests/e2e/test_modal_inference_e2e.py|requires_modal_inference collection gate"
   "tests/e2e/test_cronworkflow_execution_heavy_e2e.py|e2e_heavy marker"
 )

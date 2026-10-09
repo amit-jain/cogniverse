@@ -60,7 +60,6 @@ _PUBLICATION_ROOTS = (
     "cogniverse-agents",
     "cogniverse-vespa",
     "cogniverse-runtime",
-    "cogniverse-dashboard",
 )
 
 
@@ -1377,7 +1376,7 @@ def test_publication_with_every_child_failing_exits_nonzero(
         assert f"Failed to publish {name} 0.2.0 (twine exited 1)" in output, (
             describe_run(all_failed)
         )
-    assert f"Failed: 10 package(s): {', '.join(names)}" in output, describe_run(
+    assert f"Failed: 9 package(s): {', '.join(names)}" in output, describe_run(
         all_failed
     )
     assert "Uploaded or already present: 0 package(s)" in output, describe_run(
@@ -1420,11 +1419,11 @@ def test_publication_uploads_and_verifies_exactly_the_manifest_artifacts(
     assert registry.proxy.index_reads() == [
         (index_host, f"/simple/{name}/") for name in _manifest_names(dist)
     ]
-    assert "Uploaded or already present: 10 package(s)" in result.stdout, describe_run(
+    assert "Uploaded or already present: 9 package(s)" in result.stdout, describe_run(
         result
     )
     assert (
-        f"Verified 20 file(s) at https://{index_host}/simple/ against the "
+        f"Verified 18 file(s) at https://{index_host}/simple/ against the "
         "manifest digests" in result.stdout
     ), describe_run(result)
 
@@ -1447,7 +1446,7 @@ def test_republishing_identical_artifacts_is_the_accepted_duplicate_skip(
     assert registry.proxy.uploads() == [
         ("test.pypi.org", name, 400) for name in expected
     ]
-    assert "Uploaded or already present: 10 package(s)" in genuine_duplicates.stdout
+    assert "Uploaded or already present: 9 package(s)" in genuine_duplicates.stdout
 
 
 def test_duplicate_name_with_different_registry_bytes_fails_publication(
@@ -1500,7 +1499,7 @@ def test_authentication_refusal_fails_without_storing_any_file(
     assert registry.proxy.index_reads() == []
     output = result.stdout + result.stderr
     assert "Failed: 1 package(s): cogniverse-sdk" in output, describe_run(result)
-    assert f"Not attempted: 9 package(s): {', '.join(names[1:])}" in output, (
+    assert f"Not attempted: 8 package(s): {', '.join(names[1:])}" in output, (
         describe_run(result)
     )
 
@@ -1532,7 +1531,7 @@ def test_server_error_mid_release_fails_and_a_rerun_completes_it(
     assert "Failed: 1 package(s): cogniverse-vespa" in output, describe_run(
         partial_failure
     )
-    assert f"Not attempted: 4 package(s): {', '.join(names[6:])}" in output, (
+    assert f"Not attempted: 3 package(s): {', '.join(names[6:])}" in output, (
         describe_run(partial_failure)
     )
 
@@ -1573,7 +1572,7 @@ def test_disconnect_after_the_registry_stored_a_file_fails_and_a_rerun_completes
     assert "Failed: 1 package(s): cogniverse-core" in output, describe_run(
         partial_failure
     )
-    assert "Uploaded or already present: 9 package(s)" in output, describe_run(
+    assert "Uploaded or already present: 8 package(s)" in output, describe_run(
         partial_failure
     )
 
@@ -1831,7 +1830,7 @@ def test_index_check_retries_a_transient_index_failure_until_every_file_is_serve
         == [("test.pypi.org", f"/simple/{name}/") for name in names] * 2
     )
     assert (
-        "Verified 20 file(s) at https://test.pypi.org/simple/ against the manifest "
+        "Verified 18 file(s) at https://test.pypi.org/simple/ against the manifest "
         "digests" in result.stdout
     ), describe_run(result)
 
@@ -2016,7 +2015,7 @@ def test_workflow_publish_job_verifies_then_publishes_the_manifest_set(
     assert registry.files() == expected
     assert registry.proxy.uploads() == [(upload_host, name, 200) for name in expected]
     assert (
-        f"Verified 20 file(s) at {index_url} against the manifest digests"
+        f"Verified 18 file(s) at {index_url} against the manifest digests"
         in published.stdout
     ), describe_run(published)
 

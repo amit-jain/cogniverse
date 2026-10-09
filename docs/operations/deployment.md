@@ -48,7 +48,7 @@ A2A card, not a way to launch them as their own server.
 
 ```mermaid
 flowchart TB
-    Client["<span style='color:#000'>Client / Dashboard</span>"]
+    Client["<span style='color:#000'>Client / Web client</span>"]
 
     Client --> Runtime["<span style='color:#000'>Runtime<br/>Port 8000<br/>REST + A2A JSON-RPC</span>"]
 
@@ -306,7 +306,7 @@ warn-and-skip when the local value is absent); Argo controller install;
 sandbox wiring; `helm install/upgrade` of release `cogniverse` into
 namespace `cogniverse`; workflow-template deploy; `kubectl wait` for pod
 readiness (300s); port-forwards and HTTP health checks (Vespa `:19071`,
-Runtime `:28000`, Dashboard `:28501`, Phoenix `:26006`, LLM `:11434`, Argo
+Runtime `:28000`, Web client `:28400`, Phoenix `:26006`, LLM `:11434`, Argo
 `:2746`).
 
 Re-sync cluster Secrets later with `cogniverse secrets sync`
@@ -396,8 +396,10 @@ so it funnels through ``SchemaRegistry.deploy_schema`` and the
 document types from the live cluster and refuses to silently drop
 peer-tenant schemas). The in-cluster init job at
 ``charts/cogniverse/templates/init-jobs.yaml`` wires this up as a
-post-install step that deploys ``.Values.config.defaultProfiles.video``
-(none when it is empty) for each ``.Values.config.tenants`` entry:
+post-install step that registers each ``.Values.config.tenants`` entry
+(``POST /admin/tenants``; a 409 for an already registered tenant proceeds)
+and deploys ``.Values.config.defaultProfiles.video`` (none when it is empty)
+for it:
 
 ```bash
 RUNTIME_URL="http://$HOST:$PORT"
@@ -666,13 +668,13 @@ docker exec ollama ollama pull gemma3:4b
 ### Building Distribution Packages
 
 ```bash
-# Build all 13 SDK packages for distribution
+# Build all 12 SDK packages for distribution
 for dir in libs/*/; do
   echo "Building $(basename $dir)..."
   (cd "$dir" && uv build)
 done
 
-# Packages created in dist/ directory (all 13 packages):
+# Packages created in dist/ directory (all 12 packages):
 # Foundation Layer:
 # - cogniverse-sdk-0.1.0-py3-none-any.whl
 # - cogniverse-foundation-0.1.0-py3-none-any.whl
@@ -687,7 +689,6 @@ done
 # - cogniverse-finetuning-0.1.0-py3-none-any.whl
 # Application Layer:
 # - cogniverse-runtime-0.1.0-py3-none-any.whl
-# - cogniverse-dashboard-0.1.0-py3-none-any.whl
 # - cogniverse-cli-0.1.0-py3-none-any.whl
 # - cogniverse-messaging-0.1.0-py3-none-any.whl
 ```

@@ -250,21 +250,29 @@ jobs:
       env:
         TEST_LLM_MODEL: "qwen2.5:0.5b"
       run: |
-        # The browser suites run in web-ops-integration-tests.
+        # The browser suites run in the web-ops-integration-tests-* jobs.
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/runtime/integration/ \
+          --ignore=tests/runtime/integration/test_ag_ui_threads.py \
+          --ignore=tests/runtime/integration/test_web_agent_workspace.py \
           --ignore=tests/runtime/integration/test_web_client_ag_ui.py \
+          --ignore=tests/runtime/integration/test_web_ops_analytics.py \
           --ignore=tests/runtime/integration/test_web_ops_annotations.py \
           --ignore=tests/runtime/integration/test_web_ops_approvals.py \
           --ignore=tests/runtime/integration/test_web_ops_atlas.py \
           --ignore=tests/runtime/integration/test_web_ops_config.py \
+          --ignore=tests/runtime/integration/test_web_ops_eval_metrics.py \
           --ignore=tests/runtime/integration/test_web_ops_ingestion.py \
           --ignore=tests/runtime/integration/test_web_ops_memory.py \
           --ignore=tests/runtime/integration/test_web_ops_optimization.py \
+          --ignore=tests/runtime/integration/test_web_ops_optimization_framework.py \
           --ignore=tests/runtime/integration/test_web_ops_profiles.py \
+          --ignore=tests/runtime/integration/test_web_ops_shell.py \
           --ignore=tests/runtime/integration/test_web_ops_telemetry_metrics.py \
           --ignore=tests/runtime/integration/test_web_ops_tenants.py \
           --ignore=tests/runtime/integration/test_web_ops_workflows.py \
+          --ignore=tests/runtime/integration/test_web_search_relevance.py \
+          --ignore=tests/runtime/integration/test_web_search_session.py \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short
 
@@ -289,8 +297,9 @@ jobs:
           -v --tb=short
 
   # The web client driven in Chromium and through its Node server, against
-  # the runtime's routers on real Vespa and Redis.
-  web-ops-integration-tests:
+  # the runtime's routers on real Vespa and Redis, in shards that run in
+  # parallel.
+  web-ops-integration-tests-a:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     needs: unit-tests
@@ -308,8 +317,8 @@ jobs:
       with:
         version: "0.12.19"
 
-    # test_web_client_ag_ui.py and the test_web_ops_*.py suites install
-    # clients/web from its lockfile.
+    # test_web_client_ag_ui.py, test_web_agent_workspace.py and the
+    # test_web_ops_*.py suites install clients/web from its lockfile.
     - name: Set up Node.js 22
       uses: actions/setup-node@v4
       with:
@@ -338,21 +347,299 @@ jobs:
         docker pull vespaengine/vespa:8.668.5
         df -h
 
-    - name: Run web client integration tests
+    - name: Run web client integration tests (agent workspace, AG-UI and Analytics)
       timeout-minutes: 20
       run: |
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_ag_ui_threads.py \
+          tests/runtime/integration/test_web_agent_workspace.py \
           tests/runtime/integration/test_web_client_ag_ui.py \
-          tests/runtime/integration/test_web_ops_annotations.py \
-          tests/runtime/integration/test_web_ops_approvals.py \
-          tests/runtime/integration/test_web_ops_atlas.py \
+          tests/runtime/integration/test_web_ops_analytics.py \
+          tests/runtime/integration/test_web_ops_shell.py \
+          -m "integration and ci_fast and not requires_lm" \
+          -v --tb=short
+
+  web-ops-integration-tests-b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.12.19"
+
+    # test_web_client_ag_ui.py, test_web_agent_workspace.py and the
+    # test_web_ops_*.py suites install clients/web from its lockfile.
+    - name: Set up Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: clients/web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Install Playwright Chromium
+      run: uv run --no-sync playwright install --with-deps chromium
+
+    - name: Free up disk space for Vespa
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:8.668.5
+        df -h
+
+    - name: Run web client integration tests (configuration, profiles and optimization runs)
+      timeout-minutes: 20
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/runtime/integration/test_web_ops_config.py \
-          tests/runtime/integration/test_web_ops_ingestion.py \
-          tests/runtime/integration/test_web_ops_memory.py \
           tests/runtime/integration/test_web_ops_optimization.py \
           tests/runtime/integration/test_web_ops_profiles.py \
-          tests/runtime/integration/test_web_ops_telemetry_metrics.py \
+          -m "integration and ci_fast and not requires_lm" \
+          -v --tb=short
+
+  web-ops-integration-tests-c:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.12.19"
+
+    # test_web_client_ag_ui.py, test_web_agent_workspace.py and the
+    # test_web_ops_*.py suites install clients/web from its lockfile.
+    - name: Set up Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: clients/web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Install Playwright Chromium
+      run: uv run --no-sync playwright install --with-deps chromium
+
+    - name: Free up disk space for Vespa
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:8.668.5
+        df -h
+
+    - name: Run web client integration tests (tenants, memory, annotations and search session)
+      timeout-minutes: 20
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_web_ops_annotations.py \
+          tests/runtime/integration/test_web_ops_memory.py \
           tests/runtime/integration/test_web_ops_tenants.py \
+          tests/runtime/integration/test_web_search_session.py \
+          -m "integration and ci_fast and not requires_lm" \
+          -v --tb=short
+
+  web-ops-integration-tests-d:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.12.19"
+
+    # test_web_client_ag_ui.py, test_web_agent_workspace.py and the
+    # test_web_ops_*.py suites install clients/web from its lockfile.
+    - name: Set up Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: clients/web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Install Playwright Chromium
+      run: uv run --no-sync playwright install --with-deps chromium
+
+    - name: Free up disk space for Vespa
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:8.668.5
+        df -h
+
+    - name: Run web client integration tests (ingestion, atlas and workflow reviews)
+      timeout-minutes: 20
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_web_ops_atlas.py \
+          tests/runtime/integration/test_web_ops_ingestion.py \
           tests/runtime/integration/test_web_ops_workflows.py \
+          -m "integration and ci_fast and not requires_lm" \
+          -v --tb=short
+
+  web-ops-integration-tests-e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.12.19"
+
+    # test_web_client_ag_ui.py, test_web_agent_workspace.py and the
+    # test_web_ops_*.py suites install clients/web from its lockfile.
+    - name: Set up Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: clients/web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Install Playwright Chromium
+      run: uv run --no-sync playwright install --with-deps chromium
+
+    - name: Free up disk space for Vespa
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:8.668.5
+        df -h
+
+    - name: Run web client integration tests (approvals, evaluation, telemetry and relevance)
+      timeout-minutes: 20
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_web_ops_approvals.py \
+          tests/runtime/integration/test_web_ops_eval_metrics.py \
+          tests/runtime/integration/test_web_ops_telemetry_metrics.py \
+          tests/runtime/integration/test_web_search_relevance.py \
+          -m "integration and ci_fast and not requires_lm" \
+          -v --tb=short
+
+  # The Optimization framework view in Chromium, against the runtime's routers
+  # on real Phoenix, Redis and an Argo API server.
+  web-ops-optimization-framework-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.12.19"
+
+    - name: Set up Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: clients/web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Install Playwright Chromium
+      run: uv run --no-sync playwright install --with-deps chromium
+
+    - name: Free up disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Run optimization framework web tests
+      timeout-minutes: 15
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_web_ops_optimization_framework.py \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short

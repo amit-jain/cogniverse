@@ -340,7 +340,7 @@ sequenceDiagram
 
     Calculator->>Calculator: Routing Accuracy<br/>= successful / total_decisions
     Calculator->>Calculator: Confidence Calibration<br/>= correlation(confidence, success)<br/>(Pearson coefficient)
-    Calculator->>Calculator: Average Routing Latency<br/>= mean(latency_ms)
+    Calculator->>Calculator: Average Routing Latency<br/>= mean(latency_ms) over timed decisions
     Calculator->>Calculator: Per-Agent Metrics<br/>Precision = TP / (TP + FP)<br/>Recall = TP / (TP + FN)<br/>F1 = 2 * (P * R) / (P + R)
 
     Calculator-->>Evaluator: RoutingMetrics{<br/>routing_accuracy: 0.85,<br/>confidence_calibration: 0.72,<br/>avg_routing_latency: 150.5,<br/>per_agent_precision: {...},<br/>per_agent_recall: {...},<br/>per_agent_f1: {...},<br/>total_decisions: 100,<br/>ambiguous_count: 5<br/>}
@@ -860,7 +860,7 @@ AMBIGUOUS = "ambiguous"   # Needs human annotation
 ```python
 routing_accuracy: float                    # % successful decisions
 confidence_calibration: float              # Correlation(confidence, success)
-avg_routing_latency: float                # Mean routing time (ms)
+avg_routing_latency: Optional[float]      # Mean decision time (ms) of the timed decisions; None when none is timed
 per_agent_precision: Dict[str, float]     # Precision per agent
 per_agent_recall: Dict[str, float]        # Recall per agent
 per_agent_f1: Dict[str, float]            # F1 per agent
@@ -891,7 +891,7 @@ A span with no chosen agent or confidence raises `ValueError`.
 {
     "chosen_agent": str,        # Agent selected by routing
     "confidence": float,        # Routing confidence score, in [0, 1]
-    "latency_ms": float,        # Routing processing time
+    "latency_ms": Optional[float],  # processing_time when recorded, else the span's duration; None without either
     "success": bool,            # Whether routing succeeded
     "downstream_status": str    # Status description
 }
@@ -1521,36 +1521,9 @@ provider.log_session_evaluation(
 
 ---
 
-#### Dashboard Integration
+#### Web Client Integration
 
-The Interactive Search tab in the dashboard provides unified session evaluation:
-
-**Features:**
-
-- Conversation history tracking across turns
-
-- Session ID display and "New Session" button
-
-- Per-result relevance annotation (thumbs up/down)
-
-- Session-level outcome selection (Success/Partial/Failure)
-
-- Session quality scoring (0.0-1.0 slider)
-
-**Workflow:**
-
-1. User performs searches (single or multiple turns)
-
-2. Each search adds to `st.session_state.conversation_history`
-
-3. Individual results can be annotated for relevance
-
-4. After any search, session-level evaluation is available:
-   - Select outcome: Success, Partial, or Failure
-   - Set quality score: 0.0 to 1.0
-   - Click "Log Session Evaluation" to record
-
-**Note:** Session evaluation works for both single-turn and multi-turn conversations, providing a unified annotation mechanism.
+The web client's search conversation provides unified session evaluation: each result can be rated for relevance, and "Evaluate this conversation" stores an outcome (success, partial, failure) and a 0-1 quality on each search span of the conversation. See [Web Client](web-client.md).
 
 ### Inspect AI Model Provider
 
@@ -1729,7 +1702,7 @@ success (`well_calibrated` / `moderately_calibrated` / `poorly_calibrated`).
 
 **Purpose:** Continuous, scheduled quality monitor across all agents. Runs two evaluation strategies and decides whether to trigger an Argo optimization workflow — it composes `SpanEvaluator`, `LLMJudgeCore`, and the telemetry provider's `datasets` store rather than reimplementing them. Golden queries come from the tenant's versioned `config/golden_set_ground_truth` blob via `ArtifactManager`.
 
-**`AgentType` enum:** `SEARCH`, `SUMMARY`, `REPORT`, `GATEWAY`, `ROUTING`, `QUERY_ENHANCEMENT`, `ENTITY_EXTRACTION`, `PROFILE_SELECTION` — mapped to span names via `SPAN_NAME_BY_AGENT` (e.g. `"SearchAgent.process"`), matching the `f"{ClassName}.process"` convention emitted by `AgentBase._process_span()`.
+**`AgentType` enum:** `SEARCH`, `SUMMARY`, `REPORT`, `GATEWAY`, `ROUTING`, `QUERY_ENHANCEMENT`, `ENTITY_EXTRACTION`, `PROFILE_SELECTION` — mapped to span names via `SPAN_NAME_BY_AGENT` (e.g. `"SearchAgent.process"`), matching the `f"{ClassName}.process"` convention emitted by `AgentBase.process_span()`.
 
 **`Verdict` enum:** `SKIP = 0`, `OPTIMIZE = 1`, `FULL = 2`.
 
@@ -1865,15 +1838,23 @@ monitor = QualityMonitor(
 that succeeded, `None` without decisions); `confidence_calibration` (the Pearson correlation
 of confidence with success, `None` when either side is constant or there are fewer than two
 decisions); `latency_ms` (`mean`, `p50`, `p95`); and `per_agent` (`agent`, `decisions`,
-`successes`, `failures`, `ambiguous`, `success_rate`, `mean_confidence`, `mean_latency_ms`;
-most decisions first, then by agent). `GET /admin/tenant/{tenant_id}/routing-decisions`
-serves it.
+`successes`, `failures`, `ambiguous`, `success_rate`, `mean_confidence`, `mean_latency_ms`,
+`precision`, `recall`, `f1`; most decisions first, then by agent). `GET
+/admin/tenant/{tenant_id}/routing-decisions` serves it.
+
+`per_agent_precision_recall_f1(decisions)` scores `(chosen_agent, succeeded)` pairs per
+agent: a success is a true positive and any other decision a false positive. With no
+ground truth for where a decision should have gone there are no false negatives, so
+recall is 1.0 for an agent with a success and 0.0 otherwise. `RoutingEvaluator.calculate_metrics`
+uses the same scores.
 
 ### Scoring recorded searches
 
 **File:** `libs/evaluation/cogniverse_evaluation/recorded_searches.py`
 
-`score_recorded_searches(spans, golden_rows)` scores a tenant's `search_service.search` spans (`SEARCH_SPAN_NAME`) against its canonical golden rows (`query`, list of `expected_videos`), without running a search. A span whose stripped `query` is a golden query is scored under its `profile` and `strategy`; the latest successful search per profile, strategy and query counts. Result rows name their source by `result_source_title_key`, and a source counts once, at its best rank. Each query gets `mrr`, `ndcg` (at 10), `recall_at_1`, `recall_at_5` and `precision_at_5` from `calculate_metrics_suite`.
+`score_recorded_searches(spans, golden_rows)` scores a tenant's `search_service.search` spans (`SEARCH_SPAN_NAME`, recorded by `SearchService.search` and by every `SearchAgent` text search) against its canonical golden rows (`query`, list of `expected_videos`), without running a search. A span whose stripped `query` is a golden query is scored under its `profile` and `strategy`; the latest successful search per profile, strategy and query counts. Result rows name their source by `result_source_title_key`, and a source counts once, at its best rank. Each query gets `mrr`, `ndcg` (at 10), `recall_at_1`, `recall_at_5` and `precision_at_5` from `calculate_metrics_suite`.
+
+`dataset_golden_rows(examples)` turns an evaluation dataset's examples (Phoenix's `input`/`output` columns, as `DatasetManager` writes them: `input.query`, comma-joined `output.expected_videos`) into the same canonical golden rows; examples without a query or an expected source are left out, and a repeated query keeps its first position and its last expectation.
 
 It returns `golden_queries`; `strategies` (per profile and strategy, sorted: `queries`, the mean of each metric, and `success_rate`, the share of queries whose first result is expected); `queries` (per profile and strategy, in golden order: `query`, `expected`, `retrieved` (first 10), `searched_at`, `trace_id` and the metrics); `unsearched_queries` (golden order); `failed_searches` (searches with an `ERROR` status); and `unscored_searches` (searches with a result that has no source title, or no result rows). The runtime serves it as `GET /admin/tenant/{tenant_id}/evaluation/golden`.
 
@@ -1883,7 +1864,7 @@ It returns `golden_queries`; `strategies` (per profile and strategy, sorted: `qu
 
 **Files:** `libs/evaluation/cogniverse_evaluation/data/{datasets,storage,traces}.py`
 
-**`DatasetManager`** (`data/datasets.py`) — sync facade over the telemetry provider's async `DatasetStore`, used by the CLI's `create-dataset` command, the dashboard optimization tab, and `scripts/manage_datasets.py`:
+**`DatasetManager`** (`data/datasets.py`) — sync facade over the telemetry provider's async `DatasetStore`, used by the CLI's `create-dataset` command, the runtime's optimization framework router (`routers/optimization_framework.py`), and `scripts/manage_datasets.py`:
 
 ```python
 DatasetManager(tenant_id: str, dataset_store: DatasetStore | None = None)
@@ -1900,6 +1881,10 @@ manager.delete_dataset(dataset_name: str) -> bool
 manager.export_dataset(dataset_name: str, output_path: str) -> bool  # raises if missing
 manager.create_test_dataset() -> str
 ```
+
+A dataset the manager creates is owned by its tenant (the store records
+`tenant_id`), which scopes the runtime's dataset evaluation
+(`GET /admin/tenant/{tenant_id}/evaluation/datasets`) to it.
 
 `expected_videos` lists are persisted comma-joined (`"v1,v2"`) — the form that
 `core.ground_truth._resolve_expected_items` and `core.task` split back into

@@ -100,12 +100,65 @@ class _NoDefaultUploadProfile(ValueError):
     """No profile was named and the tenant selected no default video profile."""
 
 
+class _UnreadableUpload(ValueError):
+    """The upload is not a file the profile's pipeline reads."""
+
+
+def _files_read_by(profile_name: str, profile_config: dict) -> tuple:
+    """The kind of file a profile's segmentation reads and its suffixes.
+
+    Raises:
+        ValueError: the profile's segmentation reads no uploaded file.
+    """
+    from cogniverse_runtime.ingestion.strategies import ingested_files
+    from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
+
+    segmentation_config = profile_config["strategies"].get("segmentation")
+    if not isinstance(segmentation_config, dict):
+        raise ValueError(
+            f"profile '{profile_name}' has no segmentation strategy, so it "
+            "ingests no uploaded file"
+        )
+    try:
+        segmentation = StrategyFactory.create_from_profile_config(
+            {"strategies": {"segmentation": segmentation_config}}
+        ).segmentation
+    except TypeError as exc:
+        raise ValueError(
+            f"profile '{profile_name}' segmentation is misconfigured ({exc})"
+        ) from exc
+    if segmentation is None:
+        raise ValueError(
+            f"profile '{profile_name}' segmentation class "
+            f"{segmentation_config.get('class')!r} does not exist"
+        )
+    return ingested_files(segmentation)
+
+
+def _refuse_unreadable_upload(
+    filename: Optional[str], profile_name: str, kind: str, suffixes: frozenset
+) -> None:
+    """Raise ``_UnreadableUpload`` unless the name's suffix is one the
+    profile reads."""
+    name = filename or "The upload"
+    suffix = Path(filename or "").suffix.lower()
+    if suffix in suffixes:
+        return
+    what = f"is a {suffix} file" if suffix else "has no file extension"
+    raise _UnreadableUpload(
+        f"{name} {what}; profile '{profile_name}' ingests {kind} files "
+        f"({', '.join(sorted(suffixes))})."
+    )
+
+
 def _resolve_upload_profile(
     tenant_id: str,
     requested_profile: Optional[str],
+    filename: Optional[str],
     config_manager: ConfigManager,
 ) -> str:
-    """Resolve and validate one upload profile from the tenant config view."""
+    """Resolve and validate one upload profile from the tenant config view,
+    and refuse a file its pipeline does not read."""
     config = get_config(tenant_id=tenant_id, config_manager=config_manager)
     backend = config.get("backend", {})
     if not isinstance(backend, dict):
@@ -154,6 +207,13 @@ def _resolve_upload_profile(
             "is missing or has no usable strategies"
         )
 
+    try:
+        kind, suffixes = _files_read_by(profile_name, profile_config)
+    except ValueError as exc:
+        if explicit:
+            raise _InvalidUploadProfile(str(exc)) from exc
+        raise _UploadProfileConfigurationError(f"tenant {tenant_id!r} {exc}") from exc
+    _refuse_unreadable_upload(filename, profile_name, kind, suffixes)
     return profile_name
 
 
@@ -266,6 +326,77 @@ def _upload_profile_unavailable(exc: Exception, tenant_id: str):
         exc,
         tenant_id=tenant_id,
     )
+
+
+def _uploadable_profiles(tenant_id: str, config_manager: ConfigManager) -> dict:
+    """The tenant's profiles that ingest an uploaded file, each with the
+    kind of file it reads and the suffixes it accepts, and the profile an
+    upload naming none goes to."""
+    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    backend = config.get("backend", {})
+    profiles = backend.get("profiles", {}) if isinstance(backend, dict) else {}
+    if not isinstance(profiles, dict):
+        raise _UploadProfileConfigurationError(
+            f"tenant {tenant_id!r} has no usable backend profile catalog"
+        )
+    listed = []
+    for name in sorted(profiles):
+        profile_config = profiles[name]
+        if not (
+            isinstance(profile_config, dict)
+            and isinstance(profile_config.get("strategies"), dict)
+            and profile_config["strategies"]
+        ):
+            continue
+        try:
+            kind, suffixes = _files_read_by(name, profile_config)
+        except ValueError:
+            continue
+        listed.append(
+            {
+                "name": name,
+                "type": profile_config.get("type"),
+                "kind": kind,
+                "extensions": sorted(suffixes),
+            }
+        )
+    default = resolve_default_profile(config)
+    return {
+        "profiles": listed,
+        "default_profile": default
+        if any(entry["name"] == default for entry in listed)
+        else None,
+    }
+
+
+@router.get("/profiles")
+async def list_upload_profiles(
+    tenant_id: str = Query(..., description="Tenant whose profiles to list."),
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> Dict[str, Any]:
+    """What ``/ingestion/upload`` accepts for ``tenant_id``: the backend it
+    ingests to, the profiles that ingest an uploaded file (name, type, the
+    kind of file and its suffixes) and the default profile, which an upload
+    naming no profile goes to (null when the tenant has none usable)."""
+    try:
+        resolved = require_tenant_id(tenant_id, source="/ingestion/profiles")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    await assert_tenant_exists(resolved)
+    try:
+        sys_cfg = await asyncio.to_thread(config_manager.get_system_config)
+        listing = await asyncio.to_thread(
+            _uploadable_profiles, resolved, config_manager
+        )
+    except _UploadProfileConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise _upload_profile_unavailable(exc, resolved) from exc
+    return {
+        "tenant_id": resolved,
+        "backend": sys_cfg.search_backend or "vespa",
+        **listing,
+    }
 
 
 @router.post("/start")
@@ -488,10 +619,15 @@ async def upload_video(
             _resolve_upload_profile,
             upload_tenant_id,
             profile,
+            file.filename,
             config_manager,
         )
     except _InvalidUploadProfile as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except _UnreadableUpload as exc:
+        # Built only from the file and profile names and the suffixes the
+        # profile's segmentation reads.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except _NoDefaultUploadProfile as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except _UploadProfileConfigurationError as exc:
@@ -560,6 +696,7 @@ async def upload_video(
             redis,
             task_events=get_task_event_store(),
             source_url=source_url,
+            filename=file.filename,
             profile=resolved_profile,
             tenant_id=upload_tenant_id,
             force=force,

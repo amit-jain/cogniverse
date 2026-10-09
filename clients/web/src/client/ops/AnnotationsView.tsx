@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Alert, Panel, useAction, useLoad } from './common';
+import { ViewErrorBoundary } from './ErrorBoundary';
 import { runtimeJson, seg } from './http';
 
 interface AnnotationRequest {
@@ -35,6 +36,14 @@ export function queueSummary(byStatus: Record<string, number>): string {
 }
 
 export function AnnotationsView() {
+  return (
+    <ViewErrorBoundary view="Annotation queue">
+      <AnnotationQueue />
+    </ViewErrorBoundary>
+  );
+}
+
+function AnnotationQueue() {
   const [reviewer, setReviewer] = useState('');
   const [version, setVersion] = useState(0);
   const [notice, setNotice] = useState('');
@@ -106,6 +115,7 @@ function RequestList({
         <table aria-label={`${title} requests`}>
           <thead>
             <tr>
+              <th>Time</th>
               <th>Span</th>
               <th>Tenant</th>
               <th>Query</th>
@@ -122,6 +132,7 @@ function RequestList({
           <tbody>
             {requests.map((request) => (
               <tr key={request.span_id} className={annotating === request.span_id ? 'selected' : undefined}>
+                <td>{new Date(request.timestamp).toLocaleString()}</td>
                 <td>{request.span_id}</td>
                 <td>{request.tenant_id ?? '—'}</td>
                 <td>{request.query}</td>

@@ -3,17 +3,19 @@
 import hashlib
 import re
 import secrets
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, canonical_tenant_id
 from cogniverse_sdk.interfaces.config_store import ConfigScope, ImmutableConfigStore
 
 _SERVICE = "harness_keys"
 _REVOCATIONS = "harness_key_revocations"
+MAX_TTL_SECONDS = 7 * 24 * 3600
 
 
 class HarnessKeyNotFoundError(LookupError):
-    """The presented credential is absent or revoked."""
+    """The presented credential is absent, revoked or expired."""
 
 
 def generate_key() -> tuple[str, str]:
@@ -21,21 +23,44 @@ def generate_key() -> tuple[str, str]:
     return plaintext, hashlib.sha256(plaintext.encode()).hexdigest()
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class HarnessKeyStore:
-    """Canonical tenant credentials; only create returns plaintext."""
+    """Canonical tenant credentials; only create returns plaintext.
 
-    def __init__(self, config_store: ImmutableConfigStore):
+    A key created with ``ttl_seconds`` stops authenticating at its
+    ``expires_at``; one created without never expires.
+    """
+
+    def __init__(
+        self,
+        config_store: ImmutableConfigStore,
+        now: Callable[[], datetime] = _utc_now,
+    ):
         self._store = config_store
+        self._now = now
 
-    def create(self, tenant_id: str, name: str) -> dict:
+    def create(self, tenant_id: str, name: str, ttl_seconds: int | None = None) -> dict:
         tenant_id = canonical_tenant_id(tenant_id)
         if not name.strip():
             raise ValueError("name must not be blank")
+        if ttl_seconds is not None and not 1 <= ttl_seconds <= MAX_TTL_SECONDS:
+            raise ValueError(
+                f"ttl_seconds must be from 1 to {MAX_TTL_SECONDS}, got {ttl_seconds}"
+            )
         plaintext, key_hash = generate_key()
+        created_at = self._now()
         record = {
             "tenant_id": tenant_id,
             "name": name,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at.isoformat(),
+            "expires_at": (
+                None
+                if ttl_seconds is None
+                else (created_at + timedelta(seconds=ttl_seconds)).isoformat()
+            ),
             "revoked": False,
         }
         self._store.put_immutable_config(
@@ -55,8 +80,15 @@ class HarnessKeyStore:
             "tenant_id": record["tenant_id"],
             "name": record["name"],
             "created_at": record["created_at"],
+            "expires_at": record.get("expires_at"),
             "revoked": record["revoked"],
         }
+
+    def _expired(self, record: dict) -> bool:
+        expires_at = record.get("expires_at")
+        return expires_at is not None and self._now() >= datetime.fromisoformat(
+            expires_at
+        )
 
     def _revoked(self, key_hash: str) -> bool:
         entry = self._store.get_immutable_config(
@@ -79,7 +111,11 @@ class HarnessKeyStore:
             _SERVICE,
             key_hash,
         )
-        if entry is None or self._revoked(key_hash):
+        if (
+            entry is None
+            or self._expired(entry.config_value)
+            or self._revoked(key_hash)
+        ):
             raise HarnessKeyNotFoundError("Harness key not found")
         return canonical_tenant_id(entry.config_value["tenant_id"])
 
@@ -115,7 +151,8 @@ class HarnessKeyStore:
                         entry.config_key,
                         {
                             **record,
-                            "revoked": self._revoked(entry.config_key),
+                            "revoked": self._expired(record)
+                            or self._revoked(entry.config_key),
                         },
                     )
                 )

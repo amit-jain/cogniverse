@@ -178,7 +178,7 @@ flowchart TB
   `system_config_refresh_s` (default 5s) and `system_config_max_staleness_s`
   (default 60s), on the same terms as the scoped configs below:
   `set_system_config` holds what it wrote at once, another process's write
-  (the runtime storing its deployment overrides, a dashboard edit) is served
+  (the runtime storing its deployment overrides) is served
   within 60s, and a store outage past that bound raises. Pinned inference
   URLs are laid over every value served. Per-tenant scoped configs (routing,
   telemetry, backend, agent, durable execution, tenant instructions) are held
@@ -204,6 +204,8 @@ flowchart TB
   nested fields merge and the `vlm_endpoint` field remains system-owned. This
   merge also applies when no JSON backend section exists. Store read failures
   propagate, and callers receive isolated profile values.
+  `ConfigUtils(tenant_id, config_manager).backend_profiles()` returns that
+  merged catalog, reading only the backend configs.
 - Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore)
 
 ```python
@@ -377,7 +379,12 @@ dataclass's JSON schema without the `fixed_fields` the location sets, with
 with secrets null. `from_form(value, current)` applies the submitted fields to
 `current`: a field left out keeps its value, a null secret keeps it and `""`
 clears it, and a key the schema does not know or a value the dataclass refuses
-raises `ConfigValueError` naming each. Sections: `system` (`SystemConfig`),
+raises `ConfigValueError` naming each, as does a changed value outside a
+field's `choices` (`search_backend`, `environment`, `routing_mode`, the
+telemetry `provider` from the registered providers) or `ranges`
+(`backend_port`, 1 to 65535); `schema()` carries them as `enum`, `minimum` and
+`maximum`, and a stored value outside them is kept when a save leaves it
+unchanged. Sections: `system` (`SystemConfig`),
 `routing` (`RoutingConfigUnified`), `telemetry` (`TelemetryConfig`), `agent`
 (`AgentConfig`, one per agent) and `durable_execution`
 (`DurableExecutionConfig`); `section_for(scope, config_key)` finds the section
@@ -387,7 +394,13 @@ of a stored entry.
 value, expected_version=...)` stores a value as the next version when the stored
 one is `expected_version` (0: none) and returns None when another write landed
 first; `forget_held_configs(tenant_id)` drops what the manager holds for a
-tenant (the system config for `_system`). `SystemConfig.to_dict()` shows
+tenant (the system config for `_system`). The module function
+`forget_held_backend_configs(tenant_id)` drops the tenant's backend config
+from every ConfigManager in the process; the runtime runs it on every runtime
+and ingestion worker when a profile is written. `forget_held_tenant_configs(tenant_id)` drops
+everything every ConfigManager in the process holds for a tenant (the system
+config for `_system`); the runtime runs it on every runtime and ingestion
+worker when a config is saved, restored or imported. `SystemConfig.to_dict()` shows
 `llm_api_key` as `"***"`; `to_dict(redact=False)` is the stored form.
 
 **Profile servability** - whether a tenant can be served a profile:
@@ -420,6 +433,19 @@ be in `deployed_schemas` (`PROFILE_SCHEMA_NOT_DEPLOYED` otherwise).
 comes from `cogniverse_core.registries.schema_registry.tenant_deployed_schema_names`;
 callers in `cogniverse_agents.profile_selection_agent` compose the two, so this
 module keeps no dependency on core.
+
+`tenant_profile_servability(config_manager, tenant_id)` there lists the
+tenant's profiles with their state: the profiles it stored and, for each schema
+it has deployed that none of those reads, the catalog's search profiles
+(`video`, `document`, `image`, `audio`, `code`, `wiki`) declaring that schema.
+A registered tenant stores no profile but has the built-in
+`video_colpali_smol500_mv_frame` schema deployed, so that profile is servable
+for it, alongside any profile it adds. Each row carries the catalog definition
+from `ConfigUtils.backend_profiles()`. `servable_tenant_profiles` and
+`tenant_usable_profile_names` (which raises when none is servable) filter it to
+the servable rows; `GET /search/profiles`, answer grounding, profile selection,
+synthetic profile data and the optimizer read the tenant's profiles through
+them.
 
 **FieldMappingConfig** - Canonical content fields used by synthetic generation:
 
@@ -582,7 +608,7 @@ The process cache loads `semantic_router.response_cache_ttl_seconds` and `respon
 
 `BodyBoundedLM` holds every call's `max_tokens` within the completion budget bound by `cogniverse_foundation.config.lm_output_budget.bound_output_token_budget(budget)`: the smaller of that budget and the endpoint's configured `max_tokens` is sent, and the response cache keys on the value sent. `output_token_budget_from(context)` reads `context["max_output_tokens"]`, returns `None` when absent and raises `ValueError` for anything but a positive integer.
 
-`create_budgeted_dspy_lm(config: LLMEndpointConfig) -> dspy.LM` builds the same LM as a `BudgetedLM` (`cogniverse_foundation.config.budgeted_lm`), which fits every request inside the window its endpoint serves. On first call it resolves the window through `resolve_context_window(api_base, declared=config.context_window, model=...)` and holds it as a `TokenBudget(model, context_window, reserved_output=config.max_tokens)`; `input_budget` is `context_window - reserved_output`. What the endpoint publishes as `max_model_len` at `{api_base}/models` wins (`ResolvedContextWindow(tokens, source="served")`), because the window belongs to the deployment rather than to the model; a listing that carries none falls back to `config.context_window` (`source="declared"`). Requests over that allowance shed whole few-shot demonstrations, oldest first, and log how many were dropped. A prompt that still overflows with none left raises `PromptBudgetExceededError` naming the window, the reservation, the measured input and the number dropped — as does a provider-side context-window rejection, so a caller never sees a bare litellm error. An endpoint that publishes no `max_model_len` and declares no `context_window`, or one with no `api_base` or no `max_tokens`, raises `ContextWindowUnavailableError` instead of being budgeted by guess. Used wherever a prompt can approach the window: the DSPy bootstrap teacher, the entity-extraction optimizer, the ingestion LM context (`ingest_lm_context_for`) and the ingestion worker's default LM. `resolve_context_window` memoizes per `(api_base, model)` for the process (32 entries, oldest evicted; `clear_context_window_memo()` drops them), so ingestion paths that build one LM per segment read the listing once.
+`create_budgeted_dspy_lm(config: LLMEndpointConfig) -> dspy.LM` builds the same LM as a `BudgetedLM` (`cogniverse_foundation.config.budgeted_lm`), which fits every request inside the window its endpoint serves. On first call it resolves the window through `resolve_context_window(api_base, declared=config.context_window, model=...)` and holds it as a `TokenBudget(model, context_window, reserved_output=config.max_tokens)`; `input_budget` is `context_window - reserved_output`. What the endpoint publishes as `max_model_len` at `{api_base}/models` wins (`ResolvedContextWindow(tokens, source="served")`), because the window belongs to the deployment rather than to the model; a listing that carries none falls back to `config.context_window` (`source="declared"`). Requests over that allowance shed whole few-shot demonstrations, oldest first, and log how many were dropped. A prompt that still overflows with none left raises `PromptBudgetExceededError` naming the window, the reservation, the measured input and the number dropped — as does a provider-side context-window rejection, so a caller never sees a bare litellm error. An endpoint that publishes no `max_model_len` and declares no `context_window`, or one with no `api_base` or no `max_tokens`, raises `ContextWindowUnavailableError` instead of being budgeted by guess. Used wherever a prompt can approach the window: the DSPy bootstrap teacher, the entity-extraction optimizer, the ingestion LM context (`ingest_lm_context_for`) and the ingestion worker's default LM. `resolve_context_window` memoizes per `(api_base, model)` for the process (32 entries, oldest evicted; `clear_context_window_memo()` drops them), so ingestion paths that build one LM per segment read the listing once. `fitting_demonstrations(demos, budget=, render=, count_tokens=, calls=)` sizes a compiled program before it is sent at all: the largest number of `demos`, kept from the front, whose request `render(demos, call)` fits `budget.input_budget` for every one of `calls` (zero when a call overflows with none). Calls are taken longest request first; each is counted once at the longest prefix every earlier call fit, and one that overflows it bisects below it, so a counter that pays a round-trip per count is called about once per call. `served_message_counter(api_base, model)` is such a counter: it counts messages through the endpoint's `POST {root}/tokenize` (vLLM) with the bare served model name, so the count is the served tokenizer and chat template's, the `prompt_tokens` the completion reports. litellm counts a model it has no tokenizer for with OpenAI's `cl100k_base`, which undercounts the gemma student by about a quarter on transcript text. A count is idempotent and a fitting pass asks hundreds, so an unreachable endpoint or a 5xx answer is asked again up to `retries` times (1 s, 2 s, 4 s ... apart; the optimizer passes the endpoint's `num_retries`, as its LM calls are retried). An endpoint that still cannot answer, or answers 4xx or without an integer `count`, raises `TokenCountUnavailableError`.
 
 `resolve_inference_api_key(api_base, api_key)` is the one key-resolution rule for every OpenAI-compatible client, dspy.LM or not (Mem0's LLM provider, `litellm.completion`/`rerank`, the LLM/visual judges' chat-completions POSTs): an explicit key wins; otherwise the `COGNIVERSE_INFERENCE_API_KEY` bearer is sent whenever it is set (an in-cluster router may forward to Modal, and a self-hosted server ignores it); a `*.modal.run` `api_base` with no bearer raises naming the variable; a self-hosted `api_base` with nothing configured gets `"not-required"`; with no `api_base` the configured key passes through untouched.
 
@@ -1232,7 +1258,7 @@ with dspy.context(adapter=StructuredJSONAdapter()):
 (`cogniverse_foundation.dspy.model_format`) — strip or add a litellm provider
 prefix (`ollama`, `ollama_chat`, `hosted_vllm`, `openai`) on a model id, for
 sites that talk to an OpenAI-compatible HTTP API directly and need a bare
-model name (Mem0's embedder/LLM wiring, the dashboard's memory tab) versus
+model name (Mem0's embedder/LLM wiring) versus
 sites that need litellm's required `provider/model` form.
 
 ```python

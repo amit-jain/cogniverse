@@ -108,17 +108,19 @@ CanonicalLabel = tuple[str, tuple[tuple[str, str], ...], str]
 
 
 class DuplicateLabelFilter:
-    """Pure state machine for duplicate canonical label detection.
+    """Pure state machine for duplicate routing query detection.
 
-    Tracks seen labels and a consecutive duplicate streak. Returns a decision
-    for each label: keep (unique), drop (duplicate, continue), or stop
-    (duplicate streak reached target_count).
+    A query labels one routing example: the same query drawn again is a
+    duplicate even when the entity agent or the gateway labels it differently
+    this time. Tracks the kept labels and a consecutive duplicate streak and
+    returns a decision for each label: keep (new query), drop (duplicate,
+    continue), or stop (duplicate streak reached target_count).
     """
 
     __slots__ = ("_seen", "_duplicate_streak")
 
     def __init__(self) -> None:
-        self._seen: set[CanonicalLabel] = set()
+        self._seen: dict[str, CanonicalLabel] = {}
         self._duplicate_streak: int = 0
 
     def check(
@@ -127,29 +129,28 @@ class DuplicateLabelFilter:
         """Return (decision, error) for a canonical label.
 
         Returns:
-            ("keep", None) — label is unique, add to results
-            ("drop", ValueError) — duplicate, skip but continue
+            ("keep", None) — the query is new, add to results
+            ("drop", ValueError) — duplicate query, skip but continue
             ("stop", ValueError) — duplicate streak hit target_count, break
         """
         query, canonical_entities, chosen_agent = label
-        if label in self._seen:
+        if query in self._seen:
             error = ValueError(
-                "RoutingGenerator generated duplicate canonical label "
-                f"(query={query!r}, entities={canonical_entities!r}, "
-                f"chosen_agent={chosen_agent!r})"
+                f"RoutingGenerator generated duplicate query {query!r} "
+                f"(entities={canonical_entities!r}, chosen_agent={chosen_agent!r})"
             )
             self._duplicate_streak += 1
             if self._duplicate_streak >= target_count:
                 return ("stop", error)
             return ("drop", error)
         self._duplicate_streak = 0
-        self._seen.add(label)
+        self._seen[query] = label
         return ("keep", None)
 
     @property
     def seen_labels(self) -> frozenset[CanonicalLabel]:
         """The labels kept so far, as an immutable snapshot."""
-        return frozenset(self._seen)
+        return frozenset(self._seen.values())
 
     @property
     def seen_count(self) -> int:
@@ -248,7 +249,7 @@ class RoutingGenerator(BaseGenerator):
         The outer candidate budget allows five draws per requested example.
         Routing spends three production calls per draw, so the 5x surplus is a
         latency/completeness tradeoff: enough room to replace a few duplicate
-        canonical labels, but still bounded when the source only yields one.
+        queries, but still bounded when the source only yields one.
 
         Args:
             sampled_content: Content sampled from Vespa
@@ -275,6 +276,15 @@ class RoutingGenerator(BaseGenerator):
         )
 
         saliency = TopicSaliency.from_records(sampled_content)
+        sources: list[str] = []
+        for content in sampled_content:
+            topic = self._extract_topic(content, saliency=saliency)
+            if topic is None:
+                logger.warning("Skipping sampled routing item without a topic")
+                continue
+            sources.append(topic)
+        if not sources:
+            raise ValueError("sampled routing content requires a non-empty topic")
         examples = []
         duplicate_filter = DuplicateLabelFilter()
         last_validation_error: Exception | None = None
@@ -282,9 +292,8 @@ class RoutingGenerator(BaseGenerator):
         attempt_budget = self._routing_candidate_budget(target_count)
 
         while len(examples) < target_count and attempts < attempt_budget:
-            content = sampled_content[attempts % len(sampled_content)]
+            topic = sources[attempts % len(sources)]
             attempts += 1
-            topic = self._extract_topic(content, saliency=saliency)
 
             try:
                 labelled = await self.entity_labeler.generate(
@@ -554,11 +563,10 @@ class RoutingGenerator(BaseGenerator):
             ) from e
 
     @staticmethod
-    def _extract_topic(content: Dict[str, Any], *, saliency: TopicSaliency) -> str:
-        topic = extract_topic(content, saliency=saliency)
-        if topic is not None:
-            return topic
-        raise ValueError("sampled routing content requires a non-empty topic")
+    def _extract_topic(
+        content: Dict[str, Any], *, saliency: TopicSaliency
+    ) -> str | None:
+        return extract_topic(content, saliency=saliency)
 
     @staticmethod
     def _canonicalize_entities(entities: List[Dict]) -> List[Dict[str, str]]:

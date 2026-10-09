@@ -28,19 +28,6 @@ import requests
 from tests.utils.async_polling import simulate_processing_delay
 
 
-@pytest.fixture(autouse=True)
-def _restore_main_module():
-    """Put back the ``__main__`` module a test replaced.
-
-    Streamlit's ``AppTest`` swaps ``sys.modules["__main__"]`` for the script
-    it renders and never restores it; every later spawned child re-runs that
-    script before its target and dies outside a Streamlit session.
-    """
-    main = sys.modules["__main__"]
-    yield
-    sys.modules["__main__"] = main
-
-
 @pytest.fixture(scope="session")
 def face_embed_container(remote_inference):
     """Base URL of the cluster's face-embed service."""
@@ -1017,6 +1004,101 @@ def own_redis():
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
+class ClusterEventsOnOwnLoop:
+    """A real cluster-events worker on the test Redis, running on an event
+    loop of its own, so a route served by any loop (a sync ``TestClient``'s
+    portal, the test's own) publishes through it."""
+
+    def __init__(self, redis_url: str, handlers: dict):
+        import asyncio
+        import uuid
+
+        from cogniverse_runtime.cluster_events import ClusterEvents
+
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._loop.run_forever, name="test-cluster-events", daemon=True
+        )
+        self._thread.start()
+        self.events = ClusterEvents(
+            redis_url,
+            f"test-worker-{uuid.uuid4().hex[:8]}",
+            handlers,
+            channel=f"cogniverse:test-events:{uuid.uuid4().hex[:8]}",
+        )
+        self._run(self.events.start())
+
+    def _run(self, coroutine):
+        import asyncio
+
+        return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result(60)
+
+    async def publish(self, kind, payload, *, timeout_s):
+        import asyncio
+
+        return await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                self.events.publish(kind, payload, timeout_s=timeout_s), self._loop
+            )
+        )
+
+    def close(self) -> None:
+        try:
+            self._run(self.events.close())
+        finally:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=10)
+            self._loop.close()
+
+
+@pytest.fixture(scope="module")
+def profile_change_events(request):
+    """Wire the admin routes' config events channel, as the runtime's
+    lifespan does, with this process as its one worker: a profile write
+    publishes ``backend_profiles_changed`` and this process drops the
+    tenant's held profiles before the write answers. Module-scoped, so a
+    module's own setup can write profiles through the routes."""
+    from cogniverse_runtime.cluster_events import CONFIG_EVENT_HANDLERS
+    from cogniverse_runtime.routers import admin
+
+    redis_url = os.environ.get("COGNIVERSE_TEST_REDIS_URL") or request.getfixturevalue(
+        "workflow_state_redis_url"
+    )
+    channel = ClusterEventsOnOwnLoop(redis_url, CONFIG_EVENT_HANDLERS)
+    previous = admin._config_events
+    admin.set_config_events(channel)
+    try:
+        yield channel
+    finally:
+        admin.set_config_events(previous)
+        channel.close()
+
+
+@pytest.fixture(scope="module")
+def config_change_events(request):
+    """Wire the config routes' events channel, as the runtime's lifespan
+    does, with this process as its one worker: a config save, restore or
+    import publishes ``configs_changed`` and this process drops what its
+    config managers hold for the tenant before the write answers."""
+    from cogniverse_runtime.cluster_events import (
+        CONFIGS_CHANGED,
+        release_held_configs,
+    )
+    from cogniverse_runtime.routers import config_entries
+
+    redis_url = os.environ.get("COGNIVERSE_TEST_REDIS_URL") or request.getfixturevalue(
+        "workflow_state_redis_url"
+    )
+    channel = ClusterEventsOnOwnLoop(redis_url, {CONFIGS_CHANGED: release_held_configs})
+    previous = config_entries._config_events
+    config_entries.set_config_events(channel)
+    try:
+        yield channel
+    finally:
+        config_entries.set_config_events(previous)
+        channel.close()
+
+
 @pytest.fixture
 def dead_redis_url():
     """A Redis URL on a port nothing listens on."""
@@ -1454,9 +1536,9 @@ def _restore_telemetry_endpoint_overrides():
     them.
 
     ``configure_telemetry_endpoints`` records process-wide endpoints that every
-    later ``get_telemetry_manager`` build applies over its own config. The
-    dashboard sets them on import, so without this a manager a later test
-    builds from its own config exports to the dashboard's endpoints instead.
+    later ``get_telemetry_manager`` build applies over its own config. An
+    entrypoint a test runs sets them, so without this a manager a later test
+    builds from its own config exports to that entrypoint's endpoints instead.
     """
     import sys
 

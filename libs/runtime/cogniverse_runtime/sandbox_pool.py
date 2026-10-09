@@ -101,7 +101,7 @@ class SandboxSessionPool:
         return self._config
 
     def stats(self) -> dict:
-        """Snapshot of pool occupancy. Used by tests + dashboards."""
+        """Snapshot of pool occupancy."""
         with self._lock:
             return {
                 "max_pool_size": self._config.max_pool_size,

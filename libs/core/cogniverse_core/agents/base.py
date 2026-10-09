@@ -51,6 +51,7 @@ from typing import (
     ContextManager,
     Dict,
     Generic,
+    Iterator,
     Literal,
     Optional,
     Type,
@@ -183,6 +184,50 @@ _PROGRESS_QUEUE: contextvars.ContextVar[Optional[asyncio.Queue]] = (
 _STREAM_OWNER: contextvars.ContextVar[Optional["AgentBase"]] = contextvars.ContextVar(
     "_agent_stream_owner", default=None
 )
+
+
+class _ProgressQueue(asyncio.Queue):
+    """A progress queue ``emit_progress`` can feed from any thread.
+
+    ``asyncio.to_thread`` copies the context, so an agent's synchronous step
+    run in a worker thread emits into this queue from off the loop; those
+    puts are handed to the loop that owns the queue. A put after that loop
+    closed has no reader and is dropped.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._owner_loop = asyncio.get_running_loop()
+
+    def put_nowait(self, item: Any) -> None:
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is self._owner_loop:
+            super().put_nowait(item)
+            return
+        try:
+            self._owner_loop.call_soon_threadsafe(super().put_nowait, item)
+        except RuntimeError:
+            pass
+
+
+@contextlib.contextmanager
+def collect_progress() -> Iterator[asyncio.Queue]:
+    """Collect the progress events agents emit in this context.
+
+    Tasks created inside the ``with`` block (and the threads they offload
+    to) carry the queue, so an agent run through a non-streaming path
+    reports its ``emit_progress`` / ``report_phase`` events to the caller.
+    No agent owns the stream, so ``call_dspy`` does not stream tokens.
+    """
+    queue = _ProgressQueue()
+    token = _PROGRESS_QUEUE.set(queue)
+    try:
+        yield queue
+    finally:
+        _PROGRESS_QUEUE.reset(token)
 
 
 def leaf_exceptions(exc: BaseException) -> list[BaseException]:
@@ -735,8 +780,12 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
         """
         self.telemetry_manager = telemetry_manager
 
-    def _process_span(self, typed_input: Any) -> ContextManager[Any]:
+    def process_span(self, typed_input: Any) -> ContextManager[Any]:
         """Return a context manager that wraps ``_process_impl`` in a span.
+
+        A caller that runs an agent's work through another of its methods
+        (the summarizer's ``summarize``) wraps that call in it, so the run is
+        traced under the same span as ``process``.
 
         Span name is ``f"{ClassName}.process"`` so QualityMonitor and other
         consumers can look up an agent's processing span by class name. The
@@ -1048,7 +1097,7 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
         if stream:
             return self._stream_with_progress(typed_input)
 
-        with self._process_span(typed_input):
+        with self.process_span(typed_input):
             result = await self._process_impl(typed_input)
 
         if self._output_rails:
@@ -1083,7 +1132,7 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
         Agents do NOT override this. They call self.emit_progress() from
         within _process_impl() instead.
         """
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = _ProgressQueue()
         _SENTINEL = object()
         # Scope the queue to THIS invocation so emit_progress (called from the
         # create_task'd _process_impl, which inherits this context) targets this
@@ -1097,7 +1146,7 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
 
         async def _run_impl():
             try:
-                with self._process_span(input):
+                with self.process_span(input):
                     result = await self._process_impl(input)
                 result_holder.append(result)
             except Exception as e:

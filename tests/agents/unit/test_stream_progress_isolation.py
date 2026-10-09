@@ -9,10 +9,17 @@ per-invocation ContextVar isolates each stream.
 """
 
 import asyncio
+import threading
 
 import pytest
 
-from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.base import (
+    AgentBase,
+    AgentDeps,
+    AgentInput,
+    AgentOutput,
+    collect_progress,
+)
 
 
 def _memory_config_manager():
@@ -95,6 +102,94 @@ async def test_concurrent_streams_do_not_cross_talk():
     # No raw sentinel (a bare object(), not a dict) ever leaked into a stream.
     for event in events_a + events_b:
         assert isinstance(event, dict)
+
+
+class _ThreadEmittingAgent(AgentBase[_Input, _Output, _Deps]):
+    """Reports its phase from a worker thread, as a synchronous step offloaded
+    with ``asyncio.to_thread`` does."""
+
+    def __init__(self, deps):
+        super().__init__(deps=deps)
+        self.bind_config_manager(_memory_config_manager())
+
+    async def _process_impl(self, input: _Input) -> _Output:
+        await asyncio.to_thread(self.emit_progress, "thread", f"progress-{input.tag}")
+        return _Output(tag=input.tag)
+
+
+def _on_a_debug_loop(coroutine_fn) -> tuple:
+    """Run ``coroutine_fn`` on its own debug-mode loop in a daemon thread.
+
+    Debug mode refuses a loop call from another thread, and a waiter such a
+    call never wakes hangs its loop; the thread keeps a hang from reaching
+    the test session. Returns whether the run is still hung after 5 s, and
+    its result or exception.
+    """
+    outcome: dict = {}
+
+    def run() -> None:
+        loop = asyncio.new_event_loop()
+        loop.set_debug(True)
+        try:
+            outcome["result"] = loop.run_until_complete(coroutine_fn())
+        except BaseException as exc:
+            outcome["error"] = repr(exc)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(5.0)
+    return thread.is_alive(), outcome
+
+
+def test_a_phase_reported_from_a_worker_thread_reaches_the_collector():
+    """The collector is already waiting when the thread reports, so the put
+    must be handed to the loop that owns the queue."""
+
+    async def collect():
+        agent = _ThreadEmittingAgent(_Deps())
+        with collect_progress() as progress:
+            turn = asyncio.create_task(agent.process(_Input(tag="T")))
+        reported = await progress.get()
+        result = await turn
+        return reported, result.tag, progress.empty()
+
+    assert _on_a_debug_loop(collect) == (
+        False,
+        {
+            "result": (
+                {"type": "status", "phase": "thread", "message": "progress-T"},
+                "T",
+                True,
+            )
+        },
+    )
+
+
+def test_a_phase_reported_from_a_worker_thread_reaches_the_stream():
+    async def stream():
+        return await _drain(_ThreadEmittingAgent(_Deps()), "S")
+
+    assert _on_a_debug_loop(stream) == (
+        False,
+        {
+            "result": [
+                {"type": "status", "phase": "thread", "message": "progress-S"},
+                {"type": "final", "data": {"tag": "S"}},
+            ]
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_progress_outside_a_collector_is_dropped():
+    agent = _ThreadEmittingAgent(_Deps())
+    with collect_progress() as progress:
+        pass
+
+    result = await agent.process(_Input(tag="N"))
+
+    assert result.tag == "N"
+    assert progress.empty()
 
 
 class _AnswerInput(AgentInput):

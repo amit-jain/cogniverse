@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictInt, field_validator
 
 from cogniverse_agents.optimizer.entity_extraction_ground_truth import (
     ENTITY_EXTRACTION_GROUND_TRUTH_BLOB_KEY,
@@ -59,8 +59,12 @@ from cogniverse_runtime.admin.profile_models import (
     SchemaDeploymentRequest,
     SchemaDeploymentResponse,
 )
-from cogniverse_runtime.harness_keys import HarnessKeyStore
-from cogniverse_runtime.http_errors import failure_response
+from cogniverse_runtime.harness_keys import MAX_TTL_SECONDS, HarnessKeyStore
+from cogniverse_runtime.http_errors import (
+    canonical_tenant_or_400,
+    failure_response,
+    record_failure,
+)
 from cogniverse_sdk.interfaces.config_store import (
     ConfigScope,
     ConfigStoreUnavailableError,
@@ -261,8 +265,12 @@ async def create_profile(
         HTTPException 400: Validation errors
         HTTPException 409: Concurrent writes to the tenant's backend config
             outlasted every compare-and-set attempt
-        HTTPException 500: Creation or deployment failed
+        HTTPException 500: Creation failed; a requested schema deploy that
+            fails answers 201 with schema_deploy_error
+        HTTPException 503: The profile is stored, but a runtime or
+            ingestion worker did not confirm dropping the profiles it held
     """
+    _require_profile_change_channel()
     try:
         profile = BackendProfileConfig(
             profile_name=request.profile_name,
@@ -315,9 +323,11 @@ async def create_profile(
                 ) from exc
 
         version = await asyncio.to_thread(_validate_and_add)
+        await _publish_profile_change(request.tenant_id, request.profile_name, "stored")
 
         schema_deployed = False
         tenant_schema_name = None
+        schema_deploy_error = None
 
         if request.deploy_schema:
 
@@ -339,17 +349,28 @@ async def create_profile(
                     request.tenant_id, request.schema_name
                 )
 
-            tenant_schema_name = await asyncio.to_thread(_deploy)
-            schema_deployed = True
-            logger.info(
-                f"Deployed schema '{tenant_schema_name}' for profile '{request.profile_name}'"
-            )
+            # The profile is stored; a deploy that fails leaves it for a
+            # deploy from the profile, and the answer says so.
+            try:
+                tenant_schema_name = await asyncio.to_thread(_deploy)
+                schema_deployed = True
+                logger.info(
+                    f"Deployed schema '{tenant_schema_name}' for profile "
+                    f"'{request.profile_name}'"
+                )
+            except Exception as exc:
+                record_failure(exc, "profile_schema_deploy_failed")
+                schema_deploy_error = (
+                    f"Deploying schema '{request.schema_name}' failed "
+                    f"({type(exc).__name__}); the runtime log names the cause."
+                )
 
         return ProfileCreateResponse(
             profile_name=request.profile_name,
             tenant_id=request.tenant_id,
             schema_deployed=schema_deployed,
             tenant_schema_name=tenant_schema_name,
+            schema_deploy_error=schema_deploy_error,
             created_at=datetime.now(timezone.utc).isoformat(),
             version=version,
         )
@@ -374,9 +395,11 @@ async def create_profile(
 async def list_profile_templates(
     tenant_id: str,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    validator: ProfileValidator = Depends(get_profile_validator_dependency),
 ) -> ProfileTemplateListResponse:
     """The shipped profiles a tenant's new profile can start from, each with
-    its whole configuration as ingestion reads it.
+    its whole configuration as ingestion reads it, and the values a new
+    profile's type, embedding type, model loader and process type take.
 
     Raises:
         HTTPException 500: The config store could not be read
@@ -407,7 +430,16 @@ async def list_profile_templates(
             e,
             tenant_id=tenant_id,
         )
-    return ProfileTemplateListResponse(tenant_id=tenant_id, templates=templates)
+    from cogniverse_foundation.config.unified_config import PROCESS_TYPES
+
+    return ProfileTemplateListResponse(
+        tenant_id=tenant_id,
+        templates=templates,
+        profile_types=validator.profile_types,
+        embedding_types=list(ProfileValidator.VALID_EMBEDDING_TYPES),
+        model_loaders=ProfileValidator.model_loaders(),
+        process_types=sorted(PROCESS_TYPES),
+    )
 
 
 @router.get("/profiles", response_model=ProfileListResponse)
@@ -516,7 +548,7 @@ async def get_profile(
         # pair the content with another write's version.
         config_entry = await asyncio.to_thread(
             config_manager.store.get_config,
-            tenant_id=canonical_tenant_id(tenant_id),
+            tenant_id=canonical_tenant_or_400(tenant_id),
             scope=ConfigScope.BACKEND,
             service="backend",
             config_key="backend_config",
@@ -617,7 +649,10 @@ async def update_profile(
         HTTPException 409: Concurrent writes to the tenant's backend config
             outlasted every compare-and-set attempt
         HTTPException 500: Update operation failed
+        HTTPException 503: The update is stored, but a runtime or ingestion
+            worker did not confirm dropping the profiles it held
     """
+    _require_profile_change_channel()
 
     def _update() -> tuple[List[str], int]:
         """The updated fields and the backend config version the update
@@ -679,6 +714,7 @@ async def update_profile(
 
     try:
         updated_fields, version = await asyncio.to_thread(_update)
+        await _publish_profile_change(request.tenant_id, profile_name, "updated")
 
         return ProfileUpdateResponse(
             profile_name=profile_name,
@@ -732,7 +768,10 @@ async def delete_profile(
             concurrent writes to the tenant's backend config outlasted every
             compare-and-set attempt
         HTTPException 500: Deletion failed
+        HTTPException 503: The profile is deleted, but a runtime or
+            ingestion worker did not confirm dropping the profiles it held
     """
+    _require_profile_change_channel()
 
     def _delete() -> bool:
         """The profile delete's blocking work, run off the serving loop.
@@ -793,6 +832,7 @@ async def delete_profile(
 
     try:
         schema_deleted = await asyncio.to_thread(_delete)
+        await _publish_profile_change(tenant_id, profile_name, "deleted")
 
         return ProfileDeleteResponse(
             profile_name=profile_name,
@@ -815,6 +855,56 @@ async def delete_profile(
             profile_name=profile_name,
             tenant_id=tenant_id,
         )
+
+
+# How long a profile write waits for every worker to drop the profiles it held.
+PROFILE_CHANGE_ACK_TIMEOUT_S = 15.0
+
+# Delivers profile changes to every runtime and ingestion worker; wired at
+# startup.
+_config_events = None
+
+
+def set_config_events(config_events) -> None:
+    """Wire the channel profile changes reach every worker process through."""
+    global _config_events
+    _config_events = config_events
+
+
+def _require_profile_change_channel() -> None:
+    """A profile write refuses before storing anything when no channel can
+    carry the change to the other workers."""
+    if _config_events is None:
+        raise RuntimeError("Profile writes need the config events channel wired")
+
+
+async def _publish_profile_change(
+    tenant_id: str, profile_name: str, change: str
+) -> None:
+    """Have every runtime and ingestion worker drop the tenant's held
+    profiles, so its next request or ingest on any of them reads the change."""
+    from cogniverse_runtime.cluster_events import (
+        BACKEND_PROFILES_CHANGED,
+        ClusterEventError,
+    )
+
+    try:
+        await _config_events.publish(
+            BACKEND_PROFILES_CHANGED,
+            {"tenant_id": canonical_tenant_id(tenant_id)},
+            timeout_s=PROFILE_CHANGE_ACK_TIMEOUT_S,
+        )
+    except ClusterEventError as exc:
+        raise failure_response(
+            503,
+            "profile_change_not_propagated",
+            f"Profile '{profile_name}' is {change} for tenant '{tenant_id}', but "
+            "not every runtime or ingestion worker dropped the profiles it "
+            "held; those workers read the change within a minute.",
+            exc,
+            profile_name=profile_name,
+            tenant_id=tenant_id,
+        ) from exc
 
 
 def _profile_not_found(profile_name: str, tenant_id: str) -> HTTPException:
@@ -1350,7 +1440,7 @@ async def admin_delete_memory(tenant_id: str, memory_id: str):
     """Admin: delete any memory by ID, regardless of namespace."""
     from cogniverse_core.memory.manager import Mem0MemoryManager
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
 
     def _delete() -> bool:
         mgr = Mem0MemoryManager(tenant_id)
@@ -1383,7 +1473,7 @@ async def admin_clear_memories(
     """Admin: clear memories by type. Can clear system memories (strategies)."""
     from cogniverse_core.memory.manager import Mem0MemoryManager
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
 
     if type and type != "all":
         ns = _ADMIN_TYPE_TO_NAMESPACE.get(type)
@@ -1423,7 +1513,7 @@ async def admin_drop_session(tenant_id: str, session_id: str):
     if not session_id.strip():
         raise HTTPException(status_code=400, detail="session_id must be non-empty")
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     registry = build_default_registry()
 
     def _drop() -> Dict[str, int]:
@@ -1460,7 +1550,7 @@ SESSION_CLOSE_ACK_TIMEOUT_S = 60.0
 
 
 def set_cluster_events(cluster_events) -> None:
-    """Wire the channel a session close reaches every worker process through."""
+    """Wire the channel session closes reach every worker process through."""
     global _cluster_events
     _cluster_events = cluster_events
 
@@ -1732,7 +1822,7 @@ async def set_pin_quotas(
         # rejecting every org_admin pin for the tenant.
         raise HTTPException(400, "org_admin quota must be >= 0, or -1 for unlimited")
 
-    key = canonical_tenant_id(tenant_id)
+    key = canonical_tenant_or_400(tenant_id)
     requested = {
         role: value
         for role, value in (
@@ -1772,7 +1862,7 @@ async def set_profile_selection_ground_truth(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    key = canonical_tenant_id(tenant_id)
+    key = canonical_tenant_or_400(tenant_id)
     content = serialize_profile_selection_ground_truth_rows(canonical_rows)
     try:
         am = _build_artifact_manager(key)
@@ -1829,7 +1919,7 @@ async def set_golden_set_ground_truth(
         )
         raise HTTPException(400, message) from exc
 
-    key = canonical_tenant_id(tenant_id)
+    key = canonical_tenant_or_400(tenant_id)
     content = serialize_golden_set_ground_truth_rows(canonical_rows)
     try:
         am = _build_artifact_manager(key)
@@ -1881,7 +1971,7 @@ async def set_entity_extraction_ground_truth(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    key = canonical_tenant_id(tenant_id)
+    key = canonical_tenant_or_400(tenant_id)
     content = serialize_entity_extraction_ground_truth_rows(canonical_rows)
     try:
         am = _build_artifact_manager(key)
@@ -2043,7 +2133,7 @@ async def pin_memory(
     pinned_by = _parse_pinnable(body.pinned_by)
     if not body.actor_id.strip():
         raise HTTPException(400, "actor_id must be non-empty")
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     svc = await _pin_service_for(tenant_id)
     try:
         record = await asyncio.to_thread(
@@ -2091,7 +2181,7 @@ async def unpin_memory(
     requester = _parse_pinnable(body.requester_role)
     if not body.actor_id.strip():
         raise HTTPException(400, "actor_id must be non-empty")
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     svc = await _pin_service_for(tenant_id)
     try:
         removed = await asyncio.to_thread(
@@ -2120,7 +2210,7 @@ async def unpin_memory(
 @router.get("/tenants/{tenant_id}/pins", response_model=PinListResponse)
 async def list_pins(tenant_id: str) -> PinListResponse:
     """list all pin records for a tenant (audit + UI)."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     svc = await _pin_service_for(tenant_id)
     records = await asyncio.to_thread(svc.list_pins, tenant_id)
     return PinListResponse(
@@ -2183,7 +2273,7 @@ async def promote_to_org_trunk(
             400, f"invalid actor_role {body.actor_role!r}; expected one of: {valid}"
         ) from exc
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
     # Document point-GET: read-your-writes. The search-backed get_all lags
     # index visibility, so a freshly written memory would 404 here.
@@ -2278,7 +2368,7 @@ async def endorse_memory(
             f"unknown endorser_role={body.endorser_role!r}; valid: {valid}",
         )
 
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
     # Document point-GET: read-your-writes. The search-backed get_all lags
     # index visibility, so a freshly written memory would 404 here.
@@ -2360,7 +2450,7 @@ class RestoreMemoryResponse(BaseModel):
 )
 async def restore_memory(tenant_id: str, memory_id: str) -> RestoreMemoryResponse:
     """clear the archived flag on a soft-deleted memory."""
-    tenant_id = canonical_tenant_id(tenant_id)
+    tenant_id = canonical_tenant_or_400(tenant_id)
     source_mm = (await _pin_service_for(tenant_id))._mm  # reuse the lazy-init path
     ok = await asyncio.to_thread(source_mm.restore_archived_memory, memory_id)
     if not ok:
@@ -2439,7 +2529,7 @@ async def set_signature_variant(
         raise HTTPException(400, "variant_id must be non-empty")
     # Store under the canonical key so the dispatcher finds it whether the
     # tenant arrives as simple or colon form.
-    key = canonical_tenant_id(tenant_id)
+    key = canonical_tenant_or_400(tenant_id)
     try:
         selections = await asyncio.to_thread(
             _update_override,
@@ -2577,6 +2667,7 @@ def _reset_admin_overrides_for_tests() -> None:
 class HarnessKeyCreateRequest(BaseModel):
     tenant_id: str = Field(min_length=1)
     name: str = Field(min_length=1, max_length=200)
+    ttl_seconds: StrictInt | None = Field(None, ge=1, le=MAX_TTL_SECONDS)
 
     @field_validator("tenant_id", "name")
     @classmethod
@@ -2633,12 +2724,13 @@ async def create_harness_key(
     request: HarnessKeyCreateRequest,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
 ):
-    tenant_id = canonical_tenant_id(request.tenant_id)
+    tenant_id = canonical_tenant_or_400(request.tenant_id)
     try:
         return await asyncio.to_thread(
             HarnessKeyStore(config_manager.store).create,
             tenant_id,
             request.name,
+            request.ttl_seconds,
         )
     except ConfigStoreUnavailableError as exc:
         raise _harness_key_store_unavailable(exc) from exc

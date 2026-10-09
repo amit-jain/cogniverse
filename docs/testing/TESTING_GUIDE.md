@@ -116,8 +116,6 @@ tests/
 ├── common/
 │   ├── unit/
 │   └── integration/
-├── dashboard/
-│   └── unit/
 ├── ui/                              # Currently empty
 ├── synthetic/
 │   ├── unit/
@@ -946,7 +944,7 @@ build on a coverage floor via `--cov-fail-under`:
 | `evaluation-tests.yml` | cogniverse-evaluation | 50% |
 | `routing-tests.yml` | cogniverse-agents (routing) | 15% |
 
-All other workflows (agents, core, dashboard, finetuning, ingestion,
+All other workflows (agents, core, finetuning, ingestion,
 synthetic, telemetry, vespa, runtime) report coverage but do not fail the
 build below any specific percentage.
 
@@ -966,13 +964,12 @@ and two manual/release workflows not tied to a single module:
 | `chart-validation.yml` | Helm chart (`charts/cogniverse`) | lint + template + kubeconform | None |
 | `cli-tests.yml` | cogniverse-cli | unit + integration | None |
 | `core-tests.yml` | cogniverse-core (incl. `tests/core/*`, `tests/memory/*` and the `ci_fast` files under `tests/utils/`; the rest of memory integration is local-tier — it needs the cluster's DenseOn service) | unit + integration | Vespa |
-| `dashboard-tests.yml` | cogniverse-dashboard | unit + integration | None (TestClient) |
 | `evaluation-tests.yml` | cogniverse-evaluation | unit + integration | Phoenix |
 | `finetuning-tests.yml` | cogniverse-finetuning | unit + integration | Vespa |
 | `ingestion-tests.yml` | cogniverse-runtime (ingestion) | unit + integration | Vespa |
 | `messaging-tests.yml` | cogniverse-messaging | unit + integration | None |
 | `routing-tests.yml` | cogniverse-agents (routing) | unit + integration | Vespa |
-| `runtime-tests.yml` | cogniverse-runtime, cogniverse-foundation, cogniverse-cli, events, cogniverse-messaging (unit for all; integration for runtime + the small events/foundation/messaging suites; the web client's browser suites, `test_web_ops_*.py` and `test_web_client_ag_ui.py`, run in their own `web-ops-integration-tests` job) | unit + integration | Vespa |
+| `runtime-tests.yml` | cogniverse-runtime, cogniverse-foundation, cogniverse-cli, events, cogniverse-messaging (unit for all; integration for runtime + the small events/foundation/messaging suites; the web client's browser suites, `test_web_*.py` and `test_ag_ui_threads.py`, run in five parallel `web-ops-integration-tests-*` jobs and the Optimization framework suite in `web-ops-optimization-framework-tests`) | unit + integration | Vespa |
 | `synthetic-tests.yml` | cogniverse-synthetic | unit + integration | Phoenix |
 | `telemetry-tests.yml` | cogniverse-telemetry-phoenix | unit + integration | Phoenix |
 | `test-integrity.yml` | Whole-repo test guards (no `paths` filter) | assertion strength + CI coverage | None |

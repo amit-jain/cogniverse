@@ -34,9 +34,9 @@ from tests.e2e.cluster import (
     TENANT_ID,
 )
 from tests.e2e.conftest import (
-    DASHBOARD,
     SAMPLE_VIDEO_CONTENT_ID,
     SAMPLE_VIDEO_PATH,
+    WEB,
     _ensure_sample_content_ingested,
 )
 from tests.e2e.sample_corpus import _sample_video_media_type
@@ -86,7 +86,7 @@ def _ingress_host() -> str:
 
 
 API_PREFIX = _rule_path("runtime")
-DASHBOARD_PREFIX = _rule_path("dashboard")
+WEB_PREFIX = _rule_path("web")
 INGRESS_HOST = _ingress_host()
 
 
@@ -219,7 +219,7 @@ def test_the_published_prefix_and_the_service_serve_one_liveness_document(ingres
 
     The runtime is published under the prefix with no rewrite, so the ingress
     answer is the Service answer byte for byte, and the unprefixed path through
-    the same ingress belongs to the dashboard rule instead.
+    the same ingress belongs to the web client's rule instead.
     """
     on_service = httpx.get(f"{RUNTIME}/health/live", timeout=30.0)
     assert (on_service.status_code, on_service.json()) == (200, {"status": "alive"})
@@ -233,7 +233,7 @@ def test_the_published_prefix_and_the_service_serve_one_liveness_document(ingres
         f"{through_prefix.status_code} {through_prefix.text[:300]!r}"
     )
 
-    # The dashboard owns the unprefixed rule, so the runtime's liveness
+    # The web client owns the unprefixed rule, so the runtime's liveness
     # document must not come back from it. Paired with the assertion above,
     # this cannot hold by the ingress being unreachable.
     unprefixed = _through_ingress(ingress_url, "/health/live")
@@ -326,7 +326,7 @@ def test_the_model_catalogue_is_the_same_through_both_entry_points(
 def test_the_mounted_a2a_app_answers_on_the_service_and_under_the_prefix(ingress_url):
     """The ``/a2a`` sub-app resolves on the bare Service path and the prefix.
 
-    The dashboard, the CLI and the rest of this suite address ``/a2a/`` on the
+    The CLI and the rest of this suite address ``/a2a/`` on the
     Service with no prefix, while the ingress carries the prefix. A root path
     the process applies unconditionally resolves the mount against the prefix
     and answers 404 for the bare path.
@@ -441,16 +441,27 @@ def test_the_seeded_search_answers_the_same_hits_through_the_ingress(
     ]
 
 
-def test_the_unprefixed_rule_serves_the_dashboard(ingress_url):
-    """The overlay's other rule is the dashboard, and the prefix did not take it."""
-    assert DASHBOARD_PREFIX == "", (
-        f"{K3S_VALUES} publishes the dashboard under {DASHBOARD_PREFIX!r}; this "
+def test_the_unprefixed_rule_serves_the_web_client(ingress_url):
+    """The overlay's other rule is the web client, and the prefix did not take it."""
+    assert WEB_PREFIX == "", (
+        f"{K3S_VALUES} publishes the web client under {WEB_PREFIX!r}; this "
         "test pins the root rule the overlay ships"
     )
     root = _through_ingress(ingress_url, "/")
-    on_service = httpx.get(f"{DASHBOARD}/", timeout=30.0)
+    on_service = httpx.get(f"{WEB}/", timeout=30.0)
     assert (root.status_code, root.text) == (
         on_service.status_code,
         on_service.text,
     ), f"the root rule answered {root.status_code}: {root.text[:300]!r}"
     assert root.status_code == 200
+    assert "<title>Cogniverse</title>" in root.text
+
+    # The web server's health route and its own API sit outside the runtime's
+    # prefix, so the ingress hands them to the web client.
+    health = _through_ingress(ingress_url, "/healthz")
+    assert (health.status_code, health.json()) == (200, {"status": "ok"})
+    runtime_agents = _through_ingress(ingress_url, f"{API_PREFIX}/agents/")
+    assert runtime_agents.status_code == 200, runtime_agents.text[:300]
+    web_agents = _through_ingress(ingress_url, "/ui-api/agents")
+    assert web_agents.status_code == 200, web_agents.text[:300]
+    assert web_agents.json() == {"agents": runtime_agents.json()["agents"]}

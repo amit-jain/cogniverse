@@ -169,7 +169,9 @@ class ReportGenerationSignature(dspy.Signature):
 
     executive_summary = dspy.OutputField(desc="Executive summary of findings")
     key_findings = dspy.OutputField(desc="Key findings (comma-separated)")
-    recommendations = dspy.OutputField(desc="Recommendations (comma-separated)")
+    recommendations = dspy.OutputField(
+        desc="Recommendations, one per line; a recommendation never spans lines"
+    )
     confidence_score = dspy.OutputField(desc="Confidence in report quality (0.0-1.0)")
 
 
@@ -761,14 +763,13 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
     @staticmethod
     def _parse_llm_list(raw: Any) -> List[str]:
-        """Parse a DSPy list output (declared comma-separated, but LMs often
-        emit one item per line and/or bullet/number prefixes) into a clean
-        list. A non-string (e.g. an unset field) yields no items."""
+        """Parse a DSPy list output, declared one item per line, into a clean
+        list: each non-blank line is one item, less a bullet or number
+        prefix. Commas and parentheses inside a line stay in its item. A
+        non-string (e.g. an unset field) yields no items."""
         if not isinstance(raw, str) or not raw.strip():
             return []
         lines = [ln for ln in raw.replace("\r", "").split("\n") if ln.strip()]
-        if len(lines) <= 1:
-            lines = raw.split(",")
         items: List[str] = []
         for ln in lines:
             cleaned = ln.strip().lstrip("-*•").strip()

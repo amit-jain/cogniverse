@@ -18,6 +18,7 @@ moves takes both templates with it or fails here.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -221,7 +222,8 @@ def test_shared_template_accepts_a_triggered_compile():
     """A quality-drop or annotation-feedback trigger compiles a named agent
     set against a stored dataset, so ``agents`` and ``trigger-dataset`` are
     part of the template's parameter set; every other mode leaves them empty
-    and optimization_cli ignores them."""
+    and optimization_cli ignores them. ``options`` carries the run options of
+    the modes that take them, empty for their defaults."""
     docs = _render()
     workflow_template = _workflow_template(docs, TEMPLATE_NAME)
     runner = _named_template(workflow_template, RUNNER_TEMPLATE)
@@ -232,6 +234,7 @@ def test_shared_template_accepts_a_triggered_compile():
         {"name": "lookback-hours", "value": "48"},
         {"name": "agents", "value": ""},
         {"name": "trigger-dataset", "value": ""},
+        {"name": "options", "value": ""},
     ]
     assert runner["inputs"]["parameters"] == [
         {"name": "mode"},
@@ -239,6 +242,7 @@ def test_shared_template_accepts_a_triggered_compile():
         {"name": "lookback-hours"},
         {"name": "agents", "value": ""},
         {"name": "trigger-dataset", "value": ""},
+        {"name": "options", "value": ""},
     ]
     assert runner["container"]["command"] == [
         "python",
@@ -256,7 +260,71 @@ def test_shared_template_accepts_a_triggered_compile():
         "{{inputs.parameters.agents}}",
         "--trigger-dataset",
         "{{inputs.parameters.trigger-dataset}}",
+        "--options",
+        "{{inputs.parameters.options}}",
+        "--outcome-file",
+        "/tmp/outcome.json",
     ]
+
+
+def test_shared_template_keeps_the_run_outcome_after_the_pod():
+    """The runtime reads a run's outcome from the node Argo keeps, not from
+    the pod log the TTL removes: the CLI writes its document to the file the
+    ``outcome`` output parameter collects, failed runs included, and a run
+    that wrote none reads as empty rather than erroring the node."""
+    runner = _named_template(
+        _workflow_template(_render(), TEMPLATE_NAME), RUNNER_TEMPLATE
+    )
+    args = runner["container"]["args"]
+    outcome_file = args[args.index("--outcome-file") + 1]
+
+    assert runner["outputs"] == {
+        "parameters": [
+            {
+                "name": "outcome",
+                "valueFrom": {"path": outcome_file, "default": ""},
+            }
+        ]
+    }
+    assert outcome_file == "/tmp/outcome.json"
+
+
+def test_recorded_runs_were_recorded_from_this_template():
+    """The recorded Argo answers the runtime and web tests replay carry the
+    outcome parameter exactly as the chart declares it; a template change
+    without a re-recording fails here."""
+    declared = _named_template(
+        _workflow_template(_render(), TEMPLATE_NAME), RUNNER_TEMPLATE
+    )["outputs"]["parameters"]
+    recorded = json.loads(
+        (REPO_ROOT / "tests" / "utils" / "argo_optimizer_runs.json").read_text()
+    )
+
+    assert sorted(recorded) == [
+        "cancelled_pending",
+        "cancelled_running",
+        "killed",
+        "mixed",
+        "raised",
+        "succeeded",
+    ]
+    for case, run in recorded.items():
+        [node] = [
+            node
+            for node in run["status"]["nodes"].values()
+            if node["templateName"] == RUNNER_TEMPLATE and node["type"] == "Pod"
+        ]
+        parameters = (node.get("outputs") or {}).get("parameters")
+        if case.startswith("cancelled"):
+            assert (run["spec"], node.get("outputs")) == (
+                {"shutdown": "Terminate"},
+                None,
+            ), case
+        else:
+            assert run["spec"] == {}, case
+            assert [
+                {key: p[key] for key in ("name", "valueFrom")} for p in parameters
+            ] == declared, case
 
 
 def test_every_submitter_is_told_which_template_to_reference():

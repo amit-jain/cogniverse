@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import { Alert, ConfirmDelete, Panel, useAction, useLoad } from './common';
 import { jsonText, parseJsonObject, sameJson, type JsonObject } from './forms';
-import { runtimeJson, seg } from './http';
-import { fieldsFromTemplate, shippedValues, type ProfileFields } from './profiles';
+import { RuntimeRequestError, runtimeJson, seg } from './http';
+import {
+  BLANK_PROFILE,
+  fieldsFromTemplate,
+  withCurrent,
+  type ProfileChoices,
+  type ProfileFields,
+} from './profiles';
 import { TenantChooser } from './tenants';
 
 interface ProfileSummary {
@@ -46,7 +52,43 @@ interface Deployment {
   error_message?: string | null;
 }
 
-const EMBEDDING_TYPES = ['multi_vector', 'single_vector'];
+/** What a failed profile operation asked the runtime, for the operator to
+ * read beside the error. */
+interface Attempt {
+  route: string;
+  facts: [string, string][];
+  answer: string;
+}
+
+function AttemptDetails({ attempt }: { attempt: Attempt }) {
+  return (
+    <details className="attempt">
+      <summary>Request details</summary>
+      <dl className="facts" aria-label="Request details">
+        <dt>Runtime route</dt>
+        <dd>{attempt.route}</dd>
+        {attempt.facts.map(([term, detail]) => (
+          <Fact key={term} term={term} detail={detail} />
+        ))}
+        <dt>Answer</dt>
+        <dd>{attempt.answer}</dd>
+      </dl>
+    </details>
+  );
+}
+
+function Fact({ term, detail }: { term: string; detail: string }) {
+  return (
+    <>
+      <dt>{term}</dt>
+      <dd>{detail}</dd>
+    </>
+  );
+}
+
+function answerOf(error: unknown): string {
+  return error instanceof RuntimeRequestError ? `HTTP ${error.status}: ${error.message}` : String(error);
+}
 
 export function ProfilesView() {
   const [tenant, setTenant] = useState('');
@@ -109,6 +151,11 @@ function ProfilesPanel({
       {profiles.error && <Alert>{profiles.error}</Alert>}
       {profiles.data && profiles.data.length === 0 && (
         <p className="muted">No profiles created for {tenant}.</p>
+      )}
+      {profiles.data && profiles.data.length > 0 && (
+        <p className="muted">
+          {profiles.data.length} {profiles.data.length === 1 ? 'profile' : 'profiles'} created for {tenant}.
+        </p>
       )}
       {profiles.data && profiles.data.length > 0 && (
         <table>
@@ -269,7 +316,15 @@ function DeploySchema({
   onDeployed: (notice: string) => void;
 }) {
   const [force, setForce] = useState(false);
+  const [attempt, setAttempt] = useState<Attempt>();
   const action = useAction();
+  const route = `POST /admin/profiles/${profile.profile_name}/deploy`;
+  const facts = (forced: boolean): [string, string][] => [
+    ['Profile', profile.profile_name],
+    ['Tenant', tenant],
+    ['Schema', profile.schema_name],
+    ['Force', forced ? 'yes' : 'no'],
+  ];
   return (
     <div className="inline-form" role="group" aria-label="Deploy schema">
       <h3>Schema</h3>
@@ -279,25 +334,35 @@ function DeploySchema({
       </label>
       <button
         disabled={action.pending}
-        onClick={() =>
+        onClick={() => {
+          setAttempt(undefined);
           action.run(async () => {
-            const result = await runtimeJson<Deployment>(`/admin/profiles/${seg(profile.profile_name)}/deploy`, {
-              method: 'POST',
-              body: { tenant_id: tenant, force },
-            });
-            if (result.deployment_status === 'failed')
+            let result: Deployment;
+            try {
+              result = await runtimeJson<Deployment>(`/admin/profiles/${seg(profile.profile_name)}/deploy`, {
+                method: 'POST',
+                body: { tenant_id: tenant, force },
+              });
+            } catch (error) {
+              setAttempt({ route, facts: facts(force), answer: answerOf(error) });
+              throw error;
+            }
+            if (result.deployment_status === 'failed') {
+              setAttempt({ route, facts: facts(force), answer: `deployment_status failed: ${result.error_message}` });
               throw new Error(`Deploying schema ${result.schema_name} failed: ${result.error_message}`);
+            }
             onDeployed(
               result.deployment_status === 'already_deployed'
                 ? `Schema ${result.schema_name} is already deployed as ${result.tenant_schema_name}.`
                 : `Deployed schema ${result.schema_name} as ${result.tenant_schema_name}.`,
             );
-          })
-        }
+          });
+        }}
       >
         {action.pending ? 'Deploying schema…' : 'Deploy schema'}
       </button>
       {action.error && <Alert>{action.error}</Alert>}
+      {action.error && attempt && <AttemptDetails attempt={attempt} />}
     </div>
   );
 }
@@ -312,6 +377,7 @@ function DeleteProfile({
   onDeleted: (notice: string) => void;
 }) {
   const [deleteSchema, setDeleteSchema] = useState(false);
+  const [attempt, setAttempt] = useState<Attempt>();
   return (
     <div className="inline-form" role="group" aria-label="Delete profile">
       <h3>Delete</h3>
@@ -323,10 +389,25 @@ function DeleteProfile({
         name={profile.profile_name}
         what="profile"
         onDelete={async () => {
-          const result = await runtimeJson<{ schema_deleted: boolean }>(
-            `/admin/profiles/${seg(profile.profile_name)}?tenant_id=${seg(tenant)}&delete_schema=${deleteSchema}`,
-            { method: 'DELETE' },
-          );
+          setAttempt(undefined);
+          let result: { schema_deleted: boolean };
+          try {
+            result = await runtimeJson<{ schema_deleted: boolean }>(
+              `/admin/profiles/${seg(profile.profile_name)}?tenant_id=${seg(tenant)}&delete_schema=${deleteSchema}`,
+              { method: 'DELETE' },
+            );
+          } catch (error) {
+            setAttempt({
+              route: `DELETE /admin/profiles/${profile.profile_name}`,
+              facts: [
+                ['Profile', profile.profile_name],
+                ['Tenant', tenant],
+                ['Delete schema', deleteSchema ? 'yes' : 'no'],
+              ],
+              answer: answerOf(error),
+            });
+            throw error;
+          }
           onDeleted(
             result.schema_deleted
               ? `Deleted profile ${profile.profile_name} and schema ${profile.schema_name}.`
@@ -336,24 +417,10 @@ function DeleteProfile({
           );
         }}
       />
+      {attempt && <AttemptDetails attempt={attempt} />}
     </div>
   );
 }
-
-const EMPTY_FIELDS: ProfileFields = {
-  type: 'video',
-  description: '',
-  schemaName: '',
-  embeddingModel: '',
-  embeddingType: EMBEDDING_TYPES[0],
-  modelLoader: '',
-  processType: '',
-  pipeline: '',
-  strategies: '',
-  schemaConfig: '',
-  modelSpecific: '',
-  extraConfig: '',
-};
 
 function CreateProfile({
   tenant,
@@ -364,18 +431,20 @@ function CreateProfile({
 }) {
   const templates = useLoad(
     (signal) =>
-      runtimeJson<{ templates: ProfileTemplate[] }>(`/admin/profile-templates?tenant_id=${seg(tenant)}`, {
-        signal,
-      }).then((body) => body.templates),
+      runtimeJson<{ templates: ProfileTemplate[] } & ProfileChoices>(
+        `/admin/profile-templates?tenant_id=${seg(tenant)}`,
+        { signal },
+      ),
     [tenant],
   );
   const [name, setName] = useState('');
   const [template, setTemplate] = useState('');
-  const [fields, setFields] = useState<ProfileFields>(EMPTY_FIELDS);
+  const [fields, setFields] = useState<ProfileFields>(BLANK_PROFILE);
   const [deploy, setDeploy] = useState(false);
   const action = useAction();
   const set = (key: keyof ProfileFields) => (value: string) => setFields((current) => ({ ...current, [key]: value }));
-  const shipped = templates.data ?? [];
+  const shipped = templates.data?.templates ?? [];
+  const choices = templates.data;
   return (
     <Panel title={`New profile for ${tenant}`}>
       {templates.error && <Alert>{templates.error}</Alert>}
@@ -388,13 +457,13 @@ function CreateProfile({
             const body = {
               profile_name: name.trim(),
               tenant_id: tenant,
-              type: fields.type.trim(),
+              type: fields.type,
               description: fields.description,
               schema_name: fields.schemaName.trim(),
               embedding_model: fields.embeddingModel.trim(),
               embedding_type: fields.embeddingType,
-              model_loader: fields.modelLoader.trim(),
-              process_type: fields.processType.trim() || null,
+              model_loader: fields.modelLoader,
+              process_type: fields.processType || null,
               pipeline_config: parseJsonObject('Pipeline config', fields.pipeline) ?? {},
               strategies: parseJsonObject('Strategies', fields.strategies) ?? {},
               schema_config: parseJsonObject('Schema config', fields.schemaConfig) ?? {},
@@ -407,11 +476,15 @@ function CreateProfile({
               version: number;
               schema_deployed: boolean;
               tenant_schema_name: string | null;
+              schema_deploy_error: string | null;
             }>('/admin/profiles', { method: 'POST', body });
+            const stored = `Created profile ${created.profile_name} (config version ${created.version})`;
             onCreated(
-              `Created profile ${created.profile_name} (config version ${created.version})${
-                created.schema_deployed ? ` and deployed schema ${created.tenant_schema_name}` : ''
-              }.`,
+              created.schema_deployed
+                ? `${stored} and deployed schema ${created.tenant_schema_name}.`
+                : deploy
+                  ? `${stored}, but its schema was not deployed: ${created.schema_deploy_error} Deploy it from the profile.`
+                  : `${stored}.`,
               created.profile_name,
             );
             setName('');
@@ -426,7 +499,7 @@ function CreateProfile({
             onChange={(e) => {
               setTemplate(e.target.value);
               const chosen = shipped.find((t) => t.profile_name === e.target.value);
-              setFields(chosen ? fieldsFromTemplate(chosen.config) : EMPTY_FIELDS);
+              setFields(chosen ? fieldsFromTemplate(chosen.config) : BLANK_PROFILE);
             }}
           >
             <option value="">Blank profile</option>
@@ -442,10 +515,12 @@ function CreateProfile({
             Profile name
             <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="custom_colpali" />
           </label>
-          <label>
-            Type
-            <input required value={fields.type} onChange={(e) => set('type')(e.target.value)} />
-          </label>
+          <Choice
+            label="Type"
+            value={fields.type}
+            options={withCurrent(choices?.profile_types ?? [], fields.type)}
+            onChange={set('type')}
+          />
           <label>
             Schema name
             <input
@@ -464,42 +539,26 @@ function CreateProfile({
               placeholder="TomoroAI/tomoro-colqwen3-embed-4b"
             />
           </label>
-          <label>
-            Embedding type
-            <select value={fields.embeddingType} onChange={(e) => set('embeddingType')(e.target.value)}>
-              {EMBEDDING_TYPES.map((value) => (
-                <option key={value}>{value}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Model loader
-            <input
-              list="model-loaders"
-              value={fields.modelLoader}
-              onChange={(e) => set('modelLoader')(e.target.value)}
-              placeholder="colpali"
-            />
-            <datalist id="model-loaders">
-              {shippedValues(shipped, 'model_loader').map((value) => (
-                <option key={value} value={value} />
-              ))}
-            </datalist>
-          </label>
-          <label>
-            Process type
-            <input
-              list="process-types"
-              value={fields.processType}
-              onChange={(e) => set('processType')(e.target.value)}
-              placeholder="inferred"
-            />
-            <datalist id="process-types">
-              {shippedValues(shipped, 'process_type').map((value) => (
-                <option key={value} value={value} />
-              ))}
-            </datalist>
-          </label>
+          <Choice
+            label="Embedding type"
+            value={fields.embeddingType}
+            options={withCurrent(choices?.embedding_types ?? [], fields.embeddingType)}
+            onChange={set('embeddingType')}
+          />
+          <Choice
+            label="Model loader"
+            value={fields.modelLoader}
+            options={withCurrent(choices?.model_loaders ?? [], fields.modelLoader)}
+            blank="none"
+            onChange={set('modelLoader')}
+          />
+          <Choice
+            label="Process type"
+            value={fields.processType}
+            options={withCurrent(choices?.process_types ?? [], fields.processType)}
+            blank="inferred"
+            onChange={set('processType')}
+          />
         </div>
         <label>
           Description
@@ -514,12 +573,38 @@ function CreateProfile({
           <input type="checkbox" checked={deploy} onChange={(e) => setDeploy(e.target.checked)} />
           Deploy the schema now
         </label>
-        <button type="submit" disabled={action.pending}>
+        <button type="submit" disabled={action.pending || !templates.data}>
           {action.pending ? (deploy ? 'Creating and deploying…' : 'Creating…') : 'Create profile'}
         </button>
         {action.error && <Alert>{action.error}</Alert>}
       </form>
     </Panel>
+  );
+}
+
+function Choice({
+  label,
+  value,
+  options,
+  blank,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  blank?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label>
+      {label}
+      <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+        {blank !== undefined && <option value="">{blank}</option>}
+        {options.map((option) => (
+          <option key={option}>{option}</option>
+        ))}
+      </select>
+    </label>
   );
 }
 

@@ -167,8 +167,8 @@ class TestIngestionUploadRequiresTenant:
     def test_start_with_unregistered_tenant_returns_404(
         self, ingestion_client_missing_tenant
     ):
-        """``POST /ingestion/start`` (job-based path used by the dashboard
-        and the legacy CLI) must 404 for an unregistered tenant before
+        """``POST /ingestion/start`` (the job-based path used by the legacy
+        CLI) must 404 for an unregistered tenant before
         any backend work or background task creation.
         """
         client = ingestion_client_missing_tenant
@@ -192,15 +192,14 @@ class TestIngestionUploadRequiresTenant:
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestStartIngestionBodyContract:
-    """The dashboard's ``process_video`` action must post the body shape the
-    route accepts. It previously sent ``profiles: [<name>]`` (a list) while
-    ``IngestionRequest`` requires ``profile`` (a singular string), so every
-    dashboard ingestion 422'd before reaching any real work."""
+    """A ``/ingestion/start`` caller must post the body shape the route
+    accepts: ``IngestionRequest`` requires ``profile`` (a singular string),
+    so a ``profiles: [<name>]`` list 422s before reaching any real work."""
 
-    def test_dashboard_body_shape_passes_validation(
+    def test_singular_profile_body_passes_validation(
         self, ingestion_client_missing_tenant
     ):
-        """The singular ``profile`` body the dashboard now sends must reach
+        """A singular ``profile`` body must reach
         the tenant check (404 here), not fail model validation (422)."""
         client = ingestion_client_missing_tenant
         resp = client.post(
@@ -212,7 +211,7 @@ class TestStartIngestionBodyContract:
             },
         )
         assert resp.status_code != 422, (
-            f"dashboard body must satisfy IngestionRequest; got 422: {resp.text}"
+            f"singular-profile body must satisfy IngestionRequest; got 422: {resp.text}"
         )
         assert resp.status_code == 404
 

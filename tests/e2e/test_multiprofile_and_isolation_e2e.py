@@ -2,7 +2,7 @@
 E2E tests for multi-profile ingestion, cross-tenant isolation, and load testing.
 
 Tests exercise the full path against the k3d cluster:
-- Ingest content with multiple profiles via API, verify search via dashboard UI
+- Ingest content with multiple profiles via API, verify search via the web client
 - Create isolated tenants, verify data doesn't leak between them
 - Concurrent multi-tenant search under load
 - Verify ingestion tab UI elements and profile selection
@@ -25,12 +25,9 @@ from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
 from tests.e2e.cluster import RUNTIME, TENANT_ID
 from tests.e2e.conftest import (
-    DASHBOARD,
     GATEWAY_VIDEO_QUERIES,
-    click_top_tab,
+    SAMPLE_VIDEO_CONTENT_ID,
     expected_gateway_routing,
-    set_tenant,
-    wait_for_streamlit,
 )
 from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import (
@@ -38,6 +35,17 @@ from tests.e2e.test_api_e2e import (
     DOCUMENT_PROFILE,
     PROFILE,
     _served_document_windows,
+)
+from tests.e2e.web_client import (
+    RUN_TIMEOUT_MS,
+    VIEW_TIMEOUT_MS,
+    choose_tenant,
+    ensure_web_tenant_corpus,
+    minted_tenant,
+    open_agent,
+    open_view,
+    result_cards,
+    run_agent_and_capture_state,
 )
 from tests.utils.profile_payload import profile_create_payload
 
@@ -378,82 +386,108 @@ class TestMultiProfileIngestion:
 
 
 @pytest.mark.e2e
-class TestMultiProfileDashboardUI:
-    """Verify multi-profile search results render in the dashboard UI."""
+@pytest.mark.browser
+class TestMultiProfileWebUI:
+    """Verify search results and tenant context in the web client."""
 
-    def test_search_returns_results_in_dashboard(self, page):
-        """After API ingestion, the dashboard search UI shows results."""
-        # Data was ingested by conftest. Search via dashboard UI.
-        page.goto(DASHBOARD, timeout=30_000)
-        wait_for_streamlit(page)
-        set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Interactive Search")
+    def test_search_returns_results_in_the_web_client(self, page):
+        """A search run's hits render as the result cards, one per hit."""
+        from playwright.sync_api import expect
 
-        # get_by_label also matches the adjacent help-button with the same
-        # aria-label; narrow to the actual textbox by role to keep Playwright
-        # strict-mode happy.
-        search_input = page.get_by_role("textbox", name="Enter your search query")
-        search_input.fill("sports throwing discus")
-        search_input.press("Enter")
-        page.wait_for_timeout(5_000)
-        page.wait_for_load_state("networkidle")
-
-        page.locator('button[kind="primary"]:has-text("Search")').click()
-        page.wait_for_timeout(SEARCH_TIMEOUT)
-        page.wait_for_load_state("networkidle")
-
-        # The dashboard renders a heading <h3 id="search-results">🎯 Search Results</h3>
-        # after the search completes. Exact-text locator like text="Search Results"
-        # doesn't match because the heading is prefixed with an emoji — pin by the
-        # stable element id instead. If no hits are found, Streamlit shows an
-        # st.info/st.warning alert with a "No results" or "No matching" banner.
-        results_heading = page.locator("#search-results")
-        no_results = page.locator(
-            '[data-testid="stAlert"]:has-text("No results"), '
-            '[data-testid="stAlert"]:has-text("No matching")'
+        query = "sports throwing discus"
+        ensure_web_tenant_corpus()
+        open_agent(page, "search_agent")
+        state = run_agent_and_capture_state(page, "search_agent", query)
+        hits = state["result"]["results"]
+        assert hits != [], state["result"]
+        assert [SAMPLE_VIDEO_CONTENT_ID in json.dumps(hit) for hit in hits] == [
+            True
+        ] * len(hits)
+        cards = result_cards(state)
+        results = page.get_by_role("complementary", name="Results")
+        expect(results.locator(".result-title")).to_have_text(
+            [card["title"] for card in cards], timeout=RUN_TIMEOUT_MS
+        )
+        # The search's one group states what it found for the query.
+        plural = "" if len(cards) == 1 else "s"
+        expect(results.locator(".result-found")).to_have_text(
+            [f"Found {len(cards)} result{plural} for '{query}'."]
         )
 
-        # The dashboard renders the Search Results subheader once per executed
-        # search, before it knows whether any hits came back.
-        assert results_heading.count() == 1, (
-            "Dashboard search must execute and render the Search Results section "
-            f"exactly once; headings={results_heading.count()}, "
-            f"no_results={no_results.count()}"
+    def test_ingestion_view_takes_the_profile_to_ingest_with(self, page):
+        """The upload form names its tenant, offers the tenant's upload
+        profiles with the tenant's default chosen, and ingests with the
+        profiles the operator checks."""
+        from playwright.sync_api import expect
+
+        listed = httpx.get(
+            f"{RUNTIME}/ingestion/profiles",
+            params={"tenant_id": TENANT_ID},
+            timeout=60.0,
+        )
+        assert listed.status_code == 200, listed.text
+        targets = listed.json()
+        assert targets["tenant_id"] == canonical_tenant_id(TENANT_ID), targets
+        by_name = {entry["name"]: entry for entry in targets["profiles"]}
+        assert by_name[PROFILE]["kind"] == "video", targets
+        names = [entry["name"] for entry in targets["profiles"]]
+        defaults = [name for name in names if name == targets["default_profile"]]
+
+        open_view(page, "ingestion")
+        choose_tenant(page, TENANT_ID, "Use tenant")
+        expect(page.get_by_role("region", name=f"Upload to {TENANT_ID}")).to_be_visible(
+            timeout=VIEW_TIMEOUT_MS
+        )
+        form = page.get_by_role("form", name="Upload content")
+        expect(
+            form.get_by_text(f"Backend: {targets['backend']}", exact=True)
+        ).to_be_visible(timeout=VIEW_TIMEOUT_MS)
+        boxes = form.get_by_role("group", name="Profiles").get_by_role("checkbox")
+        expect(boxes).to_have_count(len(names))
+
+        def checked() -> list[str]:
+            return [
+                box.get_attribute("aria-label")
+                for box in boxes.all()
+                if box.is_checked()
+            ]
+
+        assert [box.get_attribute("aria-label") for box in boxes.all()] == names
+        assert checked() == defaults
+
+        def box(name: str):
+            return form.get_by_role("group", name="Profiles").get_by_role(
+                "checkbox", name=name, exact=True
+            )
+
+        for name in defaults:
+            if name != PROFILE:
+                box(name).uncheck()
+        box(PROFILE).check()
+        expect(box(PROFILE)).to_be_checked()
+        assert checked() == [PROFILE]
+        expect(form.get_by_label("File", exact=True)).to_have_attribute(
+            "accept", ",".join(by_name[PROFILE]["extensions"])
         )
 
-    def test_ingestion_tab_shows_profile_options(self, page):
-        """Ingestion tab lists multiple profiles for selection."""
-        page.goto(DASHBOARD, timeout=30_000)
-        wait_for_streamlit(page)
-        set_tenant(page, TENANT_ID)
-        click_top_tab(page, "Ingestion")
-        page.get_by_text("Ingestion Pipeline Testing").first.wait_for(timeout=30_000)
-        page.wait_for_load_state("networkidle")
+    def test_tenant_switch_changes_the_views_context(self, page):
+        """Choosing another tenant replaces every panel of the previous one."""
+        from playwright.sync_api import expect
 
-        multiselect = page.locator('[data-testid="stMultiSelect"]')
-        assert multiselect.count() > 0, "Ingestion tab must have profile multiselect"
-
-        body_text = page.inner_text("body").lower()
-        assert PROFILE in body_text, (
-            "Default ColPali profile must be visible in ingestion tab"
-        )
-
-    def test_tenant_switch_changes_search_context(self, page):
-        """Switching tenant in sidebar changes which data search queries see."""
-        page.goto(DASHBOARD, timeout=30_000)
-        wait_for_streamlit(page)
-
-        # Set to the test tenant that has data
-        set_tenant(page, TENANT_ID)
-        page.wait_for_timeout(2_000)
-
-        # Verify sidebar shows the correct tenant
-        sidebar_text = page.locator('[data-testid="stSidebar"]').inner_text()
-        assert (
-            TENANT_ID.replace(":", " ").replace("_", " ")
-            in sidebar_text.lower().replace(":", " ").replace("_", " ")
-            or "flywheel" in sidebar_text.lower()
-        ), f"Sidebar must show active tenant {TENANT_ID}"
+        # The views act for a registered tenant only.
+        other = minted_tenant("isoview")
+        open_view(page, "memory")
+        choose_tenant(page, TENANT_ID, "Show memories")
+        expect(
+            page.get_by_role(
+                "region", name=f"Memories of _user_memories in {TENANT_ID}"
+            )
+        ).to_be_visible(timeout=VIEW_TIMEOUT_MS)
+        choose_tenant(page, other, "Show memories")
+        expect(
+            page.get_by_role("region", name=f"Memories of _user_memories in {other}")
+        ).to_be_visible(timeout=VIEW_TIMEOUT_MS)
+        expect(page.get_by_text(TENANT_ID, exact=False)).to_have_count(0)
 
 
 @pytest.mark.e2e

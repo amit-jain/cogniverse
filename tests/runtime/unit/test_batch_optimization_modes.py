@@ -22,6 +22,7 @@ import pytest
 
 from cogniverse_core.agents.base import ConfigManagerAware
 from cogniverse_runtime.optimization_cli import build_parser
+from cogniverse_runtime.optimization_options import SyntheticRunOptions
 from cogniverse_sdk.interfaces.workflow_store import WorkflowLearningState
 from tests.utils.vespa_test_helpers import shipped_profile
 
@@ -578,10 +579,10 @@ class TestCliArgumentParser:
             == "online-routing-eval"
         )
 
-    def test_routing_is_not_a_mode(self, parser):
-        # 'routing' is the router family, NOT an optimization CLI mode.
-        with pytest.raises(SystemExit):
-            parser.parse_args(["--mode", "routing"])
+    @pytest.mark.parametrize("mode", ["routing", "unified"])
+    def test_module_modes_are_modes(self, parser, mode):
+        args = parser.parse_args(["--mode", mode, "--options", '{"max_iterations": 3}'])
+        assert (args.mode, args.options) == (mode, '{"max_iterations": 3}')
 
     def test_cleanup_tenant_defaults_to_none(self, parser):
         # cleanup + monthly-reports run globally; tenant_id default is None so
@@ -2706,6 +2707,74 @@ class TestSimbaQueryEnhancement:
             [ex],
         ) == (0.0, 0)
 
+    def test_scores_run_each_distinct_input_once_and_weigh_it_per_row(self):
+        """Served holdouts repeat one call hundreds of times: the module runs
+        once per distinct (query, source_text, grounding_context) and the mean
+        stays the per-row mean."""
+        from cogniverse_runtime.optimization_cli import _query_enhancement_scores
+
+        grounded = _example(query="cats", source_text="cats playing piano")
+        ungrounded = _example(query="dogs", source_text="cats playing piano")
+        same_query_other_source = _example(
+            query="cats", source_text="dogs chasing frisbees"
+        )
+        unscoreable = _example(query="birds")
+        answers = {
+            ("cats", "cats playing piano"): _pred("cats playing piano", "piano"),
+            ("dogs", "cats playing piano"): _pred("dogs barking", "barking"),
+            ("cats", "dogs chasing frisbees"): _pred("cats and frisbees", "frisbees"),
+            ("birds", ""): _pred("birds singing", "singing"),
+        }
+
+        class _Module:
+            def __init__(self):
+                self.calls = []
+
+            def __call__(self, **kwargs):
+                self.calls.append(
+                    (
+                        kwargs["query"],
+                        kwargs["source_text"],
+                        kwargs["grounding_context"],
+                    )
+                )
+                return answers[(kwargs["query"], kwargs["source_text"])]
+
+        module = _Module()
+        holdout = (
+            [grounded] * 3
+            + [ungrounded] * 2
+            + [same_query_other_source]
+            + [unscoreable] * 4
+        )
+
+        assert _query_enhancement_scores(module, holdout) == (4 / 6, 6)
+        assert module.calls == [
+            ("cats", "cats playing piano", ""),
+            ("dogs", "cats playing piano", ""),
+            ("cats", "dogs chasing frisbees", ""),
+            ("birds", "", ""),
+        ]
+
+    def test_scores_propagate_a_module_failure_on_a_repeated_input(self):
+        from cogniverse_runtime.optimization_cli import _query_enhancement_scores
+
+        class _Failing:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(self, **kwargs):
+                self.calls += 1
+                raise RuntimeError(f"student endpoint down for {kwargs['query']}")
+
+        module = _Failing()
+        holdout = [_example(query="cats", source_text="cats playing piano")] * 5
+
+        with pytest.raises(RuntimeError) as raised:
+            _query_enhancement_scores(module, holdout)
+        assert str(raised.value) == "student endpoint down for cats"
+        assert module.calls == 1
+
     @pytest.mark.parametrize(
         ("baseline", "current", "candidate", "min_improvement", "expected"),
         [
@@ -2771,9 +2840,12 @@ class TestSimbaQueryEnhancement:
         scorer=None,
         floor=(1, 1),
         config_manager=None,
+        demo_budget=None,
     ):
         from cogniverse_runtime.optimization_cli import run_simba_optimization
 
+        if demo_budget is None:
+            demo_budget = self._unbounded_demo_budget
         mgr = FakeTelemetryManager(provider)
         p1, p2 = _patch_infra(mgr, config_manager=config_manager)
         llm_config = SimpleNamespace(
@@ -2807,10 +2879,23 @@ class TestSimbaQueryEnhancement:
                 "cogniverse_runtime.optimization_cli._population_floor_from_config",
                 return_value=floor,
             ),
+            patch(
+                "cogniverse_runtime.optimization_cli._student_demo_budget",
+                side_effect=demo_budget,
+            ),
         ):
             return asyncio.run(
                 run_simba_optimization(tenant_id="test:unit", lookback_hours=1)
             )
+
+    @staticmethod
+    def _unbounded_demo_budget(endpoint):
+        from cogniverse_foundation.config.token_budget import TokenBudget
+
+        assert endpoint == "student-endpoint"
+        return TokenBudget(
+            model="student", context_window=10**9, reserved_output=1
+        ), len
 
     @staticmethod
     def _persisted_state(provider) -> dict:
@@ -3597,6 +3682,178 @@ class TestSimbaQueryEnhancement:
             "plain 1",
         ]
 
+    def test_the_saved_candidate_keeps_only_the_demos_the_student_window_fits(self):
+        """The compiled candidate is cut to the demonstrations whose request
+        fits the student's window before it is scored, and that cut program
+        is what is saved and what a restarted runtime loads."""
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+        from cogniverse_foundation.config.token_budget import TokenBudget
+
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"expanded query {i}",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+        budgets = []
+
+        def demo_budget(endpoint):
+            budgets.append(endpoint)
+            # Counted in messages: a system turn, a user/assistant pair per
+            # demonstration and the live turn, so 6 holds two demonstrations.
+            return (
+                TokenBudget(model="student", context_window=7, reserved_output=1),
+                len,
+            )
+
+        scored = []
+
+        def scorer(module, holdout):
+            scored.append(
+                [demo["query"] for demo in module.enhancer.predict.demos]
+                if getattr(module, "_compiled_marker", False)
+                else None
+            )
+            return self._score_by_module(module, holdout)
+
+        result = self._run(
+            provider, min_improvement=0.0, scorer=scorer, demo_budget=demo_budget
+        )
+
+        assert (budgets, result["decision"], result["candidate_score"]) == (
+            ["student-endpoint"],
+            "promote",
+            1.0,
+        )
+        assert scored == [None, ["query 0", "query 1"]]
+        state = self._persisted_state(provider)
+        assert [d["query"] for d in state["enhancer.predict"]["demos"]] == [
+            "query 0",
+            "query 1",
+        ]
+        restarted = QueryEnhancementModule()
+        restarted.load_state(state)
+        assert [d["query"] for d in restarted.enhancer.predict.demos] == [
+            "query 0",
+            "query 1",
+        ]
+
+    def test_an_unknown_student_window_fails_the_run_and_saves_nothing(self):
+        from cogniverse_foundation.config.token_budget import (
+            ContextWindowUnavailableError,
+        )
+
+        rows = [
+            _qe_span_row(
+                f"query {i}",
+                f"expanded query {i}",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", rows)
+        )
+
+        def demo_budget(endpoint):
+            raise ContextWindowUnavailableError(
+                "student-endpoint publishes no context window and declares none"
+            )
+
+        result = self._run(provider, min_improvement=0.0, demo_budget=demo_budget)
+
+        assert result == {
+            "status": "failed",
+            "error": "student-endpoint publishes no context window and declares none",
+            **_selection_block(3, 3),
+        }
+        assert self._lineage(provider) == []
+
+    @staticmethod
+    def _long_demo_module(count: int):
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+        from cogniverse_runtime.optimization_cli import _query_enhancement_example
+
+        module = QueryEnhancementModule()
+        module.enhancer.predict.demos = [
+            _query_enhancement_example(
+                {
+                    "query": f"query {i}",
+                    "source_text": " ".join(["alpha"] * 1000),
+                    "grounding_context": "",
+                    "enhanced_query": f"expanded query {i}",
+                    "expansion_terms": ["alpha"],
+                    "synonyms": ["a"],
+                    "context": ["c"],
+                    "confidence": 0.8,
+                    "reasoning": "because",
+                }
+            )
+            for i in range(count)
+        ]
+        return module
+
+    @staticmethod
+    def _words(messages) -> int:
+        return sum(len(str(message["content"]).split()) for message in messages)
+
+    def test_demos_are_bounded_under_the_scoring_and_serving_adapters(self):
+        """Six 1000-word demonstrations against a 3600-word input budget:
+        three fit under both the chat adapter the optimizer scores with and
+        the JSON adapter the runtime serves with (3450 and 3323 words), four
+        fit under neither (4510 and 4356)."""
+        from cogniverse_foundation.config.token_budget import TokenBudget
+        from cogniverse_runtime.optimization_cli import _bound_candidate_demos
+
+        module = self._long_demo_module(6)
+        compiled = list(module.enhancer.predict.demos)
+        bounded = _bound_candidate_demos(
+            module,
+            budget=TokenBudget(
+                model="student", context_window=4600, reserved_output=1000
+            ),
+            count_tokens=self._words,
+            inputs=[{"query": "q", "source_text": "", "grounding_context": ""}],
+        )
+        assert bounded == {"enhancer.predict": (3, 6)}
+        assert module.enhancer.predict.demos == compiled[:3]
+
+    def test_the_longest_served_input_decides_how_many_demos_fit(self):
+        """A 500-word source text in one input leaves room for two."""
+        from cogniverse_foundation.config.token_budget import TokenBudget
+        from cogniverse_runtime.optimization_cli import _bound_candidate_demos
+
+        module = self._long_demo_module(6)
+        bounded = _bound_candidate_demos(
+            module,
+            budget=TokenBudget(
+                model="student", context_window=4600, reserved_output=1000
+            ),
+            count_tokens=self._words,
+            inputs=[
+                {"query": "q", "source_text": "", "grounding_context": ""},
+                {
+                    "query": "q",
+                    "source_text": " ".join(["beta"] * 500),
+                    "grounding_context": "",
+                },
+            ],
+        )
+        assert bounded == {"enhancer.predict": (2, 6)}
+        assert [d.query for d in module.enhancer.predict.demos] == [
+            "query 0",
+            "query 1",
+        ]
+
     def test_scoreable_first_keeps_relative_order(self):
         from cogniverse_runtime.optimization_cli import _scoreable_first
 
@@ -3654,6 +3911,7 @@ class TestProfileSelectionOptimization:
         scoreable_fields: bool = True,
         search_service_factory=None,
         label_exclusions: list[dict[str, Any]] | None = None,
+        run_kwargs: dict[str, Any] | None = None,
     ):
         from cogniverse_agents.optimizer.profile_selection_ground_truth import (
             canonicalize_profile_selection_ground_truth_rows,
@@ -3934,9 +4192,54 @@ class TestProfileSelectionOptimization:
             patch("dspy.configure", lambda **kwargs: None),
         ):
             result = await run_profile_optimization(
-                tenant_id="test:unit", lookback_hours=1
+                tenant_id="test:unit", lookback_hours=1, **(run_kwargs or {})
             )
         return state, result
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("use_synthetic_data", "expected_loads"), [(True, ["profile"]), (False, [])]
+    )
+    async def test_synthetic_data_toggle_decides_whether_approved_rows_load(
+        self, use_synthetic_data, expected_loads
+    ):
+        profiles = [
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df(
+                "cogniverse.profile_selection",
+                [
+                    _profile_span_row(
+                        f"find clip {index}",
+                        span_id=f"profile-{index}",
+                        available_profiles=profiles,
+                        selected_profile=profiles[index % 2],
+                    )
+                    for index in range(4)
+                ],
+            )
+        )
+        loads = []
+
+        async def approved(received_provider, tenant_id, optimizer_type):
+            loads.append(optimizer_type)
+            return []
+
+        with patch(
+            "cogniverse_runtime.optimization_cli._load_approved_synthetic_data",
+            side_effect=approved,
+        ):
+            _, result = await self._run(
+                provider,
+                current_blob=self._served_state(),
+                floor=(1, 1),
+                run_kwargs={"use_synthetic_data": use_synthetic_data},
+            )
+
+        assert result["status"] == "success"
+        assert loads == expected_loads
 
     @staticmethod
     def _profile_selection_score_by_module(module, holdout) -> float:
@@ -4962,6 +5265,82 @@ class TestProfileSelectionOptimization:
         assert str(err.value) == (
             f"Schema 'video_orphan' not found at {tmp_path / 'video_orphan_schema.json'}"
         )
+
+    def test_profile_selection_resolves_shipped_profiles_beside_the_tenants_own(
+        self,
+    ):
+        """A tenant storing only its own profiles still serves the shipped
+        video profile whose schema registration deployed; the derivation
+        resolves both the way search does."""
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import BackendProfileConfig
+        from cogniverse_runtime.optimization_cli import (
+            SHIPPED_CONFIG_PATH,
+            _profile_selection_profile_types,
+            _profile_selection_title_fields,
+        )
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        shipped = json.loads(SHIPPED_CONFIG_PATH.read_text())["backend"]["profiles"]
+        config_manager = ConfigManager(store=InMemoryConfigStore())
+        config_manager.add_backend_profile(
+            BackendProfileConfig.from_dict(
+                "cfg20_docs", dict(shipped["document_text_semantic"])
+            ),
+            tenant_id="acme:own",
+        )
+        candidates = ["cfg20_docs", "video_colpali_smol500_mv_frame"]
+
+        title_fields = _profile_selection_title_fields(
+            config_manager,
+            "acme:own",
+            candidates,
+            FilesystemSchemaLoader(SHIPPED_CONFIG_PATH.parent / "schemas"),
+        )
+        profile_types = _profile_selection_profile_types(
+            config_manager, "acme:own", candidates
+        )
+
+        assert (
+            config_manager.get_backend_profile(
+                "video_colpali_smol500_mv_frame", tenant_id="acme:own"
+            )
+            is None
+        )
+        assert title_fields == {
+            "cfg20_docs": "document_title",
+            "video_colpali_smol500_mv_frame": "video_title",
+        }
+        assert profile_types == {
+            "cfg20_docs": "document",
+            "video_colpali_smol500_mv_frame": "video",
+        }
+
+    def test_profile_selection_profiles_raise_when_the_config_store_is_down(self):
+        """An unreadable config store is an outage, never a profile the tenant
+        does not have."""
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_runtime.optimization_cli import (
+            _profile_selection_profile_types,
+        )
+        from cogniverse_sdk.interfaces.config_store import (
+            ConfigStoreUnavailableError,
+        )
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        class DownStore(InMemoryConfigStore):
+            def get_config(self, *args, **kwargs):
+                raise ConfigStoreUnavailableError("config store did not answer")
+
+        with pytest.raises(ConfigStoreUnavailableError) as err:
+            _profile_selection_profile_types(
+                ConfigManager(store=DownStore()),
+                "acme:own",
+                ["video_colpali_smol500_mv_frame"],
+            )
+
+        assert str(err.value) == "config store did not answer"
 
     def test_shipped_label_reader_stays_removed(self):
         """Tenant ground-truth blobs are the sole label source. The shipped-file
@@ -6765,6 +7144,7 @@ class TestEntityExtractionOptimization:
         ground_truth_missing: bool = False,
         ground_truth_error: Exception | None = None,
         draws=None,
+        run_kwargs: dict[str, Any] | None = None,
     ):
         from cogniverse_runtime.optimization_cli import (
             run_entity_extraction_optimization,
@@ -6987,8 +7367,53 @@ class TestEntityExtractionOptimization:
             result = await run_entity_extraction_optimization(
                 tenant_id="test:unit",
                 lookback_hours=1,
+                **(run_kwargs or {}),
             )
         return state, result
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("use_synthetic_data", "approved_rows"), [(True, 2), (False, 0)]
+    )
+    async def test_synthetic_data_toggle_decides_whether_approved_rows_train(
+        self, use_synthetic_data, approved_rows
+    ):
+        rows = [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(3)
+        ]
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", rows)
+        )
+        approved = [
+            {
+                "query": f"approved{i} query",
+                "entities": [{"text": f"approved{i}", "type": "CONCEPT"}],
+                "example_id": f"approved:entity-approved-{i}",
+            }
+            for i in range(2)
+        ]
+
+        _, result = await self._run(
+            provider,
+            current_blob=self._base_state(),
+            floor=(30, 15),
+            approved_data=approved,
+            run_kwargs={"use_synthetic_data": use_synthetic_data},
+        )
+
+        assert (
+            result["status"],
+            result["truth_rows"],
+            result["approved_rows"],
+            result["label_rows"],
+        ) == ("insufficient_population", 3, approved_rows, 3 + approved_rows)
 
     @pytest.mark.asyncio
     async def test_entity_extraction_missing_ground_truth_returns_named_status(
@@ -8971,6 +9396,18 @@ class TestSyntheticDataMerge:
 class TestCreateTeleprompter:
     """Verify optimizer selection based on training set size."""
 
+    @pytest.mark.parametrize(
+        ("trainset_size", "max_rounds", "expected_rounds"),
+        [(10, None, 1), (10, 7, 7), (60, None, 2), (60, 40, 40)],
+    )
+    def test_max_rounds_replaces_the_size_scaled_rounds(
+        self, trainset_size, max_rounds, expected_rounds
+    ):
+        from cogniverse_runtime.optimization_cli import _create_teleprompter
+
+        teleprompter = _create_teleprompter(trainset_size, max_rounds=max_rounds)
+        assert teleprompter.max_rounds == expected_rounds
+
     def test_bootstrap_accepts_only_exact_approved_labels(self):
         import dspy
 
@@ -9432,7 +9869,7 @@ class TestSyntheticGeneration:
             result = await run_synthetic_generation(
                 tenant_id="acme:invalid",
                 optimizer_types=["query_enhancement"],
-                count=1,
+                options=SyntheticRunOptions(count=1),
             )
 
         error = (
@@ -9554,12 +9991,21 @@ class TestSyntheticGeneration:
             result = await run_synthetic_generation(
                 tenant_id="acme:science",
                 optimizer_types=["routing"],
-                count=1,
+                options=SyntheticRunOptions(count=1),
             )
 
         assert result == {
             "status": "no_data",
-            "results": {"routing": {"status": "no_data", "examples_generated": 0}},
+            "results": {
+                "routing": {
+                    "status": "no_data",
+                    "examples_generated": 0,
+                    "schema_name": "RoutingExperienceSchema",
+                    "selected_profiles": ["video_fixture"],
+                    "profile_selection_reasoning": "No source rows in unit fixture",
+                    "generation_time_ms": None,
+                }
+            },
         }
         assert build_calls == [
             {
@@ -9633,7 +10079,7 @@ class TestSyntheticGeneration:
             result = await run_synthetic_generation(
                 tenant_id="acme:science",
                 optimizer_types=["entity_extraction", "profile"],
-                count=1,
+                options=SyntheticRunOptions(count=1),
             )
 
         assert result == {
@@ -9643,7 +10089,14 @@ class TestSyntheticGeneration:
                     "status": "failed",
                     "error": "GLiNER health check failed",
                 },
-                "profile": {"status": "no_data", "examples_generated": 0},
+                "profile": {
+                    "status": "no_data",
+                    "examples_generated": 0,
+                    "schema_name": "ProfileSelectionExampleSchema",
+                    "selected_profiles": ["video_fixture"],
+                    "profile_selection_reasoning": "No source rows in unit fixture",
+                    "generation_time_ms": None,
+                },
             },
         }
         assert generated == ["profile"]
@@ -9795,10 +10248,16 @@ class TestSyntheticGeneration:
 
             def __init__(self, **kwargs):
                 storage_inits.append(kwargs)
+                self.tenant_id = kwargs["tenant_id"]
 
             async def save_batch(self, batch):
                 saved_batches.append(batch)
                 return batch.batch_id
+
+            async def persist_approved_item(self, **kwargs):
+                raise AssertionError(
+                    f"an example below the threshold was approved: {kwargs}"
+                )
 
         class RecordingSyntheticService:
             def __init__(self, **kwargs):
@@ -9817,10 +10276,10 @@ class TestSyntheticGeneration:
                     optimizer=request.optimizer,
                     schema_name=schema_name,
                     count=1,
-                    selected_profiles=[],
+                    selected_profiles=["video_fixture"],
                     profile_selection_reasoning="Direct unit fixture",
                     data=[example],
-                    metadata={},
+                    metadata={"generation_time_ms": 12},
                 )
 
         with (
@@ -9863,7 +10322,7 @@ class TestSyntheticGeneration:
             result = await run_synthetic_generation(
                 tenant_id="acme:production",
                 optimizer_types=[optimizer_type],
-                count=1,
+                options=SyntheticRunOptions(count=1),
             )
 
         assert result == {
@@ -9873,7 +10332,13 @@ class TestSyntheticGeneration:
                     "status": "success",
                     "examples_generated": 1,
                     "batch_id": saved_batches[0].batch_id,
+                    "auto_approved": 0,
                     "pending_review": 1,
+                    "avg_confidence": expected_confidence,
+                    "schema_name": schema_name,
+                    "selected_profiles": ["video_fixture"],
+                    "profile_selection_reasoning": "Direct unit fixture",
+                    "generation_time_ms": 12,
                 }
             },
         }
@@ -9952,6 +10417,174 @@ class TestSyntheticGeneration:
         assert fake_telemetry_manager._provider.datasets.created == []
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("human_review", "expected_persisted"),
+        [(True, []), (False, ["0", "1"])],
+    )
+    async def test_run_options_shape_the_request_and_the_review(
+        self,
+        fake_telemetry_manager,
+        cli_config_manager,
+        human_review,
+        expected_persisted,
+    ):
+        """The run's options reach the generation request field for field;
+        with review on, examples below the threshold wait for a reviewer, and
+        without it every example is approved for training at once."""
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+        from cogniverse_core.approval.interfaces import (
+            approved_synthetic_dataset_name,
+        )
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_runtime.optimization_cli import run_synthetic_generation
+        from cogniverse_synthetic.schemas import SyntheticDataResponse
+
+        sections = _synthetic_runtime_sections(marker="options")
+        tenant_config = SimpleNamespace(
+            get_llm_config=lambda: SimpleNamespace(primary="test-lm"),
+            get=lambda key, default=None: sections.get(key, default),
+        )
+        cli_config_manager.set_system_config(
+            SystemConfig(
+                telemetry_url="http://phoenix.test:6006",
+                telemetry_collector_endpoint="phoenix.test:4317",
+                redis_url="redis://redis.test:6379/0",
+            )
+        )
+        examples = [
+            {
+                "query": f"Find exact PyTorch tutorials part {index}",
+                "enhanced_query": f"Find exact PyTorch framework tutorials {index}",
+                "expansion_terms": ["framework"],
+                "synonyms": ["machine learning library"],
+                "context": "PyTorch education",
+                "reasoning": "Added the framework category to focus retrieval",
+            }
+            for index in range(2)
+        ]
+        requests = []
+        persisted = []
+
+        class RecordingStorage:
+            from_system_config = classmethod(
+                ApprovalStorageImpl.from_system_config.__func__
+            )
+
+            def __init__(self, **kwargs):
+                self.tenant_id = kwargs["tenant_id"]
+
+            async def save_batch(self, batch):
+                return batch.batch_id
+
+            async def persist_approved_item(
+                self, *, batch_id, dataset_name, item, decision, project_context
+            ):
+                persisted.append(
+                    (
+                        item.item_id.removeprefix(f"{batch_id}_"),
+                        dataset_name,
+                        decision.reviewer,
+                        project_context["optimizer"],
+                    )
+                )
+                return ApprovalStorageImpl._approved_item_copy(item, decision)
+
+        class RecordingSyntheticService:
+            def __init__(self, **kwargs):
+                pass
+
+            async def generate(self, request):
+                requests.append(request)
+                return SyntheticDataResponse(
+                    optimizer=request.optimizer,
+                    schema_name="QueryEnhancementExampleSchema",
+                    count=len(examples),
+                    selected_profiles=["video_fixture"],
+                    profile_selection_reasoning="Video profile holds the tutorials",
+                    data=examples,
+                    metadata={"generation_time_ms": 40},
+                )
+
+        async def query_enhancer(query, tenant_id, source_text):
+            raise AssertionError("fixture enhancer must not be invoked directly")
+
+        with (
+            patch(_PATCH_CONFIG, return_value=cli_config_manager),
+            _patch_telemetry(fake_telemetry_manager),
+            patch(
+                "cogniverse_foundation.config.utils.get_config",
+                return_value=tenant_config,
+            ),
+            patch(
+                "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_runtime.optimization_cli._build_cli_query_enhancer",
+                return_value=query_enhancer,
+            ),
+            patch(
+                "cogniverse_core.registries.backend_registry."
+                "BackendRegistry.get_search_backend",
+                return_value=object(),
+            ),
+            patch(
+                "cogniverse_synthetic.service.SyntheticDataService",
+                RecordingSyntheticService,
+            ),
+            patch(
+                "cogniverse_agents.approval.approval_storage.ApprovalStorageImpl",
+                RecordingStorage,
+            ),
+        ):
+            result = await run_synthetic_generation(
+                tenant_id="acme:production",
+                optimizer_types=["query_enhancement"],
+                options=SyntheticRunOptions(
+                    count=2,
+                    vespa_sample_size=17,
+                    strategy="temporal_recent",
+                    max_profiles=4,
+                    human_review=human_review,
+                ),
+            )
+
+        assert [
+            (
+                request.optimizer,
+                request.count,
+                request.vespa_sample_size,
+                request.strategy,
+                request.max_profiles,
+                request.tenant_id,
+            )
+            for request in requests
+        ] == [("query_enhancement", 2, 17, "temporal_recent", 4, "acme:production")]
+        outcome = result["results"]["query_enhancement"]
+        assert result["status"] == "success"
+        assert {key: value for key, value in outcome.items() if key != "batch_id"} == {
+            "status": "success",
+            "examples_generated": 2,
+            "auto_approved": 0 if human_review else 2,
+            "pending_review": 2 if human_review else 0,
+            "avg_confidence": 0.0,
+            "schema_name": "QueryEnhancementExampleSchema",
+            "selected_profiles": ["video_fixture"],
+            "profile_selection_reasoning": "Video profile holds the tutorials",
+            "generation_time_ms": 40,
+        }
+        assert outcome["batch_id"].startswith("synthetic_query_enhancement_")
+        assert persisted == [
+            (
+                index,
+                approved_synthetic_dataset_name("acme:production"),
+                "cogniverse:auto-approval",
+                "query_enhancement",
+            )
+            for index in expected_persisted
+        ]
+
+    @pytest.mark.asyncio
     async def test_synthetic_generation_does_not_reconfigure_global_dspy(
         self,
         fake_telemetry_manager,
@@ -10007,7 +10640,7 @@ class TestSyntheticGeneration:
             result = await run_synthetic_generation(
                 tenant_id="test:unit",
                 optimizer_types=["profile"],
-                count=5,
+                options=SyntheticRunOptions(count=5),
             )
 
         assert result == {
@@ -10067,7 +10700,7 @@ class TestSyntheticGeneration:
             result = await run_synthetic_generation(
                 tenant_id="test:unit",
                 optimizer_types=["profile"],
-                count=5,
+                options=SyntheticRunOptions(count=5),
             )
 
         assert result == {
@@ -10172,7 +10805,7 @@ class TestSyntheticGeneration:
                     run_synthetic_generation(
                         tenant_id=tenant,
                         optimizer_types=[optimizer_by_tenant[tenant]],
-                        count=1,
+                        options=SyntheticRunOptions(count=1),
                     )
                     for tenant in tenants
                 )
@@ -10983,3 +11616,217 @@ class TestTeacherEndpointReachability:
         assert budget.context_window == 4096
         assert budget.reserved_output == 2048
         assert budget.input_budget == 2048
+
+
+def _orchestration_rows(count: int) -> list[dict]:
+    base = datetime.now(timezone.utc) - timedelta(minutes=2)
+    return [
+        {
+            "name": "cogniverse.orchestration",
+            "context.span_id": f"span-cap-{index:02d}",
+            "start_time": base + timedelta(milliseconds=index),
+            "attributes.input.value": "find exact aurora video",
+            "attributes.output.value": json.dumps(
+                {
+                    "workflow_id": f"wf-cap-{index:02d}",
+                    "pattern": "sequential",
+                    "agent_sequence": ["search_agent"],
+                    "execution_order": ["search_agent"],
+                    "execution_time": 1.0,
+                    "success": True,
+                    "tasks_completed": 1,
+                    "confidence": 0.8,
+                    "agent_observations": [
+                        {
+                            "agent_name": "search_agent",
+                            "execution_time": 1.0,
+                            "success": True,
+                            "confidence": 0.8,
+                        }
+                    ],
+                }
+            ),
+            "status_code": "OK",
+            "status_message": None,
+        }
+        for index in range(count)
+    ]
+
+
+class TestWorkflowIterationCap:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("max_batches", "expected_spans", "expected_reads"),
+        [(1, 50, 1), (2, 55, 2), (None, 55, 2)],
+    )
+    async def test_max_batches_caps_the_evaluated_span_batches(
+        self, max_batches, expected_spans, expected_reads
+    ):
+        from cogniverse_runtime.optimization_cli import run_workflow_optimization
+
+        provider = FakeTelemetryProvider(pd.DataFrame(_orchestration_rows(55)))
+        manager = FakeTelemetryManager(provider)
+        config_patch, telemetry_patch = _patch_infra(manager)
+        with (
+            config_patch,
+            telemetry_patch,
+            patch(
+                "cogniverse_core.registries.WorkflowStoreRegistry.get",
+                return_value=FakeWorkflowStore(),
+            ),
+        ):
+            result = await run_workflow_optimization(
+                tenant_id="test:workflow-cap",
+                lookback_hours=1,
+                max_batches=max_batches,
+            )
+
+        assert (
+            result["status"],
+            result["spans_found"],
+            result["workflows_extracted"],
+            result["execution_demos_saved"],
+        ) == ("success", expected_spans, expected_spans, expected_spans)
+        assert len(provider.traces.calls) == expected_reads
+
+
+class TestModuleOptimization:
+    @staticmethod
+    def _recorders(monkeypatch, results):
+        import cogniverse_runtime.optimization_cli as oc
+
+        calls = []
+
+        def recorder(step):
+            async def run(**kwargs):
+                calls.append((step, kwargs))
+                return results[step]
+
+            return run
+
+        for step, attr in (
+            ("gateway-thresholds", "run_gateway_thresholds_optimization"),
+            ("entity-extraction", "run_entity_extraction_optimization"),
+            ("profile", "run_profile_optimization"),
+            ("workflow", "run_workflow_optimization"),
+        ):
+            monkeypatch.setattr(oc, attr, recorder(step))
+        return calls
+
+    @pytest.mark.asyncio
+    async def test_unified_runs_routing_then_workflow_with_the_options(
+        self, monkeypatch
+    ):
+        from cogniverse_runtime.optimization_cli import run_module_optimization
+        from cogniverse_runtime.optimization_options import ModuleRunOptions
+
+        results = {
+            "gateway-thresholds": {"status": "success", "thresholds": 3},
+            "entity-extraction": {"status": "success", "decision": "promote"},
+            "profile": {"status": "skipped", "reason": "no ground truth"},
+            "workflow": {"status": "no_data", "spans_found": 0},
+        }
+        calls = self._recorders(monkeypatch, results)
+        result = await run_module_optimization(
+            module="unified",
+            tenant_id="acme:prod",
+            lookback_hours=6.0,
+            options=ModuleRunOptions(
+                max_iterations=9,
+                use_synthetic_data=False,
+                dataset_name="golden-acme:prod",
+            ),
+            telemetry_otlp_endpoint="phoenix:4317",
+            embedder_url="http://denseon.test",
+        )
+
+        common = {
+            "tenant_id": "acme:prod",
+            "lookback_hours": 6.0,
+            "telemetry_otlp_endpoint": "phoenix:4317",
+        }
+        assert calls == [
+            ("gateway-thresholds", common),
+            (
+                "entity-extraction",
+                {
+                    **common,
+                    "embedder_url": "http://denseon.test",
+                    "use_synthetic_data": False,
+                    "max_rounds": 9,
+                },
+            ),
+            (
+                "profile",
+                {
+                    **common,
+                    "embedder_url": "http://denseon.test",
+                    "use_synthetic_data": False,
+                    "max_rounds": 9,
+                    "ground_truth_dataset": "golden-acme:prod",
+                },
+            ),
+            ("workflow", {**common, "max_batches": 9}),
+        ]
+        assert result == {
+            "status": "success",
+            "module": "unified",
+            "failed_steps": [],
+            "results": results,
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_failed_step_fails_the_routing_run(self, monkeypatch):
+        from cogniverse_runtime.optimization_cli import run_module_optimization
+
+        results = {
+            "gateway-thresholds": {"status": "success"},
+            "entity-extraction": {"status": "failed", "error": "LM down"},
+            "profile": {"status": "success"},
+        }
+        calls = self._recorders(monkeypatch, results)
+        result = await run_module_optimization(module="routing", tenant_id="acme:prod")
+
+        assert [step for step, _ in calls] == [
+            "gateway-thresholds",
+            "entity-extraction",
+            "profile",
+        ]
+        assert calls[1][1]["use_synthetic_data"] is True
+        assert calls[1][1]["max_rounds"] is None
+        assert result == {
+            "status": "failed",
+            "module": "routing",
+            "failed_steps": ["entity-extraction"],
+            "results": results,
+        }
+
+    @pytest.mark.asyncio
+    async def test_unknown_module_is_refused(self):
+        from cogniverse_runtime.optimization_cli import run_module_optimization
+
+        with pytest.raises(
+            ValueError,
+            match=r"Unknown module 'search'; known: \['routing', 'unified', 'workflow'\]",
+        ):
+            await run_module_optimization(module="search", tenant_id="acme:prod")
+
+    @pytest.mark.asyncio
+    async def test_a_dataset_of_another_tenant_is_refused_before_reading(self):
+        from cogniverse_agents.optimizer.profile_selection_ground_truth import (
+            ProfileSelectionGroundTruthInvalidError,
+        )
+        from cogniverse_runtime.optimization_cli import (
+            _dataset_profile_ground_truth_rows,
+        )
+        from tests.evaluation.fakes import FailingDatasetStore, StubTelemetryProvider
+
+        with pytest.raises(
+            ProfileSelectionGroundTruthInvalidError,
+            match=r"dataset golden-other:prod is not a dataset of tenant acme:prod",
+        ):
+            await _dataset_profile_ground_truth_rows(
+                StubTelemetryProvider(FailingDatasetStore()),
+                "acme:prod",
+                "golden-other:prod",
+            )

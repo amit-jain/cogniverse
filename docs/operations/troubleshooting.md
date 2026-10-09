@@ -607,7 +607,7 @@ curl "http://localhost:8000/admin/profiles/my_profile?tenant_id=acme_corp"
 **Prevention:**
 
 - Always pass the same `tenant_id` used at profile-creation time to every
-  subsequent `get`/`deploy`/`delete` call (runtime admin API and dashboard
+  subsequent `get`/`deploy`/`delete` call (runtime admin API and web client
   both go through the same `service="backend"` config namespace)
 
 - List profiles for a tenant before assuming one is missing vs. misnamed

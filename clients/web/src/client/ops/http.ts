@@ -1,10 +1,31 @@
+import { TENANT_HEADER, currentTenant } from '../tenant';
+
 export class RuntimeRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** The response's parsed JSON body. */
+    readonly body: unknown = null,
   ) {
     super(message);
   }
+}
+
+/** The typed fields a runtime failure carries beside its message (its
+ * ``error`` code and ``failure`` type) and its HTTP status, as one line;
+ * ``null`` for an error that is not a runtime answer. */
+export function failureDetail(error: unknown): string | null {
+  if (!(error instanceof RuntimeRequestError)) return null;
+  const detail = (error.body as { detail?: unknown } | null)?.detail as
+    | { error?: unknown; failure?: unknown }
+    | null
+    | undefined;
+  const parts = [
+    typeof detail?.error === 'string' ? `error ${detail.error}` : null,
+    typeof detail?.failure === 'string' ? `failure ${detail.failure}` : null,
+    `HTTP ${error.status}`,
+  ];
+  return parts.filter(Boolean).join(', ');
 }
 
 /**
@@ -41,16 +62,22 @@ export function errorMessage(body: unknown, status: number): string {
 
 /**
  * Calls a runtime route through the web server and returns its JSON body.
- * A ``FormData`` body goes as multipart; any other body as JSON.
+ * A ``FormData`` body goes as multipart; any other body as JSON. The request
+ * names ``tenant`` (by default the active tenant) for the routes the server
+ * calls as that tenant.
  */
 export async function runtimeJson<T>(
   path: string,
-  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  init: { method?: string; body?: unknown; signal?: AbortSignal; tenant?: string } = {},
 ): Promise<T> {
   const form = init.body instanceof FormData;
-  const response = await fetch(`/api/runtime${path}`, {
+  const headers: Record<string, string> = {};
+  const tenant = init.tenant ?? currentTenant();
+  if (tenant) headers[TENANT_HEADER] = tenant;
+  if (init.body !== undefined && !form) headers['content-type'] = 'application/json';
+  const response = await fetch(`/ui-api/runtime${path}`, {
     method: init.method ?? 'GET',
-    headers: init.body === undefined || form ? undefined : { 'content-type': 'application/json' },
+    headers,
     body: init.body === undefined ? undefined : form ? (init.body as FormData) : JSON.stringify(init.body),
     signal: init.signal,
   });
@@ -64,7 +91,7 @@ export async function runtimeJson<T>(
       response.status,
     );
   }
-  if (!response.ok) throw new RuntimeRequestError(errorMessage(body, response.status), response.status);
+  if (!response.ok) throw new RuntimeRequestError(errorMessage(body, response.status), response.status, body);
   return body as T;
 }
 

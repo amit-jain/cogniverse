@@ -32,11 +32,16 @@ from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
 from tests.utils.synthetic_config import video_synthetic_generator_config
 from tests.utils.vespa_test_helpers import make_config_manager
 
-pytestmark = [pytest.mark.integration, pytest.mark.requires_lm, pytest.mark.local_only]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.requires_lm,
+    pytest.mark.local_only,
+    pytest.mark.requires_inference("vllm_colpali"),
+]
 
 
 @pytest.fixture(scope="module")
-def real_service(shared_vespa):
+def real_service(shared_vespa, resolved_inference_endpoints):
     tenant_id = f"synapi{uuid.uuid4().hex[:8]}:media"
     profile_name = "video_colpali_smol500_mv_frame"
     records = [
@@ -57,7 +62,12 @@ def real_service(shared_vespa):
             "end_time": 24.0,
         },
     ]
-    config_manager = make_config_manager(shared_vespa)
+    config_manager = make_config_manager(
+        shared_vespa,
+        inference_service_urls={
+            "vllm_colpali": resolved_inference_endpoints["vllm_colpali"].base_url
+        },
+    )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     backend_config = BackendConfig(
         backend_type="vespa",

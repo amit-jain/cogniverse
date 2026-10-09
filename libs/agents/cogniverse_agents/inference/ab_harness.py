@@ -6,8 +6,8 @@ typed comparison so callers can A/B test RLM's quality vs cost trade-off
 on real workloads.
 
 Both arms share an ``ab_id`` (stamped in result metadata) so Phoenix
-spans correlate across the pair, and the dashboard's A/B tile can
-aggregate the deltas without joining on opaque trace ids.
+spans correlate across the pair, and the runtime's A/B comparison metrics
+can aggregate the deltas without joining on opaque trace ids.
 
 Caller-supplied ``judge`` is optional. When provided, the harness invokes
 it on each arm's answer to produce a per-arm quality score. Without a

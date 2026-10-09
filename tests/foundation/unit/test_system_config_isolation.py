@@ -76,3 +76,22 @@ def test_a_saved_system_api_key_is_stored_and_read_back_whole():
     assert (reread.llm_api_key, reread.llm_model) == ("sk-live-123", "m")
     assert SystemConfig(llm_api_key="sk-live-123").to_dict()["llm_api_key"] == "***"
     assert SystemConfig().to_dict()["llm_api_key"] is None
+
+
+def test_application_name_survives_config_store_round_trip():
+    """application_name is the Vespa application-package name. to_dict wrote it
+    but from_dict dropped it, so a custom value silently reverted to
+    'cogniverse' on the next cold load (a fresh process/replica)."""
+    store = InMemoryConfigStore()
+    ConfigManager(store=store).set_system_config(
+        SystemConfig(application_name="acme-cogniverse")
+    )
+
+    # A fresh manager reads cold from the store via from_dict (the writing
+    # manager's instance cache would otherwise mask the serialization gap).
+    reloaded = ConfigManager(store=store).get_system_config()
+    assert reloaded.application_name == "acme-cogniverse"
+
+
+def test_application_name_defaults_when_absent():
+    assert SystemConfig.from_dict({}).application_name == "cogniverse"

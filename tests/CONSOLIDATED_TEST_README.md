@@ -12,7 +12,7 @@ This is a comprehensive test suite for the Cogniverse multi-modal content intell
 - **Foundation Layer**: cogniverse-sdk (backend interfaces), cogniverse-foundation (config, telemetry base)
 - **Core Layer**: cogniverse-core (agents, registries, memory), cogniverse-evaluation (metrics), cogniverse-telemetry-phoenix (Phoenix provider)
 - **Implementation Layer**: cogniverse-agents (routing, search), cogniverse-vespa (backend), cogniverse-synthetic (data generation)
-- **Application Layer**: cogniverse-runtime (FastAPI, ingestion), cogniverse-dashboard (Streamlit UI)
+- **Application Layer**: cogniverse-runtime (FastAPI, ingestion)
 
 ## Quick Start
 
@@ -125,7 +125,6 @@ The test suite validates processing across **all content modalities**:
 **Application Layer Tests:**
 - Multi-modal ingestion pipeline (`cogniverse-runtime`)
 - FastAPI endpoints and tenant middleware
-- Streamlit dashboard components (`cogniverse-dashboard`)
 
 ### 3. Routing System Tests
 

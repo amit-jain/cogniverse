@@ -1,4 +1,4 @@
-"""A down Phoenix must trip the telemetry breaker: the dashboard degrades, the
+"""A down Phoenix must trip the telemetry breaker: the UI degrades, the
 provider surfaces — neither keeps dialing a dead Phoenix each call.
 """
 
@@ -33,7 +33,7 @@ def _breaker(name):
 
 def test_analytics_raises_on_outage_and_fails_fast_when_breaker_open():
     """A Phoenix outage must RAISE from get_traces — returning [] reads as
-    "no traces in range" on the dashboard, indistinguishable from genuine
+    "no traces in range" in the UI, indistinguishable from genuine
     empty data. The breaker still bounds dialing: once open, the call fails
     fast without touching the client."""
     from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
