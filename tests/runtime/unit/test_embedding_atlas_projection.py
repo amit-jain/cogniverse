@@ -247,7 +247,7 @@ def _built_map():
     ]
     document_map = build_map(documents, rng.normal(size=(12, 6)))
     document_map.source = {
-        "schema_name": "notes_acme",
+        "schema_name": "document_text",
         "embedding_field": "embedding",
         "without_embedding": 2,
     }
