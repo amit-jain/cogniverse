@@ -416,8 +416,10 @@ not the SIMBA algorithm.
 reaches them only when the scoreable records did not fill the demos, and their count is reported as
 `unscoreable_examples`. Every holdout record is an evaluation probe. `_query_enhancement_quality` scores a module's own output for the probe inputs (1.0 when
 the enhanced query differs from the query, has expansion terms and, given a grounding context, names one
-of its entities; else 0.0). The base module, the persisted artifact and the compiled candidate are scored
-on the same holdout and `_select_simba_artifact` decides: `promote` persists the candidate (it beats the
+of its entities; else 0.0). `_query_enhancement_scores` runs a module once per distinct
+(`query`, `source_text`, `grounding_context`) and counts that score once per holdout record carrying it,
+so a call served hundreds of times costs one LM request and keeps its weight in the mean. The base module,
+the persisted artifact and the compiled candidate are scored on the same holdout and `_select_simba_artifact` decides: `promote` persists the candidate (it beats the
 served module by the tenant's `optimization_improvement_threshold`), `keep` leaves the artifact, `rollback`
 persists the base state over an artifact that scores below base, `reject` persists nothing. A persisted
 artifact whose state is the base module's (`_current_score`) takes the baseline score instead of being
