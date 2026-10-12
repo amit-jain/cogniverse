@@ -1888,10 +1888,7 @@ class ArtifactManager:
         # bounded scan of recent timestamps.
         listing = getattr(self._provider.datasets, "list_datasets", None)
         if listing is not None:
-            try:
-                names = await listing()
-            except Exception:
-                names = []
+            names = [dataset["name"] for dataset in await listing()]
             candidates = [n for n in names if n.startswith(f"{base_name}_v")]
             if candidates:
                 latest = sorted(candidates)[-1]
