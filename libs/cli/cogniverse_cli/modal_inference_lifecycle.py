@@ -40,7 +40,9 @@ _DEPLOYMENT_MODULES = {
     "face_embed": "cogniverse_cli.modal_inference.face",
     "video_embed": "cogniverse_cli.modal_inference.video_embed",
 }
-_RETRYABLE_HEALTH_STATUSES = frozenset({502, 503, 504})
+# 303 is Modal's answer to a web request that waited its 150-second limit on
+# a container still starting; the next probe waits on the same container.
+_RETRYABLE_HEALTH_STATUSES = frozenset({303, 502, 503, 504})
 
 
 class ModalLifecycleError(RuntimeError):

@@ -368,6 +368,39 @@ def test_warm_retries_cold_health_then_verifies_identity_once_and_releases():
     assert stop_calls == []
 
 
+def test_warm_retries_a_health_request_modal_redirected_at_its_time_limit():
+    """Modal answers a web request that waited 150 seconds on a starting
+    container with 303; the next probe waits on the same container."""
+    with _inference_server(
+        COLPALI,
+        health_statuses=(303, 303, 200),
+    ) as (base_url, target_url, requests):
+        function = _ModalFunction(base_url)
+        with _modal_client((base_url, target_url)) as client:
+            lifecycle, _, stop_calls = _make_lifecycle(
+                {"vllm_colpali": function},
+                client=client,
+                readiness_poll_interval=0,
+            )
+            resolved = lifecycle.warm(["vllm_colpali"])
+            lifecycle.release(["vllm_colpali"])
+
+    assert requests == [
+        ("/health", f"Bearer {API_KEY}"),
+        ("/health", f"Bearer {API_KEY}"),
+        ("/health", f"Bearer {API_KEY}"),
+        ("/v1/models", f"Bearer {API_KEY}"),
+    ]
+    assert [(endpoint.service, endpoint.base_url) for endpoint in resolved] == [
+        ("vllm_colpali", base_url)
+    ]
+    assert function.autoscaler_updates == [
+        {"min_containers": 1, "scaledown_window": 300},
+        {"min_containers": 0, "scaledown_window": 300},
+    ]
+    assert stop_calls == []
+
+
 def test_warm_retries_timeout_connect_and_gateway_failures_before_identity():
     requests: list[tuple[str, str | None]] = []
 
