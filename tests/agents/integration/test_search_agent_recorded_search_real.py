@@ -224,7 +224,9 @@ async def test_two_tenants_searching_at_once_each_record_their_own_search(
 ):
     """Both searches run inside their spans at the same moment: each tenant's
     project holds exactly its own search, with its own results."""
-    since = datetime.now(timezone.utc) - timedelta(seconds=5)
+    # The window opens with this test: an earlier test's search for the same
+    # tenant ended moments ago and is not one of these two.
+    since = datetime.now(timezone.utc)
     agents = {
         TENANT_A: _agent(corpus, TENANT_A, 8072),
         TENANT_B: _agent(corpus, TENANT_B, 8073),
