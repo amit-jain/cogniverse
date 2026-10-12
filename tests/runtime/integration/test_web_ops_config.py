@@ -187,6 +187,14 @@ class TestSectionForms:
         )
 
         form.get_by_label("min_unique_queries", exact=True).fill("3")
+        for refused in ("0", "1.5"):
+            form.get_by_label("optimization_skip_above_score", exact=True).fill(refused)
+            form.get_by_role("button", name="Save").click()
+            expect(form.get_by_role("alert")).to_have_text(
+                "optimization_skip_above_score must be above 0 and at most 1."
+            )
+
+        form.get_by_label("optimization_skip_above_score", exact=True).fill("")
         form.get_by_label("optimizer_floors", exact=True).fill('{"routing": 5}')
         form.get_by_role("button", name="Save").click()
         expect(form.get_by_role("alert")).to_have_text(

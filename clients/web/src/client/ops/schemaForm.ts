@@ -16,6 +16,8 @@ export interface JsonSchema {
   default?: unknown;
   minimum?: number;
   maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
 }
 
 export type FieldKind =
@@ -47,6 +49,9 @@ export interface FormField {
   /** Inclusive bounds of a number. */
   min?: number;
   max?: number;
+  /** Exclusive bounds of a number. */
+  above?: number;
+  below?: number;
 }
 
 /** What a form holds: input text, checkbox state, or a nested object's state. */
@@ -90,7 +95,12 @@ function field(name: string, property: JsonSchema, defs: Record<string, JsonSche
   if (property.writeOnly) return { ...base, kind: 'secret' };
   if (node.enum) return { ...base, kind: 'choice', options: node.enum.map(String) };
   if (node.properties) return { ...base, kind: nullable ? 'optional' : 'object', fields: formFields(node, defs) };
-  const bounds = { min: node.minimum, max: node.maximum };
+  const bounds = {
+    min: node.minimum,
+    max: node.maximum,
+    above: node.exclusiveMinimum,
+    below: node.exclusiveMaximum,
+  };
   switch (node.type) {
     case 'string':
       return { ...base, kind: 'text' };
@@ -189,9 +199,26 @@ export function defaults(fields: FormField[]): JsonObject {
   );
 }
 
+/** A number field's bounds as a sentence fragment: "between 1 and 9", "above 0 and at most 1". */
+function boundsText(f: FormField): string {
+  if (f.min !== undefined && f.max !== undefined && f.above === undefined && f.below === undefined)
+    return `between ${f.min} and ${f.max}`;
+  const bounds: string[] = [];
+  if (f.min !== undefined) bounds.push(`at least ${f.min}`);
+  if (f.above !== undefined) bounds.push(`above ${f.above}`);
+  if (f.max !== undefined) bounds.push(`at most ${f.max}`);
+  if (f.below !== undefined) bounds.push(`below ${f.below}`);
+  return bounds.join(' and ');
+}
+
 function inRange(f: FormField, value: number, at: string): number {
-  if ((f.min !== undefined && value < f.min) || (f.max !== undefined && value > f.max))
-    throw new Error(`${at} must be between ${f.min} and ${f.max}.`);
+  if (
+    (f.min !== undefined && value < f.min) ||
+    (f.max !== undefined && value > f.max) ||
+    (f.above !== undefined && value <= f.above) ||
+    (f.below !== undefined && value >= f.below)
+  )
+    throw new Error(`${at} must be ${boundsText(f)}.`);
   return value;
 }
 

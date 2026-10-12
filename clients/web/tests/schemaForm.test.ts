@@ -193,6 +193,35 @@ describe('toFormState and fromFormState', () => {
     expect(() => fromFormState(fields, state)).toThrow('max_cached_tenants must be between 1 and 65535.');
   });
 
+  it('refuses a number at or beyond an exclusive bound, naming each bound', () => {
+    // The routing section's promotion-gate overrides: (0, 1], nullable.
+    const gate = formFields({
+      type: 'object',
+      properties: {
+        optimization_skip_above_score: {
+          anyOf: [{ type: 'number', exclusiveMinimum: 0, maximum: 1 }, { type: 'null' }],
+          default: null,
+        },
+        share_below_one: { type: 'number', minimum: 0, exclusiveMaximum: 1 },
+      },
+    });
+    const state = toFormState(gate, { optimization_skip_above_score: null, share_below_one: 0 });
+    expect(fromFormState(gate, state)).toEqual({ optimization_skip_above_score: null, share_below_one: 0 });
+    state.optimization_skip_above_score = '1';
+    expect(fromFormState(gate, state)).toEqual({ optimization_skip_above_score: 1, share_below_one: 0 });
+    state.optimization_skip_above_score = '0';
+    expect(() => fromFormState(gate, state)).toThrow(
+      'optimization_skip_above_score must be above 0 and at most 1.',
+    );
+    state.optimization_skip_above_score = '1.5';
+    expect(() => fromFormState(gate, state)).toThrow(
+      'optimization_skip_above_score must be above 0 and at most 1.',
+    );
+    state.optimization_skip_above_score = '0.95';
+    state.share_below_one = '1';
+    expect(() => fromFormState(gate, state)).toThrow('share_below_one must be at least 0 and below 1.');
+  });
+
   it('reads an unset nullable choice as null', () => {
     const state = toFormState(fields, value);
     expect(state.provider).toBe('');
