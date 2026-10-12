@@ -38,7 +38,7 @@ from redis.exceptions import RedisError
 
 # UMAP cannot lay out fewer documents than this.
 MIN_DOCUMENTS = 4
-# The fixed seed that makes a layout reproducible for a given set.
+# The seed of every random number a layout draws.
 UMAP_SEED = 42
 UNCLUSTERED = -1
 CLUSTER_LABEL_TERMS = 3
@@ -65,6 +65,8 @@ _FILE_EXTENSION = re.compile(
     r"\.(?:" + "|".join(sorted(FILE_EXTENSIONS)) + r")$", re.IGNORECASE
 )
 _WORD_JOINERS = re.compile(r"[_.\-]+")
+# The BLAS thread limit is process-wide; layouts hold it one at a time.
+_BLAS_LIMIT = threading.Lock()
 
 logger = logging.getLogger(__name__)
 
@@ -256,16 +258,22 @@ def unit_rows(vectors: np.ndarray) -> np.ndarray:
 
 
 def umap_layout(vectors: np.ndarray) -> Tuple[Any, np.ndarray]:
-    """The fitted UMAP reducer of ``vectors`` and each row's 2D place."""
+    """The fitted UMAP reducer of ``vectors`` and each row's 2D place, the
+    same in every process: the layout starts from the vectors' principal
+    axes, draws every random number from ``UMAP_SEED`` and runs BLAS on one
+    thread, since BLAS rounds differently per thread count."""
+    from threadpoolctl import threadpool_limits
     from umap import UMAP
 
     reducer = UMAP(
         n_components=2,
         n_neighbors=min(15, len(vectors) - 1),
+        init="pca",
         random_state=UMAP_SEED,
         n_jobs=1,
     )
-    coords = reducer.fit_transform(vectors)
+    with _BLAS_LIMIT, threadpool_limits(limits=1, user_api="blas"):
+        coords = reducer.fit_transform(vectors)
     return reducer, np.asarray(coords, dtype=np.float64)
 
 

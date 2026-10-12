@@ -2,9 +2,17 @@
 
 import base64
 import io
+import json
+import os
 import pickle
+import subprocess
+import sys
+import threading
+import time
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -19,6 +27,7 @@ from cogniverse_runtime.atlas_projection import (
     label_text,
     most_similar,
     place_queries,
+    umap_layout,
     unit_rows,
 )
 from cogniverse_runtime.routers.embedding_atlas import (
@@ -294,6 +303,163 @@ def test_a_map_laid_out_at_given_places_reads_back_without_a_reducer():
         None,
         coords.tolist(),
     )
+
+
+# One line of stdout per set: its layout, then the place of a query on it.
+# The sets are the five equidistant points the cache tests build, two
+# separated groups of twenty, and 300 rows of 128 dimensions.
+_LAYOUT_SCRIPT = """
+import json, os, sys
+os.sched_setaffinity(0, set(json.loads(sys.argv[1])))
+import numpy as np
+from cogniverse_runtime.atlas_projection import build_map, place_queries
+rng = np.random.default_rng(3)
+groups = np.vstack([rng.normal(loc=c, scale=0.3, size=(20, 16)) for c in (-2, 2)])
+for vectors in (np.eye(5, 8), groups, rng.normal(size=(300, 128))):
+    documents = [{"id": str(i), "title": None, "text": None} for i in range(len(vectors))]
+    built = build_map(documents, vectors)
+    print(json.dumps([built.coords.tolist(), place_queries(built, vectors[:1] * 0.9).tolist()]))
+"""
+
+
+def _layouts_in_fresh_processes(count, blas_kernel):
+    """The script's layouts from ``count`` processes started at once, each
+    with its own hash seed, thread count and CPU set, on the host's BLAS
+    kernel or the one named."""
+    cpus = sorted(os.sched_getaffinity(0))
+    kernel = {} if blas_kernel is None else {"OPENBLAS_CORETYPE": blas_kernel}
+    processes = []
+    for index in range(count):
+        threads = 2**index
+        environment = {
+            **os.environ,
+            **kernel,
+            "PYTHONHASHSEED": str(7919 * (index + 1)),
+            "OMP_NUM_THREADS": str(threads),
+            "OPENBLAS_NUM_THREADS": str(threads),
+            "NUMBA_NUM_THREADS": str(min(threads, len(cpus))),
+        }
+        processes.append(
+            subprocess.Popen(
+                [sys.executable, "-c", _LAYOUT_SCRIPT, json.dumps(cpus[:threads])],
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        )
+    layouts = []
+    for process in processes:
+        out, err = process.communicate(timeout=600)
+        assert process.returncode == 0, err
+        layouts.append([json.loads(line) for line in out.splitlines()])
+    return layouts
+
+
+# The Haswell kernel is the one GitHub's runners load; its rounding changes
+# with the thread count, and on it the sign of a symmetric set's spectral
+# axis hung on a random restart.
+@pytest.mark.parametrize("blas_kernel", [None, "Haswell"], ids=["host", "haswell"])
+def test_one_set_lays_out_the_same_in_every_process(blas_kernel):
+    """Six processes with differing hash seeds, BLAS and numba thread counts
+    (1 to 32) and CPU sets lay each set out, and place a query on it, at
+    exactly the same places."""
+    layouts = _layouts_in_fresh_processes(6, blas_kernel)
+    assert [
+        [(len(coords), len(query)) for coords, query in read] for read in layouts
+    ] == [[(5, 1), (40, 1), (300, 1)]] * 6
+    assert [read == layouts[0] for read in layouts] == [True] * 6
+
+
+def test_a_layout_draws_every_random_number_from_its_seed():
+    """Nothing in a layout asks numpy for a generator seeded by the operating
+    system, which would differ in every process."""
+    # The first layout imports libraries that draw as they load.
+    umap_layout(np.eye(5, 8))
+    seeds = []
+    seeded = np.random.default_rng
+
+    def recorded(seed=None):
+        seeds.append(seed)
+        return seeded(seed)
+
+    with patch.object(np.random, "default_rng", recorded):
+        _, coords = umap_layout(np.eye(5, 8))
+    assert (coords.shape, [seed for seed in seeds if seed is None]) == ((5, 2), [])
+
+
+def _blas_threads():
+    from threadpoolctl import threadpool_info
+
+    return [m["num_threads"] for m in threadpool_info() if m["user_api"] == "blas"]
+
+
+@pytest.fixture
+def four_blas_threads():
+    """BLAS on four threads, as a process outside the test session's
+    one-thread environment has; yields the thread count of each BLAS."""
+    from threadpoolctl import threadpool_limits
+
+    # A first layout loads every BLAS a layout uses.
+    umap_layout(np.eye(5, 8))
+    with threadpool_limits(limits=4, user_api="blas"):
+        yield _blas_threads()
+
+
+def test_concurrent_layouts_take_turns_on_one_blas_thread(four_blas_threads):
+    """Four layouts started at once fit one at a time, each on one BLAS
+    thread, lay the set out as a lone layout does, and leave the BLAS thread
+    count as it was."""
+    from umap import UMAP
+
+    vectors = np.random.default_rng(9).normal(size=(30, 12))
+    _, alone = umap_layout(vectors)
+    fit = UMAP.fit_transform
+    guard = threading.Lock()
+    active, seen = [0], []
+
+    def recorded(self, *args, **kwargs):
+        with guard:
+            active[0] += 1
+            seen.append((active[0], _blas_threads()))
+        try:
+            time.sleep(0.05)
+            return fit(self, *args, **kwargs)
+        finally:
+            with guard:
+                active[0] -= 1
+
+    barrier = threading.Barrier(4)
+
+    def layout(_):
+        barrier.wait(30)
+        return umap_layout(vectors)[1].tolist()
+
+    with patch.object(UMAP, "fit_transform", recorded):
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            layouts = list(pool.map(layout, range(4)))
+    assert four_blas_threads == [4] * len(four_blas_threads)
+    assert seen == [(1, [1] * len(four_blas_threads))] * 4
+    assert layouts == [alone.tolist()] * 4
+    assert _blas_threads() == four_blas_threads
+
+
+def test_a_failed_layout_frees_the_next_and_restores_the_blas_threads(
+    four_blas_threads,
+):
+    vectors = np.random.default_rng(9).normal(size=(30, 12))
+    _, alone = umap_layout(vectors)
+    with pytest.raises(ValueError) as refused:
+        umap_layout(np.full((5, 8), np.nan))
+    assert str(refused.value).split("\n")[0] == "Input contains NaN."
+    assert _blas_threads() == four_blas_threads == [4] * len(four_blas_threads)
+    again = []
+    next_layout = threading.Thread(
+        target=lambda: again.append(umap_layout(vectors)[1].tolist()), daemon=True
+    )
+    next_layout.start()
+    next_layout.join(120)
+    assert again == [alone.tolist()]
 
 
 class _Planted:
