@@ -432,3 +432,35 @@ def test_shipped_golden_dataset_carries_no_unusable_rows():
 
     assert blank_queries == []
     assert no_expected == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "path",
+    [*CONFIGS, REPO_ROOT / "configs" / "examples" / "config.example.json"],
+    ids=lambda p: p.name if p.name != "config.json" else p.parent.name,
+)
+def test_shipped_configs_carry_the_promotion_gate(path: Path):
+    """Every shipped config states the gate's three values, and they load."""
+    from cogniverse_agents.routing.config import OptimizationTriggersConfig
+
+    section = load_shipped_config(path)["automation_rules"]["optimization_triggers"]
+
+    assert {
+        key: section[key]
+        for key in (
+            "optimization_improvement_threshold",
+            "optimization_gap_share",
+            "optimization_skip_above_score",
+        )
+    } == {
+        "optimization_improvement_threshold": 0.05,
+        "optimization_gap_share": 0.5,
+        "optimization_skip_above_score": 0.95,
+    }
+    triggers = OptimizationTriggersConfig(**section)
+    assert (
+        triggers.optimization_improvement_threshold,
+        triggers.optimization_gap_share,
+        triggers.optimization_skip_above_score,
+    ) == (0.05, 0.5, 0.95)

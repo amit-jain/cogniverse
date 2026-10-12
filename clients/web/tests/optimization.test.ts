@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { RuntimeRequestError } from '../src/client/ops/http';
 import {
   checkTrainingFile,
+  describeOutcome,
   REPORT_START,
   reportFilename,
   reportProgress,
@@ -10,6 +11,7 @@ import {
   templateFile,
   type ExampleTemplates,
   type ReportEvent,
+  type StepOutcome,
 } from '../src/client/ops/optimization';
 
 const EXAMPLE = {
@@ -164,5 +166,84 @@ describe('reportSummary', () => {
 describe('reportFilename', () => {
   it('stamps the local date and time', () => {
     expect(reportFilename(new Date(2026, 9, 8, 7, 5, 3))).toBe('optimization_report_20261008_070503.json');
+  });
+});
+
+describe('describeOutcome', () => {
+  const outcome = (fields: Partial<StepOutcome>): StepOutcome => ({
+    name: null,
+    status: 'success',
+    reason: null,
+    decision: null,
+    served_score: null,
+    skip_above_score: null,
+    baseline_score: null,
+    current_score: null,
+    candidate_score: null,
+    rollback_version: null,
+    error: null,
+    ...fields,
+  });
+  const atCeiling = {
+    status: 'skipped',
+    reason: 'served_score_at_ceiling',
+    served_score: 0.983,
+    skip_above_score: 0.95,
+  };
+
+  it('says a compile was skipped because the served score is at the ceiling', () => {
+    expect(describeOutcome(outcome(atCeiling))).toBe(
+      'Compile skipped: the served score 0.983 is at or above the ceiling 0.95',
+    );
+    expect(describeOutcome(outcome({ ...atCeiling, served_score: 1, skip_above_score: 1 }))).toBe(
+      'Compile skipped: the served score 1 is at or above the ceiling 1',
+    );
+    expect(describeOutcome(outcome({ ...atCeiling, served_score: 0.95004, name: 'summary' }))).toBe(
+      'summary: Compile skipped: the served score 0.95 is at or above the ceiling 0.95',
+    );
+  });
+
+  it('names the rollback a skipped run still made', () => {
+    expect(describeOutcome(outcome({ ...atCeiling, served_score: 1, rollback_version: 7 }))).toBe(
+      'Compile skipped: the served score 1 is at or above the ceiling 0.95; rolled back to the base module as v7',
+    );
+  });
+
+  it('gives any other skip its reason', () => {
+    expect(describeOutcome(outcome({ status: 'skipped', reason: 'no_positive_examples' }))).toBe(
+      'Skipped: no_positive_examples',
+    );
+    expect(describeOutcome(outcome({ status: 'skipped' }))).toBe('Skipped: no reason recorded');
+    // A ceiling skip without its scores is not dressed up as one.
+    expect(describeOutcome(outcome({ status: 'skipped', reason: 'served_score_at_ceiling' }))).toBe(
+      'Skipped: served_score_at_ceiling',
+    );
+  });
+
+  it('gives a decision with the scores it was made on', () => {
+    expect(
+      describeOutcome(outcome({ decision: 'promote', baseline_score: 0.5, current_score: 0.983, candidate_score: 1 })),
+    ).toBe('Promoted the candidate (baseline 0.5, current 0.983, candidate 1)');
+    expect(describeOutcome(outcome({ decision: 'keep', baseline_score: 0.9, candidate_score: 0.9049 }))).toBe(
+      'Kept the served artifact (baseline 0.9, candidate 0.905)',
+    );
+    expect(describeOutcome(outcome({ decision: 'rollback', name: 'profile' }))).toBe(
+      'profile: Rolled back to the base module',
+    );
+    expect(describeOutcome(outcome({ decision: 'reject', baseline_score: 0.9288, candidate_score: 0.9303 }))).toBe(
+      'Rejected the candidate (baseline 0.929, candidate 0.93)',
+    );
+    expect(describeOutcome(outcome({ decision: 'insufficient_population' }))).toBe('insufficient_population');
+  });
+
+  it('gives a failure its error and anything else its status', () => {
+    expect(describeOutcome(outcome({ status: 'failed', error: 'teacher endpoint down', name: 'report' }))).toBe(
+      'report: Failed: teacher endpoint down',
+    );
+    expect(describeOutcome(outcome({ status: 'failed', reason: 'baseline_not_reconstructable' }))).toBe(
+      'Failed: baseline_not_reconstructable',
+    );
+    expect(describeOutcome(outcome({ status: 'error' }))).toBe('Failed: no error recorded');
+    expect(describeOutcome(outcome({ status: 'no_eval_material' }))).toBe('no_eval_material');
   });
 });

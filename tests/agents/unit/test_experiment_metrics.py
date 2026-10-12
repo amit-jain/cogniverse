@@ -173,6 +173,34 @@ class TestArtifactManagerExperiments:
         assert history[1].promoted is False
 
     @pytest.mark.asyncio
+    async def test_a_tenant_with_no_experiments_has_an_empty_history(self):
+        from tests.evaluation.fakes import InMemoryDatasetStore, StubTelemetryProvider
+
+        store = InMemoryDatasetStore()
+        await store.create_dataset(
+            "dspy-experiments-other:other-search_agent",
+            pd.DataFrame([{"run_id": "theirs"}]),
+        )
+        mgr = ArtifactManager(StubTelemetryProvider(store), "acme:acme")
+
+        assert await mgr.load_experiments("search_agent") == []
+        assert await mgr.load_latest_experiment("search_agent") is None
+
+    @pytest.mark.asyncio
+    async def test_a_dataset_listing_that_fails_is_not_an_empty_history(self):
+        from tests.evaluation.fakes import InMemoryDatasetStore, StubTelemetryProvider
+
+        class ListingDown(InMemoryDatasetStore):
+            async def list_datasets(self):
+                raise ConnectionError("connection refused: telemetry backend down")
+
+        mgr = ArtifactManager(StubTelemetryProvider(ListingDown()), "acme:acme")
+
+        with pytest.raises(ConnectionError) as raised:
+            await mgr.load_experiments("search_agent")
+        assert str(raised.value) == "connection refused: telemetry backend down"
+
+    @pytest.mark.asyncio
     async def test_tenant_id_mismatch_rejected(self, manager_and_provider):
         mgr, _ = manager_and_provider
         wrong = ExperimentMetrics(

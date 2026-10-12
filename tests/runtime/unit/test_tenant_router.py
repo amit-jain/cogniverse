@@ -4,6 +4,7 @@ All external dependencies (ConfigManager, Mem0MemoryManager) are mocked
 so the tests run without live Vespa or LM instances.
 """
 
+import json
 import re
 from datetime import datetime
 from typing import Any, Dict, List
@@ -1560,6 +1561,186 @@ class TestGetManualOptimizeStatus:
             "profile-ground-truth": "Succeeded",
             "profile": "Skipped",
             "workflow": "Running",
+        }
+
+    @staticmethod
+    def _outcome_node(name: str, document) -> dict:
+        return {
+            "displayName": name,
+            "type": "Pod",
+            "phase": "Succeeded",
+            "outputs": {
+                "parameters": [
+                    {
+                        "name": "outcome",
+                        "value": document
+                        if isinstance(document, str)
+                        else json.dumps(document, indent=2),
+                    }
+                ]
+            },
+        }
+
+    def test_each_step_reports_what_its_optimizer_decided(self, argo_configured_client):
+        """A step that succeeded without compiling must read as skipped at the
+        ceiling, with the scores, not as a bare Succeeded."""
+        client = argo_configured_client
+        skipped = {
+            "status": "skipped",
+            "reason": "served_score_at_ceiling",
+            "served_score": 0.983,
+            "skip_above_score": 0.95,
+            "baseline_score": 0.9,
+            "current_score": 0.983,
+            "rollback_version": None,
+            "spans_found": 120,
+        }
+        rolled_back = {**skipped, "current_score": 0.25, "rollback_version": 7}
+        promoted = {
+            "status": "success",
+            "baseline_score": 0.5,
+            "current_score": None,
+            "candidate_score": 0.75,
+            "decision": "promote",
+            "version": 3,
+        }
+        triggered = {
+            "search": {
+                "status": "success",
+                "training_examples": 4,
+                "served": {
+                    "served_agent": "search_agent",
+                    "version": None,
+                    "active": False,
+                    "promoted": False,
+                    "baseline_score": 0.9288,
+                    "candidate_score": 0.9303,
+                },
+            },
+            "summary": {
+                "status": "skipped",
+                "reason": "served_score_at_ceiling",
+                "served_score": 0.96,
+                "skip_above_score": 0.95,
+                "training_examples": 6,
+                "holdout_examples": 2,
+                "negative_probes": 1,
+            },
+            "report": {"status": "failed", "error": "teacher endpoint down"},
+            "strategies_distilled": 2,
+            "post_optimization_eval": {"mrr": 0.5},
+        }
+        unified = {
+            "status": "success",
+            "module": "unified",
+            "failed_steps": [],
+            "results": {
+                "entity-extraction": skipped,
+                "workflow": {"status": "no_data", "spans_found": 0},
+            },
+        }
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(
+                return_value={
+                    **_ACME_SPEC,
+                    "status": {
+                        "phase": "Succeeded",
+                        "nodes": {
+                            "wf": {
+                                "displayName": "optimize-all-agents",
+                                "type": "Steps",
+                                "phase": "Succeeded",
+                            },
+                            "wf-1": self_outcome("simba", skipped),
+                            "wf-2": self_outcome("profile", rolled_back),
+                            "wf-3": self_outcome("entity-extraction", promoted),
+                            "wf-4": self_outcome("triggered", triggered),
+                            "wf-5": self_outcome("unified", unified),
+                            "wf-6": self_outcome("killed", ""),
+                            "wf-7": self_outcome("garbled", "{not json"),
+                            "wf-8": self_outcome("scalar", "[1, 2]"),
+                            "wf-9": {
+                                "displayName": "workflow",
+                                "type": "Pod",
+                                "phase": "Running",
+                            },
+                        },
+                    },
+                }
+            )
+            return resp
+
+        self_outcome = self._outcome_node
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = client.get("/acme/optimize/runs/wf")
+
+        def outcome(**fields):
+            return {
+                "name": None,
+                "status": "success",
+                "reason": None,
+                "decision": None,
+                "served_score": None,
+                "skip_above_score": None,
+                "baseline_score": None,
+                "current_score": None,
+                "candidate_score": None,
+                "rollback_version": None,
+                "error": None,
+                **fields,
+            }
+
+        at_ceiling = {
+            "status": "skipped",
+            "reason": "served_score_at_ceiling",
+            "served_score": 0.983,
+            "skip_above_score": 0.95,
+            "baseline_score": 0.9,
+            "current_score": 0.983,
+        }
+        assert resp.status_code == 200
+        assert resp.json()["steps"] == {
+            "simba": "Succeeded",
+            "profile": "Succeeded",
+            "entity-extraction": "Succeeded",
+            "triggered": "Succeeded",
+            "unified": "Succeeded",
+            "killed": "Succeeded",
+            "garbled": "Succeeded",
+            "scalar": "Succeeded",
+            "workflow": "Running",
+        }
+        assert resp.json()["step_outcomes"] == {
+            "simba": [outcome(**at_ceiling)],
+            "profile": [
+                outcome(**{**at_ceiling, "current_score": 0.25, "rollback_version": 7})
+            ],
+            "entity-extraction": [
+                outcome(decision="promote", baseline_score=0.5, candidate_score=0.75)
+            ],
+            "triggered": [
+                outcome(
+                    name="search",
+                    decision="reject",
+                    baseline_score=0.9288,
+                    candidate_score=0.9303,
+                ),
+                outcome(
+                    name="summary",
+                    status="skipped",
+                    reason="served_score_at_ceiling",
+                    served_score=0.96,
+                    skip_above_score=0.95,
+                ),
+                outcome(name="report", status="failed", error="teacher endpoint down"),
+            ],
+            "unified": [
+                outcome(name="entity-extraction", **at_ceiling),
+                outcome(name="workflow", status="no_data"),
+            ],
         }
 
     def test_pending_workflow_has_no_timestamps(self, argo_configured_client):

@@ -363,12 +363,17 @@ class TestTriggeredCompileServesThroughOverlay:
     ):
         import json
 
+        from cogniverse_agents.optimizer.artifact_manager import PromotionGate
         from cogniverse_agents.search_agent import SearchOptimizationModule
         from cogniverse_core.agents.base import (
             COMPILED_MODULE_PROMPT_KEY,
             load_compiled_module_state,
         )
         from cogniverse_runtime.optimization_cli import _serve_compiled_prompts
+
+        gate = PromotionGate(
+            improvement_threshold=0.05, gap_share=0.5, skip_above_score=0.95
+        )
 
         def _compiled(instructions: str) -> SearchOptimizationModule:
             module = SearchOptimizationModule()
@@ -393,7 +398,7 @@ class TestTriggeredCompileServesThroughOverlay:
             compiled,
             baseline_score=0.40,
             candidate_score=0.60,
-            min_improvement=0.05,
+            gate=gate,
         )
 
         assert served is not None
@@ -427,7 +432,7 @@ class TestTriggeredCompileServesThroughOverlay:
             _compiled("Optimized v2."),
             baseline_score=0.40,
             candidate_score=0.90,
-            min_improvement=0.05,
+            gate=gate,
         )
         assert served2["version"] > served["version"]
 
@@ -448,7 +453,7 @@ class TestTriggeredCompileServesThroughOverlay:
             _compiled("Optimized v3 (worse)."),
             baseline_score=0.90,
             candidate_score=0.50,
-            min_improvement=0.05,
+            gate=gate,
         )
         assert served3["promoted"] is False
         assert served3["version"] is None
@@ -460,4 +465,64 @@ class TestTriggeredCompileServesThroughOverlay:
         assert result3["version"] == served2["version"]
         assert _instructions(result3["prompts"][COMPILED_MODULE_PROMPT_KEY]) == [
             "Optimized v2."
+        ]
+
+        # Near the maximum the candidate owes half the remaining gap, not the
+        # flat 0.05: 0.99 over 0.983 falls short of 0.9915 and is rejected,
+        # 1.0 clears it and serves.
+        served4 = await _serve_compiled_prompts(
+            artifact_manager,
+            "search",
+            _compiled("Optimized v4 (short of half the gap)."),
+            baseline_score=0.983,
+            candidate_score=0.99,
+            gate=gate,
+        )
+        assert (served4["promoted"], served4["version"]) == (False, None)
+
+        served5 = await _serve_compiled_prompts(
+            artifact_manager,
+            "search",
+            _compiled("Optimized v5."),
+            baseline_score=0.983,
+            candidate_score=1.0,
+            gate=gate,
+        )
+        assert (served5["promoted"], served5["active"]) == (True, True)
+        assert served5["version"] > served2["version"]
+
+        # Nothing is left to gain at the maximum: an equal candidate stays out.
+        served6 = await _serve_compiled_prompts(
+            artifact_manager,
+            "search",
+            _compiled("Optimized v6 (equal at the maximum)."),
+            baseline_score=1.0,
+            candidate_score=1.0,
+            gate=gate,
+        )
+        assert (served6["promoted"], served6["version"]) == (False, None)
+
+        result6 = await artifact_manager.load_for_request(
+            "search_agent", request_seed="any-seed-6"
+        )
+        assert result6["served_from"] == "active"
+        assert result6["version"] == served5["version"]
+        assert _instructions(result6["prompts"][COMPILED_MODULE_PROMPT_KEY]) == [
+            "Optimized v5."
+        ]
+        assert [
+            (
+                entry.baseline_score,
+                entry.candidate_score,
+                entry.promoted,
+                entry.extra_metrics["min_improvement"],
+            )
+            for entry in await artifact_manager.load_experiments("search_agent")
+        ] == [
+            (0.40, 0.60, True, 0.05),
+            (0.40, 0.90, True, 0.05),
+            (0.90, 0.50, False, 0.5 * (1.0 - 0.90)),
+            (0.983, 0.99, False, 0.5 * (1.0 - 0.983)),
+            (0.983, 1.0, True, 0.5 * (1.0 - 0.983)),
+            (1.0, 1.0, False, 0.0),
         ]

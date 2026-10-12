@@ -291,3 +291,118 @@ def test_the_artifact_reset_leaves_one_fresh_version_and_no_inherited_history(
     assert json.loads(
         asyncio.run(after.load_blob("model", "profile_selection"))
     ) == json.loads(json.dumps(ProfileSelectionModule().dump_state(), default=str))
+
+
+_CEILING_TENANT = "ceiling_tenant:ceiling_tenant"
+
+
+def test_the_skip_ceiling_script_changes_only_the_ceiling(monkeypatch, capsys):
+    """Run the in-pod script against a real ConfigManager over an in-memory
+    store: the ceiling is set and read back, the previous value is printed,
+    and the tenant's other routing fields stay as stored."""
+    from cogniverse_foundation.config import utils as config_utils
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+    from cogniverse_foundation.telemetry import manager as telemetry_manager
+    from cogniverse_runtime import entrypoint_env
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    manager = ConfigManager(store=InMemoryConfigStore())
+    floors = {
+        "entity_extraction": {
+            "min_samples_for_optimization": 4,
+            "min_unique_queries": 4,
+        }
+    }
+    manager.set_routing_config(
+        RoutingConfigUnified(
+            tenant_id=_CEILING_TENANT,
+            optimizer_floors=floors,
+            optimization_gap_share=0.25,
+        )
+    )
+    monkeypatch.setattr(
+        entrypoint_env,
+        "resolve_library_env_defaults",
+        lambda: {"telemetry_otlp_endpoint": "http://127.0.0.1:4317"},
+    )
+    monkeypatch.setattr(
+        telemetry_manager, "get_telemetry_manager", lambda **kwargs: None
+    )
+    monkeypatch.setattr(config_utils, "create_default_config_manager", lambda: manager)
+
+    exec(batch_optimization._skip_ceiling_script(_CEILING_TENANT, 1.0), {})
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "__CEILING__null"
+    stored = manager.get_routing_config(tenant_id=_CEILING_TENANT)
+    assert (
+        stored.optimization_skip_above_score,
+        stored.optimization_gap_share,
+        stored.optimizer_floors,
+    ) == (1.0, 0.25, floors)
+
+    exec(batch_optimization._skip_ceiling_script(_CEILING_TENANT, None), {})
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "__CEILING__1.0"
+    restored = manager.get_routing_config(tenant_id=_CEILING_TENANT)
+    assert (
+        restored.optimization_skip_above_score,
+        restored.optimization_gap_share,
+        restored.optimizer_floors,
+    ) == (None, 0.25, floors)
+
+
+_SKIPPED_RUN = {
+    "status": "skipped",
+    "reason": "served_score_at_ceiling",
+    "served_score": 1.0,
+    "skip_above_score": 1.0,
+    "baseline_score": 1.0,
+    "current_score": 1.0,
+    "rollback_version": None,
+    "spans_found": 12,
+}
+
+
+def test_a_skipped_run_is_recognised_and_a_compiled_run_is_not():
+    assert (
+        batch_optimization.compile_skipped_at_ceiling(
+            _SKIPPED_RUN, ceiling=1.0, active_version=3
+        )
+        is True
+    )
+    assert (
+        batch_optimization.compile_skipped_at_ceiling(
+            {"status": "success", "decision": "keep", "version": 4},
+            ceiling=1.0,
+            active_version=3,
+        )
+        is False
+    )
+    rolled_back = {**_SKIPPED_RUN, "current_score": 0.5, "rollback_version": 7}
+    assert (
+        batch_optimization.compile_skipped_at_ceiling(
+            rolled_back, ceiling=1.0, active_version=7
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    ("change", "active_version"),
+    [
+        ({"reason": "no_data"}, 3),
+        ({"skip_above_score": 0.95}, 3),
+        ({"served_score": 0.99}, 3),
+        ({"version": 4}, 3),
+        ({"decision": "keep"}, 3),
+        ({"candidate_score": 1.0}, 3),
+        ({"rollback_version": 4}, 4),
+        ({"current_score": 0.5}, 3),
+        ({"current_score": 0.5, "rollback_version": 7}, 6),
+        ({"served_score": 0.9, "baseline_score": 0.9, "current_score": None}, 3),
+    ],
+)
+def test_a_skipped_run_off_its_contract_is_refused(change, active_version):
+    with pytest.raises(AssertionError):
+        batch_optimization.compile_skipped_at_ceiling(
+            {**_SKIPPED_RUN, **change}, ceiling=1.0, active_version=active_version
+        )

@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
+from cogniverse_agents.optimizer.artifact_manager import PromotionGate
 from cogniverse_agents.routing.config import (
     AutomationRulesConfig,
     OptimizationTriggersConfig,
@@ -40,10 +41,24 @@ def _rules(**triggers) -> AutomationRulesConfig:
     )
 
 
+def _gate(rules: AutomationRulesConfig) -> PromotionGate:
+    triggers = rules.optimization_triggers
+    return PromotionGate(
+        improvement_threshold=triggers.optimization_improvement_threshold,
+        gap_share=triggers.optimization_gap_share,
+        skip_above_score=triggers.optimization_skip_above_score,
+    )
+
+
 def _patch_rules(monkeypatch, rules: AutomationRulesConfig) -> None:
     monkeypatch.setattr(
         "cogniverse_runtime.quality_monitor_cli._load_automation_rules",
         lambda tenant_id, config_manager=None: rules,
+    )
+    monkeypatch.setattr(
+        optimization_cli,
+        "_promotion_gate_from_config",
+        lambda tenant_id, config_manager=None: _gate(rules),
     )
 
 
@@ -122,14 +137,20 @@ class TestReflectiveMetric:
         assert diverged.score == 1.0
 
 
-def _install_reflective_fakes(monkeypatch, *, agent_name, promote=True):
+REFLECTIVE_INSTRUCTIONS = "Reflective: avoid the failing output."
+
+
+def _install_reflective_fakes(
+    monkeypatch, *, agent_name, promote=True, baseline_score=0.30
+):
     """Wire the reflective branch's boundaries to recording fakes.
 
     Returns ``(fake_gepa, captured, gate_calls)`` so a test can assert the
     trainset GEPA received, the metric/budget/reflection_lm handed to
     ``_build_gepa``, and the ``promote_if_better`` call the serving path made.
+    ``captured["scored"]`` names each module the probe set scored, in order.
     """
-    captured: dict = {}
+    captured: dict = {"scored": []}
     gate_calls: list = []
 
     class _FakeGepa:
@@ -141,7 +162,7 @@ def _install_reflective_fakes(monkeypatch, *, agent_name, promote=True):
             self.module = module
             for _, predictor in module.named_predictors():
                 predictor.signature = predictor.signature.with_instructions(
-                    "Reflective: avoid the failing output."
+                    REFLECTIVE_INSTRUCTIONS
                 )
             return module
 
@@ -154,10 +175,18 @@ def _install_reflective_fakes(monkeypatch, *, agent_name, promote=True):
         return fake_gepa
 
     monkeypatch.setattr(optimization_cli, "_build_gepa", _fake_build_gepa)
-    # Baseline scoring would otherwise hit the real LM; pin a winning pair.
-    monkeypatch.setattr(
-        optimization_cli, "_holdout_scores", lambda *a, **k: (0.30, 0.80)
-    )
+
+    # Scoring would otherwise hit the real LM; pin the served module to
+    # ``baseline_score`` and the reflectively compiled one to 0.80.
+    def _fake_probe_set_score(module, holdout, negatives, agent_name):
+        compiled = any(
+            predictor.signature.instructions == REFLECTIVE_INSTRUCTIONS
+            for _, predictor in module.named_predictors()
+        )
+        captured["scored"].append("candidate" if compiled else "baseline")
+        return 0.80 if compiled else baseline_score
+
+    monkeypatch.setattr(optimization_cli, "_probe_set_score", _fake_probe_set_score)
 
     class _FakeOptimizer:
         def initialize_language_model(self, endpoint, teacher_endpoint_config=None):
@@ -183,7 +212,8 @@ def _install_reflective_fakes(monkeypatch, *, agent_name, promote=True):
             baseline_score,
             candidate_score,
             *,
-            min_improvement=0.0,
+            gate=None,
+            max_score=None,
             serve_versioned=False,
             optimizer="unknown",
             train_examples=None,
@@ -195,7 +225,8 @@ def _install_reflective_fakes(monkeypatch, *, agent_name, promote=True):
                     "candidate_prompts": candidate_prompts,
                     "baseline_score": baseline_score,
                     "candidate_score": candidate_score,
-                    "min_improvement": min_improvement,
+                    "gate": gate,
+                    "max_score": max_score,
                     "serve_versioned": serve_versioned,
                     "train_examples": train_examples,
                 }
@@ -301,6 +332,13 @@ class TestReflectiveBranch:
         assert gate_calls[0]["baseline_score"] == 0.30
         assert gate_calls[0]["candidate_score"] == 0.80
         assert gate_calls[0]["train_examples"] == 9
+        assert gate_calls[0]["gate"] == PromotionGate(
+            improvement_threshold=0.05, gap_share=0.5, skip_above_score=0.95
+        )
+        assert gate_calls[0]["max_score"] == 1.0
+        # The served module is scored before the compile, the candidate after
+        # it; the gate's baseline is that first score, not a second draw.
+        assert captured["scored"] == ["baseline", "candidate"]
         assert result["served"] == {
             "served_agent": "summarizer_agent",
             "version": 5,
@@ -347,6 +385,146 @@ class TestReflectiveBranch:
         assert all(ex._bad_output == "" for ex in fake_gepa.trainset)
         assert gate_calls[0]["agent_type"] == "search_agent"
         assert result["served"]["promoted"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("baseline_score", "skip_above_score"),
+        [(0.95, 0.95), (0.96, 0.95), (1.0, 0.95), (0.5, 0.5)],
+    )
+    async def test_a_served_score_at_the_ceiling_skips_the_reflective_compile(
+        self, monkeypatch, caplog, baseline_score, skip_above_score
+    ):
+        _patch_rules(
+            monkeypatch,
+            _rules(
+                enable_reflective_recompile=True,
+                min_reflective_failures=5,
+                optimization_skip_above_score=skip_above_score,
+            ),
+        )
+        fake_gepa, captured, gate_calls = _install_reflective_fakes(
+            monkeypatch, agent_name="search", baseline_score=baseline_score
+        )
+        low = pd.DataFrame(
+            [{"query": f"query {i}", "output": "{}", "score": 0.2} for i in range(12)]
+        )
+
+        with caplog.at_level("INFO", logger=optimization_cli.logger.name):
+            result = await _optimize_agent(
+                agent_name="search",
+                low_scoring_df=low,
+                high_scoring_df=pd.DataFrame(),
+                llm_endpoint=None,
+                config_manager=MagicMock(),
+                telemetry_provider=MagicMock(),
+                tenant_id="acme:acme",
+            )
+
+        assert result == {
+            "status": "skipped",
+            "reason": "served_score_at_ceiling",
+            "served_score": baseline_score,
+            "skip_above_score": skip_above_score,
+            "training_examples": 9,
+            "holdout_examples": 0,
+            "negative_probes": 3,
+        }
+        # Scored once, never compiled, never offered to the gate.
+        assert captured["scored"] == ["baseline"]
+        assert fake_gepa.trainset is None
+        assert "metric" not in captured
+        assert gate_calls == []
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == optimization_cli.logger.name
+        ] == [
+            f"Optimization of search skipped for acme:acme: served score "
+            f"{baseline_score:.4f} is at or above the ceiling {skip_above_score:.4f}"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_served_score_just_below_the_ceiling_compiles(self, monkeypatch):
+        _patch_rules(
+            monkeypatch,
+            _rules(enable_reflective_recompile=True, min_reflective_failures=5),
+        )
+        fake_gepa, captured, gate_calls = _install_reflective_fakes(
+            monkeypatch, agent_name="search", baseline_score=0.9499
+        )
+        low = pd.DataFrame(
+            [{"query": f"query {i}", "output": "{}", "score": 0.2} for i in range(12)]
+        )
+
+        result = await _optimize_agent(
+            agent_name="search",
+            low_scoring_df=low,
+            high_scoring_df=pd.DataFrame(),
+            llm_endpoint=None,
+            config_manager=MagicMock(),
+            telemetry_provider=MagicMock(),
+            tenant_id="acme:acme",
+        )
+
+        assert result["status"] == "success"
+        assert len(fake_gepa.trainset) == 9
+        assert captured["scored"] == ["baseline", "candidate"]
+        assert [
+            (call["baseline_score"], call["candidate_score"]) for call in gate_calls
+        ] == [(0.9499, 0.80)]
+
+    @pytest.mark.asyncio
+    async def test_an_unreconstructable_baseline_fails_before_the_compile(
+        self, monkeypatch
+    ):
+        _patch_rules(
+            monkeypatch,
+            _rules(enable_reflective_recompile=True, min_reflective_failures=5),
+        )
+        fake_gepa, captured, gate_calls = _install_reflective_fakes(
+            monkeypatch, agent_name="summary"
+        )
+
+        async def predictor_keyed(self, agent_type):
+            return {"summarizer": "Summarize tersely."}
+
+        from cogniverse_agents.optimizer import artifact_manager
+
+        monkeypatch.setattr(
+            artifact_manager.ArtifactManager, "load_prompts", predictor_keyed
+        )
+        low = pd.DataFrame(
+            [
+                {
+                    "query": f"q{i}",
+                    "output": json.dumps({"summary": f"bad {i}"}),
+                    "score": 0.2,
+                }
+                for i in range(12)
+            ]
+        )
+
+        result = await _optimize_agent(
+            agent_name="summary",
+            low_scoring_df=low,
+            high_scoring_df=pd.DataFrame(),
+            llm_endpoint=None,
+            config_manager=MagicMock(),
+            telemetry_provider=MagicMock(),
+            tenant_id="acme:acme",
+        )
+
+        assert result == {
+            "status": "failed",
+            "reason": "baseline_not_reconstructable",
+            "error": (
+                "active prompts carry ['summarizer'] and no __dspy_module__; "
+                "the baseline cannot be rebuilt"
+            ),
+        }
+        assert captured["scored"] == []
+        assert fake_gepa.trainset is None
+        assert gate_calls == []
 
     @pytest.mark.asyncio
     async def test_flag_off_keeps_no_positive_examples_skip(self, monkeypatch):

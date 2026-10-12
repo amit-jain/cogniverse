@@ -13,6 +13,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, patch
@@ -376,6 +377,23 @@ def _teacher_service_reports_configured_model(monkeypatch):
         inference_health_check,
         "probe_service_model",
         lambda url, **kwargs: _TEACHER_SERVED_MODEL,
+    )
+
+
+def _gate(
+    improvement_threshold: float,
+    *,
+    gap_share: float = 0.5,
+    skip_above_score: float = 0.95,
+):
+    """The tenant's promotion gate; the share and the ceiling default to the
+    shipped values."""
+    from cogniverse_agents.optimizer.artifact_manager import PromotionGate
+
+    return PromotionGate(
+        improvement_threshold=improvement_threshold,
+        gap_share=gap_share,
+        skip_above_score=skip_above_score,
     )
 
 
@@ -1602,7 +1620,6 @@ class TestProfileSelectionTrainingExamples:
         )
 
     def test_profile_optimizer_source_does_not_embed_retired_pool(self):
-        from pathlib import Path
 
         source = (
             Path(__file__).resolve().parents[3]
@@ -2427,6 +2444,293 @@ class TestTrainingSelectionConfig:
         ]
 
 
+class TestPromotionGateConfig:
+    """``optimization_triggers`` carries the promotion gate's three knobs."""
+
+    @staticmethod
+    def _published(tmp_path, monkeypatch, triggers: dict | None):
+        from cogniverse_foundation.config.manager import ConfigManager
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        document = {}
+        if triggers is not None:
+            document = {"automation_rules": {"optimization_triggers": triggers}}
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps(document))
+        monkeypatch.setenv("COGNIVERSE_CONFIG", str(path))
+        return ConfigManager(store=InMemoryConfigStore())
+
+    def test_defaults(self):
+        from cogniverse_agents.routing.config import OptimizationTriggersConfig
+
+        triggers = OptimizationTriggersConfig()
+
+        assert (
+            triggers.optimization_improvement_threshold,
+            triggers.optimization_gap_share,
+            triggers.optimization_skip_above_score,
+        ) == (0.05, 0.5, 0.95)
+
+    @pytest.mark.parametrize(
+        ("field", "value", "error_type"),
+        [
+            ("optimization_gap_share", 0.0, "greater_than"),
+            ("optimization_gap_share", -0.5, "greater_than"),
+            ("optimization_gap_share", 1.01, "less_than_equal"),
+            ("optimization_skip_above_score", 0.0, "greater_than"),
+            ("optimization_skip_above_score", -0.95, "greater_than"),
+            ("optimization_skip_above_score", 1.01, "less_than_equal"),
+        ],
+    )
+    def test_out_of_range_values_are_refused(self, field, value, error_type):
+        from pydantic import ValidationError
+
+        from cogniverse_agents.routing.config import OptimizationTriggersConfig
+
+        with pytest.raises(ValidationError) as raised:
+            OptimizationTriggersConfig(**{field: value})
+        assert [(e["loc"], e["type"]) for e in raised.value.errors()] == [
+            ((field,), error_type)
+        ]
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("optimization_gap_share", 1.0),
+            ("optimization_gap_share", 0.01),
+            ("optimization_skip_above_score", 1.0),
+            ("optimization_skip_above_score", 0.01),
+        ],
+    )
+    def test_range_bounds_are_accepted(self, field, value):
+        from cogniverse_agents.routing.config import OptimizationTriggersConfig
+
+        assert getattr(OptimizationTriggersConfig(**{field: value}), field) == value
+
+    def test_gate_reads_the_published_values(self, tmp_path, monkeypatch):
+        from cogniverse_agents.optimizer.artifact_manager import PromotionGate
+        from cogniverse_runtime.optimization_cli import _promotion_gate_from_config
+
+        manager = self._published(
+            tmp_path,
+            monkeypatch,
+            {
+                "optimization_improvement_threshold": 0.02,
+                "optimization_gap_share": 0.25,
+                "optimization_skip_above_score": 0.9,
+            },
+        )
+
+        assert _promotion_gate_from_config("acme:acme", manager) == PromotionGate(
+            improvement_threshold=0.02, gap_share=0.25, skip_above_score=0.9
+        )
+
+    def test_a_tenants_routing_config_replaces_the_share_and_the_ceiling(
+        self, tmp_path, monkeypatch
+    ):
+        from cogniverse_agents.optimizer.artifact_manager import PromotionGate
+        from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+        from cogniverse_runtime.optimization_cli import _promotion_gate_from_config
+
+        manager = self._published(
+            tmp_path,
+            monkeypatch,
+            {
+                "optimization_improvement_threshold": 0.02,
+                "optimization_gap_share": 0.25,
+                "optimization_skip_above_score": 0.9,
+            },
+        )
+        manager.set_routing_config(
+            RoutingConfigUnified(
+                tenant_id="acme:acme",
+                optimization_gap_share=0.75,
+                optimization_skip_above_score=0.8,
+            )
+        )
+        manager.set_routing_config(
+            RoutingConfigUnified(tenant_id="globex:globex", optimization_gap_share=1.0)
+        )
+
+        assert _promotion_gate_from_config("acme:acme", manager) == PromotionGate(
+            improvement_threshold=0.02, gap_share=0.75, skip_above_score=0.8
+        )
+        # A tenant that sets one keeps the deployment's other.
+        assert _promotion_gate_from_config("globex:globex", manager) == PromotionGate(
+            improvement_threshold=0.02, gap_share=1.0, skip_above_score=0.9
+        )
+        # A tenant that set neither is gated by the deployment's values.
+        assert _promotion_gate_from_config("initech:initech", manager) == PromotionGate(
+            improvement_threshold=0.02, gap_share=0.25, skip_above_score=0.9
+        )
+
+    def test_gate_defaults_when_the_section_is_absent(self, tmp_path, monkeypatch):
+        from cogniverse_agents.optimizer.artifact_manager import PromotionGate
+        from cogniverse_runtime.optimization_cli import _promotion_gate_from_config
+
+        manager = self._published(tmp_path, monkeypatch, None)
+
+        assert _promotion_gate_from_config("acme:acme", manager) == PromotionGate(
+            improvement_threshold=0.05, gap_share=0.5, skip_above_score=0.95
+        )
+
+    def test_a_published_value_out_of_range_fails_the_read(self, tmp_path, monkeypatch):
+        from pydantic import ValidationError
+
+        from cogniverse_runtime.optimization_cli import _promotion_gate_from_config
+
+        manager = self._published(
+            tmp_path, monkeypatch, {"optimization_skip_above_score": 1.5}
+        )
+
+        with pytest.raises(ValidationError) as raised:
+            _promotion_gate_from_config("acme:acme", manager)
+        assert [(e["loc"], e["type"]) for e in raised.value.errors()] == [
+            (("optimization_skip_above_score",), "less_than_equal")
+        ]
+
+    def test_a_negative_threshold_fails_the_read(self, tmp_path, monkeypatch):
+        from cogniverse_runtime.optimization_cli import _promotion_gate_from_config
+
+        manager = self._published(
+            tmp_path, monkeypatch, {"optimization_improvement_threshold": -0.05}
+        )
+
+        with pytest.raises(ValueError) as raised:
+            _promotion_gate_from_config("acme:acme", manager)
+        assert str(raised.value) == "improvement_threshold must be >= 0; got -0.05"
+
+    def test_a_config_store_outage_fails_the_read(self, tmp_path, monkeypatch):
+        """A run must not gate on defaults the operator did not set."""
+        from cogniverse_runtime.optimization_cli import _promotion_gate_from_config
+
+        manager = self._published(
+            tmp_path, monkeypatch, {"optimization_skip_above_score": 0.9}
+        )
+
+        def store_down(*args, **kwargs):
+            raise ConnectionError("config store unreachable")
+
+        monkeypatch.setattr(manager, "get_system_config", store_down)
+
+        with pytest.raises(ConnectionError) as raised:
+            _promotion_gate_from_config("acme:acme", manager)
+        assert str(raised.value) == "config store unreachable"
+
+    def test_a_tenant_routing_read_that_fails_fails_the_read(
+        self, tmp_path, monkeypatch
+    ):
+        """An unreadable tenant override is not the deployment's value."""
+        from cogniverse_runtime.optimization_cli import _promotion_gate_from_config
+
+        manager = self._published(
+            tmp_path, monkeypatch, {"optimization_skip_above_score": 0.9}
+        )
+
+        def store_down(*args, **kwargs):
+            raise ConnectionError("routing config unreachable")
+
+        monkeypatch.setattr(manager, "get_routing_config", store_down)
+
+        with pytest.raises(ConnectionError) as raised:
+            _promotion_gate_from_config("acme:acme", manager)
+        assert str(raised.value) == "routing config unreachable"
+
+    def test_a_stored_tenant_override_out_of_range_fails_the_read(
+        self, tmp_path, monkeypatch
+    ):
+        from cogniverse_runtime.optimization_cli import _promotion_gate_from_config
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        manager = self._published(tmp_path, monkeypatch, None)
+        manager.store.set_config(
+            tenant_id="acme:acme",
+            scope=ConfigScope.ROUTING,
+            service="gateway_agent",
+            config_key="routing_config",
+            config_value={"tenant_id": "acme:acme", "optimization_gap_share": 0.0},
+        )
+
+        with pytest.raises(ValueError) as raised:
+            _promotion_gate_from_config("acme:acme", manager)
+        assert str(raised.value) == (
+            "optimization_gap_share must be in (0, 1.0]; got 0.0"
+        )
+
+    def test_every_metric_tops_out_at_its_declared_maximum(self):
+        """The gap is measured against each scorer's real maximum."""
+        import dspy
+
+        from cogniverse_agents.entity_extraction_agent import EntityMention
+        from cogniverse_foundation.config.unified_config import OPTIMIZATION_SCORE_MAX
+        from cogniverse_runtime.optimization_cli import (
+            ENTITY_EXTRACTION_METRIC_ID,
+            OPTIMIZER_METRIC_IDS,
+            OPTIMIZER_METRIC_MAX_SCORES,
+            PROBE_SET_MAX_SCORE,
+            PROFILE_SELECTION_METRIC_ID,
+            QUERY_ENHANCEMENT_METRIC_ID,
+            _entity_extraction_scores,
+            _probe_set_score,
+            _profile_selection_scores,
+            _query_enhancement_scores,
+        )
+
+        mention = EntityMention(text="Marie Curie", type="PERSON")
+        perfect = {
+            QUERY_ENHANCEMENT_METRIC_ID: _query_enhancement_scores(
+                lambda **inputs: dspy.Prediction(
+                    enhanced_query="cats playing piano indoors",
+                    expansion_terms="piano",
+                ),
+                [
+                    dspy.Example(
+                        query="cats",
+                        source_text="cats playing piano",
+                        grounding_context="",
+                    )
+                ],
+            )[0],
+            PROFILE_SELECTION_METRIC_ID: _profile_selection_scores(
+                lambda **inputs: dspy.Prediction(selected_profile="video_a"),
+                [
+                    dspy.Example(
+                        query="find clip",
+                        available_profiles="video_a, video_b",
+                        selected_profile="video_a",
+                    )
+                ],
+            ),
+            ENTITY_EXTRACTION_METRIC_ID: _entity_extraction_scores(
+                lambda **inputs: dspy.Prediction(entities=[mention]),
+                [dspy.Example(query="who was Marie Curie", entities=[mention])],
+            ),
+        }
+
+        assert perfect == OPTIMIZER_METRIC_MAX_SCORES
+        assert set(OPTIMIZER_METRIC_MAX_SCORES) == set(OPTIMIZER_METRIC_IDS.values())
+        assert set(OPTIMIZER_METRIC_MAX_SCORES.values()) == {OPTIMIZATION_SCORE_MAX}
+        # A probe set scores at most 1.0: a positive that reproduces its label
+        # and a negative that shares no token with the recorded failure.
+        assert (
+            _probe_set_score(
+                lambda **inputs: dspy.Prediction(enhanced_query="red car chase"),
+                [
+                    dspy.Example(
+                        query="red car",
+                        modality="video",
+                        top_k=10,
+                        enhanced_query="red car chase",
+                    )
+                ],
+                [({"query": "blue boat", "modality": "video", "top_k": 10}, "")],
+                "search",
+            )
+            == PROBE_SET_MAX_SCORE
+            == OPTIMIZATION_SCORE_MAX
+        )
+
+
 class TestRoutingConfigSerialization:
     @pytest.mark.parametrize(
         "field_name,field_value,expected_serialized,expected_warning",
@@ -2788,7 +3092,16 @@ class TestSimbaQueryEnhancement:
             (0.5, 0.5, 0.25, 0.0, "keep"),
             (0.5, 0.75, 0.75, 0.05, "keep"),
             (0.5, 0.75, 0.8, 0.05, "promote"),
-            (1.0, 1.0, 1.0, 0.0, "promote"),
+            # Nothing is left to gain at the maximum: an equal candidate stays out.
+            (1.0, 1.0, 1.0, 0.0, "keep"),
+            (1.0, None, 1.0, 0.0, "reject"),
+            # Above 0.90 the candidate must close half the remaining gap.
+            (0.5, 0.983, 1.0, 0.05, "promote"),
+            (0.5, 0.983, 0.99, 0.05, "keep"),
+            (0.983, None, 1.0, 0.05, "promote"),
+            (0.983, None, 0.99, 0.05, "reject"),
+            (0.5, None, 0.54, 0.05, "reject"),
+            (0.5, None, 0.55, 0.05, "promote"),
         ],
     )
     def test_select_simba_artifact(
@@ -2797,7 +3110,9 @@ class TestSimbaQueryEnhancement:
         from cogniverse_runtime.optimization_cli import _select_simba_artifact
 
         assert (
-            _select_simba_artifact(baseline, current, candidate, min_improvement)
+            _select_simba_artifact(
+                baseline, current, candidate, _gate(min_improvement), 1.0
+            )
             == expected
         )
 
@@ -2841,8 +3156,23 @@ class TestSimbaQueryEnhancement:
         floor=(1, 1),
         config_manager=None,
         demo_budget=None,
+        skip_above_score: float = 0.95,
+        compiles: list | None = None,
     ):
         from cogniverse_runtime.optimization_cli import run_simba_optimization
+
+        def teleprompter(*args, **kwargs):
+            compiler = self._fake_teleprompter(*args, **kwargs)
+            if compiles is None:
+                return compiler
+            compile_module = compiler.compile
+
+            def counted(module, trainset):
+                compiles.append(len(trainset))
+                return compile_module(module, trainset=trainset)
+
+            compiler.compile = counted
+            return compiler
 
         if demo_budget is None:
             demo_budget = self._unbounded_demo_budget
@@ -2865,15 +3195,15 @@ class TestSimbaQueryEnhancement:
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._create_teleprompter",
-                side_effect=self._fake_teleprompter,
+                side_effect=teleprompter,
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._query_enhancement_scores",
                 side_effect=scorer or self._score_by_module,
             ),
             patch(
-                "cogniverse_runtime.optimization_cli._min_improvement_from_config",
-                return_value=min_improvement,
+                "cogniverse_runtime.optimization_cli._promotion_gate_from_config",
+                return_value=_gate(min_improvement, skip_above_score=skip_above_score),
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._population_floor_from_config",
@@ -3200,12 +3530,12 @@ class TestSimbaQueryEnhancement:
             )
         )
 
-        # Every module scores 1.0: the candidate cannot clear the 0.05 bar
+        # Every module scores 0.8: the candidate cannot clear the 0.05 bar
         # over the served artifact, which is not worse than base, so it stays.
         result = self._run(
             provider,
             min_improvement=0.05,
-            scorer=lambda module, holdout: (1.0, len(holdout)),
+            scorer=lambda module, holdout: (0.8, len(holdout)),
         )
 
         assert result == {
@@ -3223,9 +3553,9 @@ class TestSimbaQueryEnhancement:
             "holdout_examples": 1,
             "holdout_source": "served",
             **_selection_block(3, 3),
-            "baseline_score": 1.0,
-            "current_score": 1.0,
-            "candidate_score": 1.0,
+            "baseline_score": 0.8,
+            "current_score": 0.8,
+            "candidate_score": 0.8,
             "decision": "keep",
             "version": 1,
             "consumed_example_ids": [
@@ -3240,7 +3570,303 @@ class TestSimbaQueryEnhancement:
         assert self._persisted_state(provider) == json.loads(served_state)
         lineage = self._lineage(provider)
         assert [(e["version"], e["decision"]) for e in lineage] == [(1, "keep")]
-        assert lineage[0]["score"] == 1.0
+        assert lineage[0]["score"] == 0.8
+        assert self._active_version(provider, "simba_query_enhancement") is None
+
+    @staticmethod
+    def _four_served_rows():
+        return [
+            _qe_span_row(
+                f"query {i}",
+                f"expanded query {i}",
+                expansion_terms=["expanded"],
+                source_text="src",
+                span_id=f"qe-{i}",
+            )
+            for i in range(4)
+        ]
+
+    @staticmethod
+    def _skipped_result(**skip) -> dict:
+        return {
+            "status": "skipped",
+            "reason": "served_score_at_ceiling",
+            "skip_above_score": 0.95,
+            **skip,
+            "spans_found": 4,
+            "examples": 4,
+            "served_examples": 4,
+            "approved_examples": 0,
+            "served_scoreable_examples": 4,
+            "distinct_queries": 4,
+            "holdout_queries": 1,
+            "non_trainable_examples": 0,
+            "unscoreable_examples": 0,
+            "training_examples": 3,
+            "holdout_examples": 1,
+            "holdout_source": "served",
+            **_selection_block(3, 3),
+        }
+
+    def test_a_base_module_at_the_ceiling_skips_the_compile(self):
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", self._four_served_rows())
+        )
+        scored: list[str] = []
+        compiles: list[int] = []
+
+        def scorer(module, holdout):
+            scored.append(
+                "candidate" if getattr(module, "_compiled_marker", False) else "base"
+            )
+            return 0.95, len(holdout)
+
+        result = self._run(
+            provider, min_improvement=0.05, scorer=scorer, compiles=compiles
+        )
+
+        assert result == self._skipped_result(
+            served_score=0.95,
+            baseline_score=0.95,
+            current_score=None,
+            rollback_version=None,
+        )
+        # Scored once, never compiled, nothing written.
+        assert scored == ["base"]
+        assert compiles == []
+        assert self._lineage(provider) == []
+        assert self._active_version(provider, "simba_query_enhancement") is None
+
+    def test_a_served_score_just_below_the_ceiling_compiles_and_reuses_it(self):
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", self._four_served_rows())
+        )
+        scored: list[str] = []
+        compiles: list[int] = []
+
+        def scorer(module, holdout):
+            if getattr(module, "_compiled_marker", False):
+                scored.append("candidate")
+                return 0.98, len(holdout)
+            scored.append("base")
+            return 0.9499, len(holdout)
+
+        result = self._run(
+            provider, min_improvement=0.05, scorer=scorer, compiles=compiles
+        )
+
+        # The gate's baseline is the pre-score: the base module is scored once.
+        assert scored == ["base", "candidate"]
+        assert compiles == [3]
+        # 0.98 closes more than half of the 0.0501 gap left above 0.9499.
+        assert (
+            result["status"],
+            result["baseline_score"],
+            result["current_score"],
+            result["candidate_score"],
+            result["decision"],
+            result["version"],
+        ) == ("success", 0.9499, None, 0.98, "promote", 1)
+        lineage = self._lineage(provider)
+        assert [
+            (e["version"], e["decision"], e["base_score"], e["candidate_score"])
+            for e in lineage
+        ] == [(1, "promote", 0.9499, 0.98)]
+        assert self._active_version(provider, "simba_query_enhancement") == 1
+
+    def test_a_persisted_artifact_at_the_ceiling_skips_the_compile(self):
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", self._four_served_rows())
+        )
+        served = QueryEnhancementModule()
+        served.enhancer.predict.demos = [{"query": "old", "enhanced_query": "old x"}]
+        served_state = json.dumps(served.dump_state(), default=str)
+        asyncio.run(
+            ArtifactManager(provider, "test:unit").save_blob(
+                "model", "simba_query_enhancement", served_state
+            )
+        )
+        scored: list[str] = []
+        compiles: list[int] = []
+
+        def scorer(module, holdout):
+            if module.enhancer.predict.demos:
+                scored.append("artifact")
+                return 0.983, len(holdout)
+            scored.append("base")
+            return 0.5, len(holdout)
+
+        result = self._run(
+            provider, min_improvement=0.05, scorer=scorer, compiles=compiles
+        )
+
+        assert result == self._skipped_result(
+            served_score=0.983,
+            baseline_score=0.5,
+            current_score=0.983,
+            rollback_version=None,
+        )
+        assert scored == ["base", "artifact"]
+        assert compiles == []
+        assert self._lineage(provider) == []
+        assert self._persisted_state(provider) == json.loads(served_state)
+        assert self._active_version(provider, "simba_query_enhancement") is None
+
+    @pytest.mark.parametrize(
+        ("candidate_score", "decision", "active_version"),
+        [(0.99, "keep", None), (0.9915, "promote", 1), (1.0, "promote", 1)],
+    )
+    def test_a_candidate_must_close_half_the_gap_above_the_artifact(
+        self, candidate_score, decision, active_version
+    ):
+        """Served 0.983: the flat 0.05 bar is out of reach, half of the
+        remaining 0.017 is not."""
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", self._four_served_rows())
+        )
+        served = QueryEnhancementModule()
+        served.enhancer.predict.demos = [{"query": "old", "enhanced_query": "old x"}]
+        asyncio.run(
+            ArtifactManager(provider, "test:unit").save_blob(
+                "model",
+                "simba_query_enhancement",
+                json.dumps(served.dump_state(), default=str),
+            )
+        )
+
+        def scorer(module, holdout):
+            if getattr(module, "_compiled_marker", False):
+                return candidate_score, len(holdout)
+            if module.enhancer.predict.demos:
+                return 0.983, len(holdout)
+            return 0.5, len(holdout)
+
+        result = self._run(
+            provider, min_improvement=0.05, scorer=scorer, skip_above_score=1.0
+        )
+
+        assert (
+            result["status"],
+            result["baseline_score"],
+            result["current_score"],
+            result["candidate_score"],
+            result["decision"],
+            result["version"],
+        ) == ("success", 0.5, 0.983, candidate_score, decision, 1)
+        assert [(e["version"], e["decision"]) for e in self._lineage(provider)] == [
+            (1, decision)
+        ]
+        assert (
+            self._active_version(provider, "simba_query_enhancement") == active_version
+        )
+
+    def test_a_skipped_run_still_rolls_a_worse_artifact_back_to_base(self):
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", self._four_served_rows())
+        )
+        degraded = QueryEnhancementModule()
+        degraded.enhancer.predict.demos = [
+            {"query": "old", "enhanced_query": "old related content"}
+        ]
+        asyncio.run(
+            ArtifactManager(provider, "test:unit").save_blob(
+                "model",
+                "simba_query_enhancement",
+                json.dumps(degraded.dump_state(), default=str),
+            )
+        )
+        scored: list[str] = []
+        compiles: list[int] = []
+
+        def scorer(module, holdout):
+            if module.enhancer.predict.demos:
+                scored.append("artifact")
+                return 0.25, len(holdout)
+            scored.append("base")
+            return 1.0, len(holdout)
+
+        result = self._run(
+            provider, min_improvement=0.05, scorer=scorer, compiles=compiles
+        )
+
+        assert result == self._skipped_result(
+            served_score=1.0,
+            baseline_score=1.0,
+            current_score=0.25,
+            rollback_version=1,
+        )
+        assert scored == ["base", "artifact"]
+        assert compiles == []
+        # The base state replaced the worse artifact although nothing compiled.
+        assert self._persisted_state(provider) == json.loads(
+            json.dumps(QueryEnhancementModule().dump_state(), default=str)
+        )
+        lineage = self._lineage(provider)
+        assert [
+            (
+                e["version"],
+                e["decision"],
+                e["scored"],
+                e["score"],
+                e["base_score"],
+                e["candidate_score"],
+                e["metric_id"],
+                e["consumed_example_ids"],
+            )
+            for e in lineage
+        ] == [
+            (
+                1,
+                "rollback",
+                False,
+                None,
+                1.0,
+                None,
+                "query_enhancement.grounded_usable.v1",
+                ["span:qe-0", "span:qe-1", "span:qe-2", "span:qe-3"],
+            )
+        ]
+        assert self._active_version(provider, "simba_query_enhancement") == 1
+
+    def test_a_rollback_write_failing_during_a_skip_fails_the_run(self):
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
+
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.query_enhancement", self._four_served_rows())
+        )
+        degraded = QueryEnhancementModule()
+        degraded.enhancer.predict.demos = [
+            {"query": "old", "enhanced_query": "old related content"}
+        ]
+        degraded_state = json.dumps(degraded.dump_state(), default=str)
+        asyncio.run(
+            ArtifactManager(provider, "test:unit").save_blob(
+                "model", "simba_query_enhancement", degraded_state
+            )
+        )
+
+        def scorer(module, holdout):
+            return (0.25 if module.enhancer.predict.demos else 1.0), len(holdout)
+
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager."
+            "save_blob_versioned",
+            new=AsyncMock(side_effect=ConnectionError("dataset store down")),
+        ):
+            result = self._run(provider, min_improvement=0.05, scorer=scorer)
+
+        assert (result["status"], result["error"]) == ("failed", "dataset store down")
+        assert self._persisted_state(provider) == json.loads(degraded_state)
         assert self._active_version(provider, "simba_query_enhancement") is None
 
     def test_score_failure_preserves_selection_block(self):
@@ -3902,7 +4528,7 @@ class TestProfileSelectionOptimization:
         artifact_version: int | None = None,
         floor: tuple[int, int],
         min_improvement: float = 0.05,
-        score: float = 1.0,
+        score: float = 0.8,
         score_by_module=None,
         config_manager=None,
         ground_truth_blob: str | None = None,
@@ -4178,8 +4804,8 @@ class TestProfileSelectionOptimization:
                 side_effect=_score,
             ),
             patch(
-                "cogniverse_runtime.optimization_cli._min_improvement_from_config",
-                return_value=min_improvement,
+                "cogniverse_runtime.optimization_cli._promotion_gate_from_config",
+                return_value=_gate(min_improvement),
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._population_floor_from_config",
@@ -4248,7 +4874,7 @@ class TestProfileSelectionOptimization:
             return 0.0
         if state.get("selector.predict", {}).get("demos", []):
             return 0.0
-        return 1.0
+        return 0.8
 
     @pytest.mark.asyncio
     async def test_profile_selection_imbalanced_labels_still_compile(self):
@@ -4280,7 +4906,7 @@ class TestProfileSelectionOptimization:
             provider,
             current_blob=self._served_state(),
             floor=(1, 1),
-            score=1.0,
+            score=0.8,
         )
 
         assert result["status"] == "success"
@@ -5360,7 +5986,6 @@ class TestProfileSelectionOptimization:
         shipped label source is never opened."""
         import collections
         import io
-        from pathlib import Path
 
         shipped_data_root = Path(__file__).resolve().parents[3] / "data"
 
@@ -5974,7 +6599,7 @@ class TestProfileSelectionOptimization:
             current_blob=served_state,
             floor=(1, 1),
             min_improvement=0.05,
-            score=1.0,
+            score=0.8,
         )
 
         assert result == {
@@ -6000,9 +6625,9 @@ class TestProfileSelectionOptimization:
             "dominant_label_share": 0.5,
             "exclusions_by_reason": {},
             **_selection_block(3, 3),
-            "baseline_score": 1.0,
-            "current_score": 1.0,
-            "candidate_score": 1.0,
+            "baseline_score": 0.8,
+            "current_score": 0.8,
+            "candidate_score": 0.8,
             "decision": "keep",
             "version": 1,
             "consumed_example_ids": [
@@ -6025,9 +6650,9 @@ class TestProfileSelectionOptimization:
                 ],
                 "decision": "keep",
                 "scored": True,
-                "score": 1.0,
-                "base_score": 1.0,
-                "candidate_score": 1.0,
+                "score": 0.8,
+                "base_score": 0.8,
+                "candidate_score": 0.8,
                 "metric_id": "profile_selection.recorded_label_exact_match.v1",
                 "extra_ledger_fields": {
                     "distinct_queries": 4,
@@ -6110,7 +6735,7 @@ class TestProfileSelectionOptimization:
                 ),
                 floor=(1, 1),
                 min_improvement=0.05,
-                score=1.0,
+                score=0.8,
             )
 
         assert result == {
@@ -6136,9 +6761,9 @@ class TestProfileSelectionOptimization:
             "dominant_label_share": 0.5,
             "exclusions_by_reason": {},
             **_selection_block(3, 3),
-            "baseline_score": 1.0,
+            "baseline_score": 0.8,
             "current_score": None,
-            "candidate_score": 1.0,
+            "candidate_score": 0.8,
             "decision": "reject",
             "version": 1,
             "consumed_example_ids": [
@@ -6161,9 +6786,9 @@ class TestProfileSelectionOptimization:
                 ],
                 "decision": "reject",
                 "scored": True,
-                "score": 1.0,
-                "base_score": 1.0,
-                "candidate_score": 1.0,
+                "score": 0.8,
+                "base_score": 0.8,
+                "candidate_score": 0.8,
                 "metric_id": "profile_selection.recorded_label_exact_match.v1",
                 "extra_ledger_fields": {
                     "labels_by_profile": {
@@ -6217,13 +6842,13 @@ class TestProfileSelectionOptimization:
             _make_spans_df("cogniverse.profile_selection", rows)
         )
         base_state = json.dumps(ProfileSelectionModule().dump_state(), default=str)
-        base_scores = iter([1.0, 0.9])
+        base_scores = iter([0.8, 0.7])
 
         def noisy(module, holdout):
             state = json.loads(json.dumps(module.dump_state(), default=str))
             if state == json.loads(base_state):
                 return next(base_scores)
-            return 0.95
+            return 0.75
 
         state, result = await self._run(
             provider,
@@ -6238,10 +6863,161 @@ class TestProfileSelectionOptimization:
             result["current_score"],
             result["candidate_score"],
             result["decision"],
-        ) == (1.0, 1.0, 0.95, "keep")
+        ) == (0.8, 0.8, 0.75, "keep")
         assert [save["decision"] for save in state["versioned_saves"]] == ["keep"]
         assert state["versioned_saves"][0]["content"] != base_state
         assert state["activate_calls"] == []
+
+    @staticmethod
+    def _four_profile_rows():
+        return [
+            _profile_span_row(
+                f"find clip {i}",
+                span_id=f"profile-{i}",
+                available_profiles=[
+                    "video_colpali_smol500_mv_frame",
+                    "video_colqwen_omni_mv_chunk_30s",
+                ],
+                selected_profile=(
+                    "video_colpali_smol500_mv_frame"
+                    if i % 2 == 0
+                    else "video_colqwen_omni_mv_chunk_30s"
+                ),
+            )
+            for i in range(4)
+        ]
+
+    _PROFILE_DISTRIBUTION = {
+        "distinct_queries": 4,
+        "holdout_queries": 1,
+        "labels_by_profile": {
+            "video_colpali_smol500_mv_frame": 2,
+            "video_colqwen_omni_mv_chunk_30s": 2,
+        },
+        "dominant_label_share": 0.5,
+        "exclusions_by_reason": {},
+    }
+
+    def _skipped_profile_result(self, **skip) -> dict:
+        return {
+            "status": "skipped",
+            "reason": "served_score_at_ceiling",
+            "skip_above_score": 0.95,
+            **skip,
+            "spans_found": 4,
+            "served_examples": 4,
+            "approved_examples": 0,
+            "served_scoreable_examples": 4,
+            "training_examples": 3,
+            "holdout_examples": 1,
+            "holdout_source": "derived_labels",
+            "label_exclusions": {
+                "count": 0,
+                "queries": [],
+                "incomplete_comparison_rate": 0.0,
+            },
+            **_selection_block(3, 3),
+            **self._PROFILE_DISTRIBUTION,
+        }
+
+    async def test_a_served_score_at_the_ceiling_skips_the_profile_compile(self):
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", self._four_profile_rows())
+        )
+        served_state = self._served_state()
+
+        state, result = await self._run(
+            provider, current_blob=served_state, floor=(1, 1), score=0.95
+        )
+
+        assert result == self._skipped_profile_result(
+            served_score=0.95,
+            baseline_score=0.95,
+            current_score=0.95,
+            rollback_version=None,
+        )
+        # The base module and the persisted artifact, once each; no compile.
+        assert state["score_calls"] == [
+            {"module": "ProfileSelectionModule", "holdout": 1},
+            {"module": "ProfileSelectionModule", "holdout": 1},
+        ]
+        assert "compiled_module" not in state
+        assert state["versioned_saves"] == []
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == served_state
+
+    async def test_a_served_score_just_below_the_ceiling_compiles_the_profile(self):
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", self._four_profile_rows())
+        )
+
+        state, result = await self._run(
+            provider, current_blob=self._served_state(), floor=(1, 1), score=0.9499
+        )
+
+        assert (
+            result["status"],
+            result["baseline_score"],
+            result["current_score"],
+            result["candidate_score"],
+            result["decision"],
+        ) == ("success", 0.9499, 0.9499, 0.9499, "keep")
+        assert state["compiled_module"] == "ProfileSelectionModule"
+        # Base, artifact and candidate are each scored exactly once.
+        assert state["score_calls"] == [
+            {"module": "ProfileSelectionModule", "holdout": 1},
+            {"module": "ProfileSelectionModule", "holdout": 1},
+            {"module": "Compiled", "holdout": 1},
+        ]
+
+    async def test_a_skipped_profile_run_still_rolls_a_worse_artifact_back(self):
+        from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
+
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.profile_selection", self._four_profile_rows())
+        )
+        base_state = json.dumps(ProfileSelectionModule().dump_state(), default=str)
+
+        def base_perfect_artifact_broken(module, holdout) -> float:
+            state = json.loads(json.dumps(module.dump_state(), default=str))
+            return 0.0 if state["selector.predict"]["demos"] else 1.0
+
+        state, result = await self._run(
+            provider,
+            current_blob=self._served_state(),
+            floor=(1, 1),
+            score_by_module=base_perfect_artifact_broken,
+        )
+
+        assert result == self._skipped_profile_result(
+            served_score=1.0,
+            baseline_score=1.0,
+            current_score=0.0,
+            rollback_version=1,
+        )
+        assert "compiled_module" not in state
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "profile_selection",
+                "content": base_state,
+                "consumed_example_ids": [
+                    "span:profile-label:0",
+                    "span:profile-label:1",
+                    "span:profile-label:2",
+                    "span:profile-label:3",
+                ],
+                "decision": "rollback",
+                "scored": False,
+                "score": None,
+                "base_score": 1.0,
+                "candidate_score": None,
+                "metric_id": "profile_selection.recorded_label_exact_match.v1",
+                "extra_ledger_fields": self._PROFILE_DISTRIBUTION,
+            }
+        ]
+        assert state["activate_calls"] == [("model", "profile_selection", 1)]
+        assert state["active_blob"] == base_state
 
     async def test_profile_rollback_persists_and_activates_base_state(self):
         from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
@@ -6299,7 +7075,7 @@ class TestProfileSelectionOptimization:
             "dominant_label_share": 0.5,
             "exclusions_by_reason": {},
             **_selection_block(3, 3),
-            "baseline_score": 1.0,
+            "baseline_score": 0.8,
             "current_score": 0.0,
             "candidate_score": 0.0,
             "decision": "rollback",
@@ -6325,7 +7101,7 @@ class TestProfileSelectionOptimization:
                 "decision": "rollback",
                 "scored": True,
                 "score": 0.0,
-                "base_score": 1.0,
+                "base_score": 0.8,
                 "candidate_score": 0.0,
                 "metric_id": "profile_selection.recorded_label_exact_match.v1",
                 "extra_ledger_fields": {
@@ -7126,7 +7902,7 @@ class TestEntityExtractionOptimization:
         state = json.loads(json.dumps(module.dump_state(), default=str))
         if state.get("extractor.predict", {}).get("demos", []):
             return 0.0
-        return 1.0
+        return 0.8
 
     async def _run(
         self,
@@ -7136,7 +7912,7 @@ class TestEntityExtractionOptimization:
         artifact_version: int | None = None,
         floor: tuple[int, int],
         min_improvement: float = 0.05,
-        score: float = 1.0,
+        score: float = 0.8,
         score_by_module=None,
         config_manager=None,
         truth_rows: list[dict[str, Any]] | None = None,
@@ -7351,8 +8127,8 @@ class TestEntityExtractionOptimization:
                 side_effect=score_by_module or (lambda module, holdout: score),
             ),
             patch(
-                "cogniverse_runtime.optimization_cli._min_improvement_from_config",
-                return_value=min_improvement,
+                "cogniverse_runtime.optimization_cli._promotion_gate_from_config",
+                return_value=_gate(min_improvement),
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._population_floor_from_config",
@@ -7655,8 +8431,8 @@ class TestEntityExtractionOptimization:
                 return_value=(1, 1),
             ),
             patch(
-                "cogniverse_runtime.optimization_cli._min_improvement_from_config",
-                return_value=0.05,
+                "cogniverse_runtime.optimization_cli._promotion_gate_from_config",
+                return_value=_gate(0.05),
             ),
             patch(
                 "cogniverse_runtime.optimization_cli._apply_training_selection",
@@ -8412,9 +9188,9 @@ class TestEntityExtractionOptimization:
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
             **_self_consistency_block(1),
-            "baseline_score": 1.0,
+            "baseline_score": 0.8,
             "current_score": None,
-            "candidate_score": 1.0,
+            "candidate_score": 0.8,
             "decision": "reject",
             "version": 1,
             "consumed_example_ids": ["truth:0", "truth:1"],
@@ -8427,9 +9203,9 @@ class TestEntityExtractionOptimization:
                 "consumed_example_ids": ["truth:0", "truth:1"],
                 "decision": "reject",
                 "scored": True,
-                "score": 1.0,
-                "base_score": 1.0,
-                "candidate_score": 1.0,
+                "score": 0.8,
+                "base_score": 0.8,
+                "candidate_score": 0.8,
                 "metric_id": "entity_extraction.pair_set_f1.v1",
                 "extra_ledger_fields": {},
             }
@@ -8487,9 +9263,9 @@ class TestEntityExtractionOptimization:
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
             **_self_consistency_block(1),
-            "baseline_score": 1.0,
-            "current_score": 1.0,
-            "candidate_score": 1.0,
+            "baseline_score": 0.8,
+            "current_score": 0.8,
+            "candidate_score": 0.8,
             "decision": "keep",
             "version": 1,
             "consumed_example_ids": ["truth:0", "truth:1"],
@@ -8502,9 +9278,9 @@ class TestEntityExtractionOptimization:
                 "consumed_example_ids": ["truth:0", "truth:1"],
                 "decision": "keep",
                 "scored": True,
-                "score": 1.0,
-                "base_score": 1.0,
-                "candidate_score": 1.0,
+                "score": 0.8,
+                "base_score": 0.8,
+                "candidate_score": 0.8,
                 "metric_id": "entity_extraction.pair_set_f1.v1",
                 "extra_ledger_fields": {},
             }
@@ -8530,12 +9306,12 @@ class TestEntityExtractionOptimization:
         provider = FakeTelemetryProvider(
             _make_spans_df("cogniverse.entity_extraction", rows)
         )
-        base_scores = iter([1.0, 0.9])
+        base_scores = iter([0.8, 0.7])
 
         def noisy(module, holdout):
             state = json.loads(json.dumps(module.dump_state(), default=str))
             if state.get("compiled") == "entity_extraction":
-                return 0.95
+                return 0.75
             return next(base_scores)
 
         state, result = await self._run(
@@ -8550,11 +9326,119 @@ class TestEntityExtractionOptimization:
             result["current_score"],
             result["candidate_score"],
             result["decision"],
-        ) == (1.0, 1.0, 0.95, "keep")
+        ) == (0.8, 0.8, 0.75, "keep")
         assert [
             (save["decision"], save["content"]) for save in state["versioned_saves"]
         ] == [("keep", '{"compiled": "entity_extraction"}')]
         assert state["activate_calls"] == []
+
+    @staticmethod
+    def _two_entity_rows():
+        return [
+            {
+                "context.span_id": f"ee-{i}",
+                "attributes.input.value": f"find entity {i}",
+                "attributes.output.value": json.dumps(
+                    {"entities": [{"text": f"Entity {i}", "type": "CONCEPT"}]}
+                ),
+            }
+            for i in range(2)
+        ]
+
+    @staticmethod
+    def _skipped_entity_result(**skip) -> dict:
+        return {
+            "status": "skipped",
+            "reason": "served_score_at_ceiling",
+            "skip_above_score": 0.95,
+            **skip,
+            "spans_found": 2,
+            "served_examples": 2,
+            "served_scoreable_examples": 2,
+            "distinct_queries": 2,
+            "holdout_queries": 1,
+            "label_rows": 2,
+            "truth_rows": 2,
+            "approved_rows": 0,
+            "training_examples": 1,
+            "holdout_examples": 1,
+            "holdout_source": "ground_truth",
+            **_selection_block(1, 1),
+        }
+
+    async def test_a_served_score_at_the_ceiling_skips_the_entity_compile(self):
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", self._two_entity_rows())
+        )
+        served_state = self._served_state()
+        scored: list[bool] = []
+
+        def score_by_module(module, holdout) -> float:
+            state = json.loads(json.dumps(module.dump_state(), default=str))
+            scored.append(bool(state["extractor.predict"]["demos"]))
+            return 0.96 if scored[-1] else 0.5
+
+        state, result = await self._run(
+            provider,
+            current_blob=served_state,
+            floor=(1, 1),
+            score_by_module=score_by_module,
+        )
+
+        assert result == self._skipped_entity_result(
+            served_score=0.96,
+            baseline_score=0.5,
+            current_score=0.96,
+            rollback_version=None,
+        )
+        # The base module, then the persisted artifact; no compile, no sampling.
+        assert scored == [False, True]
+        assert "compiled_module" not in state
+        assert state["versioned_saves"] == []
+        assert state["activate_calls"] == []
+        assert state["active_blob"] == served_state
+
+    async def test_a_skipped_entity_run_still_rolls_a_worse_artifact_back(self):
+        provider = FakeTelemetryProvider(
+            _make_spans_df("cogniverse.entity_extraction", self._two_entity_rows())
+        )
+        base_state = self._base_state()
+
+        def base_perfect_artifact_broken(module, holdout) -> float:
+            state = json.loads(json.dumps(module.dump_state(), default=str))
+            return 0.0 if state["extractor.predict"]["demos"] else 1.0
+
+        state, result = await self._run(
+            provider,
+            current_blob=self._served_state(),
+            floor=(1, 1),
+            score_by_module=base_perfect_artifact_broken,
+        )
+
+        assert result == self._skipped_entity_result(
+            served_score=1.0,
+            baseline_score=1.0,
+            current_score=0.0,
+            rollback_version=1,
+        )
+        assert "compiled_module" not in state
+        assert state["versioned_saves"] == [
+            {
+                "kind": "model",
+                "key": "entity_extraction",
+                "content": base_state,
+                "consumed_example_ids": ["truth:0", "truth:1"],
+                "decision": "rollback",
+                "scored": False,
+                "score": None,
+                "base_score": 1.0,
+                "candidate_score": None,
+                "metric_id": "entity_extraction.pair_set_f1.v1",
+                "extra_ledger_fields": {},
+            }
+        ]
+        assert state["activate_calls"] == [("model", "entity_extraction", 1)]
+        assert state["active_blob"] == base_state
 
     async def test_entity_extraction_rollback_persists_and_activates_base_state(self):
         rows = [
@@ -8596,9 +9480,9 @@ class TestEntityExtractionOptimization:
             **_selection_block(1, 1),
             "bootstrap": _fake_bootstrap_block(1),
             **_self_consistency_block(1),
-            "baseline_score": 1.0,
+            "baseline_score": 0.8,
             "current_score": 0.0,
-            "candidate_score": 1.0,
+            "candidate_score": 0.8,
             "decision": "rollback",
             "version": 1,
             "consumed_example_ids": ["truth:0", "truth:1"],
@@ -8611,9 +9495,9 @@ class TestEntityExtractionOptimization:
                 "consumed_example_ids": ["truth:0", "truth:1"],
                 "decision": "rollback",
                 "scored": True,
-                "score": 1.0,
-                "base_score": 1.0,
-                "candidate_score": 1.0,
+                "score": 0.8,
+                "base_score": 0.8,
+                "candidate_score": 0.8,
                 "metric_id": "entity_extraction.pair_set_f1.v1",
                 "extra_ledger_fields": {},
             }
@@ -8773,9 +9657,9 @@ class TestEntityExtractionOptimization:
             **_selection_block(23, 23),
             "bootstrap": _fake_bootstrap_block(23),
             **_self_consistency_block(23),
-            "baseline_score": 1.0,
-            "current_score": 1.0,
-            "candidate_score": 1.0,
+            "baseline_score": 0.8,
+            "current_score": 0.8,
+            "candidate_score": 0.8,
             "decision": "keep",
             "version": 1,
             "consumed_example_ids": [f"truth:{i}" for i in range(30)],
@@ -8788,9 +9672,9 @@ class TestEntityExtractionOptimization:
                 "consumed_example_ids": [f"truth:{i}" for i in range(30)],
                 "decision": "keep",
                 "scored": True,
-                "score": 1.0,
-                "base_score": 1.0,
-                "candidate_score": 1.0,
+                "score": 0.8,
+                "base_score": 0.8,
+                "candidate_score": 0.8,
                 "metric_id": "entity_extraction.pair_set_f1.v1",
                 "extra_ledger_fields": {},
             }

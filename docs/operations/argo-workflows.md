@@ -274,7 +274,7 @@ curl -X POST http://localhost:8000/admin/tenant/acme_corp/optimize \
 
 ### Check Results
 
-The `run-optimizer` template runs the CLI with `--outcome-file /tmp/outcome.json` and declares that file as its `outcome` output parameter (empty when the run wrote none): the JSON result dict every `optimization_cli` mode prints, or `{"status": "failed", "error": "<type>: <message>"}` for a run that raised. Argo keeps it on the node after the pod and its log are gone, failed runs included; the runtime reads a synthetic run's results from it. Anything else the run produced lives in whatever `ArtifactManager` persisted for the tenant.
+The `run-optimizer` template runs the CLI with `--outcome-file /tmp/outcome.json` and declares that file as its `outcome` output parameter (empty when the run wrote none): the JSON result dict every `optimization_cli` mode prints, or `{"status": "failed", "error": "<type>: <message>"}` for a run that raised. Argo keeps it on the node after the pod and its log are gone, failed runs included; the runtime reads a synthetic run's results from it, and reports every step's result in `step_outcomes` of `GET /admin/tenant/{tenant_id}/optimize/runs/{workflow_name}`. A step whose served score is already at the tenant's `optimization_skip_above_score` succeeds without compiling and writes `{"status": "skipped", "reason": "served_score_at_ceiling", "served_score": ..., "skip_above_score": ...}`. Anything else the run produced lives in whatever `ArtifactManager` persisted for the tenant.
 
 ```bash
 # Read the run's outcome document

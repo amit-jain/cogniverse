@@ -54,6 +54,75 @@ ARTIFACT_LOAD_ERROR = "error"
 # targets.
 _BLOB_RING_SLOTS = 3
 
+# Scores are ratios of example counts, so a candidate that closes exactly the
+# required gain (58/60 -> 59/60 for half the gap) differs from the bar only by
+# float rounding; a shortfall this small counts as meeting it.
+_SCORE_ROUNDING = 1e-9
+
+
+@dataclass(frozen=True)
+class PromotionGate:
+    """When a candidate replaces what is served, and when a compile is not run.
+
+    A candidate must beat the served score by ``improvement_threshold``, or by
+    ``gap_share`` of the gap left to the metric's maximum when that is
+    smaller. A served score at the maximum leaves nothing to gain, so no
+    candidate promotes over it. A served score at or above
+    ``skip_above_score`` is not worth a compile at all.
+    """
+
+    improvement_threshold: float
+    gap_share: float
+    skip_above_score: float
+
+    def __post_init__(self) -> None:
+        if self.improvement_threshold < 0:
+            raise ValueError(
+                f"improvement_threshold must be >= 0; got {self.improvement_threshold}"
+            )
+        if not 0 < self.gap_share <= 1:
+            raise ValueError(f"gap_share must be in (0, 1]; got {self.gap_share}")
+        if self.skip_above_score <= 0:
+            raise ValueError(
+                f"skip_above_score must be > 0; got {self.skip_above_score}"
+            )
+
+    def _check_max_score(self, max_score: float) -> None:
+        if max_score <= 0:
+            raise ValueError(f"max_score must be > 0; got {max_score}")
+        if self.skip_above_score > max_score:
+            raise ValueError(
+                f"skip_above_score {self.skip_above_score} is above the metric's "
+                f"maximum {max_score}"
+            )
+
+    def required_gain(self, served_score: float, max_score: float) -> float:
+        """The gain a candidate must show over ``served_score``."""
+        self._check_max_score(max_score)
+        return min(
+            self.improvement_threshold,
+            self.gap_share * (max_score - served_score),
+        )
+
+    def promotes(
+        self,
+        candidate_score: float,
+        served_score: float,
+        max_score: float,
+        *,
+        tolerance: float = 0.0,
+    ) -> bool:
+        """Whether ``candidate_score`` earns promotion over ``served_score``."""
+        required = self.required_gain(served_score, max_score)
+        if served_score >= max_score:
+            return False
+        return candidate_score >= served_score + required - tolerance - _SCORE_ROUNDING
+
+    def skips_compile(self, served_score: float, max_score: float) -> bool:
+        """Whether ``served_score`` is already at the tenant's ceiling."""
+        self._check_max_score(max_score)
+        return served_score >= self.skip_above_score
+
 
 @dataclass(frozen=True)
 class ExperimentMetrics:
@@ -1590,6 +1659,8 @@ class ArtifactManager:
         *,
         tolerance: float = 0.0,
         min_improvement: float = 0.0,
+        gate: Optional[PromotionGate] = None,
+        max_score: Optional[float] = None,
         serve_versioned: bool = False,
         optimizer: str = "unknown",
         train_examples: Optional[int] = None,
@@ -1621,7 +1692,12 @@ class ArtifactManager:
                 Pass a small positive value (e.g. 0.005) to tolerate noise.
             min_improvement: Required margin over the baseline; the candidate
                 must score at least ``baseline + min_improvement - tolerance``
-                to promote. Wire ``optimization_improvement_threshold`` here.
+                to promote.
+            gate: The tenant's ``PromotionGate``. With it the required margin
+                is ``gate.required_gain(baseline_score, max_score)`` and a
+                baseline at ``max_score`` never promotes; ``min_improvement``
+                must be left at 0.
+            max_score: The metric's maximum; required with ``gate``.
             serve_versioned: When True, a winning candidate is served through
                 the canary state machine (``save_prompts_versioned`` →
                 ``promote_to_canary`` → ``promote_canary_to_active``) so both
@@ -1643,15 +1719,33 @@ class ArtifactManager:
             raise ValueError(f"tolerance must be >= 0; got {tolerance}")
         if min_improvement < 0:
             raise ValueError(f"min_improvement must be >= 0; got {min_improvement}")
+        if (gate is None) != (max_score is None):
+            raise ValueError("gate and max_score are passed together")
+        if gate is not None and min_improvement:
+            raise ValueError(
+                "min_improvement is derived from the gate; pass one or the other"
+            )
 
         improvement = candidate_score - baseline_score
+        at_max_score = False
+        if gate is not None:
+            min_improvement = gate.required_gain(baseline_score, max_score)
+            at_max_score = baseline_score >= max_score
+            promoted = gate.promotes(
+                candidate_score, baseline_score, max_score, tolerance=tolerance
+            )
+        else:
+            promoted = candidate_score >= baseline_score + min_improvement - tolerance
         threshold = baseline_score + min_improvement - tolerance
-        promoted = candidate_score >= threshold
 
         rid = run_id or _generate_run_id()
         extras: Dict[str, Any] = dict(extra_metrics or {})
         extras["tolerance"] = tolerance
         extras["min_improvement"] = min_improvement
+        if gate is not None:
+            extras["improvement_threshold"] = gate.improvement_threshold
+            extras["gap_share"] = gate.gap_share
+            extras["max_score"] = max_score
 
         if promoted:
             # Snapshot the about-to-be-overwritten active artefacts as
@@ -1754,13 +1848,20 @@ class ArtifactManager:
                 tolerance,
             )
         else:
-            extras["rejection_reason"] = (
-                f"candidate_score={candidate_score:.4f} < required "
-                f"{threshold:.4f} (baseline {baseline_score:.4f} + "
-                f"min_improvement {min_improvement:.4f} - tolerance "
-                f"{tolerance:.4f}); improvement={improvement:.4f} — "
-                "regression-rejected"
-            )
+            if at_max_score:
+                extras["rejection_reason"] = (
+                    f"baseline {baseline_score:.4f} is at the metric's maximum "
+                    f"{max_score:.4f}; candidate_score={candidate_score:.4f} "
+                    "cannot improve on it"
+                )
+            else:
+                extras["rejection_reason"] = (
+                    f"candidate_score={candidate_score:.4f} < required "
+                    f"{threshold:.4f} (baseline {baseline_score:.4f} + "
+                    f"min_improvement {min_improvement:.4f} - tolerance "
+                    f"{tolerance:.4f}); improvement={improvement:.4f} — "
+                    "regression-rejected"
+                )
             logger.warning(
                 "Rejected candidate for %s/%s: candidate=%.4f baseline=%.4f "
                 "(regression=%.4f, tolerance=%.4f) — active artefacts "
@@ -1888,10 +1989,7 @@ class ArtifactManager:
         # bounded scan of recent timestamps.
         listing = getattr(self._provider.datasets, "list_datasets", None)
         if listing is not None:
-            try:
-                names = await listing()
-            except Exception:
-                names = []
+            names = [dataset["name"] for dataset in await listing()]
             candidates = [n for n in names if n.startswith(f"{base_name}_v")]
             if candidates:
                 latest = sorted(candidates)[-1]

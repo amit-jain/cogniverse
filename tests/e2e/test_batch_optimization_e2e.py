@@ -51,6 +51,7 @@ from cogniverse_agents.optimizer.profile_selection_ground_truth import (
 from cogniverse_agents.profile_selection_agent import ProfileSelectionModule
 from cogniverse_agents.query_enhancement_agent import QueryEnhancementModule
 from cogniverse_core.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.config.unified_config import OPTIMIZATION_SCORE_MAX
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
 from cogniverse_runtime.optimization_cli import (
     OPTIMIZER_METRIC_IDS,
@@ -1941,6 +1942,98 @@ def generate_spans_for_batch_jobs(_kubectl_cluster_ready):
     yield
 
 
+# The modes that score the served module before compiling and skip the compile
+# at the tenant's optimization_skip_above_score.
+GATED_BATCH_MODES = frozenset({"simba", "profile", "entity-extraction", "triggered"})
+# Tenants whose skip ceiling this module raised, with the value they had.
+_SKIP_CEILING_BEFORE: dict[str, float | None] = {}
+
+
+def _set_skip_ceiling_in_pod(tenant_id: str, ceiling: float | None) -> float | None:
+    """Set the tenant's ``optimization_skip_above_score``; return what it was."""
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
+            "--",
+            "python3",
+            "-c",
+            batch_optimization._skip_ceiling_script(tenant_id, ceiling),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            _subprocess_failure_message(
+                "set_skip_ceiling",
+                result,
+                operation=f"set skip ceiling {ceiling!r} for tenant_id={tenant_id!r}",
+            )
+        )
+    line = next(ln for ln in result.stdout.splitlines() if ln.startswith("__CEILING__"))
+    return json.loads(line[len("__CEILING__") :])
+
+
+def _compile_below_a_perfect_score(tenant_id: str) -> None:
+    """Raise the tenant's skip ceiling to the metric's maximum, once.
+
+    The tests here pin what a compile persists, so the tenant's jobs must
+    compile at every served score that leaves something to gain; at the
+    maximum itself a job still skips, which ``_compile_skipped`` pins.
+    """
+    if tenant_id not in _SKIP_CEILING_BEFORE:
+        _SKIP_CEILING_BEFORE[tenant_id] = _set_skip_ceiling_in_pod(
+            tenant_id, OPTIMIZATION_SCORE_MAX
+        )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def restore_skip_ceilings():
+    """Hand the seeded tenant, and any tenant that had its own ceiling, the
+    value it had before this module's jobs ran."""
+    yield
+    while _SKIP_CEILING_BEFORE:
+        tenant_id, before = _SKIP_CEILING_BEFORE.popitem()
+        if tenant_id == TENANT_ID or before is not None:
+            _set_skip_ceiling_in_pod(tenant_id, before)
+
+
+def _compile_skipped(
+    result: dict,
+    artifact_key: str,
+    tenant_id: str = TENANT_ID,
+    *,
+    blob_before: str | None = None,
+) -> bool:
+    """Whether the job skipped its compile because the served module already
+    scores the metric's maximum; the skipped outcome is pinned when it did.
+
+    With ``blob_before`` (the served blob read before the job), a skip that
+    rolled nothing back must have left that blob served.
+    """
+    if result["status"] != "skipped":
+        return False
+    batch_optimization.compile_skipped_at_ceiling(
+        result,
+        ceiling=OPTIMIZATION_SCORE_MAX,
+        active_version=_active_blob_version_in_pod(
+            "model", artifact_key, tenant_id=tenant_id
+        ),
+    )
+    if blob_before is not None and result["rollback_version"] is None:
+        assert _load_blob_in_pod("model", artifact_key, tenant_id) == blob_before
+    return True
+
+
 def _optimization_cli_argv(
     mode: str,
     tenant_id: str,
@@ -2029,6 +2122,8 @@ def _run_batch_job(
         lookback_hours = _module_lookback_hours()
     if timeout is None:
         timeout = _batch_job_timeout_s()
+    if mode in GATED_BATCH_MODES:
+        _compile_below_a_perfect_score(tenant_id)
     started_at = time.monotonic()
     try:
         result = subprocess.run(
@@ -3349,6 +3444,11 @@ def _assert_simba_served_the_best_module(result: dict, blob_before: str) -> dict
     that scored best on that holdout and never scores below the base module.
     Returns the persisted state.
     """
+    if _compile_skipped(result, "simba_query_enhancement", blob_before=blob_before):
+        after = json.loads(_load_blob_in_pod("model", "simba_query_enhancement"))
+        if result["rollback_version"] is not None:
+            assert after == _base_query_enhancement_state()
+        return after
     approved = _approved_query_enhancement_examples_in_pod()
     assert set(result) == {
         "status",
@@ -3555,7 +3655,7 @@ class TestSimbaOptimization:
 
         after = _assert_simba_served_the_best_module(result, blob_before)
         assert isinstance(result["current_score"], float), result
-        if result["decision"] == "keep":
+        if result.get("decision") == "keep":
             assert after == first
 
 
@@ -3638,6 +3738,16 @@ class TestSimbaSelectionCap:
         self, simba_selection_tenant
     ):
         result = _run_batch_job("simba", tenant_id=simba_selection_tenant.tenant_id)
+        if _compile_skipped(
+            result, "simba_query_enhancement", simba_selection_tenant.tenant_id
+        ):
+            # A served module at the maximum is not compiled; the selection it
+            # reports was still made over the seeded pool and crossed the cap.
+            assert result["spans_found"] == simba_selection_tenant.seeded_count
+            assert result["selection"]["cap"] == 8, result
+            assert result["selection"]["mmr_applied"] is True, result
+            assert result["training_examples"] == 8, result
+            return
         assert set(result) == {
             "status",
             "spans_found",
@@ -3773,6 +3883,8 @@ class TestProfileOptimization:
         assert blob_before != "", "the module fixture persists the base artifact"
 
         result = _run_batch_job("profile")
+        if _compile_skipped(result, "profile_selection", blob_before=blob_before):
+            return
         approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
         version_blob, ledger = _load_blob_version_in_pod(
             "model", "profile_selection", result["version"]
@@ -3904,6 +4016,15 @@ class TestProfileOptimization:
             _active_blob_version_in_pod("model", "profile_selection") == reset_version
         )
         result = _run_batch_job("profile")
+        if _compile_skipped(result, "profile_selection"):
+            # The base module served above already scores the maximum, so
+            # there is nothing for a compile to learn and the reset version
+            # stays the served one.
+            assert (
+                _active_blob_version_in_pod("model", "profile_selection")
+                == reset_version
+            )
+            return
         version_blob, ledger = _load_blob_version_in_pod(
             "model", "profile_selection", result["version"]
         )
@@ -4413,8 +4534,13 @@ class TestProfileLabelRetrievalOutage:
         outage run reports as 1.0 is 0.0 and every row carries a label."""
         seeded, _ = ground_truth_contract_tenants
         result = _run_batch_job("profile", tenant_id=seeded)
-        assert result["status"] == "success", result
-        _assert_profile_labels_partition_ground_truth(result)
+        if _compile_skipped(result, "profile_selection", seeded):
+            assert result["label_exclusions"]["incomplete_comparison_rate"] == 0.0, (
+                result
+            )
+        else:
+            assert result["status"] == "success", result
+            _assert_profile_labels_partition_ground_truth(result)
         assert result["exclusions_by_reason"].get("incomplete_comparison", 0) == 0, (
             result
         )
@@ -4442,6 +4568,8 @@ class TestProfileSelectionArtifactReload:
         assert blob_before != "", "the module fixture persists the base artifact"
 
         result = _run_batch_job("profile")
+        if _compile_skipped(result, "profile_selection", blob_before=blob_before):
+            return
         approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
         version_blob, ledger = _load_blob_version_in_pod(
             "model", "profile_selection", result["version"]
@@ -4754,12 +4882,18 @@ def entity_extraction_batch_result(generate_spans_for_batch_jobs):
         TENANT_ID, "entity_extraction"
     )
     result = _run_batch_job("entity-extraction")
-    version_blob, ledger = _load_blob_version_in_pod(
-        "model", "entity_extraction", result["version"]
+    # A served module already at the metric's maximum is not compiled: the run
+    # persists no version, and each test pins that outcome instead.
+    skipped = _compile_skipped(result, "entity_extraction", blob_before=blob_before)
+    version_blob, ledger = (
+        (None, None)
+        if skipped
+        else _load_blob_version_in_pod("model", "entity_extraction", result["version"])
     )
     blob_after_run = _load_blob_in_pod("model", "entity_extraction")
 
     return {
+        "skipped": skipped,
         "blob_before": blob_before,
         "blob_after_run": blob_after_run,
         "ground_truth_rows": ground_truth_rows,
@@ -4784,6 +4918,12 @@ class TestEntityExtractionOptimization:
         version_blob = batch["version_blob"]
         ledger = batch["ledger"]
         active_blob = batch["blob_after_run"]
+
+        if batch["skipped"]:
+            assert result["truth_rows"] == len(batch["ground_truth_rows"]), result
+            assert result["approved_rows"] == len(approved_examples), result
+            assert result["holdout_source"] == "ground_truth", result
+            return
 
         assert set(result) == {
             "status",
@@ -4994,6 +5134,12 @@ class TestEntityExtractionOptimization:
         result = batch["result"]
         version_blob = batch["version_blob"]
 
+        if batch["skipped"]:
+            # The base module the setup serves already scores the maximum on
+            # the holdout, so no candidate was compiled to carry demos.
+            assert result["current_score"] in (None, result["baseline_score"]), result
+            assert result["served_score"] == OPTIMIZATION_SCORE_MAX, result
+            return
         assert result["status"] == "success", result
         # The module setup serves the base module, and only this job writes
         # the tenant's entity_extraction artifact, so the served artifact is
@@ -5396,7 +5542,11 @@ class TestArtifactLoadingRoundTrip:
             str(row["query"]) for row in selected_rows
         ], served_before_bounce
 
-        if result["decision"] in {"promote", "rollback"}:
+        if batch["skipped"]:
+            # Nothing was compiled: the restart reloads the blob the run left
+            # served.
+            expected_blob = blob_after_run
+        elif result["decision"] in {"promote", "rollback"}:
             expected_blob = version_blob
             assert blob_after_run == version_blob, batch["ledger"]
             assert (
@@ -5429,6 +5579,8 @@ class TestArtifactLoadingRoundTrip:
         blob_after = _load_blob_in_pod("model", "entity_extraction")
         assert blob_after != "", "Entity extraction artifact missing after restart"
         assert blob_after == expected_blob, batch["ledger"]
+        if batch["skipped"]:
+            return
         if result["decision"] in {"promote", "rollback"}:
             assert (
                 _active_blob_version_in_pod("model", "entity_extraction")
@@ -5446,6 +5598,8 @@ class TestArtifactLoadingRoundTrip:
         assert blob_before != "", "the module fixture persists the base artifact"
 
         result = _run_batch_job("profile")
+        if _compile_skipped(result, "profile_selection", blob_before=blob_before):
+            return
         approved = _approved_query_enhancement_examples_in_pod(TENANT_ID, "profile")
         version_blob, ledger = _load_blob_version_in_pod(
             "model", "profile_selection", result["version"]
@@ -6499,6 +6653,13 @@ class TestTrainingSelectionDecay:
 
         expected_decayed_example_ids = {"approved:entity-old-unconfirmed"}
         result = _run_batch_job("entity-extraction", tenant_id=tenant_id)
+        if _compile_skipped(result, "entity_extraction", tenant_id):
+            # Selection runs before the served module is scored, so the decay
+            # this test seeds is reported even though nothing was compiled.
+            assert set(result["selection"]["decayed_example_ids"]) == (
+                expected_decayed_example_ids
+            ), result
+            return
         assert result["status"] == "success", result
         assert result["spans_found"] == 1, result
         assert result["served_examples"] == 1, result
@@ -6620,6 +6781,7 @@ def _create_trigger_dataset(name: str, rows: list[dict]) -> None:
 
 
 def _run_triggered(tenant_id: str, dataset_name: str, timeout: int) -> dict:
+    _compile_below_a_perfect_score(tenant_id)
     run = _exec_optimization_cli_in_pod(
         "triggered",
         tenant_id,
@@ -6788,9 +6950,22 @@ class TestReflectiveOptimizerAcceptsCandidates:
 
         document = _run_triggered(tenant_id, dataset, timeout=_batch_job_timeout_s())
         outcome = document["search"]
+        holdout = REFLECTIVE_FAILING_ROWS // 4
+        if outcome["status"] == "skipped":
+            # The served module reproduces none of the held-out failures, so
+            # there is nothing to reflect on and no compile runs.
+            assert outcome == {
+                "status": "skipped",
+                "reason": "served_score_at_ceiling",
+                "served_score": OPTIMIZATION_SCORE_MAX,
+                "skip_above_score": OPTIMIZATION_SCORE_MAX,
+                "training_examples": REFLECTIVE_FAILING_ROWS - holdout,
+                "holdout_examples": 0,
+                "negative_probes": holdout,
+            }, document
+            return
         assert outcome["status"] == "success", document
         assert outcome["reflective"] is True, document
-        holdout = REFLECTIVE_FAILING_ROWS // 4
         assert outcome["training_examples"] == REFLECTIVE_FAILING_ROWS - holdout, (
             document
         )

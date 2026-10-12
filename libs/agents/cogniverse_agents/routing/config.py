@@ -18,6 +18,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
+from cogniverse_foundation.config.unified_config import OPTIMIZATION_SCORE_MAX
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,6 +57,24 @@ class OptimizationTriggersConfig(BaseModel):
     )
     optimization_improvement_threshold: float = Field(
         0.05, description="Minimum improvement required to accept optimization"
+    )
+    optimization_gap_share: float = Field(
+        0.5,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Share of the gap between the served score and the metric's "
+            "maximum a candidate must close when that is less than the "
+            "improvement threshold"
+        ),
+    )
+    optimization_skip_above_score: float = Field(
+        0.95,
+        gt=0.0,
+        le=OPTIMIZATION_SCORE_MAX,
+        description=(
+            "Served score at or above which an optimization run skips its compile"
+        ),
     )
     min_days_between_optimizations: int = Field(
         1, description="Minimum days between optimization runs"

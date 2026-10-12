@@ -4,6 +4,7 @@ import { SETTLED } from './framework/api';
 import { errorMessage, runtimeJson, seg } from './http';
 import {
   checkTrainingFile,
+  describeOutcome,
   REPORT_START,
   reportFilename,
   reportProgress,
@@ -15,6 +16,7 @@ import {
   type FileCheck,
   type ReportEvent,
   type ReportProgress,
+  type StepOutcome,
 } from './optimization';
 import { parseSse } from './sse';
 import { TenantChooser } from './tenants';
@@ -35,6 +37,7 @@ interface RunStatus {
   finished_at: string | null;
   message: string | null;
   steps: Record<string, string>;
+  step_outcomes: Record<string, StepOutcome[]>;
   blocked_reason: string | null;
 }
 
@@ -459,6 +462,7 @@ function RunPanel({
                 <tr>
                   <th>Step</th>
                   <th>Phase</th>
+                  <th>Outcome</th>
                 </tr>
               </thead>
               <tbody>
@@ -466,6 +470,13 @@ function RunPanel({
                   <tr key={step}>
                     <td>{step}</td>
                     <td>{phase}</td>
+                    <td>
+                      {run.step_outcomes[step]?.length
+                        ? run.step_outcomes[step].map((outcome) => (
+                            <div key={outcome.name ?? step}>{describeOutcome(outcome)}</div>
+                          ))
+                        : '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>

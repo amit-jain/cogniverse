@@ -299,10 +299,12 @@ class TestOptimizationRuns:
         )
         steps = detail.get_by_role("table", name="Steps")
         expect(steps.get_by_role("cell")).to_have_text(
-            ["run-optimizer", "Running", "profile", "Skipped"],
+            ["run-optimizer", "Running", "—", "profile", "Skipped", "—"],
             timeout=POLL_TIMEOUT_MS,
         )
-        expect(steps.get_by_role("columnheader")).to_have_text(["Step", "Phase"])
+        expect(steps.get_by_role("columnheader")).to_have_text(
+            ["Step", "Phase", "Outcome"]
+        )
 
         detail.get_by_role("button", name="Cancel run").click()
         expect(page.get_by_role("status")).to_have_text(
@@ -364,6 +366,65 @@ class TestOptimizationRuns:
         expect(page.get_by_role("status")).to_have_text(
             f"Retried {name}; Argo reports {retried['status'].get('phase') or 'no phase'}."
         )
+
+    def test_a_run_that_skipped_its_compile_says_why(self, page, web_url, argo):
+        """The optimizer step succeeded without compiling: its Outcome names
+        the served score and the ceiling it met, not an empty result."""
+        tenant = f"webopt{uuid.uuid4().hex[:8]}:main"
+        _runs_view(page, web_url, tenant)
+        name = _start(page, "simba")
+        detail = page.get_by_role("region", name=f"Run {name}")
+        nodes = _nodes(name, "Succeeded")
+        nodes[f"{name}-1"]["outputs"] = {
+            "parameters": [
+                {
+                    "name": "outcome",
+                    "value": json.dumps(
+                        {
+                            "status": "skipped",
+                            "reason": "served_score_at_ceiling",
+                            "served_score": 0.9833333333333333,
+                            "skip_above_score": 0.95,
+                            "baseline_score": 0.9,
+                            "current_score": 0.9833333333333333,
+                            "rollback_version": None,
+                            "spans_found": 240,
+                            "training_examples": 48,
+                            "holdout_examples": 60,
+                        }
+                    ),
+                }
+            ]
+        }
+        set_workflow_status(
+            argo["kubeconfig"],
+            name,
+            {
+                "phase": "Succeeded",
+                "startedAt": "2026-10-04T09:00:00Z",
+                "finishedAt": "2026-10-04T09:01:00Z",
+                "nodes": nodes,
+            },
+        )
+
+        expect(detail.locator("dt:text-is('Phase') + dd")).to_have_text(
+            "Succeeded", timeout=POLL_TIMEOUT_MS
+        )
+        expect(
+            detail.get_by_role("table", name="Steps").get_by_role("cell")
+        ).to_have_text(
+            [
+                "run-optimizer",
+                "Succeeded",
+                "Compile skipped: the served score 0.983 is at or above the "
+                "ceiling 0.95",
+                "profile",
+                "Skipped",
+                "—",
+            ],
+            timeout=POLL_TIMEOUT_MS,
+        )
+        expect(page.get_by_role("alert")).to_have_count(0)
 
 
 class TestConcurrency:
@@ -524,7 +585,7 @@ class TestRunLifecycle:
         )
         expect(
             detail.get_by_role("table", name="Steps").get_by_role("cell")
-        ).to_have_text([name, "Skipped"])
+        ).to_have_text([name, "Skipped", "—"])
         expect(_row(page, tenant, name).get_by_role("cell").nth(3)).to_have_text(
             "Cancelled", timeout=POLL_TIMEOUT_MS
         )

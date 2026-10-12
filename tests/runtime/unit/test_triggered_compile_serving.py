@@ -16,16 +16,19 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from cogniverse_agents.optimizer.artifact_manager import PromotionGate
 from cogniverse_runtime.optimization_cli import (
     _SERVE_TARGET,
-    _holdout_scores,
     _optimize_agent,
+    _probe_set_score,
     _serve_compiled_prompts,
     _split_train_holdout,
     _token_f1,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
+
+GATE = PromotionGate(improvement_threshold=0.05, gap_share=0.5, skip_above_score=0.95)
 
 
 class _GateRecordingManager:
@@ -43,7 +46,8 @@ class _GateRecordingManager:
         baseline_score,
         candidate_score,
         *,
-        min_improvement=0.0,
+        gate=None,
+        max_score=None,
         serve_versioned=False,
         optimizer="unknown",
         train_examples=None,
@@ -55,8 +59,10 @@ class _GateRecordingManager:
                 "candidate_prompts": candidate_prompts,
                 "baseline_score": baseline_score,
                 "candidate_score": candidate_score,
-                "min_improvement": min_improvement,
+                "gate": gate,
+                "max_score": max_score,
                 "serve_versioned": serve_versioned,
+                "unexpected": kwargs,
             }
         )
         extras = {"served_version": 7} if self.promote else {}
@@ -132,7 +138,7 @@ class TestEvalPrimitives:
         assert _probe_score(SimpleNamespace(enhanced_query=""), "", "search") == 0.0
         assert _probe_score(pred, "", "search") == 1.0
 
-    def test_holdout_scores_exact_for_summary(self):
+    def test_probe_set_scores_exact_for_summary(self):
         import dspy
 
         def _example(label):
@@ -172,7 +178,8 @@ class TestEvalPrimitives:
         # candidate: exact on both, diverges from the known-bad output.
         candidate = _StubModule(["alpha beta", "gamma delta", "good different text"])
 
-        b, c = _holdout_scores(baseline, candidate, holdout, negatives, "summary")
+        b = _probe_set_score(baseline, holdout, negatives, "summary")
+        c = _probe_set_score(candidate, holdout, negatives, "summary")
 
         assert b == pytest.approx((1.0 + 0.0 + 0.0) / 3)
         assert c == pytest.approx((1.0 + 1.0 + 2 / 3) / 3)
@@ -184,7 +191,7 @@ class TestEvalPrimitives:
         ] * 3
         assert baseline.calls[2]["content"] == "{}"
 
-    def test_holdout_scores_search_uses_the_served_enhanced_query(self):
+    def test_probe_set_score_search_uses_the_served_enhanced_query(self):
         class _StubModule:
             def __init__(self, preds):
                 self.preds = list(preds)
@@ -205,13 +212,19 @@ class TestEvalPrimitives:
         )
         candidate = _StubModule([SimpleNamespace(enhanced_query="red kite footage")])
 
-        b, c = _holdout_scores(baseline, candidate, [], negatives, "search")
+        b = _probe_set_score(baseline, [], negatives, "search")
+        c = _probe_set_score(candidate, [], negatives, "search")
 
         assert b == 0.0
         assert c == 1.0
         assert baseline.calls == [
             {"query": "previously failing query", "modality": "video", "top_k": 10}
         ]
+
+    def test_probe_set_score_refuses_an_empty_probe_set(self):
+        with pytest.raises(ValueError) as raised:
+            _probe_set_score(object(), [], [], "search")
+        assert str(raised.value) == "no probes to score the search module on"
 
 
 class TestGatedServing:
@@ -226,7 +239,7 @@ class TestGatedServing:
             compiled,
             baseline_score=0.40,
             candidate_score=0.60,
-            min_improvement=0.05,
+            gate=GATE,
         )
 
         assert len(am.gate_calls) == 1
@@ -237,7 +250,9 @@ class TestGatedServing:
         }
         assert call["baseline_score"] == 0.40
         assert call["candidate_score"] == 0.60
-        assert call["min_improvement"] == 0.05
+        assert call["gate"] == GATE
+        assert call["max_score"] == 1.0
+        assert call["unexpected"] == {}
         assert call["serve_versioned"] is True
         assert result == {
             "served_agent": "search_agent",
@@ -258,7 +273,7 @@ class TestGatedServing:
             _compiled(),
             baseline_score=0.60,
             candidate_score=0.40,
-            min_improvement=0.05,
+            gate=GATE,
         )
 
         assert len(am.gate_calls) == 1
@@ -275,7 +290,7 @@ class TestGatedServing:
     async def test_no_eval_material_does_not_promote(self):
         am = _GateRecordingManager(promote=True)
 
-        result = await _serve_compiled_prompts(am, "search", _compiled())
+        result = await _serve_compiled_prompts(am, "search", _compiled(), gate=GATE)
 
         assert am.gate_calls == []
         assert result == {
@@ -297,6 +312,7 @@ class TestGatedServing:
             compiled,
             baseline_score=0.3,
             candidate_score=0.9,
+            gate=GATE,
         )
 
         assert am.gate_calls[0]["agent_type"] == "summarizer_agent"
@@ -311,7 +327,12 @@ class TestGatedServing:
         compiled = SimpleNamespace(dump_state=lambda: {})
 
         result = await _serve_compiled_prompts(
-            am, "report", compiled, baseline_score=0.1, candidate_score=0.9
+            am,
+            "report",
+            compiled,
+            baseline_score=0.1,
+            candidate_score=0.9,
+            gate=GATE,
         )
 
         assert result is None
@@ -361,20 +382,21 @@ class TestNoPositiveExamples:
         }
 
 
-class TestMinImprovementKnob:
-    def test_reads_the_declared_default_from_config(self):
-        """The acceptance gate reads the tenant's
-        ``optimization_improvement_threshold`` through the real config path;
-        with no tenant override the declared default (0.05) applies."""
+class TestPromotionGateKnobs:
+    def test_reads_the_shipped_values_from_config(self):
+        """The acceptance gate reads ``optimization_improvement_threshold``,
+        ``optimization_gap_share`` and ``optimization_skip_above_score``
+        through the real config path; the shipped config carries 0.05, 0.5
+        and 0.95."""
         from cogniverse_foundation.config.manager import ConfigManager
-        from cogniverse_runtime.optimization_cli import _min_improvement_from_config
+        from cogniverse_runtime.optimization_cli import _promotion_gate_from_config
         from tests.utils.memory_store import InMemoryConfigStore
 
         store = InMemoryConfigStore()
         store.initialize()
         cm = ConfigManager(store=store)
 
-        assert _min_improvement_from_config("acme:acme", config_manager=cm) == 0.05
+        assert _promotion_gate_from_config("acme:acme", config_manager=cm) == GATE
 
 
 @pytest.mark.parametrize("agent_name", ["search", "summary", "report"])
@@ -432,6 +454,7 @@ async def test_triggered_publishes_the_complete_compiled_module_state():
         compiled,
         baseline_score=0.0,
         candidate_score=1.0,
+        gate=GATE,
     )
     assert result["promoted"] is True
     assert manager.gate_calls[0]["candidate_prompts"] == {
@@ -557,35 +580,45 @@ class TestBaselineReconstruction:
         )
 
     @pytest.mark.asyncio
-    async def test_predictor_keyed_active_artifact_fails_the_run(self):
+    async def test_predictor_keyed_active_artifact_refuses_the_pre_score(self):
         """A tenant whose active artifact predates the compiled-state contract
-        must fail the run, not score against a silently stock baseline."""
-        from cogniverse_runtime.optimization_cli import _score_and_serve
+        must not be scored against a silently stock baseline."""
+        from cogniverse_runtime.optimization_cli import (
+            BaselineNotReconstructableError,
+            _score_served_or_skip,
+        )
 
         manager = _BaselineManager({"summarizer": "Summarize tersely."})
 
-        result = await _score_and_serve(
-            manager,
-            "summary",
-            _compiled(agent_name="summary"),
-            holdout=[object()],
-            negatives=[],
-            optimizer_lm=None,
-            tenant_id="t1",
-            config_manager=None,
-            train_examples=4,
-        )
+        with pytest.raises(BaselineNotReconstructableError) as raised:
+            await _score_served_or_skip(
+                manager,
+                "summary",
+                [object()],
+                [],
+                None,
+                GATE,
+                "t1",
+                4,
+            )
 
-        assert result == {
-            "status": "failed",
-            "reason": "baseline_not_reconstructable",
-            "error": (
-                "active prompts carry ['summarizer'] and no __dspy_module__; "
-                "the baseline cannot be rebuilt"
-            ),
-        }
+        assert str(raised.value) == (
+            "active prompts carry ['summarizer'] and no __dspy_module__; "
+            "the baseline cannot be rebuilt"
+        )
         assert manager.load_calls == ["summarizer_agent"]
         assert manager.gate_calls == []
+
+    @pytest.mark.asyncio
+    async def test_without_probes_nothing_is_scored_and_nothing_is_skipped(self):
+        from cogniverse_runtime.optimization_cli import _score_served_or_skip
+
+        manager = _BaselineManager(None)
+
+        assert await _score_served_or_skip(
+            manager, "summary", [], [], None, GATE, "t1", 4
+        ) == (None, None)
+        assert manager.load_calls == []
 
 
 class TestPublishedStateCompatibility:
@@ -641,6 +674,7 @@ class TestPublishedStateCompatibility:
                 SummarizationModule(),
                 baseline_score=0.0,
                 candidate_score=1.0,
+                gate=GATE,
             )
 
         assert str(excinfo.value) == (

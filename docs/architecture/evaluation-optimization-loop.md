@@ -153,8 +153,10 @@ active dataset content.
 optimizer outputs. It compares the candidate against the active baseline
 and promotes only when
 `candidate_score >= baseline_score + min_improvement - tolerance`
-(`min_improvement` defaults to 0; `--mode triggered` wires the tenant's
-`optimization_improvement_threshold` into it, and passes
+(`min_improvement` defaults to 0; `--mode triggered` passes the tenant's
+`PromotionGate`, which sets it to `min(optimization_improvement_threshold,
+optimization_gap_share * (max_score - baseline_score))` and never promotes
+over a baseline at the metric's maximum, and passes
 `serve_versioned=True` so a win lands through the canary state machine).
 Failed promotions still land in the experiment ledger with `promoted=False`
 and a `rejection_reason`, so the loop is observable end-to-end:
@@ -490,6 +492,8 @@ the quality-monitor Deployment — not by a live in-process RL loop:
 |---|---|---|---|
 | `OptimizationTriggersConfig` | `min_annotations_for_optimization` | 50 | Minimum annotations before an optimization run is worth submitting |
 | `OptimizationTriggersConfig` | `optimization_improvement_threshold` | 0.05 | Minimum score improvement required to accept a candidate |
+| `OptimizationTriggersConfig` | `optimization_gap_share` | 0.5 | Share of the gap between the served score and the metric's maximum that caps the required improvement; in (0, 1]; a tenant's routing config overrides it |
+| `OptimizationTriggersConfig` | `optimization_skip_above_score` | 0.95 | Served score at or above which an optimization step skips its compile and reports `served_score_at_ceiling`; in (0, 1]; a tenant's routing config overrides it |
 | `OptimizationTriggersConfig` | `min_days_between_optimizations` | 1 | Cooldown between optimization runs |
 | `OptimizationTriggersConfig` | `enable_reflective_recompile` | True | Recompile an all-failure agent (empty positives trainset) with `dspy.GEPA` reflective prompt evolution instead of skipping; on for the three servable agents |
 | `OptimizationTriggersConfig` | `min_reflective_failures` | 10 | Minimum rows in the post-split GEPA trainset (not the raw failing-row count) before a reflective recompile runs |
@@ -502,11 +506,14 @@ the quality-monitor Deployment — not by a live in-process RL loop:
 Each batch optimization run (see the diagram above) builds a `dspy.Example` trainset from
 approved synthetic data and/or scored spans and compiles with the selected teleprompter.
 `--mode triggered` holds out a ~25% tail of the labeled positives and turns the
-human-flagged failures into known-bad probes, scores the compiled candidate against the
-currently-active baseline on that probe set (token-F1 to labels for `summary`/`report`,
+human-flagged failures into known-bad probes, scores the currently-active baseline on
+that probe set before it compiles (token-F1 to labels for `summary`/`report`,
 reward for not reproducing a failing output; a label-free enum-validity check for `search`,
-whose signature has no free-text label), and publishes **only a candidate that wins by at least the
-tenant's `optimization_improvement_threshold`** — via
+whose signature has no free-text label), skips the compile when that score is at or above
+`optimization_skip_above_score`, and otherwise scores the compiled candidate on the same probes and
+publishes **only a candidate that beats the baseline by the tenant's
+`optimization_improvement_threshold`, or by `optimization_gap_share` of the gap left to the
+maximum when that is less** — via
 `ArtifactManager.promote_if_better(serve_versioned=True)`, which routes the win through
 the canary state machine (`save_prompts_versioned` → canary → active) so the dispatcher's
 per-request overlay serves it on the next dispatch. A losing candidate never touches live
@@ -525,7 +532,7 @@ metric that rewards a candidate for
 **not** reproducing the recorded failing output (returning `ScoreWithFeedback(score, feedback)`), and it
 proposes improved instructions within a `reflective_max_metric_calls` budget. The GEPA candidate goes
 through the **same** `promote_if_better(serve_versioned=True)` gate scored on the held-out failures — it
-must still beat `baseline + optimization_improvement_threshold` to serve, otherwise it is rejected and
+must still clear the same required gain over the baseline to serve, otherwise it is rejected and
 the base prompt is left byte-unchanged. An all-failure agent that cannot be improved keeps its base
 prompt rather than getting a worse one.
 
@@ -946,7 +953,7 @@ Agents retrieve strategies at inference time via `MemoryAwareMixin.get_strategie
 | **HITL Approval** | Data curation | Confidence-based auto-approval with rejection/regeneration cycle |
 | **BootstrapFewShot** | Few-shot learning | Batch CLI's default optimizer for all agent types; `simba`/`profile`/`entity-extraction` scale by trainset size (<50 vs >=50 examples), `triggered` uses fixed settings |
 | **DSPyOptimizerRegistry** | Optimizer selection | Per-agent `OptimizerConfig.optimizer_type`: BootstrapFewShot, LabeledFewShot, BootstrapFewShotWithRandomSearch, COPRO, MIPROv2 wired; GEPA/SIMBA reserved (unmapped) |
-| **Regression-Reject Gate** | Promotion safety | `ArtifactManager.promote_if_better` only writes artefacts when candidate ≥ baseline + min_improvement − tolerance; `--mode triggered` gates every compile through it with the tenant's `optimization_improvement_threshold` |
+| **Regression-Reject Gate** | Promotion safety | `ArtifactManager.promote_if_better` only writes artefacts when candidate ≥ baseline + min_improvement − tolerance; `--mode triggered` gates every compile through it with the tenant's `PromotionGate` (`optimization_improvement_threshold` capped by `optimization_gap_share` of the gap to the maximum) |
 | **Canary Promotion** | Rollout safety | Stable per-request-seed routing between active/canary versions at a configurable traffic % |
 | **Reference-Free Evaluation** | Quality assessment | Relevance, diversity, temporal coverage without ground truth |
 | **IR Metrics Suite** | Retrieval evaluation | MRR, NDCG@K, Precision@K, Recall@K, MAP |

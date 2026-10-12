@@ -81,3 +81,116 @@ def test_the_agent_section_names_its_entries_by_service():
     assert raised.value.errors == [
         "section routing is stored under service gateway_agent"
     ]
+
+
+def test_the_routing_form_offers_the_tenants_promotion_gate_values():
+    routing = CONFIG_SECTIONS["routing"]
+    properties = routing.schema()["properties"]
+    assert {
+        name: (properties[name]["anyOf"], properties[name]["default"])
+        for name in ("optimization_gap_share", "optimization_skip_above_score")
+    } == {
+        name: (
+            [
+                {"exclusiveMinimum": 0.0, "maximum": 1.0, "type": "number"},
+                {"type": "null"},
+            ],
+            None,
+        )
+        for name in ("optimization_gap_share", "optimization_skip_above_score")
+    }
+
+    current = routing.default("acme:prod", "gateway_agent")
+    assert (
+        routing.form_value(current)["optimization_gap_share"],
+        routing.form_value(current)["optimization_skip_above_score"],
+    ) == (None, None)
+
+    saved = routing.from_form(
+        {"optimization_gap_share": 0.25, "optimization_skip_above_score": 1.0},
+        current,
+    )
+    assert (saved.optimization_gap_share, saved.optimization_skip_above_score) == (
+        0.25,
+        1.0,
+    )
+    stored = routing.dump(saved, "acme:prod")
+    assert (
+        stored["optimization_gap_share"],
+        stored["optimization_skip_above_score"],
+    ) == (0.25, 1.0)
+    assert routing.load(stored) == saved
+    # A form that leaves them out keeps them; null hands them back to the
+    # deployment.
+    assert routing.from_form({"min_unique_queries": 4}, saved) == routing.load(
+        {**stored, "min_unique_queries": 4}
+    )
+    cleared = routing.from_form(
+        {"optimization_gap_share": None, "optimization_skip_above_score": None},
+        saved,
+    )
+    assert (cleared.optimization_gap_share, cleared.optimization_skip_above_score) == (
+        None,
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "errors"),
+    [
+        (
+            {"optimization_gap_share": 0},
+            ["optimization_gap_share: Input should be greater than 0"],
+        ),
+        (
+            {"optimization_gap_share": 1.01},
+            ["optimization_gap_share: Input should be less than or equal to 1"],
+        ),
+        (
+            {"optimization_skip_above_score": 0},
+            ["optimization_skip_above_score: Input should be greater than 0"],
+        ),
+        (
+            {"optimization_skip_above_score": 1.5},
+            ["optimization_skip_above_score: Input should be less than or equal to 1"],
+        ),
+    ],
+)
+def test_the_routing_form_refuses_a_gate_value_outside_its_range(value, errors):
+    routing = CONFIG_SECTIONS["routing"]
+    with pytest.raises(ConfigValueError) as raised:
+        routing.from_form(value, routing.default("acme:prod", "gateway_agent"))
+    assert raised.value.errors == errors
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        (
+            "optimization_gap_share",
+            0.0,
+            "optimization_gap_share must be in (0, 1.0]; got 0.0",
+        ),
+        (
+            "optimization_gap_share",
+            1.5,
+            "optimization_gap_share must be in (0, 1.0]; got 1.5",
+        ),
+        (
+            "optimization_skip_above_score",
+            -0.1,
+            "optimization_skip_above_score must be in (0, 1.0]; got -0.1",
+        ),
+        (
+            "optimization_skip_above_score",
+            1.01,
+            "optimization_skip_above_score must be in (0, 1.0]; got 1.01",
+        ),
+    ],
+)
+def test_a_stored_gate_value_outside_its_range_does_not_load(field, value, message):
+    from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+
+    with pytest.raises(ValueError) as raised:
+        RoutingConfigUnified.from_dict({"tenant_id": "acme:prod", field: value})
+    assert str(raised.value) == message

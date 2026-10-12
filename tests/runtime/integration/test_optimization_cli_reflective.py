@@ -9,12 +9,24 @@ prompt, or it is rejected and the base prompt is left byte-for-byte unchanged.
 Uses the shared vespa_instance + config_manager + real_telemetry from conftest.
 """
 
+import json
 import logging
 
 import pandas as pd
 import pytest
 
 logger = logging.getLogger(__name__)
+
+FAILING_QUERIES = [
+    "when did the event happen after the explosion",
+    "timeline of events before the crash",
+    "sequence during the performance",
+    "what happened right after the goal",
+    "before the sunrise over the mountains",
+    "who scored just before halftime",
+    "events leading up to the finale",
+    "moments after the announcement",
+]
 
 
 # Runtime LM gate: the requires_lm marker is enforced per test by
@@ -38,6 +50,11 @@ class TestReflectiveRecompile:
             AutomationRulesConfig,
             OptimizationTriggersConfig,
         )
+        from cogniverse_agents.search_agent import SearchOptimizationModule
+        from cogniverse_core.agents.base import (
+            COMPILED_MODULE_PROMPT_KEY,
+            compiled_module_identity,
+        )
         from cogniverse_foundation.config.utils import get_config
         from cogniverse_runtime.optimization_cli import _optimize_agent
 
@@ -58,20 +75,17 @@ class TestReflectiveRecompile:
         )
 
         # All failures, zero positives — the positives trainset is empty and the
-        # reflective branch takes over.
+        # reflective branch takes over. Each failure recorded the query echoed
+        # back as its rewrite, so a module that rewrites at all scores below
+        # the ceiling on the held-out failures and the compile runs.
         low = pd.DataFrame(
             [
-                {"query": q, "output": '{"results": []}', "score": 0.1}
-                for q in [
-                    "when did the event happen after the explosion",
-                    "timeline of events before the crash",
-                    "sequence during the performance",
-                    "what happened right after the goal",
-                    "before the sunrise over the mountains",
-                    "who scored just before halftime",
-                    "events leading up to the finale",
-                    "moments after the announcement",
-                ]
+                {
+                    "query": q,
+                    "output": json.dumps({"results": [], "enhanced_query": q}),
+                    "score": 0.1,
+                }
+                for q in FAILING_QUERIES
             ]
         )
 
@@ -114,10 +128,92 @@ class TestReflectiveRecompile:
         if served["promoted"]:
             assert served["active"] is True
             assert isinstance(served["version"], int) and served["version"] >= 1
-            assert after is not None
-            assert after.get("search_optimizer")
+            # The whole compiled module state is published under the one
+            # reserved key the served agent loads.
+            assert list(after) == [COMPILED_MODULE_PROMPT_KEY], after
+            payload = json.loads(after[COMPILED_MODULE_PROMPT_KEY])
+            assert set(payload) == {"dspy_version", "module", "state"}, payload
+            assert payload["module"] == compiled_module_identity(
+                SearchOptimizationModule()
+            )
+            assert list(payload["state"]) == ["search_optimizer"], payload
             assert after != before
         else:
             assert served["active"] is False
             # A rejected reflective candidate must not touch the base prompt.
             assert after == before
+
+    @pytest.mark.asyncio
+    async def test_failures_the_served_module_already_avoids_skip_the_compile(
+        self, config_manager, real_telemetry, phoenix_container, monkeypatch
+    ):
+        """These failures recorded no rewritten query, so every held-out probe
+        scores 1.0 for the served module: at the ceiling, nothing to reflect on."""
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_agents.routing.config import (
+            AutomationRulesConfig,
+            OptimizationTriggersConfig,
+        )
+        from cogniverse_foundation.config.utils import get_config
+        from cogniverse_runtime import optimization_cli
+        from cogniverse_runtime.optimization_cli import _optimize_agent
+
+        tenant_id = "test:unit"
+        rules = AutomationRulesConfig(
+            optimization_triggers=OptimizationTriggersConfig(
+                enable_reflective_recompile=True,
+                min_reflective_failures=3,
+                reflective_max_metric_calls=18,
+            )
+        )
+        monkeypatch.setattr(
+            "cogniverse_runtime.quality_monitor_cli._load_automation_rules",
+            lambda tenant_id, config_manager=None: rules,
+        )
+        gepa_builds: list[int] = []
+        real_build_gepa = optimization_cli._build_gepa
+
+        def counted_build_gepa(metric, reflection_lm, max_metric_calls):
+            gepa_builds.append(max_metric_calls)
+            return real_build_gepa(metric, reflection_lm, max_metric_calls)
+
+        monkeypatch.setattr(optimization_cli, "_build_gepa", counted_build_gepa)
+
+        low = pd.DataFrame(
+            [
+                {"query": q, "output": '{"results": []}', "score": 0.1}
+                for q in FAILING_QUERIES
+            ]
+        )
+        telemetry_provider = real_telemetry.get_provider(tenant_id=tenant_id)
+        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+        before = await artifact_manager.load_prompts("search_agent")
+        experiments_before = await artifact_manager.load_experiments("search_agent")
+        config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        llm_endpoint = config.get_llm_config().resolve("optimization")
+
+        result = await _optimize_agent(
+            agent_name="search",
+            low_scoring_df=low,
+            high_scoring_df=pd.DataFrame(),
+            llm_endpoint=llm_endpoint,
+            config_manager=config_manager,
+            telemetry_provider=telemetry_provider,
+            tenant_id=tenant_id,
+        )
+
+        assert result == {
+            "status": "skipped",
+            "reason": "served_score_at_ceiling",
+            "served_score": 1.0,
+            "skip_above_score": 0.95,
+            "training_examples": 6,
+            "holdout_examples": 0,
+            "negative_probes": 2,
+        }
+        assert gepa_builds == []
+        assert await artifact_manager.load_prompts("search_agent") == before
+        assert (
+            await artifact_manager.load_experiments("search_agent")
+            == experiments_before
+        )
