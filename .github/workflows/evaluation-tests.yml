@@ -109,7 +109,7 @@ jobs:
   integration-tests:
     runs-on: ubuntu-latest
     needs: unit-tests
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
     - uses: actions/checkout@v3
@@ -155,7 +155,7 @@ jobs:
         echo "Phoenix is ready!"
 
     - name: Run integration tests
-      timeout-minutes: 10
+      timeout-minutes: 15
       env:
         COVERAGE_FILE: .coverage
       run: |

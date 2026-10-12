@@ -193,9 +193,11 @@ jobs:
         uv run --no-sync python -c "from cogniverse_runtime.routers.health import router; print('Health router import successful')"
         echo "All runtime imports successful"
 
-  integration-tests:
+  # The runtime's routers and workers on real Vespa and Redis, in shards that
+  # run in parallel. A suite no other shard names runs in integration-tests-a.
+  integration-tests-a:
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 35
     needs: unit-tests
 
     steps:
@@ -246,14 +248,26 @@ jobs:
         key: ollama-qwen2.5-0.5b-v1
 
     - name: Run integration tests
-      timeout-minutes: 25
+      timeout-minutes: 20
       env:
         TEST_LLM_MODEL: "qwen2.5:0.5b"
       run: |
-        # The browser suites run in the web-ops-integration-tests-* jobs.
+        # The suites named by integration-tests-b and -c and the browser
+        # suites of the web-ops-integration-tests-* jobs run there.
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/runtime/integration/ \
+          --ignore=tests/runtime/integration/test_acp_process.py \
+          --ignore=tests/runtime/integration/test_admin_harness_keys.py \
+          --ignore=tests/runtime/integration/test_admin_organization_listing.py \
           --ignore=tests/runtime/integration/test_ag_ui_threads.py \
+          --ignore=tests/runtime/integration/test_approval_routes.py \
+          --ignore=tests/runtime/integration/test_embedding_atlas_umap_routes.py \
+          --ignore=tests/runtime/integration/test_entity_self_consistency_review_queue.py \
+          --ignore=tests/runtime/integration/test_ingestion_worker_e2e.py \
+          --ignore=tests/runtime/integration/test_llm_annotation_job.py \
+          --ignore=tests/runtime/integration/test_openai_compat_endpoint.py \
+          --ignore=tests/runtime/integration/test_runtime_startup_entrypoint.py \
+          --ignore=tests/runtime/integration/test_signature_variant_persistence.py \
           --ignore=tests/runtime/integration/test_web_agent_workspace.py \
           --ignore=tests/runtime/integration/test_web_client_ag_ui.py \
           --ignore=tests/runtime/integration/test_web_ops_analytics.py \
@@ -276,8 +290,164 @@ jobs:
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short
 
-    - name: Run admin integration tests
+  integration-tests-b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.12.19"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Free up disk space for Vespa
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:8.668.5
+        df -h
+
+    - name: Cache Ollama binary and test model
+      uses: actions/cache@v4
+      with:
+        path: ~/.ollama
+        key: ollama-qwen2.5-0.5b-v1
+
+    - name: Run integration tests (embedding atlas and admin keys)
       timeout-minutes: 20
+      env:
+        TEST_LLM_MODEL: "qwen2.5:0.5b"
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_admin_harness_keys.py \
+          tests/runtime/integration/test_admin_organization_listing.py \
+          tests/runtime/integration/test_embedding_atlas_umap_routes.py \
+          -m "integration and ci_fast and not requires_lm" \
+          -v --tb=short
+
+  integration-tests-c:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.12.19"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Free up disk space for Vespa
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:8.668.5
+        df -h
+
+    - name: Cache Ollama binary and test model
+      uses: actions/cache@v4
+      with:
+        path: ~/.ollama
+        key: ollama-qwen2.5-0.5b-v1
+
+    - name: Run integration tests (ACP process, approvals, OpenAI endpoint, ingestion worker and startup)
+      timeout-minutes: 20
+      env:
+        TEST_LLM_MODEL: "qwen2.5:0.5b"
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_acp_process.py \
+          tests/runtime/integration/test_approval_routes.py \
+          tests/runtime/integration/test_entity_self_consistency_review_queue.py \
+          tests/runtime/integration/test_ingestion_worker_e2e.py \
+          tests/runtime/integration/test_llm_annotation_job.py \
+          tests/runtime/integration/test_openai_compat_endpoint.py \
+          tests/runtime/integration/test_runtime_startup_entrypoint.py \
+          tests/runtime/integration/test_signature_variant_persistence.py \
+          -m "integration and ci_fast and not requires_lm" \
+          -v --tb=short
+
+  # The admin API and the events and foundation suites.
+  admin-platform-integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.12.19"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Free up disk space for Vespa
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:8.668.5
+        df -h
+
+    - name: Cache Ollama binary and test model
+      uses: actions/cache@v4
+      with:
+        path: ~/.ollama
+        key: ollama-qwen2.5-0.5b-v1
+
+    - name: Run admin integration tests
+      timeout-minutes: 25
       env:
         TEST_LLM_MODEL: "qwen2.5:0.5b"
       run: |
@@ -287,7 +457,7 @@ jobs:
           -v --tb=short
 
     - name: Run platform integration tests
-      timeout-minutes: 10
+      timeout-minutes: 12
       run: |
         # Small self-contained suites (no heavy model sidecars); memory
         # integration needs the vLLM DenseOn sidecar and stays local-tier.

@@ -495,16 +495,18 @@ def test_parser_ignores_echoed_command_hints(workflows) -> None:
 
 
 def test_parser_reads_the_environment_each_selection_runs_under(workflows) -> None:
-    """runtime-tests.yml's integration job: the workflow env on every step, a
-    step env on two, and the command's own ``JAX_PLATFORM_NAME`` prefix."""
+    """runtime-tests.yml's first integration shard and its admin and platform
+    job: the workflow env on every step, a step env on two, and the command's
+    own ``JAX_PLATFORM_NAME`` prefix."""
     runtime = _workflow(workflows, "runtime-tests.yml")
     workflow_env = {"CARGO_NET_RETRY": "10", "CARGO_HTTP_MULTIPLEXING": "false"}
     assert [
-        (s.paths, dict(s.env))
+        (s.job, s.paths, dict(s.env))
         for s in runtime.selections
-        if s.job == "integration-tests"
+        if s.job in ("integration-tests-a", "admin-platform-integration-tests")
     ] == [
         (
+            "integration-tests-a",
             ("tests/runtime/integration",),
             {
                 **workflow_env,
@@ -513,6 +515,7 @@ def test_parser_reads_the_environment_each_selection_runs_under(workflows) -> No
             },
         ),
         (
+            "admin-platform-integration-tests",
             ("tests/admin",),
             {
                 **workflow_env,
@@ -521,6 +524,7 @@ def test_parser_reads_the_environment_each_selection_runs_under(workflows) -> No
             },
         ),
         (
+            "admin-platform-integration-tests",
             ("tests/events/integration", "tests/foundation/integration"),
             {**workflow_env, "JAX_PLATFORM_NAME": "cpu"},
         ),

@@ -133,7 +133,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 28
+    timeout-minutes: 30
     needs: unit-tests
 
     steps:
@@ -190,7 +190,7 @@ jobs:
           -v --tb=short
 
     - name: Run dataset, evaluation and session integration tests
-      timeout-minutes: 5
+      timeout-minutes: 6
       run: |
         uv run --no-sync python -m pytest \
           tests/telemetry/integration/ \
