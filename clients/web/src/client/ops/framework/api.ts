@@ -1,5 +1,6 @@
 import type { GoldenEntry, RatingKind } from '../framework';
 import { runtimeJson, seg } from '../http';
+import type { StepOutcome } from '../optimization';
 
 export function tenantPath(tenant: string): string {
   return `/admin/tenant/${seg(tenant)}`;
@@ -19,6 +20,7 @@ export interface RunStatus {
   phase: string | null;
   message: string | null;
   blocked_reason: string | null;
+  step_outcomes: Record<string, StepOutcome[]>;
 }
 
 /** Phases after which nothing changes about a run; Cancelled is a run that was shut down. */

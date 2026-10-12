@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Panel, useAction, useLoad } from '../common';
 import { MODULES } from '../framework';
+import { describeOutcome } from '../optimization';
 import { POLL_MS, runStatus, SETTLED, startRun, trainingDatasets, uploadDataset } from './api';
 
 export function ModuleOptimizationTab({ tenant }: { tenant: string }) {
@@ -224,6 +225,18 @@ function SubmittedRun({ tenant, name }: { tenant: string; name: string }) {
             <>
               <dt>Message</dt>
               <dd>{status.data.message}</dd>
+            </>
+          )}
+          {Object.values(status.data.step_outcomes).some((outcomes) => outcomes.length > 0) && (
+            <>
+              <dt>Outcome</dt>
+              <dd>
+                {Object.entries(status.data.step_outcomes).flatMap(([step, outcomes]) =>
+                  outcomes.map((outcome) => (
+                    <div key={`${step}-${outcome.name ?? ''}`}>{describeOutcome(outcome)}</div>
+                  )),
+                )}
+              </dd>
             </>
           )}
         </dl>

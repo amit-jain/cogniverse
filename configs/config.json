@@ -304,6 +304,8 @@
     "optimization_triggers": {
       "min_annotations_for_optimization": 50,
       "optimization_improvement_threshold": 0.05,
+      "optimization_gap_share": 0.5,
+      "optimization_skip_above_score": 0.95,
       "min_days_between_optimizations": 1,
       "span_eval_lookback_hours": 2,
       "annotation_lookback_hours": 24,

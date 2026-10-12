@@ -74,6 +74,66 @@ export function checkTrainingFile(text: string, catalog: ExampleTemplates): File
   };
 }
 
+/** One result in the outcome document an optimizer step wrote, as the run status route serves it. */
+export interface StepOutcome {
+  name: string | null;
+  status: string;
+  reason: string | null;
+  decision: string | null;
+  served_score: number | null;
+  skip_above_score: number | null;
+  baseline_score: number | null;
+  current_score: number | null;
+  candidate_score: number | null;
+  rollback_version: number | null;
+  error: string | null;
+}
+
+/** A score to at most three decimals, without trailing zeros. */
+function score(value: number): string {
+  return String(Number(value.toFixed(3)));
+}
+
+const DECISIONS: Record<string, string> = {
+  promote: 'Promoted the candidate',
+  keep: 'Kept the served artifact',
+  rollback: 'Rolled back to the base module',
+  reject: 'Rejected the candidate',
+};
+
+/**
+ * What an optimizer reported, as one line: why it skipped its compile, why
+ * it failed, or what it decided and on which scores.
+ */
+export function describeOutcome(outcome: StepOutcome): string {
+  const prefix = outcome.name ? `${outcome.name}: ` : '';
+  if (outcome.status === 'skipped') {
+    if (
+      outcome.reason === 'served_score_at_ceiling' &&
+      outcome.served_score !== null &&
+      outcome.skip_above_score !== null
+    ) {
+      const rolledBack =
+        outcome.rollback_version === null
+          ? ''
+          : `; rolled back to the base module as v${outcome.rollback_version}`;
+      return `${prefix}Compile skipped: the served score ${score(outcome.served_score)} is at or above the ceiling ${score(outcome.skip_above_score)}${rolledBack}`;
+    }
+    return `${prefix}Skipped: ${outcome.reason ?? 'no reason recorded'}`;
+  }
+  if (outcome.status === 'failed' || outcome.status === 'error')
+    return `${prefix}Failed: ${outcome.error ?? outcome.reason ?? 'no error recorded'}`;
+  if (outcome.decision) {
+    const scores: string[] = [];
+    if (outcome.baseline_score !== null) scores.push(`baseline ${score(outcome.baseline_score)}`);
+    if (outcome.current_score !== null) scores.push(`current ${score(outcome.current_score)}`);
+    if (outcome.candidate_score !== null) scores.push(`candidate ${score(outcome.candidate_score)}`);
+    const decided = DECISIONS[outcome.decision] ?? outcome.decision;
+    return `${prefix}${decided}${scores.length ? ` (${scores.join(', ')})` : ''}`;
+  }
+  return `${prefix}${outcome.status}`;
+}
+
 /** What a run's 404 means: Argo deleted it when its time-to-live expired. */
 export function runActionError(name: string, error: unknown): string {
   if (error instanceof RuntimeRequestError && error.status === 404)

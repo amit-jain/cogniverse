@@ -374,6 +374,11 @@ async def run_profile_optimization(
       - {"status": "insufficient_population", "spans_found": int, "examples": int,
          "distinct_queries": int, "min_samples": int, "min_unique_queries": int,
          "version": int}
+      - {"status": "skipped", "reason": "served_score_at_ceiling",
+         "served_score": float, "skip_above_score": float,
+         "baseline_score": float, "current_score": float | None,
+         "rollback_version": int | None, "spans_found": int,
+         "training_examples": int, "holdout_examples": int, "selection": {...}}
       - {"status": "failed", "error": str, "selection": {...}}
     """
 ```
@@ -426,9 +431,12 @@ the enhanced query differs from the query, has expansion terms and, given a grou
 of its entities; else 0.0). `_query_enhancement_scores` runs a module once per distinct
 (`query`, `source_text`, `grounding_context`) and counts that score once per holdout record carrying it,
 so a call served hundreds of times costs one LM request and keeps its weight in the mean. The base module,
-the persisted artifact and the compiled candidate are scored on the same holdout and `_select_simba_artifact` decides: `promote` persists the candidate (it beats the
-served module by the tenant's `optimization_improvement_threshold`), `keep` leaves the artifact, `rollback`
-persists the base state over an artifact that scores below base, `reject` persists nothing. A persisted
+the persisted artifact and the compiled candidate are scored on the same holdout and `_select_simba_artifact` decides: `promote` persists the candidate (the
+tenant's [promotion gate](#promotion-gate) finds it enough above the served module), `keep` leaves the artifact, `rollback`
+persists the base state over an artifact that scores below base, `reject` persists nothing. The base
+module and the persisted artifact are scored before anything is compiled; a served score at or above
+`optimization_skip_above_score` ends the run there with `{"status": "skipped", "reason":
+"served_score_at_ceiling"}` (see [Promotion gate](#promotion-gate)). A persisted
 artifact whose state is the base module's (`_current_score`) takes the baseline score instead of being
 scored again: a second scoring of the same module measures only the LM's noise, and a lower draw would
 roll back to that same state and discard the candidate. The SIMBA, profile and entity-extraction runs all
@@ -528,6 +536,11 @@ Returns:
   - {"status": "insufficient_population", "spans_found": int, "examples": int,
      "distinct_queries": int, "min_samples": int, "min_unique_queries": int,
      "version": int}
+  - {"status": "skipped", "reason": "served_score_at_ceiling",
+     "served_score": float, "skip_above_score": float,
+     "baseline_score": float, "current_score": float | None,
+     "rollback_version": int | None, "spans_found": int,
+     "training_examples": int, "holdout_examples": int}
   - {"status": "failed", "error": str}
 
 **File:** `libs/runtime/cogniverse_runtime/optimization_cli.py`
@@ -613,16 +626,21 @@ splits each agent's rows into `low_scoring`/`high_scoring` by `category`, and fo
    inside `dspy.context(lm=optimizer.lm)` (`initialize_language_model` only sets `optimizer.lm`; the
    compile reads the LM from the task-local binding). Training examples carry the served signature's
    own input and output fields (`_served_example` / `_served_inputs`).
-3. Scores the compiled candidate against the currently-active baseline (`_holdout_scores` via
-   `_probe_score`): held-out positives contribute token-F1 of the served output field
+3. Scores the currently-active baseline before the compile (`_score_served_or_skip`) and the compiled
+   candidate after it, each with one `_probe_set_score` pass over the same probes (`_probe_score`):
+   held-out positives contribute token-F1 of the served output field
    (`_EVAL_FIELD`: `enhanced_query` / `summary` / `executive_summary`) against the labeled output,
    and the low-scoring rows become known-bad probes (`_negative_probes`) that reward NOT reproducing
    the recorded failing output. The baseline is the same served module with the active compiled state
    loaded into it (`_active_compiled_payload`). An agent whose active prompts are not a compiled
    module state has no reconstructable baseline, so the run fails with
-   `reason: "baseline_not_reconstructable"` rather than scoring against a stock module.
-4. Publishes the compiled module's whole `dump_state()` via `_serve_compiled_prompts` **only if the candidate wins by
-   at least the tenant's `optimization_improvement_threshold`** — the call routes through
+   `reason: "baseline_not_reconstructable"` rather than scoring against a stock module. A baseline at
+   or above `optimization_skip_above_score` skips the compile: the agent's result is
+   `{"status": "skipped", "reason": "served_score_at_ceiling", "served_score", "skip_above_score",
+   "training_examples", "holdout_examples", "negative_probes"}`. Without probes there is no score and
+   the compile runs.
+4. Publishes the compiled module's whole `dump_state()` via `_serve_compiled_prompts` **only if the
+   tenant's [promotion gate](#promotion-gate) finds the candidate enough above that baseline** — the call routes through
    `ArtifactManager.promote_if_better(serve_versioned=True)` (versioned save → canary → active). The
    published prompts dict has the single reserved key `__dspy_module__`
    (`cogniverse_core.agents.base.COMPILED_MODULE_PROMPT_KEY`) holding
@@ -654,7 +672,7 @@ resolved optimization LM) reads the failing rollouts plus that feedback and prop
 instructions, capped at `reflective_max_metric_calls` metric calls (`_build_gepa` is the injectable GEPA
 seam). The GEPA candidate STILL flows through the same `_score_and_serve` →
 `promote_if_better(serve_versioned=True)` gate, scored on the **held-out** negatives — a reflective
-candidate that does not beat `baseline + optimization_improvement_threshold` is rejected and the base
+candidate the [promotion gate](#promotion-gate) does not pass is rejected and the base
 prompt is left byte-unchanged, so an all-failure agent that cannot be improved keeps its base prompt
 rather than a worse one. A successful run returns
 `{"status": "success", "reflective": True, ..., "served": {...}}`; too few failing rows to reflect
@@ -843,14 +861,19 @@ metrics = await am.promote_if_better(
     baseline_score=0.72,
     candidate_score=0.75,
     tolerance=0.0,                      # allowed regression band (0 = strict win)
-    min_improvement=0.05,               # required margin over baseline
+    gate=PromotionGate(                 # the tenant's promotion gate
+        improvement_threshold=0.05, gap_share=0.5, skip_above_score=0.95
+    ),
+    max_score=1.0,                      # the metric's maximum
     serve_versioned=True,               # winner goes versioned → canary → active
     optimizer="BootstrapFewShot",
     train_examples=64,
 )
 ```
 
-- Promoted when `candidate_score >= baseline_score + min_improvement - tolerance`: prompts/demos are
+- Promoted when `candidate_score >= baseline_score + min_improvement - tolerance`, where
+  `min_improvement` is `gate.required_gain(baseline_score, max_score)` when a `gate` is passed (and a
+  baseline at `max_score` never promotes) or the `min_improvement` argument otherwise: prompts/demos are
   saved and become active (current active is snapshotted first via `snapshot_active` when
   `snapshot_before_promote=True`, the default). With `serve_versioned=True` the win lands through the
   canary state machine (`save_prompts_versioned` → `promote_to_canary` → `promote_canary_to_active`)
@@ -859,8 +882,44 @@ metrics = await am.promote_if_better(
   `extra_metrics["served_version"]`. With the default `serve_versioned=False` the win overwrites the
   un-versioned active artefacts only.
 - Rejected otherwise: prompts/demos are **not** saved; the run is recorded with `promoted=False` and a
-  `rejection_reason`. `--mode triggered` wires the tenant's `optimization_improvement_threshold`
-  config knob into `min_improvement`.
+  `rejection_reason`. `--mode triggered` passes the tenant's [promotion gate](#promotion-gate).
+
+#### Promotion gate
+
+`PromotionGate` (`artifact_manager.py`) is the one rule every optimizer step decides promotion and
+skipping with. `_promotion_gate_from_config` builds it from `automation_rules.optimization_triggers`
+in `config.json`; a tenant's routing config (`optimization_gap_share`,
+`optimization_skip_above_score`; the Routing form of the web client's Config view) replaces the share
+and the ceiling for that tenant when it sets them. A config store that cannot answer, or a value
+outside its range, fails the run.
+
+| Key | Default | Range | Meaning |
+|---|---|---|---|
+| `optimization_improvement_threshold` | 0.05 | >= 0 | Gain a candidate must show over the served score |
+| `optimization_gap_share` | 0.5 | (0, 1] | Share of the gap between the served score and the metric's maximum that caps that gain |
+| `optimization_skip_above_score` | 0.95 | (0, 1] | Served score at or above which a run does not compile |
+
+- **Required gain.** `required_gain = min(optimization_improvement_threshold, optimization_gap_share *
+  (max_score - served))`, and a candidate promotes when `candidate >= served + required_gain`. With
+  the defaults a served score below 0.90 needs the full 0.05; above it the candidate has to close half
+  of what is left (served 0.983 needs 0.9915). A served score at the maximum is never replaced.
+  `served` is the better of the base module and the persisted artifact for the `simba`, `profile` and
+  `entity-extraction` steps, and the active compiled module for `triggered`. Every metric's maximum is
+  1.0 (`OPTIMIZER_METRIC_MAX_SCORES`, `PROBE_SET_MAX_SCORE`).
+- **Skip.** Each of those steps scores what is served before it compiles, and reuses that score as
+  the gate's baseline when it goes on. At or above `optimization_skip_above_score` it compiles
+  nothing and returns `{"status": "skipped", "reason": "served_score_at_ceiling", "served_score",
+  "skip_above_score", ...}` with the step's population counts; the `simba`, `profile` and
+  `entity-extraction` steps add `baseline_score`, `current_score` and `rollback_version`. A persisted
+  artifact that scores below the base module is still rolled back to the base state:
+  `rollback_version` is the version that rollback activated, and null when nothing was written. A
+  step with no holdout or probes cannot be scored and is not skipped. The `workflow` and
+  `gateway-thresholds` steps compile nothing and have no gate.
+- **Where it shows.** The skipped result is the step's outcome document (the `outcome` output
+  parameter), its log line (`... optimization skipped for <tenant>: served score ... is at or above
+  the ceiling ...`), `step_outcomes` of `GET /admin/tenant/{tenant_id}/optimize/runs/{workflow_name}`,
+  the Outcome column of the web client's Optimization runs view, and the Outcome of a run submitted
+  from its Optimization framework view. A skipped step exits 0.
 
 Either outcome lands as a typed `ExperimentMetrics` row via `save_experiment` in the per-agent experiments
 dataset, so the promotion ledger is observable end-to-end — rejected runs stay visible with their scores

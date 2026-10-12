@@ -36,6 +36,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
+from cogniverse_agents.optimizer.artifact_manager import PromotionGate
 from cogniverse_agents.optimizer.example_selection import (
     TRAINING_SELECTION_DEFAULTS as _TRAINING_SELECTION_DEFAULTS,
 )
@@ -1181,25 +1182,34 @@ def _profile_selection_scores(module, holdout) -> float:
     return sum(scores) / len(scores) if scores else 0.0
 
 
+def _served_score(baseline_score: float, current_score: Optional[float]) -> float:
+    """The score a candidate has to beat: the persisted artifact's when it
+    beats the base module, else the base module's."""
+    return (
+        baseline_score if current_score is None else max(baseline_score, current_score)
+    )
+
+
 def _select_simba_artifact(
     baseline_score: float,
     current_score: Optional[float],
     candidate_score: Optional[float],
-    min_improvement: float,
+    gate: PromotionGate,
+    max_score: float,
 ) -> str:
     """Which module the tenant should serve after this run.
 
-    ``promote``: persist the compiled candidate — it scores at least
-    ``min_improvement`` above whatever is served today (the base module, or
-    the persisted artifact when that beats base). ``keep``: the persisted
-    artifact stays. ``rollback``: the persisted artifact scores below the
-    base module, so the base state is persisted in its place. ``reject``:
-    nothing is served and the candidate did not earn it.
+    ``promote``: persist the compiled candidate — ``gate`` finds it enough
+    above whatever is served today (the base module, or the persisted
+    artifact when that beats base). ``keep``: the persisted artifact stays.
+    ``rollback``: the persisted artifact scores below the base module, so the
+    base state is persisted in its place. ``reject``: nothing is served and
+    the candidate did not earn it.
     """
-    served = (
-        baseline_score if current_score is None else max(baseline_score, current_score)
-    )
-    if candidate_score is not None and candidate_score >= served + min_improvement:
+    served = _served_score(baseline_score, current_score)
+    if candidate_score is not None and gate.promotes(
+        candidate_score, served, max_score
+    ):
         return "promote"
     if current_score is None:
         return "reject"
@@ -1279,6 +1289,81 @@ def _current_score(
     return score(current_module)
 
 
+SKIP_REASON_SERVED_SCORE_AT_CEILING = "served_score_at_ceiling"
+
+
+def _skipped_at_ceiling(served_score: float, gate: PromotionGate) -> Dict[str, Any]:
+    """The outcome of a run that did not compile because what is served
+    already scores at the tenant's ceiling."""
+    return {
+        "status": "skipped",
+        "reason": SKIP_REASON_SERVED_SCORE_AT_CEILING,
+        "served_score": served_score,
+        "skip_above_score": gate.skip_above_score,
+    }
+
+
+async def _skip_compile_at_ceiling(
+    *,
+    optimizer: str,
+    tenant_id: str,
+    gate: PromotionGate,
+    metric_id: str,
+    baseline_score: float,
+    current_score: Optional[float],
+    artifact_manager,
+    blob_key: str,
+    module_factory: Callable[[], Any],
+    consumed_example_ids: List[str],
+    extra_ledger_fields: Optional[Mapping[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """The skipped outcome when the served score is at the tenant's ceiling,
+    or None when the run should compile.
+
+    A persisted artifact that scores below the base module is rolled back to
+    the base state even though nothing is compiled; ``rollback_version`` is
+    the version that rollback activated.
+    """
+    served = _served_score(baseline_score, current_score)
+    if not gate.skips_compile(served, OPTIMIZER_METRIC_MAX_SCORES[metric_id]):
+        return None
+    rollback_version = None
+    if current_score is not None and current_score < baseline_score:
+        _, rollback_version = await artifact_manager.save_blob_versioned(
+            "model",
+            blob_key,
+            json.dumps(module_factory().dump_state(), default=str),
+            consumed_example_ids=consumed_example_ids,
+            decision="rollback",
+            scored=False,
+            score=None,
+            base_score=baseline_score,
+            candidate_score=None,
+            metric_id=metric_id,
+            extra_ledger_fields=extra_ledger_fields,
+        )
+        await artifact_manager.activate_version("model", blob_key, rollback_version)
+    logger.info(
+        "%s optimization skipped for %s: served score %.3f is at or above the "
+        "ceiling %.3f (baseline=%.3f current=%s)%s",
+        optimizer,
+        tenant_id,
+        served,
+        gate.skip_above_score,
+        baseline_score,
+        current_score,
+        ""
+        if rollback_version is None
+        else f"; rolled back to the base state as v{rollback_version}",
+    )
+    return {
+        **_skipped_at_ceiling(served, gate),
+        "baseline_score": baseline_score,
+        "current_score": current_score,
+        "rollback_version": rollback_version,
+    }
+
+
 def _entity_extraction_pairs(spans_df) -> List[Dict[str, Any]]:
     """(query -> entities) training pairs from entity_extraction spans.
 
@@ -1350,6 +1435,14 @@ OPTIMIZER_METRIC_IDS = {
     "entity_extraction": ENTITY_EXTRACTION_METRIC_ID,
 }
 
+# The highest holdout score each metric can report: the two exact-match
+# metrics and the pair-set F1 are means of per-example scores in [0, 1].
+OPTIMIZER_METRIC_MAX_SCORES = {
+    QUERY_ENHANCEMENT_METRIC_ID: 1.0,
+    PROFILE_SELECTION_METRIC_ID: 1.0,
+    ENTITY_EXTRACTION_METRIC_ID: 1.0,
+}
+
 # The current bootstrap bar is fixed at 1.0.
 ENTITY_BOOTSTRAP_METRIC_THRESHOLD = 1.0
 
@@ -1363,10 +1456,7 @@ def _entity_bootstrap_threshold(
     """Token-set F1 a teacher trace must reach to become a bootstrapped demo:
     ``bar``, never below what the served module already scores on the holdout.
     """
-    served = (
-        baseline_score if current_score is None else max(baseline_score, current_score)
-    )
-    return max(bar, served)
+    return max(bar, _served_score(baseline_score, current_score))
 
 
 def _entity_extraction_example(record: Dict[str, Any]):
@@ -1852,10 +1942,12 @@ async def _optimize_agent(
 ) -> dict:
     """Run DSPy optimization for a specific agent using scored examples.
 
-    The compile trains on the high-scoring rows; a held-out slice of them
-    plus the low-scoring rows (as known-bad probes) score the candidate
-    against the currently-active baseline, and only a win by at least
-    ``optimization_improvement_threshold`` is promoted to serving.
+    A held-out slice of the high-scoring rows plus the low-scoring rows (as
+    known-bad probes) score the currently-active baseline first; at or above
+    the tenant's ``optimization_skip_above_score`` nothing is compiled.
+    Otherwise the compile trains on the remaining high-scoring rows and the
+    candidate is promoted to serving only when the tenant's promotion gate
+    finds it enough above that same baseline score.
     """
     import json as _json
 
@@ -1921,14 +2013,28 @@ async def _optimize_agent(
     )
 
     module = _served_module(agent_name)
+    gate = _promotion_gate_from_config(tenant_id, config_manager)
 
     try:
+        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+        baseline_score, skipped = await _score_served_or_skip(
+            artifact_manager,
+            agent_name,
+            holdout,
+            negatives,
+            optimizer.lm,
+            gate,
+            tenant_id,
+            len(train),
+        )
+        if skipped is not None:
+            return skipped
+
         # initialize_language_model only sets optimizer.lm, so the compile gets
         # it task-locally — the same binding every other mode uses.
         with dspy.context(lm=optimizer.lm):
             compiled = teleprompter.compile(module, trainset=train)
 
-        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
         return await _score_and_serve(
             artifact_manager,
             agent_name,
@@ -1936,11 +2042,17 @@ async def _optimize_agent(
             holdout,
             negatives,
             optimizer.lm,
-            tenant_id,
-            config_manager,
+            gate,
+            baseline_score,
             len(train),
         )
 
+    except BaselineNotReconstructableError as exc:
+        return {
+            "status": "failed",
+            "reason": "baseline_not_reconstructable",
+            "error": str(exc),
+        }
     except Exception as e:
         logger.error(f"DSPy compilation failed for {agent_name}: {e}")
         return {"status": "failed", "error": str(e)}
@@ -2058,6 +2170,67 @@ def _served_example(agent_name: str, query: str, output: dict, score):
     return dspy.Example(**inputs, **labels).with_inputs(*inputs)
 
 
+# The highest score ``_probe_set_score`` can report: every probe scores a
+# token-set F1, its complement, or 0/1 non-emptiness.
+PROBE_SET_MAX_SCORE = 1.0
+
+
+async def _score_served_or_skip(
+    artifact_manager,
+    agent_name: str,
+    holdout: list,
+    negatives: list,
+    optimizer_lm,
+    gate: PromotionGate,
+    tenant_id: str,
+    train_examples: int,
+) -> tuple[Optional[float], Optional[dict]]:
+    """Score what the agent serves today, before anything is compiled.
+
+    Loads the currently-active compiled module (or the stock served module
+    when the agent was never optimized) and scores it on the held-out
+    positives + known-bad probes. Returns ``(baseline_score, skipped)``:
+    ``skipped`` is the run's outcome when that score is at the tenant's
+    ceiling, and ``baseline_score`` is None when there are no probes to score
+    on — such a run is never skipped.
+
+    Raises:
+        BaselineNotReconstructableError: The active artifact is not a
+            compiled module state.
+    """
+    import dspy
+
+    if not (holdout or negatives):
+        return None, None
+    served_agent, _ = _SERVE_TARGET[agent_name]
+    baseline_module = _served_module(agent_name)
+    active_payload = _active_compiled_payload(
+        await artifact_manager.load_prompts(served_agent)
+    )
+    if active_payload is not None:
+        load_compiled_module_state(baseline_module, active_payload)
+    with dspy.context(lm=optimizer_lm):
+        baseline_score = _probe_set_score(
+            baseline_module, holdout, negatives, agent_name
+        )
+    if not gate.skips_compile(baseline_score, PROBE_SET_MAX_SCORE):
+        return baseline_score, None
+    logger.info(
+        "Optimization of %s skipped for %s: served score %.4f is at or above "
+        "the ceiling %.4f",
+        agent_name,
+        tenant_id,
+        baseline_score,
+        gate.skip_above_score,
+    )
+    return baseline_score, {
+        **_skipped_at_ceiling(baseline_score, gate),
+        "training_examples": train_examples,
+        "holdout_examples": len(holdout),
+        "negative_probes": len(negatives),
+    }
+
+
 async def _score_and_serve(
     artifact_manager,
     agent_name: str,
@@ -2065,55 +2238,34 @@ async def _score_and_serve(
     holdout: list,
     negatives: list,
     optimizer_lm,
-    tenant_id: str,
-    config_manager,
+    gate: PromotionGate,
+    baseline_score: Optional[float],
     train_examples: int,
     extra_result: Optional[dict] = None,
 ) -> dict:
-    """Score a compiled candidate against the active baseline and serve a winner.
+    """Score a compiled candidate and serve it when it beats the baseline.
 
-    Loads the currently-active instructions into a baseline module, scores
-    baseline vs candidate on the same ``(holdout, negatives)`` probe set, and
-    routes the candidate through ``_serve_compiled_prompts`` — promoted only
-    when it beats ``baseline + optimization_improvement_threshold``. Shared by
-    the positives-trained path and the reflective all-failure path;
+    ``baseline_score`` is what ``_score_served_or_skip`` measured before the
+    compile; the candidate is scored on the same ``(holdout, negatives)``
+    probe set and routed through ``_serve_compiled_prompts`` — promoted only
+    when ``gate`` finds it enough above that baseline. Shared by the
+    positives-trained path and the reflective all-failure path;
     ``extra_result`` is merged into the returned dict (e.g. ``reflective``).
     """
     import dspy
 
-    served_agent, _ = _SERVE_TARGET[agent_name]
-
-    # Baseline = the currently-active compiled module (or the stock served
-    # module when the agent was never optimized), scored against the candidate
-    # on the held-out positives + known-bad probes.
-    baseline_score = candidate_score = None
-    if holdout or negatives:
-        baseline_module = _served_module(agent_name)
-        try:
-            active_payload = _active_compiled_payload(
-                await artifact_manager.load_prompts(served_agent)
-            )
-        except BaselineNotReconstructableError as exc:
-            return {
-                "status": "failed",
-                "reason": "baseline_not_reconstructable",
-                "error": str(exc),
-            }
-        if active_payload is not None:
-            load_compiled_module_state(baseline_module, active_payload)
+    candidate_score = None
+    if baseline_score is not None:
         with dspy.context(lm=optimizer_lm):
-            baseline_score, candidate_score = _holdout_scores(
-                baseline_module, compiled, holdout, negatives, agent_name
-            )
+            candidate_score = _probe_set_score(compiled, holdout, negatives, agent_name)
 
-    min_improvement = _min_improvement_from_config(tenant_id, config_manager)
     served = await _serve_compiled_prompts(
         artifact_manager,
         agent_name,
         compiled,
         baseline_score=baseline_score,
         candidate_score=candidate_score,
-        min_improvement=min_improvement,
+        gate=gate,
         train_examples=train_examples,
     )
 
@@ -2130,12 +2282,44 @@ async def _score_and_serve(
     return result
 
 
-def _min_improvement_from_config(tenant_id: str, config_manager=None) -> float:
-    """The tenant's ``optimization_improvement_threshold`` acceptance gate."""
-    from cogniverse_runtime.quality_monitor_cli import _load_automation_rules
+def _promotion_gate_from_config(tenant_id: str, config_manager=None) -> PromotionGate:
+    """The tenant's promotion gate.
 
-    rules = _load_automation_rules(tenant_id, config_manager=config_manager)
-    return float(rules.optimization_triggers.optimization_improvement_threshold)
+    ``optimization_improvement_threshold``, ``optimization_gap_share`` and
+    ``optimization_skip_above_score`` come from the deployment's
+    ``automation_rules.optimization_triggers``; the tenant's routing config
+    replaces the share and the ceiling when it sets them.
+
+    A config store that cannot answer and a value outside its range both
+    raise: a run gated on defaults the operator did not set would promote or
+    skip against the wrong bar.
+    """
+    from cogniverse_agents.routing.config import OptimizationTriggersConfig
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
+
+    manager = config_manager or create_default_config_manager()
+    cfg = get_config(tenant_id=tenant_id, config_manager=manager)
+    automation_rules = cfg.get("automation_rules") or {}
+    triggers = OptimizationTriggersConfig(
+        **(automation_rules.get("optimization_triggers") or {})
+    ).model_dump()
+    routing = manager.get_routing_config(tenant_id=tenant_id)
+    gap_share = routing.optimization_gap_share
+    skip_above_score = routing.optimization_skip_above_score
+    return PromotionGate(
+        improvement_threshold=float(triggers["optimization_improvement_threshold"]),
+        gap_share=float(
+            triggers["optimization_gap_share"] if gap_share is None else gap_share
+        ),
+        skip_above_score=float(
+            triggers["optimization_skip_above_score"]
+            if skip_above_score is None
+            else skip_above_score
+        ),
+    )
 
 
 def _population_floor_from_config(
@@ -2462,7 +2646,10 @@ async def _reflect_or_skip(
     trainset and a held-out negatives slice, GEPA proposes improved
     instructions from the feedback metric, and the candidate goes through the
     SAME ``_score_and_serve`` promotion gate (scored on the held-out negatives,
-    no positives). Otherwise the original skip dict is returned unchanged.
+    no positives). The served module is scored on those negatives first, and
+    nothing is compiled when it is already at the tenant's
+    ``optimization_skip_above_score``. Otherwise the original skip dict is
+    returned unchanged.
     """
     enable, min_failures, max_metric_calls = _reflective_settings_from_config(
         tenant_id, config_manager
@@ -2499,15 +2686,28 @@ async def _reflect_or_skip(
     # never sees reflect_eval_rows, so the promotion gate scores against unseen
     # failures.
     eval_negatives = _negative_probes(agent_name, _pd.DataFrame(reflect_eval_rows))
+    gate = _promotion_gate_from_config(tenant_id, config_manager)
 
     try:
+        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+        baseline_score, skipped = await _score_served_or_skip(
+            artifact_manager,
+            agent_name,
+            [],
+            eval_negatives,
+            optimizer.lm,
+            gate,
+            tenant_id,
+            len(reflect_train_rows),
+        )
+        if skipped is not None:
+            return skipped
         compiled = _reflective_compile(
             agent_name,
             reflect_train_rows,
             optimizer.lm,
             max_metric_calls,
         )
-        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
         return await _score_and_serve(
             artifact_manager,
             agent_name,
@@ -2515,11 +2715,17 @@ async def _reflect_or_skip(
             [],
             eval_negatives,
             optimizer.lm,
-            tenant_id,
-            config_manager,
+            gate,
+            baseline_score,
             len(reflect_train_rows),
             extra_result={"reflective": True},
         )
+    except BaselineNotReconstructableError as exc:
+        return {
+            "status": "failed",
+            "reason": "baseline_not_reconstructable",
+            "error": str(exc),
+        }
     except Exception as e:
         logger.error(f"Reflective compilation failed for {agent_name}: {e}")
         return {"status": "failed", "error": str(e)}
@@ -2860,38 +3066,28 @@ def _negative_probes(agent_name: str, low_scoring_df, limit: int = 20) -> list:
     return probes
 
 
-def _holdout_scores(
-    baseline_module, candidate_module, holdout, negatives, agent_name: str
-) -> tuple[float, float]:
-    """Score both modules on the same probe set.
+def _probe_set_score(module, holdout, negatives, agent_name: str) -> float:
+    """Mean score of ``module`` over the probe set.
 
     Held-out positives contribute ``_probe_score`` against the labeled output;
     negatives contribute ``1 - F1`` against the recorded failing output, so a
-    candidate is rewarded for not reproducing it. Returns
-    ``(baseline_score, candidate_score)`` as means over the probe set.
+    module is rewarded for not reproducing it. The baseline and the candidate
+    are each scored by one call over the same probes.
     """
     input_keys = _EVAL_INPUTS[agent_name]
     label_field = _EVAL_FIELD[agent_name]
 
-    def _run(module) -> list:
-        scores = []
-        for ex in holdout:
-            pred = module(**{k: getattr(ex, k) for k in input_keys})
-            scores.append(_probe_score(pred, getattr(ex, label_field), agent_name))
-        for inputs, bad_output in negatives:
-            pred = module(**inputs)
-            produced = str(getattr(pred, label_field, "") or "")
-            scores.append(1.0 - _token_f1(produced, bad_output))
-        return scores
-
-    baseline_scores = _run(baseline_module)
-    candidate_scores = _run(candidate_module)
-    if not baseline_scores:
-        return 0.0, 0.0
-    return (
-        sum(baseline_scores) / len(baseline_scores),
-        sum(candidate_scores) / len(candidate_scores),
-    )
+    scores = []
+    for ex in holdout:
+        pred = module(**{k: getattr(ex, k) for k in input_keys})
+        scores.append(_probe_score(pred, getattr(ex, label_field), agent_name))
+    for inputs, bad_output in negatives:
+        pred = module(**inputs)
+        produced = str(getattr(pred, label_field, "") or "")
+        scores.append(1.0 - _token_f1(produced, bad_output))
+    if not scores:
+        raise ValueError(f"no probes to score the {agent_name} module on")
+    return sum(scores) / len(scores)
 
 
 async def _serve_compiled_prompts(
@@ -2901,13 +3097,13 @@ async def _serve_compiled_prompts(
     *,
     baseline_score: Optional[float] = None,
     candidate_score: Optional[float] = None,
-    min_improvement: float = 0.0,
+    gate: PromotionGate,
     train_examples: Optional[int] = None,
 ):
     """Publish a compiled module's whole state IF it beats the active baseline.
 
     Serving goes through ``ArtifactManager.promote_if_better``: only a
-    candidate that scores at least ``baseline + min_improvement`` on the
+    candidate ``gate`` finds enough above the baseline on the
     held-out eval flips active (versioned save → canary → active, so the
     per-request overlay serves it on the next dispatch). A losing candidate
     is recorded in the experiments ledger and never touches live traffic;
@@ -2958,7 +3154,8 @@ async def _serve_compiled_prompts(
         candidate_demos=None,
         baseline_score=baseline_score,
         candidate_score=candidate_score,
-        min_improvement=min_improvement,
+        gate=gate,
+        max_score=PROBE_SET_MAX_SCORE,
         serve_versioned=True,
         optimizer="BootstrapFewShot",
         train_examples=train_examples,
@@ -2966,12 +3163,12 @@ async def _serve_compiled_prompts(
     promoted = bool(record.promoted)
     version = record.extra_metrics.get("served_version") if promoted else None
     logger.info(
-        "Compiled %s prompts %s (candidate=%.4f baseline=%.4f min_improvement=%.4f)%s",
+        "Compiled %s prompts %s (candidate=%.4f baseline=%.4f required_gain=%.4f)%s",
         agent_name,
         "PROMOTED" if promoted else "rejected",
         candidate_score,
         baseline_score,
-        min_improvement,
+        gate.required_gain(baseline_score, PROBE_SET_MAX_SCORE),
         f" — serving as {served_agent} v{version} (active)" if promoted else "",
     )
     return {
@@ -4212,6 +4409,8 @@ async def run_simba_optimization(
     llm_config = config.get_llm_config()
     student_endpoint = llm_config.resolve("optimization")
     dspy.configure(lm=create_dspy_lm(student_endpoint))
+    gate = _promotion_gate_from_config(tenant_id, config_manager)
+    consumed_example_ids = [record["example_id"] for record in records]
 
     try:
         baseline_score, scored_count = _query_enhancement_scores(
@@ -4245,6 +4444,41 @@ async def run_simba_optimization(
             current_blob=current_blob,
             module_factory=QueryEnhancementModule,
         )
+        current_score = _current_score(
+            current_module,
+            QueryEnhancementModule,
+            baseline_score,
+            lambda module: _query_enhancement_scores(module, holdout)[0],
+        )
+        skipped = await _skip_compile_at_ceiling(
+            optimizer="SIMBA",
+            tenant_id=tenant_id,
+            gate=gate,
+            metric_id=QUERY_ENHANCEMENT_METRIC_ID,
+            baseline_score=baseline_score,
+            current_score=current_score,
+            artifact_manager=artifact_manager,
+            blob_key=SIMBA_ARTIFACT_KEY,
+            module_factory=QueryEnhancementModule,
+            consumed_example_ids=consumed_example_ids,
+        )
+        if skipped is not None:
+            return {
+                **skipped,
+                "spans_found": len(spans_df),
+                "examples": len(records),
+                "served_examples": served_examples,
+                "approved_examples": approved_examples,
+                "served_scoreable_examples": served_scoreable_examples,
+                "distinct_queries": distinct_queries,
+                "holdout_queries": holdout_queries,
+                "non_trainable_examples": non_trainable_examples,
+                "unscoreable_examples": unscoreable_examples,
+                "training_examples": len(trainset),
+                "holdout_examples": len(holdout),
+                "holdout_source": "served",
+                **selection_summary,
+            }
 
         compiled = None
         if trainset:
@@ -4264,12 +4498,6 @@ async def run_simba_optimization(
                 ),
             )
 
-        current_score = _current_score(
-            current_module,
-            QueryEnhancementModule,
-            baseline_score,
-            lambda module: _query_enhancement_scores(module, holdout)[0],
-        )
         candidate_score = (
             _query_enhancement_scores(compiled, holdout)[0]
             if compiled is not None
@@ -4283,7 +4511,8 @@ async def run_simba_optimization(
         baseline_score,
         current_score,
         candidate_score,
-        _min_improvement_from_config(tenant_id, config_manager),
+        gate,
+        OPTIMIZER_METRIC_MAX_SCORES[QUERY_ENHANCEMENT_METRIC_ID],
     )
     # Every run this reached persists a version whose ledger names the examples
     # it consumed; only promote / rollback move the active pointer. The version
@@ -4294,7 +4523,6 @@ async def run_simba_optimization(
         "promote": compiled,
         "rollback": QueryEnhancementModule(),
     }.get(decision, compiled or QueryEnhancementModule())
-    consumed_example_ids = [record["example_id"] for record in records]
     _, version = await artifact_manager.save_blob_versioned(
         "model",
         SIMBA_ARTIFACT_KEY,
@@ -5404,6 +5632,7 @@ async def run_profile_optimization(
     llm_endpoint = llm_config.resolve("optimization")
 
     dspy.configure(lm=create_dspy_lm(llm_endpoint))
+    gate = _promotion_gate_from_config(tenant_id, config_manager)
 
     try:
         baseline_score = _profile_selection_scores(ProfileSelectionModule(), holdout)
@@ -5415,6 +5644,41 @@ async def run_profile_optimization(
             current_blob=current_blob,
             module_factory=ProfileSelectionModule,
         )
+        current_score = _current_score(
+            current_module,
+            ProfileSelectionModule,
+            baseline_score,
+            lambda module: _profile_selection_scores(module, holdout),
+        )
+        skipped = await _skip_compile_at_ceiling(
+            optimizer="Profile",
+            tenant_id=tenant_id,
+            gate=gate,
+            metric_id=PROFILE_SELECTION_METRIC_ID,
+            baseline_score=baseline_score,
+            current_score=current_score,
+            artifact_manager=artifact_manager,
+            blob_key="profile_selection",
+            module_factory=ProfileSelectionModule,
+            consumed_example_ids=consumed_example_ids,
+            extra_ledger_fields=result_distribution,
+        )
+        if skipped is not None:
+            return {
+                **skipped,
+                "spans_found": len(spans_df),
+                "served_examples": served_examples,
+                "approved_examples": approved_examples,
+                "served_scoreable_examples": served_scoreable_examples,
+                "distinct_queries": split.distinct_queries,
+                "holdout_queries": split.holdout_queries,
+                "training_examples": len(trainset),
+                "holdout_examples": len(holdout),
+                "holdout_source": "derived_labels",
+                "label_exclusions": label_exclusions,
+                **selection_summary,
+                **result_distribution,
+            }
 
         compiled = None
         if trainset:
@@ -5426,12 +5690,6 @@ async def run_profile_optimization(
             )
             compiled = teleprompter.compile(ProfileSelectionModule(), trainset=trainset)
 
-        current_score = _current_score(
-            current_module,
-            ProfileSelectionModule,
-            baseline_score,
-            lambda module: _profile_selection_scores(module, holdout),
-        )
         candidate_score = (
             _profile_selection_scores(compiled, holdout)
             if compiled is not None
@@ -5451,7 +5709,8 @@ async def run_profile_optimization(
         baseline_score,
         current_score,
         candidate_score,
-        _min_improvement_from_config(tenant_id, config_manager),
+        gate,
+        OPTIMIZER_METRIC_MAX_SCORES[PROFILE_SELECTION_METRIC_ID],
     )
     run_module = {
         "promote": compiled,
@@ -5712,6 +5971,7 @@ async def run_entity_extraction_optimization(
     llm_endpoint = llm_config.resolve("optimization")
 
     dspy.configure(lm=create_budgeted_dspy_lm(llm_endpoint))
+    gate = _promotion_gate_from_config(tenant_id, config_manager)
 
     try:
         baseline_score = _entity_extraction_scores(EntityExtractionModule(), holdout)
@@ -5729,6 +5989,34 @@ async def run_entity_extraction_optimization(
             baseline_score,
             lambda module: _entity_extraction_scores(module, holdout),
         )
+        skipped = await _skip_compile_at_ceiling(
+            optimizer="Entity extraction",
+            tenant_id=tenant_id,
+            gate=gate,
+            metric_id=ENTITY_EXTRACTION_METRIC_ID,
+            baseline_score=baseline_score,
+            current_score=current_score,
+            artifact_manager=artifact_manager,
+            blob_key="entity_extraction",
+            module_factory=EntityExtractionModule,
+            consumed_example_ids=consumed_example_ids,
+        )
+        if skipped is not None:
+            return {
+                **skipped,
+                "spans_found": len(spans_df),
+                "served_examples": served_examples,
+                "served_scoreable_examples": served_scoreable_examples,
+                "distinct_queries": split.distinct_queries,
+                "holdout_queries": split.holdout_queries,
+                "label_rows": label_rows,
+                "truth_rows": truth_rows,
+                "approved_rows": approved_rows,
+                "training_examples": len(trainset),
+                "holdout_examples": len(holdout),
+                "holdout_source": "ground_truth",
+                **selection_summary,
+            }
 
         compiled = None
         bootstrap = None
@@ -5781,7 +6069,8 @@ async def run_entity_extraction_optimization(
         baseline_score,
         current_score,
         candidate_score,
-        _min_improvement_from_config(tenant_id, config_manager),
+        gate,
+        OPTIMIZER_METRIC_MAX_SCORES[ENTITY_EXTRACTION_METRIC_ID],
     )
     run_module = {
         "promote": compiled,

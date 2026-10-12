@@ -665,6 +665,81 @@ class TestModuleOptimization:
             submitted.get_by_role("link", name="Optimization runs")
         ).to_have_attribute("href", "#/ops/optimization")
 
+        # The run ends: the entity-extraction step met the tenant's ceiling and
+        # compiled nothing, the profile step kept what is served.
+        pod = f"{name}-1"
+        set_workflow_status(
+            argo["kubeconfig"],
+            name,
+            {
+                "phase": "Succeeded",
+                "startedAt": "2026-10-04T09:00:00Z",
+                "finishedAt": "2026-10-04T09:05:00Z",
+                "nodes": {
+                    pod: {
+                        "id": pod,
+                        "name": f"{name}[0].run-optimizer",
+                        "displayName": "run-optimizer",
+                        "type": "Pod",
+                        "templateName": "run-optimizer",
+                        "boundaryID": name,
+                        "phase": "Succeeded",
+                        "outputs": {
+                            "parameters": [
+                                {
+                                    "name": "outcome",
+                                    "value": json.dumps(
+                                        {
+                                            "status": "success",
+                                            "module": "unified",
+                                            "failed_steps": [],
+                                            "results": {
+                                                "gateway-thresholds": {
+                                                    "status": "no_data"
+                                                },
+                                                "entity-extraction": {
+                                                    "status": "skipped",
+                                                    "reason": "served_score_at_ceiling",
+                                                    "served_score": 1.0,
+                                                    "skip_above_score": 0.95,
+                                                    "baseline_score": 1.0,
+                                                    "current_score": 0.5,
+                                                    "rollback_version": 4,
+                                                },
+                                                "profile": {
+                                                    "status": "success",
+                                                    "decision": "keep",
+                                                    "baseline_score": 0.9,
+                                                    "current_score": 0.96,
+                                                    "candidate_score": 0.97,
+                                                    "version": 9,
+                                                },
+                                                "workflow": {"status": "no_data"},
+                                            },
+                                        }
+                                    ),
+                                }
+                            ]
+                        },
+                    }
+                },
+            },
+        )
+        expect(_fact(submitted, "Phase")).to_have_text(
+            "Succeeded", timeout=POLL_TIMEOUT_MS
+        )
+        expect(submitted.locator("dt:text-is('Outcome') + dd > div")).to_have_text(
+            [
+                "gateway-thresholds: no_data",
+                "entity-extraction: Compile skipped: the served score 1 is at or "
+                "above the ceiling 0.95; rolled back to the base module as v4",
+                "profile: Kept the served artifact (baseline 0.9, current 0.96, "
+                "candidate 0.97)",
+                "workflow: no_data",
+            ]
+        )
+        expect(submitted.get_by_role("alert")).to_have_count(0)
+
     def test_a_dataset_store_outage_offers_the_manual_name(
         self, page, web_url, argo, phoenix_proxy
     ):

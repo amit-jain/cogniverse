@@ -341,3 +341,230 @@ class TestServeVersioned:
         assert await mgr.load_prompts("search_agent") is None
         state = await mgr.get_artefact_state("search_agent")
         assert state == {"active": None, "canary": None, "retired": []}
+
+
+def _gate(threshold=0.05, share=0.5, ceiling=0.95):
+    from cogniverse_agents.optimizer.artifact_manager import PromotionGate
+
+    return PromotionGate(
+        improvement_threshold=threshold, gap_share=share, skip_above_score=ceiling
+    )
+
+
+class TestPromotionGate:
+    """The gain a candidate owes is capped by a share of the gap to the maximum."""
+
+    @pytest.mark.parametrize(
+        ("served", "candidate", "threshold", "share", "max_score", "required", "wins"),
+        [
+            # Below 0.90 the gap share exceeds the threshold: the flat rule.
+            (0.5, 0.54, 0.05, 0.5, 1.0, 0.05, False),
+            (0.5, 0.55, 0.05, 0.5, 1.0, 0.05, True),
+            (0.0, 0.05, 0.05, 0.5, 1.0, 0.05, True),
+            (0.0, 0.04, 0.05, 0.5, 1.0, 0.05, False),
+            # Exactly 0.90: half the gap equals the threshold.
+            (0.9, 0.95, 0.05, 0.5, 1.0, 0.5 * (1.0 - 0.9), True),
+            (0.9, 0.94, 0.05, 0.5, 1.0, 0.5 * (1.0 - 0.9), False),
+            # Above 0.90 the candidate must close half the remaining gap.
+            (0.983, 1.0, 0.05, 0.5, 1.0, 0.5 * (1.0 - 0.983), True),
+            (0.983, 0.99, 0.05, 0.5, 1.0, 0.5 * (1.0 - 0.983), False),
+            (0.983, 0.9915, 0.05, 0.5, 1.0, 0.5 * (1.0 - 0.983), True),
+            (0.96, 0.98, 0.05, 0.5, 1.0, 0.5 * (1.0 - 0.96), True),
+            (0.96, 0.979, 0.05, 0.5, 1.0, 0.5 * (1.0 - 0.96), False),
+            # A whole-gap share demands the maximum itself.
+            (0.98, 0.99, 0.05, 1.0, 1.0, 1.0 - 0.98, False),
+            (0.98, 1.0, 0.05, 1.0, 1.0, 1.0 - 0.98, True),
+            # Nothing left to gain: an equal candidate never promotes.
+            (1.0, 1.0, 0.05, 0.5, 1.0, 0.0, False),
+            (1.0, 1.0, 0.0, 0.5, 1.0, 0.0, False),
+            (2.0, 2.0, 0.05, 0.5, 2.0, 0.0, False),
+            # A regression never promotes, whatever the gap.
+            (0.983, 0.9, 0.05, 0.5, 1.0, 0.5 * (1.0 - 0.983), False),
+            # The gap is measured against the metric's own maximum.
+            (1.0, 1.04, 0.05, 0.5, 2.0, 0.05, False),
+            (1.0, 1.05, 0.05, 0.5, 2.0, 0.05, True),
+            (1.96, 1.98, 0.05, 0.5, 2.0, 0.5 * (2.0 - 1.96), True),
+            # A zero threshold accepts an equal candidate only below the maximum.
+            (0.5, 0.5, 0.0, 0.5, 1.0, 0.0, True),
+        ],
+    )
+    def test_decision_table(
+        self, served, candidate, threshold, share, max_score, required, wins
+    ):
+        gate = _gate(threshold, share)
+
+        assert gate.required_gain(served, max_score) == required
+        assert gate.promotes(candidate, served, max_score) is wins
+
+    @pytest.mark.parametrize(
+        ("holdout", "served_hits", "candidate_hits", "wins"),
+        [
+            # Half the gap, exactly: 0.5 * (1 - 58/60) rounds a hair above 1/60.
+            (60, 58, 59, True),
+            (27, 25, 26, True),
+            (54, 50, 52, True),
+            (54, 50, 51, False),
+            # The flat threshold, exactly: 2/20 + 0.05 rounds above 3/20.
+            (20, 2, 3, True),
+            (40, 21, 23, True),
+            (40, 21, 22, False),
+            (60, 60, 60, False),
+        ],
+    )
+    def test_a_candidate_exactly_on_the_bar_is_not_lost_to_rounding(
+        self, holdout, served_hits, candidate_hits, wins
+    ):
+        assert (
+            _gate().promotes(candidate_hits / holdout, served_hits / holdout, 1.0)
+            is wins
+        )
+
+    @pytest.mark.parametrize(
+        ("served", "ceiling", "skips"),
+        [
+            (0.983, 0.95, True),
+            (0.95, 0.95, True),
+            (0.9499999, 0.95, False),
+            (0.5, 0.95, False),
+            (1.0, 1.0, True),
+            (0.999, 1.0, False),
+        ],
+    )
+    def test_skips_compile_at_or_above_the_ceiling(self, served, ceiling, skips):
+        assert _gate(ceiling=ceiling).skips_compile(served, 1.0) is skips
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"threshold": -0.01}, "improvement_threshold must be >= 0; got -0.01"),
+            ({"share": 0.0}, "gap_share must be in (0, 1]; got 0.0"),
+            ({"share": 1.01}, "gap_share must be in (0, 1]; got 1.01"),
+            ({"share": -0.5}, "gap_share must be in (0, 1]; got -0.5"),
+            ({"ceiling": 0.0}, "skip_above_score must be > 0; got 0.0"),
+            ({"ceiling": -1.0}, "skip_above_score must be > 0; got -1.0"),
+        ],
+    )
+    def test_out_of_range_values_are_refused(self, kwargs, message):
+        with pytest.raises(ValueError) as raised:
+            _gate(**kwargs)
+        assert str(raised.value) == message
+
+    def test_a_ceiling_above_the_metric_maximum_is_refused(self):
+        gate = _gate(ceiling=1.5)
+
+        with pytest.raises(ValueError) as raised:
+            gate.skips_compile(1.0, 1.0)
+        assert str(raised.value) == (
+            "skip_above_score 1.5 is above the metric's maximum 1.0"
+        )
+        with pytest.raises(ValueError) as raised:
+            gate.promotes(1.0, 0.5, 0.0)
+        assert str(raised.value) == "max_score must be > 0; got 0.0"
+
+
+class TestGatedPromotion:
+    """``promote_if_better`` decides through the tenant's ``PromotionGate``."""
+
+    @pytest.mark.asyncio
+    async def test_a_candidate_closing_half_the_gap_is_promoted(
+        self, manager_and_provider
+    ):
+        manager, provider = manager_and_provider
+
+        record = await manager.promote_if_better(
+            agent_type="search_agent",
+            candidate_prompts=CANDIDATE_PROMPTS,
+            candidate_demos=None,
+            baseline_score=0.983,
+            candidate_score=1.0,
+            gate=_gate(),
+            max_score=1.0,
+        )
+
+        assert record.promoted is True
+        assert record.extra_metrics["min_improvement"] == 0.5 * (1.0 - 0.983)
+        assert record.extra_metrics["improvement_threshold"] == 0.05
+        assert record.extra_metrics["gap_share"] == 0.5
+        assert record.extra_metrics["max_score"] == 1.0
+        assert provider.datasets.created[_ds_name_prompts("search_agent")].to_dict(
+            "records"
+        ) == [{"name": key, "value": text} for key, text in CANDIDATE_PROMPTS.items()]
+
+    @pytest.mark.asyncio
+    async def test_a_candidate_short_of_half_the_gap_is_rejected(
+        self, manager_and_provider
+    ):
+        manager, provider = manager_and_provider
+
+        record = await manager.promote_if_better(
+            agent_type="search_agent",
+            candidate_prompts=CANDIDATE_PROMPTS,
+            candidate_demos=None,
+            baseline_score=0.983,
+            candidate_score=0.99,
+            gate=_gate(),
+            max_score=1.0,
+        )
+
+        assert record.promoted is False
+        assert record.extra_metrics["rejection_reason"] == (
+            "candidate_score=0.9900 < required 0.9915 (baseline 0.9830 + "
+            "min_improvement 0.0085 - tolerance 0.0000); improvement=0.0070 — "
+            "regression-rejected"
+        )
+        assert _ds_name_prompts("search_agent") not in provider.datasets.created
+
+    @pytest.mark.asyncio
+    async def test_a_baseline_at_the_maximum_never_promotes_an_equal_candidate(
+        self, manager_and_provider
+    ):
+        manager, provider = manager_and_provider
+
+        record = await manager.promote_if_better(
+            agent_type="search_agent",
+            candidate_prompts=CANDIDATE_PROMPTS,
+            candidate_demos=None,
+            baseline_score=1.0,
+            candidate_score=1.0,
+            gate=_gate(),
+            max_score=1.0,
+        )
+
+        assert record.promoted is False
+        assert record.extra_metrics["min_improvement"] == 0.0
+        assert record.extra_metrics["rejection_reason"] == (
+            "baseline 1.0000 is at the metric's maximum 1.0000; "
+            "candidate_score=1.0000 cannot improve on it"
+        )
+        assert _ds_name_prompts("search_agent") not in provider.datasets.created
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"gate": "gate"}, "gate and max_score are passed together"),
+            ({"max_score": 1.0}, "gate and max_score are passed together"),
+            (
+                {"gate": "gate", "max_score": 1.0, "min_improvement": 0.05},
+                "min_improvement is derived from the gate; pass one or the other",
+            ),
+        ],
+    )
+    async def test_gate_arguments_are_checked(
+        self, manager_and_provider, kwargs, message
+    ):
+        manager, provider = manager_and_provider
+        if "gate" in kwargs:
+            kwargs = {**kwargs, "gate": _gate()}
+
+        with pytest.raises(ValueError) as raised:
+            await manager.promote_if_better(
+                agent_type="search_agent",
+                candidate_prompts=CANDIDATE_PROMPTS,
+                candidate_demos=None,
+                baseline_score=0.5,
+                candidate_score=0.9,
+                **kwargs,
+            )
+        assert str(raised.value) == message
+        assert provider.datasets.created == {}

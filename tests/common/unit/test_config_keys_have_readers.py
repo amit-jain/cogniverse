@@ -94,7 +94,6 @@ COMMON_RATCHET_KEYS = {
     "ollama_bge",
     "ollama_config",
     "ollama_mxbai",
-    "optimization_improvement_threshold",
     "output_rails",
     "performance_degradation_threshold",
     "persist_scores",
@@ -156,9 +155,9 @@ EXPECTED_RATCHET_KEYS = {
 }
 
 EXPECTED_KEY_COUNTS = {
-    CONFIG_PATHS[0]: 325,
-    CONFIG_PATHS[1]: 308,
-    CONFIG_PATHS[2]: 276,
+    CONFIG_PATHS[0]: 327,
+    CONFIG_PATHS[1]: 310,
+    CONFIG_PATHS[2]: 278,
 }
 
 EXPECTED_AGENT_MAPPINGS = {

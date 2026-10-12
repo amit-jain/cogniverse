@@ -165,6 +165,68 @@ async def test_promote_if_better_against_real_phoenix(artifact_manager):
     assert len(rejected_runs) == 1 and rejected_runs[0].promoted is False
 
 
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_the_promotion_gate_decides_what_real_phoenix_serves(artifact_manager):
+    """Near the maximum a candidate owes half the remaining gap: each decision
+    lands in the ledger with the gain it required, and only a winner changes
+    the prompts the tenant serves."""
+    from cogniverse_agents.optimizer.artifact_manager import PromotionGate
+
+    mgr = artifact_manager
+    agent = "gate_int_agent"
+    gate = PromotionGate(
+        improvement_threshold=0.05, gap_share=0.5, skip_above_score=0.95
+    )
+    assert await mgr.load_experiments(agent) == []
+
+    served_after = []
+    for baseline, candidate, text in (
+        (0.50, 0.54, "short of the flat threshold"),
+        (0.50, 0.55, "v1"),
+        (0.983, 0.99, "short of half the gap"),
+        (0.983, 1.0, "v2"),
+        (1.0, 1.0, "equal at the maximum"),
+    ):
+        await mgr.promote_if_better(
+            agent_type=agent,
+            candidate_prompts={"system": text},
+            candidate_demos=None,
+            baseline_score=baseline,
+            candidate_score=candidate,
+            gate=gate,
+            max_score=1.0,
+            serve_versioned=True,
+            optimizer="BootstrapFewShot",
+        )
+        served_after.append(await mgr.load_prompts(agent))
+
+    assert served_after == [
+        None,
+        {"system": "v1"},
+        {"system": "v1"},
+        {"system": "v2"},
+        {"system": "v2"},
+    ]
+    assert [
+        (
+            entry.baseline_score,
+            entry.candidate_score,
+            entry.promoted,
+            entry.extra_metrics["min_improvement"],
+            entry.extra_metrics["gap_share"],
+            entry.extra_metrics["max_score"],
+        )
+        for entry in await mgr.load_experiments(agent)
+    ] == [
+        (0.50, 0.54, False, 0.05, 0.5, 1.0),
+        (0.50, 0.55, True, 0.05, 0.5, 1.0),
+        (0.983, 0.99, False, 0.5 * (1.0 - 0.983), 0.5, 1.0),
+        (0.983, 1.0, True, 0.5 * (1.0 - 0.983), 0.5, 1.0),
+        (1.0, 1.0, False, 0.0, 0.5, 1.0),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_save_experiment_persists_to_typed_ledger(artifact_manager):
     """save_experiment must land in the experiments dataset, not save_blob."""

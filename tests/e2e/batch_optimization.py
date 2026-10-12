@@ -676,6 +676,59 @@ def _backdated_training_selection_script(
     )
 
 
+def _skip_ceiling_script(tenant_id: str, ceiling: float | None) -> str:
+    """The in-pod script that sets ``optimization_skip_above_score`` in the
+    tenant's routing config, leaving every other field as stored, and prints
+    ``__CEILING__<previous value as JSON>``."""
+    return IN_POD_TELEMETRY_PRELUDE + textwrap.dedent(
+        f"""\
+        import json
+        from cogniverse_foundation.config.utils import create_default_config_manager
+
+        manager = create_default_config_manager()
+        routing = manager.get_routing_config(tenant_id={tenant_id!r})
+        previous = routing.optimization_skip_above_score
+        routing.optimization_skip_above_score = {ceiling!r}
+        manager.set_routing_config(routing)
+        stored = manager.get_routing_config(tenant_id={tenant_id!r})
+        assert stored.optimization_skip_above_score == {ceiling!r}, stored
+        print("__CEILING__" + json.dumps(previous))
+        """
+    )
+
+
+def compile_skipped_at_ceiling(
+    result: dict, *, ceiling: float, active_version: int | None
+) -> bool:
+    """Whether a ``simba`` / ``profile`` / ``entity-extraction`` run skipped
+    its compile, pinning the skipped outcome when it did.
+
+    ``active_version`` is the artifact version the tenant serves after the
+    run. A skipped run reports the served score that met ``ceiling`` and
+    persists nothing, except the rollback of an artifact scoring below the
+    base module, which it activates.
+    """
+    from cogniverse_runtime.optimization_cli import SKIP_REASON_SERVED_SCORE_AT_CEILING
+
+    if result["status"] != "skipped":
+        return False
+    assert result["reason"] == SKIP_REASON_SERVED_SCORE_AT_CEILING, result
+    assert result["skip_above_score"] == ceiling, result
+    assert "version" not in result and "decision" not in result, result
+    assert "candidate_score" not in result, result
+    baseline, current = result["baseline_score"], result["current_score"]
+    assert result["served_score"] == (
+        baseline if current is None else max(baseline, current)
+    ), result
+    assert result["served_score"] >= ceiling, result
+    if current is not None and current < baseline:
+        assert isinstance(result["rollback_version"], int), result
+        assert active_version == result["rollback_version"], (active_version, result)
+    else:
+        assert result["rollback_version"] is None, result
+    return True
+
+
 def _reset_module_artifact_script(
     *,
     module_import: str,

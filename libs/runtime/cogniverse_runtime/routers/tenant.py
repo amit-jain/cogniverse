@@ -7,6 +7,7 @@ Allows tenants to customize their agent experience:
 """
 
 import asyncio
+import json
 import logging
 import re
 import uuid
@@ -916,6 +917,27 @@ class ManualOptimizeResponse(BaseModel):
     status_url: str
 
 
+class StepOutcome(BaseModel):
+    """One result in the outcome document an optimizer step wrote.
+
+    ``name`` is the optimizer, agent or module step the result belongs to
+    inside a document that carries several; None when the document is the
+    step's own result.
+    """
+
+    name: Optional[str] = None
+    status: str
+    reason: Optional[str] = None
+    decision: Optional[str] = None
+    served_score: Optional[float] = None
+    skip_above_score: Optional[float] = None
+    baseline_score: Optional[float] = None
+    current_score: Optional[float] = None
+    candidate_score: Optional[float] = None
+    rollback_version: Optional[int] = None
+    error: Optional[str] = None
+
+
 class OptimizeRunStatus(BaseModel):
     workflow_name: str
     phase: Optional[str]
@@ -926,6 +948,10 @@ class OptimizeRunStatus(BaseModel):
     # the profile step for a tenant with no uploaded ground truth) reads as
     # Skipped rather than disappearing into a green workflow.
     steps: Dict[str, str] = {}
+    # What each step's optimizer reported, so a step that succeeded without
+    # compiling (its served score was already at the tenant's ceiling) reads
+    # as that instead of as an unexplained Succeeded.
+    step_outcomes: Dict[str, List[StepOutcome]] = {}
     # ``blocked_reason`` is populated when phase is ``Pending`` specifically
     # because the per-tenant optimization mutex is held by another Workflow.
     # The web client surfaces this so users don't confuse mutex-wait with
@@ -954,6 +980,93 @@ def _step_phases(status_block: Dict[str, Any]) -> Dict[str, str]:
             phase = "Skipped"
         phases[name] = phase
     return phases
+
+
+_OUTCOME_SCORE_FIELDS = (
+    "served_score",
+    "skip_above_score",
+    "baseline_score",
+    "current_score",
+    "candidate_score",
+)
+
+
+def _outcome_number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _step_outcome(name: Optional[str], result: Dict[str, Any]) -> StepOutcome:
+    """One result of an outcome document as the run status reports it."""
+    served = result.get("served") if isinstance(result.get("served"), dict) else {}
+    scores = {
+        field: _outcome_number(result.get(field, served.get(field)))
+        for field in _OUTCOME_SCORE_FIELDS
+    }
+    decision = result.get("decision")
+    if decision is None and isinstance(served.get("promoted"), bool):
+        decision = "promote" if served["promoted"] else "reject"
+    rollback_version = result.get("rollback_version")
+    error = result.get("error")
+    reason = result.get("reason", served.get("reason"))
+    return StepOutcome(
+        name=name,
+        status=str(result["status"]),
+        reason=None if reason is None else str(reason),
+        decision=None if decision is None else str(decision),
+        rollback_version=rollback_version
+        if isinstance(rollback_version, int) and not isinstance(rollback_version, bool)
+        else None,
+        error=None if error is None else str(error),
+        **scores,
+    )
+
+
+def _outcome_results(document: str) -> List[StepOutcome]:
+    """The results an outcome document carries.
+
+    A step's document is one result (``simba``), a ``results`` mapping per
+    optimizer or module step (``synthetic``, ``unified``), or a mapping per
+    agent (``triggered``). A document that is not JSON, or carries no result,
+    has none.
+    """
+    try:
+        parsed = json.loads(document)
+    except ValueError:
+        return []
+    if not isinstance(parsed, dict):
+        return []
+    nested = parsed.get("results")
+    named = nested if isinstance(nested, dict) else None
+    if named is None and not isinstance(parsed.get("status"), str):
+        named = parsed
+    if named is None:
+        return [_step_outcome(None, parsed)]
+    return [
+        _step_outcome(str(name), result)
+        for name, result in named.items()
+        if isinstance(result, dict) and isinstance(result.get("status"), str)
+    ]
+
+
+def _step_outcomes(status_block: Dict[str, Any]) -> Dict[str, List[StepOutcome]]:
+    """What each pod step's optimizer reported in its ``outcome`` output
+    parameter; a step that wrote no document is absent."""
+    outcomes: Dict[str, List[StepOutcome]] = {}
+    for node in (status_block.get("nodes") or {}).values():
+        if not isinstance(node, dict) or node.get("type") != "Pod":
+            continue
+        name = node.get("displayName")
+        if not name:
+            continue
+        for parameter in (node.get("outputs") or {}).get("parameters") or []:
+            if not isinstance(parameter, dict) or parameter.get("name") != "outcome":
+                continue
+            results = _outcome_results(parameter.get("value") or "")
+            if results:
+                outcomes[name] = results
+    return outcomes
 
 
 def _extract_blocked_reason(status_block: Dict[str, Any]) -> Optional[str]:
@@ -1553,6 +1666,7 @@ async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
         message=status_block.get("message"),
         blocked_reason=_extract_blocked_reason(status_block),
         steps=_step_phases(status_block),
+        step_outcomes=_step_outcomes(status_block),
     )
 
 
@@ -1625,6 +1739,7 @@ async def cancel_manual_optimization(tenant_id: str, workflow_name: str):
         message=status_block.get("message"),
         blocked_reason=_extract_blocked_reason(status_block),
         steps=_step_phases(status_block),
+        step_outcomes=_step_outcomes(status_block),
     )
 
 
@@ -1651,6 +1766,7 @@ async def retry_manual_optimization(tenant_id: str, workflow_name: str):
         message=status_block.get("message"),
         blocked_reason=_extract_blocked_reason(status_block),
         steps=_step_phases(status_block),
+        step_outcomes=_step_outcomes(status_block),
     )
 
 

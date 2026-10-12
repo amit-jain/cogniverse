@@ -364,6 +364,10 @@ class RoutingConfigUnified:
     # Optional per-optimizer overrides. Missing keys fall back to the global
     # 100/3 defaults; query_enhancement keeps the global floor.
     optimizer_floors: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    # Tenant overrides of the promotion gate (docs/modules/optimization.md);
+    # None takes the deployment's automation_rules.optimization_triggers value.
+    optimization_gap_share: Optional[float] = None          # (0, 1]
+    optimization_skip_above_score: Optional[float] = None   # (0, 1]
 
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)

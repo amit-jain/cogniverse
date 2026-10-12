@@ -11,13 +11,18 @@ import logging
 import math
 from dataclasses import dataclass, field, fields
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional, get_args
+from typing import Annotated, Any, Dict, List, Literal, Optional, get_args
+
+from pydantic import Field
 
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,
 )
 
 logger = logging.getLogger(__name__)
+
+# Every optimizer metric is a mean of per-example scores in [0, 1].
+OPTIMIZATION_SCORE_MAX = 1.0
 
 PROFILE_SCORING_OPTIMIZERS = frozenset(
     {
@@ -546,6 +551,31 @@ class RoutingConfigUnified:
     min_unique_queries: int = 3
     optimizer_floors: Dict[str, Dict[str, int]] = field(default_factory=dict)
     training_selection: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    # The tenant's own promotion-gate values; None takes the deployment's
+    # automation_rules.optimization_triggers value of the same name.
+    optimization_gap_share: Annotated[
+        Optional[float],
+        Field(
+            gt=0.0,
+            le=1.0,
+            description=(
+                "Share of the gap between the served score and the metric's "
+                "maximum a candidate must close when that is less than the "
+                "improvement threshold; blank takes the deployment's value"
+            ),
+        ),
+    ] = None
+    optimization_skip_above_score: Annotated[
+        Optional[float],
+        Field(
+            gt=0.0,
+            le=OPTIMIZATION_SCORE_MAX,
+            description=(
+                "Served score at or above which an optimization run skips its "
+                "compile; blank takes the deployment's value"
+            ),
+        ),
+    ] = None
 
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -554,6 +584,13 @@ class RoutingConfigUnified:
         from cogniverse_foundation.common.tenant_utils import require_tenant_id
 
         require_tenant_id(self.tenant_id, source="RoutingConfigUnified")
+        for name, maximum in (
+            ("optimization_gap_share", 1.0),
+            ("optimization_skip_above_score", OPTIMIZATION_SCORE_MAX),
+        ):
+            value = getattr(self, name)
+            if value is not None and not 0 < value <= maximum:
+                raise ValueError(f"{name} must be in (0, {maximum}]; got {value}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -579,6 +616,8 @@ class RoutingConfigUnified:
                 field_name="training_selection",
                 entries=self.training_selection,
             ),
+            "optimization_gap_share": self.optimization_gap_share,
+            "optimization_skip_above_score": self.optimization_skip_above_score,
             "metadata": self.metadata,
         }
 
@@ -608,6 +647,8 @@ class RoutingConfigUnified:
             min_unique_queries=data.get("min_unique_queries", 3),
             optimizer_floors=data.get("optimizer_floors", {}),
             training_selection=data.get("training_selection", {}),
+            optimization_gap_share=data.get("optimization_gap_share"),
+            optimization_skip_above_score=data.get("optimization_skip_above_score"),
             metadata=data.get("metadata", {}),
         )
 
