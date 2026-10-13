@@ -3892,3 +3892,198 @@ async def test_a_schedule_firing_while_its_delete_lands_leaves_no_run_behind(
     }
     assert _error_lines(caplog) == []
     assert tenant_delete_pending(store, tenant_id) is False
+
+
+@pytest.fixture(scope="module")
+def minio():
+    from tests.system.minio_test_manager import MinIOTestManager
+
+    with MinIOTestManager().lifecycle(name_prefix="tenant-delete-ingest") as instance:
+        yield instance
+
+
+@pytest.fixture
+def ingest_bucket(wired_tenant_manager, minio):
+    """A bucket of this test's own as the ingest bucket tenant deletes empty."""
+    from tests.utils.ingest_objects import object_store
+
+    with object_store(tm._config_manager, minio) as bucket:
+        yield bucket
+
+
+def _ingest_keys(tenant_id: str) -> set:
+    """The keys ``seed_tenant_objects`` writes for a tenant."""
+    import hashlib
+
+    video = hashlib.sha256(f"video of {tenant_id}".encode()).hexdigest()
+    return {
+        f"{tenant_id}/{video}.mp4",
+        f"{tenant_id}/keyframes/clip/0000.jpg",
+        f"{tenant_id}/keyframes/clip/0001.jpg",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_delete_removes_the_tenants_ingest_objects_and_no_others(
+    wired_tenant_manager, minio, ingest_bucket, tmp_path, caplog
+):
+    """The tenant's uploads and keyframes go; those of a tenant whose id its
+    own id begins, and of a tenant in its organization, stay."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from tests.utils.ingest_objects import bucket_keys, seed_tenant_objects
+
+    tenant_id = _unique_tenant()
+    neighbour = f"{tenant_id}0"
+    sibling = f"{tenant_id.split(':')[0]}:t2"
+    written = {
+        owner: seed_tenant_objects(owner, tmp_path)
+        for owner in (tenant_id, neighbour, sibling)
+    }
+    await _create_bare_tenant(tenant_id)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+
+    result = await tm.delete_tenant_internal(tenant_id)
+
+    assert written == {
+        owner: _ingest_keys(owner) for owner in (tenant_id, neighbour, sibling)
+    }
+    assert result["status"] == "deleted"
+    assert bucket_keys(minio, ingest_bucket) == (
+        _ingest_keys(neighbour) | _ingest_keys(sibling)
+    )
+    assert _error_lines(caplog) == []
+    assert (
+        tenant_is_deleted(tm._config_manager.store, tenant_id),
+        tenant_delete_pending(tm._config_manager.store, tenant_id),
+    ) == (True, False)
+
+
+@pytest.mark.asyncio
+async def test_a_delete_of_a_tenant_with_only_ingest_objects_removes_them(
+    wired_tenant_manager, minio, ingest_bucket, tmp_path
+):
+    """A tenant id with no record, schemas or state, but with objects in the
+    bucket, is deleted rather than answered 404."""
+    from tests.utils.ingest_objects import bucket_keys, seed_tenant_objects
+
+    tenant_id = _unique_tenant()
+    seed_tenant_objects(tenant_id, tmp_path)
+
+    result = await tm.delete_tenant_internal(tenant_id)
+
+    assert (result["status"], result["schemas_deleted"]) == ("deleted", 0)
+    assert bucket_keys(minio, ingest_bucket) == set()
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_object_store_leaves_the_delete_pending_until_its_retry(
+    wired_tenant_manager, minio, ingest_bucket, cluster_events, tmp_path, caplog
+):
+    """The object store does not answer. The delete still drops the tenant,
+    logs at ERROR that its ingest objects were not removed, and stays
+    pending; its retry, once the store answers, removes them and completes
+    it."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from tests.utils.ingest_objects import (
+        bucket_keys,
+        seed_tenant_objects,
+        unreachable_object_store,
+    )
+
+    store = tm._config_manager.store
+    tenant_id = _unique_tenant()
+    neighbour = f"{tenant_id}0"
+    seed_tenant_objects(tenant_id, tmp_path)
+    seed_tenant_objects(neighbour, tmp_path)
+    await _create_bare_tenant(tenant_id)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+
+    with unreachable_object_store():
+        result = await tm.delete_tenant_internal(tenant_id)
+    logged = _error_lines(caplog)
+    pending = tenant_delete_pending(store, tenant_id)
+    left = bucket_keys(minio, ingest_bucket)
+    caplog.clear()
+
+    retried = await tm.delete_tenant_internal(tenant_id)
+
+    assert (result["status"], result["deleted_schemas"]) == (
+        "deleted",
+        [_schema_names(tenant_id)[1]],
+    )
+    assert [message.split(" (", 1)[0] for message in logged] == [
+        f"Cannot remove the ingest objects of deleted tenant {tenant_id}"
+    ]
+    assert logged[0].endswith(
+        "; the delete stays pending and its retry, or the next create of the "
+        "tenant, deletes them"
+    ), logged
+    assert (pending, left) == (True, _ingest_keys(tenant_id) | _ingest_keys(neighbour))
+    assert retried == {
+        "status": "deleted",
+        "tenant_full_id": tenant_id,
+        "schemas_deleted": 0,
+        "deleted_schemas": [],
+        "organization_deleted": False,
+        "workers_released": [cluster_events.worker_id],
+    }
+    assert bucket_keys(minio, ingest_bucket) == _ingest_keys(neighbour)
+    assert _error_lines(caplog) == []
+    assert tenant_delete_pending(store, tenant_id) is False
+
+
+@pytest.mark.asyncio
+async def test_two_tenants_deleted_together_each_remove_only_their_objects(
+    wired_tenant_manager, minio, ingest_bucket, tmp_path, caplog, monkeypatch
+):
+    """Two deletes, one tenant's id beginning the other's, reach the object
+    store together: each holds at a barrier before its batch delete until the
+    other's has arrived. Each removes exactly its own objects."""
+    from cogniverse_core.common.tenant_utils import tenant_delete_pending
+    from cogniverse_runtime.ingestion_worker import minio_client
+    from tests.utils.ingest_objects import bucket_keys, seed_tenant_objects
+
+    store = tm._config_manager.store
+    first = _unique_tenant()
+    second = f"{first}0"
+    bystander = f"{first}00"
+    for owner in (first, second, bystander):
+        seed_tenant_objects(owner, tmp_path)
+    await _create_bare_tenant(first)
+    await _create_bare_tenant(second)
+    caplog.set_level(logging.ERROR, logger=tm.logger.name)
+    together = threading.Barrier(2)
+    batches: list = []
+    build_client = minio_client._client
+
+    def client_meeting_at_delete(**config):
+        client = build_client(**config)
+        delete_objects = client.delete_objects
+
+        def held(**request):
+            batches.append(
+                sorted(entry["Key"] for entry in request["Delete"]["Objects"])
+            )
+            together.wait(timeout=120)
+            return delete_objects(**request)
+
+        client.delete_objects = held
+        return client
+
+    monkeypatch.setattr(minio_client, "_client", client_meeting_at_delete)
+
+    results = await asyncio.gather(
+        tm.delete_tenant_internal(first), tm.delete_tenant_internal(second)
+    )
+
+    assert [result["status"] for result in results] == ["deleted", "deleted"]
+    assert together.broken is False
+    assert sorted(batches) == sorted(
+        [sorted(_ingest_keys(first)), sorted(_ingest_keys(second))]
+    )
+    assert bucket_keys(minio, ingest_bucket) == _ingest_keys(bystander)
+    assert _error_lines(caplog) == []
+    assert (
+        tenant_delete_pending(store, first),
+        tenant_delete_pending(store, second),
+    ) == (False, False)

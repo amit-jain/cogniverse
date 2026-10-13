@@ -212,6 +212,10 @@ cogniverse admin reconcile-orphans --confirm --runtime-url http://localhost:2800
 # Also drop schemas whose tenant no longer has a tenant_metadata record
 cogniverse admin reconcile-orphans --confirm --tenant-orphans
 
+# List ingest-bucket prefixes whose tenant is gone, then delete their objects
+cogniverse admin reconcile-ingest-orphans
+cogniverse admin reconcile-ingest-orphans --confirm
+
 # Report, then apply, merges of article-prefixed KG nodes into their twins
 cogniverse admin merge-article-nodes --tenant acme:acme
 cogniverse admin merge-article-nodes --tenant acme:acme --apply --exclude the_who

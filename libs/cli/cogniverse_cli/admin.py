@@ -12,6 +12,10 @@ mid-cleanup. Tenant-orphans accumulate from schema auto-deploy paths that
 never created a tenant (memory lazy-init, ingestion upload) and from
 tenant records removed outside ``DELETE /admin/tenants``. Recovery is
 operator-triggered, never automatic.
+
+``cogniverse admin reconcile-ingest-orphans`` reports the ingest bucket's
+prefixes whose tenant has no tenant_metadata record and optionally deletes
+their objects.
 """
 
 from __future__ import annotations
@@ -145,6 +149,76 @@ def cmd_reconcile_orphans(
             f"to drop {len(orphan_tenants)} tenant(s) in one redeploy."
         )
     return 0
+
+
+def cmd_reconcile_ingest_orphans(runtime_url: str, *, confirm: bool) -> int:
+    """List the ingest bucket's prefixes whose tenant is gone (default) or
+    delete their objects when ``confirm`` is True.
+
+    Returns the process exit code (0 success, non-zero on error).
+    """
+    url = f"{runtime_url.rstrip('/')}/admin/reconcile-ingest-orphans"
+    params = {"dry_run": "false" if confirm else "true"}
+    try:
+        with httpx.Client(timeout=900.0) as client:
+            resp = client.post(url, params=params)
+    except httpx.HTTPError as exc:
+        console.print(f"[red]Failed to reach runtime at {runtime_url}: {exc}[/red]")
+        return 2
+
+    if resp.status_code != 200:
+        console.print(
+            f"[red]reconcile-ingest-orphans returned {resp.status_code}: "
+            f"{resp.text[:2000]}[/red]"
+        )
+        return 3
+
+    data = resp.json()
+    try:
+        orphans = data["orphan_prefixes"]
+        live = data["live_prefixes"]
+        unrecognized = data["unrecognized_prefixes"]
+        deleted = data["deleted"]
+    except KeyError as exc:
+        console.print(f"[red]reconcile-ingest-orphans response is missing {exc}[/red]")
+        return 3
+
+    console.print(
+        f"Ingest bucket: {len(live)} prefix(es) of registered tenants, "
+        f"{len(orphans)} orphan prefix(es), {len(unrecognized)} not a tenant id."
+    )
+    for prefix in unrecognized:
+        console.print(f"  [yellow]left alone (not a tenant id):[/yellow] {prefix!r}")
+    if not orphans:
+        console.print("[green]No orphan ingest prefixes found.[/green]")
+        return 0
+
+    table = Table(title="Orphan ingest prefixes (no tenant_metadata record)")
+    table.add_column("Prefix", style="cyan")
+    table.add_column("Objects", justify="right")
+    table.add_column("Bytes", justify="right")
+    for row in orphans:
+        table.add_row(row["prefix"], str(row["objects"]), str(row["bytes"]))
+    console.print(table)
+    objects = sum(row["objects"] for row in orphans)
+    size = sum(row["bytes"] for row in orphans)
+    if confirm:
+        console.print(
+            f"[green]Deleted the objects of {len(deleted)} prefix(es).[/green]"
+        )
+    else:
+        console.print(
+            f"[cyan]Dry run.[/cyan] Re-run with [bold]--confirm[/bold] to delete "
+            f"{objects} object(s), {size} bytes, under {len(orphans)} prefix(es)."
+        )
+    return 0
+
+
+def run_ingest_orphans(runtime_url: str, *, confirm: bool) -> None:
+    """Entry point used by the click command in main.py."""
+    code = cmd_reconcile_ingest_orphans(runtime_url, confirm=confirm)
+    if code != 0:
+        sys.exit(code)
 
 
 def run(runtime_url: str, *, confirm: bool, tenant_orphans: bool = False) -> None:

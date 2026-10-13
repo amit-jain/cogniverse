@@ -1671,6 +1671,10 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
      — and deletes the `tenant_metadata` row. A row it cannot delete is
      logged at ERROR and the delete stays pending, so its retry or the next
      create of the tenant removes it;
+   - deletes every object under `<tenant>/` in the ingest bucket — the
+     tenant's uploads and keyframes. An object store that does not answer is
+     logged at ERROR and the delete stays pending, so its retry or the next
+     create of the tenant removes them;
    - records the delete complete (`complete_tenant_delete`).
    ```bash
    curl -X DELETE http://localhost:8000/admin/tenants/acme:acme

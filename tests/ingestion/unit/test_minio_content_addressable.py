@@ -97,3 +97,96 @@ def test_missing_filename_uploads_without_metadata(fake_client):
     assert url == f"s3://media/t1:t1/{digest}"
     assert "Metadata" not in fake_client.put_calls[0]
     assert minio_client.get_original_filename(url) == ""
+
+
+@pytest.fixture
+def stubbed_store(monkeypatch):
+    """A real boto3 S3 client whose answers a ``Stubber`` supplies; botocore
+    validates each request and answer against the S3 service model."""
+    import boto3
+    from botocore.stub import Stubber
+
+    client = boto3.client(
+        "s3",
+        endpoint_url="http://minio.invalid:9000",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+        region_name="us-east-1",
+    )
+    built_with: list[dict] = []
+
+    def build(**config):
+        built_with.append(config)
+        return client
+
+    monkeypatch.setattr(minio_client, "_client", build)
+    monkeypatch.setattr(minio_client, "_default_bucket", lambda: "media")
+    with Stubber(client) as stubber:
+        yield stubber, built_with
+        stubber.assert_no_pending_responses()
+
+
+def test_delete_tenant_objects_reports_each_object_the_store_refuses(stubbed_store):
+    stubber, built_with = stubbed_store
+    keys = ["acme:acme/a.mp4", "acme:acme/keyframes/v/0000.jpg", "acme:acme/z.mp4"]
+    stubber.add_response(
+        "list_objects_v2",
+        {"Contents": [{"Key": key, "Size": 1} for key in keys], "IsTruncated": False},
+        {"Bucket": "media", "Prefix": "acme:acme/"},
+    )
+    stubber.add_response(
+        "delete_objects",
+        {
+            "Errors": [
+                {"Key": keys[1], "Code": "AccessDenied", "Message": "Access Denied."}
+            ]
+        },
+        {
+            "Bucket": "media",
+            "Delete": {"Objects": [{"Key": key} for key in keys], "Quiet": True},
+        },
+    )
+
+    removed, refused = minio_client.delete_tenant_objects("acme:acme")
+
+    assert (removed, refused) == (2, {keys[1]: "AccessDenied: Access Denied."})
+    assert built_with == [
+        {
+            "connect_timeout": 5,
+            "read_timeout": 30,
+            "retries": {"max_attempts": 2, "mode": "standard"},
+        }
+    ]
+
+
+def test_delete_tenant_objects_with_nothing_stored_sends_no_delete(stubbed_store):
+    stubber, _ = stubbed_store
+    stubber.add_response(
+        "list_objects_v2",
+        {"IsTruncated": False},
+        {"Bucket": "media", "Prefix": "acme:acme/"},
+    )
+
+    assert minio_client.delete_tenant_objects("acme:acme") == (0, {})
+
+
+def test_delete_tenant_objects_raises_when_the_listing_fails(stubbed_store):
+    stubber, _ = stubbed_store
+    stubber.add_client_error(
+        "list_objects_v2", service_error_code="SlowDown", http_status_code=503
+    )
+
+    with pytest.raises(ClientError) as failure:
+        minio_client.delete_tenant_objects("acme:acme")
+
+    assert failure.value.response["Error"]["Code"] == "SlowDown"
+
+
+@pytest.mark.parametrize("tenant_id", ["", "acme:acme/keyframes", "/"])
+def test_delete_tenant_objects_refuses_an_id_that_names_no_tenant_prefix(
+    stubbed_store, tenant_id
+):
+    with pytest.raises(ValueError) as refused:
+        minio_client.delete_tenant_objects(tenant_id)
+
+    assert str(refused.value) == f"{tenant_id!r} names no tenant prefix"

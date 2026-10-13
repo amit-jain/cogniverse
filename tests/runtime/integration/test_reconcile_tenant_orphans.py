@@ -397,3 +397,256 @@ async def test_concurrent_dry_runs_preserve_the_same_orphan_documents(
     ] * 2
     assert [report["tenant_orphans_deleted"] for report in reports] == [[], []]
     _assert_memories_readable(vespa_instance["base_url"], _schema_name(ghost))
+
+
+@pytest.fixture(scope="module")
+def minio():
+    from tests.system.minio_test_manager import MinIOTestManager
+
+    with MinIOTestManager().lifecycle(name_prefix="reconcile-ingest") as instance:
+        yield instance
+
+
+@pytest.fixture
+def ingest_bucket(wired_tenant_manager, minio):
+    """A bucket of this test's own as the runtime's ingest bucket."""
+    from tests.utils.ingest_objects import object_store
+
+    with object_store(tm._config_manager, minio) as bucket:
+        yield bucket
+
+
+def _ingest_keys(tenant_id: str) -> set:
+    """The keys ``seed_tenant_objects`` writes for a tenant."""
+    import hashlib
+
+    video = hashlib.sha256(f"video of {tenant_id}".encode()).hexdigest()
+    return {
+        f"{tenant_id}/{video}.mp4",
+        f"{tenant_id}/keyframes/clip/0000.jpg",
+        f"{tenant_id}/keyframes/clip/0001.jpg",
+    }
+
+
+def _ingest_bytes(tenant_id: str) -> int:
+    return len(f"video of {tenant_id}") + sum(
+        len(f"frame {index} of {tenant_id}") for index in range(2)
+    )
+
+
+# Prefixes that are not canonical tenant ids, and an object at the bucket
+# root: reported, never removed.
+_FOREIGN_KEYS = {"a:b:c/notes.txt", "shared/readme.txt", "manifest.json"}
+
+
+async def _seed_ingest_bucket(minio, bucket: str, workdir) -> tuple[str, str, str]:
+    """A registered tenant and two with no record, the first of them with an
+    id the registered tenant's id begins, each with uploads; plus the
+    foreign keys."""
+    from tests.utils.ingest_objects import seed_tenant_objects
+
+    live = f"ingorph{uuid.uuid4().hex[:8]}:t1"
+    ghost_a, ghost_b = f"{live}0", f"{live.split(':')[0]}:gone"
+    await tm.create_tenant(
+        CreateTenantRequest(
+            tenant_id=live,
+            created_by="ingest-orphan-test",
+            base_schemas=[MEMORY_BASE_SCHEMA],
+        )
+    )
+    for owner in (live, ghost_a, ghost_b):
+        seed_tenant_objects(owner, workdir)
+    client = minio.boto3_client()
+    for key in _FOREIGN_KEYS:
+        client.put_object(Bucket=bucket, Key=key, Body=b"kept")
+    return live, ghost_a, ghost_b
+
+
+def _orphan_rows(*tenants: str) -> list:
+    return [
+        {"prefix": tenant, "objects": 3, "bytes": _ingest_bytes(tenant)}
+        for tenant in sorted(tenants)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ingest_orphan_dry_run_lists_exactly_the_orphans_and_removes_nothing(
+    wired_tenant_manager, minio, ingest_bucket, tmp_path
+):
+    from tests.utils.ingest_objects import bucket_keys
+
+    live, ghost_a, ghost_b = await _seed_ingest_bucket(minio, ingest_bucket, tmp_path)
+    everything = {
+        *_ingest_keys(live),
+        *_ingest_keys(ghost_a),
+        *_ingest_keys(ghost_b),
+        *_FOREIGN_KEYS,
+    }
+
+    report = await tm.reconcile_ingest_orphans(dry_run=True)
+
+    assert report == {
+        "dry_run": True,
+        "deleted": [],
+        "orphan_prefixes": _orphan_rows(ghost_a, ghost_b),
+        "live_prefixes": [live],
+        "unrecognized_prefixes": ["", "a:b:c", "shared"],
+    }
+    assert bucket_keys(minio, ingest_bucket) == everything
+
+
+@pytest.mark.asyncio
+async def test_ingest_orphan_removal_deletes_exactly_the_orphan_prefixes(
+    wired_tenant_manager, minio, ingest_bucket, tmp_path
+):
+    from tests.utils.ingest_objects import bucket_keys
+
+    live, ghost_a, ghost_b = await _seed_ingest_bucket(minio, ingest_bucket, tmp_path)
+
+    report = await tm.reconcile_ingest_orphans(dry_run=False)
+    after = await tm.reconcile_ingest_orphans(dry_run=True)
+
+    assert report == {
+        "dry_run": False,
+        "deleted": sorted([ghost_a, ghost_b]),
+        "orphan_prefixes": _orphan_rows(ghost_a, ghost_b),
+        "live_prefixes": [live],
+        "unrecognized_prefixes": ["", "a:b:c", "shared"],
+    }
+    assert bucket_keys(minio, ingest_bucket) == {*_ingest_keys(live), *_FOREIGN_KEYS}
+    assert (after["orphan_prefixes"], after["live_prefixes"]) == ([], [live])
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_created_after_the_listing_keeps_its_ingest_objects(
+    wired_tenant_manager, minio, ingest_bucket, tmp_path, monkeypatch
+):
+    """A tenant is created under an orphan prefix between the listing and the
+    removal: its prefix is kept and named, the other orphan goes."""
+    from tests.utils.ingest_objects import bucket_keys
+
+    live, ghost_a, ghost_b = await _seed_ingest_bucket(minio, ingest_bucket, tmp_path)
+    listed = tm._list_ingest_orphans
+
+    def create_after_listing():
+        diff = listed()
+        with tm.metadata_backend() as backend:
+            backend.create_metadata_document(
+                schema="tenant_metadata",
+                doc_id=ghost_a,
+                fields={
+                    "tenant_full_id": ghost_a,
+                    "org_id": ghost_a.split(":")[0],
+                    "tenant_name": ghost_a.split(":")[1],
+                    "created_at": 1757000000,
+                    "created_by": "ingest-orphan-test",
+                    "status": "active",
+                    "schemas_deployed": [],
+                },
+            )
+        return diff
+
+    monkeypatch.setattr(tm, "_list_ingest_orphans", create_after_listing)
+    try:
+        with pytest.raises(HTTPException) as refused:
+            await tm.reconcile_ingest_orphans(dry_run=False)
+    finally:
+        with tm.metadata_backend() as backend:
+            backend.delete_metadata_document(schema="tenant_metadata", doc_id=ghost_a)
+
+    assert (refused.value.status_code, refused.value.detail) == (
+        502,
+        {
+            "error": "ingest_orphans_not_removed",
+            "message": "1 orphan prefix(es) were not removed; retry.",
+            "not_removed": [ghost_a],
+            "deleted": [ghost_b],
+        },
+    )
+    assert bucket_keys(minio, ingest_bucket) == {
+        *_ingest_keys(live),
+        *_ingest_keys(ghost_a),
+        *_FOREIGN_KEYS,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ingest_orphan_reconcile_refuses_when_the_bucket_cannot_be_listed(
+    wired_tenant_manager, minio, ingest_bucket, tmp_path
+):
+    from tests.utils.ingest_objects import bucket_keys, unreachable_object_store
+
+    live, ghost_a, ghost_b = await _seed_ingest_bucket(minio, ingest_bucket, tmp_path)
+    before = bucket_keys(minio, ingest_bucket)
+
+    with unreachable_object_store():
+        with pytest.raises(HTTPException) as refused:
+            await tm.reconcile_ingest_orphans(dry_run=False)
+
+    assert refused.value.status_code == 503
+    assert refused.value.detail == {
+        "error": "reconcile_unavailable",
+        "message": "Cannot list the ingest bucket; refusing to reconcile its orphans.",
+        "failure": "EndpointConnectionError",
+    }
+    assert bucket_keys(minio, ingest_bucket) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registry", ["unreachable", "empty"])
+async def test_ingest_orphan_reconcile_refuses_without_a_trustworthy_tenant_list(
+    wired_tenant_manager, minio, ingest_bucket, tmp_path, monkeypatch, registry
+):
+    """A tenant registry that cannot be read, or that reads as holding no
+    tenant while the bucket holds prefixes, removes nothing."""
+    from tests.utils.ingest_objects import bucket_keys
+
+    await _seed_ingest_bucket(minio, ingest_bucket, tmp_path)
+    before = bucket_keys(minio, ingest_bucket)
+    if registry == "unreachable":
+        with socket.socket() as unavailable:
+            unavailable.bind(("127.0.0.1", 0))
+            dead = f"http://127.0.0.1:{unavailable.getsockname()[1]}"
+        with tm.metadata_backend() as backend:
+            monkeypatch.setattr(
+                type(backend), "_metadata_vespa_app", lambda _self: Vespa(url=dead)
+            )
+        expected = (
+            503,
+            {
+                "error": "reconcile_unavailable",
+                "message": (
+                    "Cannot read the tenant registry; refusing to reconcile "
+                    "orphans because every schema would read as a tenant-orphan."
+                ),
+                "failure": "ConnectError",
+            },
+        )
+    else:
+        monkeypatch.setattr(tm, "_live_tenant_ids", lambda _backend: set())
+        expected = (
+            503,
+            "Tenant registry holds no tenants while the ingest bucket holds 6 "
+            "prefix(es); refusing to reconcile ingest orphans (this would remove "
+            "every tenant's uploads)",
+        )
+
+    with pytest.raises(HTTPException) as refused:
+        await tm.reconcile_ingest_orphans(dry_run=False)
+
+    assert (refused.value.status_code, refused.value.detail) == expected
+    assert bucket_keys(minio, ingest_bucket) == before
+
+
+@pytest.mark.asyncio
+async def test_ingest_orphan_reconcile_without_an_object_store_answers_503(
+    wired_tenant_manager,
+):
+    with pytest.raises(HTTPException) as refused:
+        await tm.reconcile_ingest_orphans(dry_run=True)
+
+    assert (refused.value.status_code, refused.value.detail) == (
+        503,
+        "No object store is configured for this runtime; there is no ingest "
+        "bucket to reconcile.",
+    )

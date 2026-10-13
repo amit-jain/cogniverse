@@ -151,6 +151,121 @@ def test_reconcile_orphans_non_200_returns_3(
 
 
 # ---------------------------------------------------------------------------
+# admin reconcile-ingest-orphans
+# ---------------------------------------------------------------------------
+
+_INGEST_REPORT = {
+    "dry_run": True,
+    "deleted": [],
+    "orphan_prefixes": [
+        {"prefix": "gone:t1", "objects": 3, "bytes": 700},
+        {"prefix": "gone:t10", "objects": 2, "bytes": 24},
+    ],
+    "live_prefixes": ["acme:prod"],
+    "unrecognized_prefixes": ["shared"],
+}
+
+
+@pytest.mark.parametrize(
+    "confirm, sent, closing",
+    [
+        (
+            False,
+            "true",
+            "Dry run. Re-run with --confirm to delete 5 object(s), 724 bytes, "
+            "under 2 prefix(es).",
+        ),
+        (True, "false", "Deleted the objects of 2 prefix(es)."),
+    ],
+)
+def test_reconcile_ingest_orphans_lists_then_deletes_on_confirm(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_console: io.StringIO,
+    confirm: bool,
+    sent: str,
+    closing: str,
+) -> None:
+    seen: list[tuple[str, str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, dict(request.url.params)))
+        deleted = ["gone:t1", "gone:t10"] if confirm else []
+        return httpx.Response(
+            200, json={**_INGEST_REPORT, "dry_run": not confirm, "deleted": deleted}
+        )
+
+    _mount_httpx(monkeypatch, handler)
+    rc = admin_cli.cmd_reconcile_ingest_orphans("http://runtime.test", confirm=confirm)
+
+    assert rc == 0
+    assert seen == [("POST", "/admin/reconcile-ingest-orphans", {"dry_run": sent})]
+    lines = [line.strip() for line in capture_console.getvalue().splitlines()]
+    assert lines[0] == (
+        "Ingest bucket: 1 prefix(es) of registered tenants, 2 orphan prefix(es), "
+        "1 not a tenant id."
+    )
+    assert lines[1] == "left alone (not a tenant id): 'shared'"
+    assert [
+        [cell.strip() for cell in line.strip("│┃").split("│")]
+        for line in lines
+        if line.startswith("│")
+    ] == [["gone:t1", "3", "700"], ["gone:t10", "2", "24"]]
+    assert lines[-1] == closing
+
+
+def test_reconcile_ingest_orphans_clean_bucket(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={**_INGEST_REPORT, "orphan_prefixes": [], "unrecognized_prefixes": []},
+        )
+
+    _mount_httpx(monkeypatch, handler)
+    rc = admin_cli.cmd_reconcile_ingest_orphans("http://runtime.test", confirm=True)
+
+    assert rc == 0
+    assert capture_console.getvalue().splitlines() == [
+        "Ingest bucket: 1 prefix(es) of registered tenants, 0 orphan prefix(es), "
+        "0 not a tenant id.",
+        "No orphan ingest prefixes found.",
+    ]
+
+
+@pytest.mark.parametrize(
+    "answer, code, shown",
+    [
+        (httpx.ConnectError("connection refused"), 2, "Failed to reach runtime"),
+        (
+            httpx.Response(502, text='{"detail":{"not_removed":["gone:t1"]}}'),
+            3,
+            'reconcile-ingest-orphans returned 502: {"detail":{"not_removed":'
+            '["gone:t1"]}}',
+        ),
+        (
+            httpx.Response(200, json={"dry_run": True}),
+            3,
+            "reconcile-ingest-orphans response is missing 'orphan_prefixes'",
+        ),
+    ],
+)
+def test_reconcile_ingest_orphans_failures_exit_non_zero(
+    monkeypatch: pytest.MonkeyPatch, capture_console: io.StringIO, answer, code, shown
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    _mount_httpx(monkeypatch, handler)
+    rc = admin_cli.cmd_reconcile_ingest_orphans("http://runtime.test", confirm=True)
+
+    assert rc == code
+    assert shown in capture_console.getvalue().replace("\n", "")
+
+
+# ---------------------------------------------------------------------------
 # graph subcommands
 # ---------------------------------------------------------------------------
 

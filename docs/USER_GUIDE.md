@@ -144,6 +144,7 @@ The `cogniverse` CLI manages the full stack:
 | `cogniverse sandbox sync` | Sync OpenShell gateway mTLS certs into the cluster (after rotation) |
 | `cogniverse sandbox status` | Show OpenShell gateway status and cluster sync state |
 | `cogniverse secrets sync` | Re-sync cluster Secrets (`hf-token`, `cogniverse-messaging-secrets`) from env vars, `./.env`, or `~/.env` |
+| `cogniverse admin reconcile-ingest-orphans` | Find (and, with `--confirm`, delete) uploads of tenants that no longer exist |
 | `cogniverse admin reconcile-orphans` | Find (and, with `--confirm`, drop) Vespa schema orphans not in the schema registry |
 | `cogniverse admin merge-article-nodes` | Report (and, with `--apply`, perform) merges of KG nodes `the_<id>` / `a_<id>` / `an_<id>` into the tenant's `<id>` node; `--tenant` scopes to one tenant; `--exclude ID` (repeatable) never merges that article id |
 | `cogniverse admin invite <tenant_id>` | Mint a messaging invite token; prints the `/start <token>` the user sends to the bot |

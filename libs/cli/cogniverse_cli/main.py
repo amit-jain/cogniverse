@@ -1010,6 +1010,35 @@ def admin_reconcile_orphans(
     run(runtime_url, confirm=confirm, tenant_orphans=tenant_orphans)
 
 
+@admin.command(name="reconcile-ingest-orphans")
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help=(
+        "Actually delete the orphan prefixes' objects. Default is dry-run (list only)."
+    ),
+)
+@click.option(
+    "--runtime-url",
+    default="http://localhost:28000",
+    show_default=True,
+    help="Runtime endpoint to call /admin/reconcile-ingest-orphans on.",
+)
+def admin_reconcile_ingest_orphans(confirm: bool, runtime_url: str) -> None:
+    """Find and delete uploads of tenants that no longer exist.
+
+    Reports each top-level prefix of the ingest bucket that is a tenant id
+    with no tenant_metadata record, with its object count and bytes.
+    --confirm deletes the objects under those prefixes; prefixes of
+    registered tenants and prefixes that are not tenant ids are never
+    touched.
+    """
+    from cogniverse_cli.admin import run_ingest_orphans
+
+    run_ingest_orphans(runtime_url, confirm=confirm)
+
+
 @admin.command(name="merge-article-nodes")
 @click.option(
     "--tenant",
