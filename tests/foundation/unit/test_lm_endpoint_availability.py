@@ -12,12 +12,14 @@ from cogniverse_foundation.config.lm_endpoint_availability import (
     MAX_TRACKED_ENDPOINTS,
     NOT_SERVING_RECHECK_S,
     PROBE_VERDICT_S,
+    SERVING_FRESHNESS_S,
     LMEndpoint,
     LMEndpointAvailability,
     LMEndpointNotServing,
     not_serving_cause,
 )
 from cogniverse_foundation.config.request_body import http_status_of
+from cogniverse_foundation.inference_specs import INFERENCE_SERVICE_SPECS
 from cogniverse_foundation.telemetry.span_contract import (
     LLM_ENDPOINT_FAILED_FAST_ATTRIBUTE,
     LLM_ENDPOINT_RECHECK_IN_S_ATTRIBUTE,
@@ -147,6 +149,9 @@ class TestRecheck:
                 "failure": None,
                 "reason": "answered its last call",
                 "observed_at": _iso(clocks),
+                "age_s": 0.0,
+                "last_answered_at": _iso(clocks),
+                "last_answered_age_s": 0.0,
                 "recheck_in_s": None,
             }
         ]
@@ -277,9 +282,149 @@ class TestSnapshot:
                     "calls fail fast until the next recheck"
                 ),
                 "observed_at": observed,
+                "age_s": 12.5,
+                "last_answered_at": None,
+                "last_answered_age_s": None,
                 "recheck_in_s": NOT_SERVING_RECHECK_S - 12.5,
             }
         ]
+
+    def test_the_freshness_window_is_the_shortest_chat_llm_scale_down(self):
+        assert SERVING_FRESHNESS_S == float(
+            min(
+                INFERENCE_SERVICE_SPECS[name].scaledown_window
+                for name in ("vllm_llm_student", "vllm_llm_teacher")
+            )
+        )
+
+    def test_an_answer_is_serving_up_to_the_freshness_window(
+        self, availability, clocks
+    ):
+        availability.answered(CLASSIFICATION)
+        answered = _iso(clocks)
+        clocks.advance(SERVING_FRESHNESS_S)
+
+        assert availability.snapshot() == [
+            {
+                "endpoint": ROUTER,
+                "model": CLASSIFICATION.model,
+                "route": "pro",
+                "state": "serving",
+                "upstream_status": None,
+                "failure": None,
+                "reason": "answered its last call",
+                "observed_at": answered,
+                "age_s": SERVING_FRESHNESS_S,
+                "last_answered_at": answered,
+                "last_answered_age_s": SERVING_FRESHNESS_S,
+                "recheck_in_s": None,
+            }
+        ]
+
+    def test_an_answer_older_than_the_window_is_idle_with_its_age(
+        self, availability, clocks
+    ):
+        availability.answered(CLASSIFICATION)
+        answered = _iso(clocks)
+        sixteen_hours = 16 * 3600.0
+        clocks.advance(sixteen_hours)
+
+        assert availability.snapshot() == [
+            {
+                "endpoint": ROUTER,
+                "model": CLASSIFICATION.model,
+                "route": "pro",
+                "state": "idle",
+                "upstream_status": None,
+                "failure": None,
+                "reason": (
+                    "answered its last call 57600s ago and has not been called "
+                    "since; whether it still serves is unknown until the next call"
+                ),
+                "observed_at": answered,
+                "age_s": sixteen_hours,
+                "last_answered_at": answered,
+                "last_answered_age_s": sixteen_hours,
+                "recheck_in_s": None,
+            }
+        ]
+
+    def test_an_idle_endpoint_is_serving_again_once_it_answers(
+        self, availability, clocks
+    ):
+        availability.answered(CLASSIFICATION)
+        clocks.advance(SERVING_FRESHNESS_S + 1.0)
+        assert availability.snapshot()[0]["state"] == "idle"
+
+        availability.answered(CLASSIFICATION)
+
+        entry = availability.snapshot()[0]
+        assert (entry["state"], entry["age_s"], entry["last_answered_at"]) == (
+            "serving",
+            0.0,
+            _iso(clocks),
+        )
+
+    def test_an_idle_endpoint_is_still_called(self, availability, clocks):
+        availability.answered(CLASSIFICATION)
+        clocks.advance(SERVING_FRESHNESS_S + 1.0)
+
+        assert availability.admit(CLASSIFICATION) is None
+        assert availability.refusal(CLASSIFICATION) is None
+
+    def test_a_failure_keeps_when_the_endpoint_last_answered(
+        self, availability, clocks
+    ):
+        availability.answered(CLASSIFICATION)
+        answered = _iso(clocks)
+        clocks.advance(40.0)
+        availability.failed(CLASSIFICATION, status=503, failure="Timeout")
+        failed = _iso(clocks)
+        clocks.advance(SERVING_FRESHNESS_S + 60.0)
+
+        entry = availability.snapshot()[0]
+        assert (
+            entry["state"],
+            entry["observed_at"],
+            entry["age_s"],
+            entry["last_answered_at"],
+            entry["last_answered_age_s"],
+        ) == (
+            "failing",
+            failed,
+            SERVING_FRESHNESS_S + 60.0,
+            answered,
+            SERVING_FRESHNESS_S + 100.0,
+        )
+
+    def test_concurrent_outcomes_leave_one_consistent_entry(self, clocks):
+        """Answers and failures racing on one endpoint never tear the entry:
+        the last-answered time is always the answer's, whichever lands last."""
+        availability = LMEndpointAvailability(
+            clock=clocks.monotonic, wall_clock=clocks.wall
+        )
+        workers = 16
+        barrier = threading.Barrier(workers)
+
+        def outcome(index: int) -> None:
+            barrier.wait()
+            for _ in range(200):
+                if index % 2:
+                    availability.answered(CLASSIFICATION)
+                else:
+                    availability.failed(CLASSIFICATION, status=503, failure="X")
+                availability.snapshot()
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for future in [pool.submit(outcome, i) for i in range(workers)]:
+                future.result()
+
+        (entry,) = availability.snapshot()
+        assert entry["state"] in ("serving", "failing")
+        assert (entry["last_answered_at"], entry["last_answered_age_s"]) == (
+            _iso(clocks),
+            0.0,
+        )
 
     def test_credentials_in_the_address_never_reach_the_snapshot(self, availability):
         availability.not_serving(

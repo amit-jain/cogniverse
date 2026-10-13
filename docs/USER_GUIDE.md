@@ -1221,6 +1221,10 @@ GET /health
   "dependencies": {
     "llm": {
       "status": "not_serving",
+      "observed_by": {"scope": "worker", "pid": 41},
+      "freshness_window_s": 300.0,
+      "last_answered_at": null,
+      "last_answered_age_s": null,
       "endpoints": [
         {
           "endpoint": "http://cogniverse-semantic-router-envoy:8801/v1",
@@ -1231,6 +1235,9 @@ GET /health
           "failure": null,
           "reason": "answered HTTP 404: nothing is deployed for this model; calls fail fast until the next recheck",
           "observed_at": "2026-10-01T17:10:07.512301+00:00",
+          "age_s": 8.6,
+          "last_answered_at": null,
+          "last_answered_age_s": null,
           "recheck_in_s": 21.4
         }
       ]
@@ -1242,7 +1249,12 @@ GET /health
 `status` is `healthy`, `degraded` (the chat LLM is `not_serving` or `failing`;
 search still serves) or, with HTTP 503, `unhealthy` (the search backend is
 unreachable). `dependencies.llm.status` is `not_called` until this worker
-process has made an LM call.
+process has made an LM call, `serving` when an endpoint answered within
+`freshness_window_s`, and `idle` when every answer is older than that: the
+LLM is observed from request traffic, never probed, so an old answer does not
+say the endpoint is still warm. `age_s` and `last_answered_age_s` give the
+age of each observation. Each worker process reports only its own calls;
+`observed_by.pid` names the one that answered.
 
 ### Python SDK Reference
 

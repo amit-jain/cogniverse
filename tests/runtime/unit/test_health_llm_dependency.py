@@ -7,6 +7,7 @@ when it is serving again.
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.lm_endpoint_availability import (
     NOT_SERVING_RECHECK_S,
+    SERVING_FRESHNESS_S,
     LMEndpointNotServing,
     lm_endpoint_availability,
 )
@@ -76,8 +78,13 @@ def _assert_recent(observed_at: str) -> None:
     assert 0.0 <= age_s < 60.0, observed_at
 
 
+def _assert_small_age(age_s: float) -> None:
+    assert 0.0 <= age_s < 60.0, age_s
+
+
 def _not_serving_entry(app: ModalApp, entry: dict) -> None:
     _assert_recent(entry.pop("observed_at"))
+    _assert_small_age(entry.pop("age_s"))
     recheck_in_s = entry.pop("recheck_in_s")
     assert NOT_SERVING_RECHECK_S - 60.0 < recheck_in_s <= NOT_SERVING_RECHECK_S
     assert entry == {
@@ -88,6 +95,8 @@ def _not_serving_entry(app: ModalApp, entry: dict) -> None:
         "upstream_status": 404,
         "failure": None,
         "reason": NOT_SERVING_REASON,
+        "last_answered_at": None,
+        "last_answered_age_s": None,
     }
 
 
@@ -100,7 +109,14 @@ class TestHealthNamesTheLLM:
         body = response.json()
         assert body["status"] == "healthy"
         assert body["dependencies"] == {
-            "llm": {"status": "not_called", "endpoints": []}
+            "llm": {
+                "status": "not_called",
+                "observed_by": {"scope": "worker", "pid": os.getpid()},
+                "freshness_window_s": SERVING_FRESHNESS_S,
+                "last_answered_at": None,
+                "last_answered_age_s": None,
+                "endpoints": [],
+            }
         }
 
     def test_an_undeployed_llm_is_degraded_with_its_reason(self, no_agents, modal_app):
@@ -132,9 +148,20 @@ class TestHealthNamesTheLLM:
         assert answer.choices[0].message.content == f"served:{prompt}"
         body = response.json()
         assert (response.status_code, body["status"]) == (200, "healthy")
-        (entry,) = body["dependencies"]["llm"]["endpoints"]
-        _assert_recent(entry.pop("observed_at"))
-        assert body["dependencies"]["llm"]["status"] == "serving"
+        llm = body["dependencies"]["llm"]
+        (entry,) = llm["endpoints"]
+        observed_at = entry.pop("observed_at")
+        _assert_recent(observed_at)
+        _assert_small_age(entry.pop("age_s"))
+        _assert_small_age(entry.pop("last_answered_age_s"))
+        _assert_small_age(llm.pop("last_answered_age_s"))
+        assert llm == {
+            "status": "serving",
+            "observed_by": {"scope": "worker", "pid": os.getpid()},
+            "freshness_window_s": SERVING_FRESHNESS_S,
+            "last_answered_at": observed_at,
+            "endpoints": [entry],
+        }
         assert entry == {
             "endpoint": modal_app.api_base,
             "model": MODEL,
@@ -143,8 +170,72 @@ class TestHealthNamesTheLLM:
             "upstream_status": None,
             "failure": None,
             "reason": "answered its last call",
+            "last_answered_at": observed_at,
             "recheck_in_s": None,
         }
+
+    def test_an_llm_that_last_answered_before_the_window_is_idle_not_serving(
+        self, no_agents, modal_app, monkeypatch
+    ):
+        """An answer says nothing once the endpoint has had time to scale to
+        zero: /health reports it idle with its age, and makes no LM call."""
+        modal_app.deploy()
+        _lm(modal_app).forward(f"rewrite {uuid.uuid4()}")
+        calls_before = list(modal_app.requests)
+        monkeypatch.setattr(lm_endpoint_availability(), "serving_freshness_s", 0.2)
+        time.sleep(0.3)
+
+        with _stub_backend() as base:
+            response = _client(base).get("/health")
+
+        body = response.json()
+        assert (response.status_code, body["status"]) == (200, "healthy")
+        llm = body["dependencies"]["llm"]
+        (entry,) = llm["endpoints"]
+        age_s = entry["age_s"]
+        assert 0.3 <= age_s < 60.0
+        assert (
+            llm["status"],
+            llm["freshness_window_s"],
+            llm["last_answered_at"],
+            entry["state"],
+            entry["reason"],
+            entry["last_answered_at"],
+        ) == (
+            "idle",
+            0.2,
+            entry["observed_at"],
+            "idle",
+            f"answered its last call {age_s:.0f}s ago and has not been called "
+            "since; whether it still serves is unknown until the next call",
+            entry["observed_at"],
+        )
+        assert 0.3 <= llm["last_answered_age_s"] < 60.0
+        assert modal_app.requests == calls_before
+
+    def test_one_fresh_answer_among_idle_endpoints_is_serving(
+        self, no_agents, modal_app, monkeypatch
+    ):
+        modal_app.deploy()
+        other = ModalApp()
+        try:
+            other.deploy()
+            _lm(other).forward(f"rewrite {uuid.uuid4()}")
+            monkeypatch.setattr(lm_endpoint_availability(), "serving_freshness_s", 0.2)
+            time.sleep(0.3)
+            _lm(modal_app).forward(f"rewrite {uuid.uuid4()}")
+
+            with _stub_backend() as base:
+                llm = _client(base).get("/health").json()["dependencies"]["llm"]
+        finally:
+            other.close()
+
+        assert llm["status"] == "serving"
+        assert [(e["endpoint"], e["state"]) for e in llm["endpoints"]] == [
+            (other.api_base, "idle"),
+            (modal_app.api_base, "serving"),
+        ]
+        assert llm["last_answered_at"] == llm["endpoints"][1]["observed_at"]
 
     def test_an_unreachable_llm_is_degraded_as_failing(self, no_agents):
         """litellm reports a refused connection as a 500 InternalServerError;

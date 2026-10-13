@@ -1,6 +1,7 @@
 """Health check endpoints for runtime monitoring."""
 
 import logging
+import os
 import time
 from functools import lru_cache
 from typing import Any, Dict, Optional
@@ -13,6 +14,7 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.lm_endpoint_availability import (
     FAILING,
+    IDLE,
     NOT_SERVING,
     SERVING,
     lm_endpoint_availability,
@@ -130,8 +132,9 @@ def _resolve_agent_registry() -> AgentRegistry:
 
 
 # The chat LLM's status as /health reports it: ``not_called`` before this
-# process made any LM call, otherwise the worst last outcome across the
-# endpoints it called.
+# process made any LM call; otherwise ``not_serving`` or ``failing`` when any
+# endpoint's last call ended that way, ``serving`` when one answered inside
+# the freshness window, and ``idle`` when every answer is older than that.
 LLM_NOT_CALLED = "not_called"
 
 
@@ -140,9 +143,13 @@ def llm_dependency_status() -> Dict[str, Any]:
 
     Observed from the calls requests made, never probed: a probe would boot a
     scaled-to-zero GPU endpoint. Each uvicorn worker is its own process and
-    reports its own observations.
+    reports its own observations, so the block names the worker that answered
+    and how old its newest answer is.
     """
-    endpoints = lm_endpoint_availability().snapshot()
+    availability = lm_endpoint_availability()
+    endpoints = availability.snapshot()
+    answered = [e for e in endpoints if e["last_answered_at"] is not None]
+    newest = min(answered, key=lambda e: e["last_answered_age_s"], default=None)
     states = {endpoint["state"] for endpoint in endpoints}
     if not endpoints:
         status = LLM_NOT_CALLED
@@ -150,9 +157,18 @@ def llm_dependency_status() -> Dict[str, Any]:
         status = NOT_SERVING
     elif FAILING in states:
         status = FAILING
-    else:
+    elif SERVING in states:
         status = SERVING
-    return {"status": status, "endpoints": endpoints}
+    else:
+        status = IDLE
+    return {
+        "status": status,
+        "observed_by": {"scope": "worker", "pid": os.getpid()},
+        "freshness_window_s": availability.serving_freshness_s,
+        "last_answered_at": newest["last_answered_at"] if newest else None,
+        "last_answered_age_s": newest["last_answered_age_s"] if newest else None,
+        "endpoints": endpoints,
+    }
 
 
 @router.get("/health")
@@ -168,7 +184,8 @@ async def health_check(request: Request) -> Any:
 
     A chat LLM that is not serving or failing leaves it 200 with status
     ``degraded``: search serves without the LLM. ``dependencies.llm`` names
-    each endpoint's state and reason either way.
+    each endpoint's state, reason and age either way; an LLM that last
+    answered before the freshness window is ``idle``, not ``serving``.
     """
     try:
         # Reused across probes; backends/agents are still queried live below.
