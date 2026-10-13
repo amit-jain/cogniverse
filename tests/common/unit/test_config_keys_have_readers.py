@@ -26,7 +26,6 @@ STARTUP_PARSE_PATHS = CONFIG_PATHS[:2]
 
 COMMON_RATCHET_KEYS = {
     "adaptive_segmentation",
-    "allowed_topics",
     "annotation_interval_minutes",
     "annotation_lookback_hours",
     "annotation_thresholds",
@@ -121,7 +120,6 @@ COMMON_RATCHET_KEYS = {
 }
 
 CONFIG_EXTRA_RATCHET_KEYS = {
-    "advisory",
     "bucket",
     "chunk_based",
     "inference_config",
@@ -155,9 +153,9 @@ EXPECTED_RATCHET_KEYS = {
 }
 
 EXPECTED_KEY_COUNTS = {
-    CONFIG_PATHS[0]: 327,
-    CONFIG_PATHS[1]: 310,
-    CONFIG_PATHS[2]: 278,
+    CONFIG_PATHS[0]: 325,
+    CONFIG_PATHS[1]: 309,
+    CONFIG_PATHS[2]: 277,
 }
 
 EXPECTED_AGENT_MAPPINGS = {

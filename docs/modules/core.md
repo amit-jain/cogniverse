@@ -312,6 +312,10 @@ Three concrete rails (raise `RailBlockedError` on violation):
   not block) because coarse keyword matching would otherwise reject legitimate
   natural-language queries; set `advisory=False` to hard-block (only with a
   deliberately broad `allowed_topics`).
+  The shipped configs carry no topic boundary: a retrieval query names content
+  ("man lifting"), not a modality, so no keyword allowlist describes the
+  search domain. Add one only for a deployment whose queries share a closed
+  vocabulary.
 - **`ContentSafetyRail(blocked_patterns)`** — blocks input/output matching any regex
   (e.g. prompt-injection phrases, `<script>`).
 - **`OutputFormatRail(required_fields)`** — enforces required output fields + types.
@@ -324,7 +328,6 @@ Rails are configured under the `rails` block in `config.json`
 "rails": {
   "enabled": true,
   "input_rails": [
-    {"type": "topic_boundary", "params": {"advisory": true, "allowed_topics": ["video", "search"]}},
     {"type": "content_safety", "params": {"blocked_patterns": ["ignore previous instructions", "<script>"]}}
   ],
   "output_rails": []
