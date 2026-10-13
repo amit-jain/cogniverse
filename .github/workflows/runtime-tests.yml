@@ -252,7 +252,7 @@ jobs:
       env:
         TEST_LLM_MODEL: "qwen2.5:0.5b"
       run: |
-        # The suites named by integration-tests-b and -c and the browser
+        # The suites named by integration-tests-b, -c and -d and the browser
         # suites of the web-ops-integration-tests-* jobs run there.
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/runtime/integration/ \
@@ -266,8 +266,10 @@ jobs:
           --ignore=tests/runtime/integration/test_ingestion_worker_e2e.py \
           --ignore=tests/runtime/integration/test_llm_annotation_job.py \
           --ignore=tests/runtime/integration/test_openai_compat_endpoint.py \
+          --ignore=tests/runtime/integration/test_reconcile_tenant_orphans.py \
           --ignore=tests/runtime/integration/test_runtime_startup_entrypoint.py \
           --ignore=tests/runtime/integration/test_signature_variant_persistence.py \
+          --ignore=tests/runtime/integration/test_tenant_delete_memory_schema.py \
           --ignore=tests/runtime/integration/test_web_agent_workspace.py \
           --ignore=tests/runtime/integration/test_web_client_ag_ui.py \
           --ignore=tests/runtime/integration/test_web_ops_analytics.py \
@@ -400,6 +402,59 @@ jobs:
           tests/runtime/integration/test_openai_compat_endpoint.py \
           tests/runtime/integration/test_runtime_startup_entrypoint.py \
           tests/runtime/integration/test_signature_variant_persistence.py \
+          -m "integration and ci_fast and not requires_lm" \
+          -v --tb=short
+
+  integration-tests-d:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "0.12.19"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
+
+    - name: Free up disk space for Vespa
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:8.668.5
+        df -h
+
+    - name: Cache Ollama binary and test model
+      uses: actions/cache@v4
+      with:
+        path: ~/.ollama
+        key: ollama-qwen2.5-0.5b-v1
+
+    - name: Run integration tests (tenant delete and orphan reconciliation)
+      timeout-minutes: 20
+      env:
+        TEST_LLM_MODEL: "qwen2.5:0.5b"
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+          tests/runtime/integration/test_reconcile_tenant_orphans.py \
+          tests/runtime/integration/test_tenant_delete_memory_schema.py \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short
 

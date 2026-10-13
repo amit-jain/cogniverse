@@ -469,6 +469,7 @@ def _orphan_rows(*tenants: str) -> list:
     ]
 
 
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_ingest_orphan_dry_run_lists_exactly_the_orphans_and_removes_nothing(
     wired_tenant_manager, minio, ingest_bucket, tmp_path
@@ -495,6 +496,7 @@ async def test_ingest_orphan_dry_run_lists_exactly_the_orphans_and_removes_nothi
     assert bucket_keys(minio, ingest_bucket) == everything
 
 
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_ingest_orphan_removal_deletes_exactly_the_orphan_prefixes(
     wired_tenant_manager, minio, ingest_bucket, tmp_path
@@ -517,6 +519,7 @@ async def test_ingest_orphan_removal_deletes_exactly_the_orphan_prefixes(
     assert (after["orphan_prefixes"], after["live_prefixes"]) == ([], [live])
 
 
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_a_tenant_created_after_the_listing_keeps_its_ingest_objects(
     wired_tenant_manager, minio, ingest_bucket, tmp_path, monkeypatch
@@ -570,6 +573,7 @@ async def test_a_tenant_created_after_the_listing_keeps_its_ingest_objects(
     }
 
 
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_ingest_orphan_reconcile_refuses_when_the_bucket_cannot_be_listed(
     wired_tenant_manager, minio, ingest_bucket, tmp_path
@@ -592,6 +596,7 @@ async def test_ingest_orphan_reconcile_refuses_when_the_bucket_cannot_be_listed(
     assert bucket_keys(minio, ingest_bucket) == before
 
 
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 @pytest.mark.parametrize("registry", ["unreachable", "empty"])
 async def test_ingest_orphan_reconcile_refuses_without_a_trustworthy_tenant_list(
@@ -638,6 +643,7 @@ async def test_ingest_orphan_reconcile_refuses_without_a_trustworthy_tenant_list
     assert bucket_keys(minio, ingest_bucket) == before
 
 
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_ingest_orphan_reconcile_without_an_object_store_answers_503(
     wired_tenant_manager,

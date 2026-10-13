@@ -3923,6 +3923,7 @@ def _ingest_keys(tenant_id: str) -> set:
     }
 
 
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_a_delete_removes_the_tenants_ingest_objects_and_no_others(
     wired_tenant_manager, minio, ingest_bucket, tmp_path, caplog
@@ -3958,6 +3959,7 @@ async def test_a_delete_removes_the_tenants_ingest_objects_and_no_others(
     ) == (True, False)
 
 
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_a_delete_of_a_tenant_with_only_ingest_objects_removes_them(
     wired_tenant_manager, minio, ingest_bucket, tmp_path
@@ -3975,6 +3977,7 @@ async def test_a_delete_of_a_tenant_with_only_ingest_objects_removes_them(
     assert bucket_keys(minio, ingest_bucket) == set()
 
 
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_an_unreachable_object_store_leaves_the_delete_pending_until_its_retry(
     wired_tenant_manager, minio, ingest_bucket, cluster_events, tmp_path, caplog
@@ -4032,6 +4035,7 @@ async def test_an_unreachable_object_store_leaves_the_delete_pending_until_its_r
     assert tenant_delete_pending(store, tenant_id) is False
 
 
+@pytest.mark.ci_fast
 @pytest.mark.asyncio
 async def test_two_tenants_deleted_together_each_remove_only_their_objects(
     wired_tenant_manager, minio, ingest_bucket, tmp_path, caplog, monkeypatch
