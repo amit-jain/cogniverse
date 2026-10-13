@@ -15,6 +15,7 @@ from cogniverse_foundation.config.lm_endpoint_availability import (
     LMEndpointNotServing,
 )
 from cogniverse_foundation.config.routed_lm import (
+    ContextWindowExceeded,
     RouterDecodeFailed,
     UpstreamAuthRejected,
     UpstreamNotServing,
@@ -105,6 +106,23 @@ class TestTheAnswerFollowsTheFailureType:
             "llm_request_rejected",
             kind.__name__,
             status,
+            ROUTED,
+            None,
+        )
+
+    def test_a_context_overflow_is_a_rejected_request_not_an_outage(self):
+        failure = _routed(
+            ContextWindowExceeded,
+            400,
+            context_window=8192,
+            prompt_tokens=7193,
+            requested_output_tokens=1000,
+        )
+        assert _answer(failure) == (
+            502,
+            "llm_request_rejected",
+            "ContextWindowExceeded",
+            400,
             ROUTED,
             None,
         )

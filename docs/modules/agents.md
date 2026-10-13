@@ -4622,6 +4622,17 @@ unobserved. The overrun is therefore bounded by the model call in flight when
 the deadline passes. The same check guards `aforward`/`acall`. `process` is
 synchronous; async callers run it through `asyncio.to_thread`.
 
+A prompt the generated program passes to `llm_query` / `llm_query_batched` can
+carry the whole context variable. `TolerantRLM` bounds each one to the input
+allowance of the LM answering it (`BodyBoundedLM.prompt_allowance()`, known
+for a routed LM on the classification entry) with `fit_text`: a prompt within
+the allowance is sent unchanged; a longer one keeps its leading characters,
+ends with a line saying how many of them are shown, and is logged at WARNING.
+A serving endpoint that cannot report its window or count the prompt raises
+`ContextWindowUnavailableError` / `TokenCountUnavailableError` and no
+completion is requested. An LM with no known allowance sends the prompt as
+built.
+
 A model reply that does not parse into `reasoning` and `code` (dspy's
 `AdapterParseError`, typically a reply cut off at `max_tokens`) is recorded as
 a failed iteration: its trajectory entry has empty `reasoning` and `code` and an

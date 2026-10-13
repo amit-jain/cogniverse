@@ -3,7 +3,9 @@
 The router preserves the upstream's HTTP status, so the status is the
 contract: 401/403 is a credential or tenant refusal, 429 a quota, 5xx an
 outage, 404 an upstream with nothing deployed for the routed model, and any
-other 4xx the router refusing the request cogniverse built.
+other 4xx the router refusing the request cogniverse built. One 400 is not the
+router's: the model endpoint refusing a request larger than its context
+window, which litellm raises as its own ``ContextWindowExceededError``.
 litellm collapses several of those onto one exception class -- a 403 from the
 upstream and a 400 from the router both arrive as ``BadRequestError`` -- so a
 caller reading the litellm class alone cannot tell "this tenant may not use
@@ -27,12 +29,15 @@ inputs are what travels with the error.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import openai
+from litellm.exceptions import ContextWindowExceededError
 from opentelemetry import trace
 
 from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
@@ -47,6 +52,13 @@ from cogniverse_foundation.config.request_body import (
     request_body_metrics,
 )
 from cogniverse_foundation.config.semantic_router import record_served_model
+from cogniverse_foundation.config.token_budget import (
+    ContextWindowUnavailableError,
+    PromptAllowance,
+    TokenBudget,
+    resolve_context_window,
+    shared_served_message_counter,
+)
 from cogniverse_foundation.telemetry.span_contract import (
     LLM_TIER_DEGRADED_ATTRIBUTE,
     LLM_UPSTREAM_EXCEPTION_TYPE_ATTRIBUTE,
@@ -55,6 +67,22 @@ from cogniverse_foundation.telemetry.span_contract import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# Tokens held back from a routed prompt's allowance: the router renders the
+# request with its own reasoning switch, which the endpoint's ``/tokenize``
+# count does not include.
+ROUTED_PROMPT_MARGIN_TOKENS = 32
+
+
+@dataclass(frozen=True, slots=True)
+class ServingEndpoint:
+    """The model endpoint behind a router entry that one endpoint serves."""
+
+    api_base: str
+    model: str
+    context_window: Optional[int] = None
+    num_retries: int = 1
 
 
 class RoutedLMCallFailed(RuntimeError):
@@ -129,7 +157,51 @@ class RouterDecodeFailed(RoutedLMCallFailed):
     """The router would not accept the request cogniverse sent (other 4xx)."""
 
 
+class ContextWindowExceeded(RoutedLMCallFailed):
+    """The prompt and the completion it reserves overflow the model's window.
+
+    ``context_window``, ``prompt_tokens`` and ``requested_output_tokens`` are
+    what the model endpoint reported, ``None`` for one it did not report.
+    ``prompt_tokens`` is a lower bound when the endpoint stops counting at the
+    window.
+    """
+
+    def __init__(
+        self,
+        summary: str,
+        *,
+        context_window: Optional[int],
+        prompt_tokens: Optional[int],
+        requested_output_tokens: Optional[int],
+        **fields: Any,
+    ) -> None:
+        super().__init__(summary, **fields)
+        self.args = (
+            f"{self.args[0]} context_window={context_window} "
+            f"prompt_tokens={prompt_tokens} "
+            f"requested_output_tokens={requested_output_tokens}",
+        )
+        self.context_window = context_window
+        self.prompt_tokens = prompt_tokens
+        self.requested_output_tokens = requested_output_tokens
+
+
+_CONTEXT_WINDOW = re.compile(r"maximum context length is (\d+) tokens")
+_PROMPT_TOKENS = re.compile(
+    r"prompt contains at least (\d+) input tokens|\((\d+) in the messages"
+)
+_REQUESTED_OUTPUT = re.compile(r"requested (\d+) output tokens|(\d+) in the completion")
+
+
+def _reported(pattern: re.Pattern[str], text: str) -> Optional[int]:
+    match = pattern.search(text)
+    if match is None:
+        return None
+    return int(next(group for group in match.groups() if group is not None))
+
+
 _SUMMARIES = {
+    ContextWindowExceeded: "the request does not fit the model's context window",
     UpstreamAuthRejected: "the model endpoint rejected the credentials or the tenant",
     UpstreamRateLimited: "the model endpoint refused the request for quota",
     UpstreamUnavailable: "the model endpoint did not answer",
@@ -187,6 +259,21 @@ def classify_routed_failure(
     if not isinstance(exc, openai.APIError):
         return None
     status = http_status_of(exc)
+    if isinstance(exc, ContextWindowExceededError):
+        reported = str(exc)
+        return ContextWindowExceeded(
+            _SUMMARIES[ContextWindowExceeded],
+            context_window=_reported(_CONTEXT_WINDOW, reported),
+            prompt_tokens=_reported(_PROMPT_TOKENS, reported),
+            requested_output_tokens=_reported(_REQUESTED_OUTPUT, reported),
+            status=status,
+            router_code=router_error_code(exc),
+            tenant_id=tenant_id,
+            tier=tier,
+            routed_model=routed_model,
+            endpoint=endpoint,
+            deadline_s=deadline_s,
+        )
     if isinstance(exc, openai.APIConnectionError):
         # A timeout or a refused/reset connection: no status was answered, and
         # the one litellm stamps on (408 / 500) is synthetic.
@@ -214,8 +301,9 @@ def classify_routed_failure(
 
 
 # Failures a second attempt can plausibly answer. A refused credential, a
-# forbidden tenant, a request the router will not accept and an endpoint with
-# nothing deployed answer the same way every time, so retrying one only doubles
+# forbidden tenant, a request the router will not accept, one larger than the
+# model's window and an endpoint with nothing deployed answer the same way
+# every time, so retrying one only doubles
 # the latency and the load: ``UpstreamNotServing`` is never retried.
 RETRYABLE = (UpstreamRateLimited, UpstreamUnavailable)
 
@@ -267,6 +355,10 @@ class RoutedLM(BodyBoundedLM):
     Carries the routing inputs of the request so a failure says which tenant,
     tier and routed model it belongs to, and owns the retry policy: the
     endpoint's ``num_retries`` applies only to statuses a retry can answer.
+
+    ``served_by`` names the model endpoint the router serves this LM's routed
+    model from, when one endpoint always does. ``prompt_allowance`` is then
+    that endpoint's input allowance, counted with its tokenizer.
     """
 
     def __init__(
@@ -277,11 +369,13 @@ class RoutedLM(BodyBoundedLM):
         tier: str,
         vision_model: str | None = None,
         student_model: str | None = None,
+        served_by: ServingEndpoint | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(model, **kwargs)
         self.tenant_id = tenant_id
         self.tier = tier
+        self.served_by = served_by
         # The endpoint's retry allowance, spent here rather than inside
         # litellm, which retries by status class and would re-send a rejected
         # credential.
@@ -306,6 +400,46 @@ class RoutedLM(BodyBoundedLM):
         resolve the model to a different upstream."""
         return LMEndpoint(
             api_base=self.kwargs.get("api_base"), model=self.model, route=self.tier
+        )
+
+    def prompt_allowance(self) -> Optional[PromptAllowance]:
+        """What a prompt may weigh at the endpoint serving this LM's calls.
+
+        ``None`` when the router chooses the upstream per request. Otherwise
+        the serving endpoint's context window less the completion this LM
+        reserves and ``ROUTED_PROMPT_MARGIN_TOKENS``, counted through that
+        endpoint's ``/tokenize``.
+
+        Raises:
+            ContextWindowUnavailableError: the serving endpoint publishes no
+                window and declares none, or this LM reserves no completion.
+        """
+        served_by = self.served_by
+        if served_by is None:
+            return None
+        reserved = self.kwargs.get("max_tokens") or self.kwargs.get(
+            "max_completion_tokens"
+        )
+        if not reserved:
+            raise ContextWindowUnavailableError(
+                f"{self.model} reserves no completion tokens, so the input "
+                f"allowance of {served_by.model} is undefined"
+            )
+        window = resolve_context_window(
+            served_by.api_base,
+            declared=served_by.context_window,
+            model=served_by.model,
+        )
+        return PromptAllowance(
+            budget=TokenBudget(
+                model=served_by.model,
+                context_window=window.tokens,
+                reserved_output=int(reserved),
+            ),
+            count_tokens=shared_served_message_counter(
+                served_by.api_base, served_by.model, retries=served_by.num_retries
+            ),
+            margin=ROUTED_PROMPT_MARGIN_TOKENS,
         )
 
     def _carrier(self, prompt, messages):

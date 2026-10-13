@@ -664,7 +664,12 @@ A failed routed completion raises a `RoutedLMCallFailed` subclass from `cogniver
 | 429 | `UpstreamRateLimited` | up to `num_retries` |
 | 5xx, reset, timeout | `UpstreamUnavailable` | up to `num_retries` |
 | 404 | `UpstreamNotServing` (an `UpstreamUnavailable`) | never |
+| 400 that litellm raises as `ContextWindowExceededError` | `ContextWindowExceeded` | never |
 | any other 4xx | `RouterDecodeFailed` | never |
+
+`ContextWindowExceeded` is the model endpoint refusing a prompt that, with the completion it reserves, overflows its window. It also carries `context_window`, `prompt_tokens` (a lower bound when the endpoint stops counting at the window) and `requested_output_tokens`, read from the endpoint's answer and `None` for one it did not report.
+
+A `RoutedLM` on `classification_model` is served by one endpoint for every tier — the endpoint the call site is configured with — and `create_routed_lm` records it as `served_by` (`ServingEndpoint(api_base, model, context_window, num_retries)`). `RoutedLM.prompt_allowance()` then returns a `PromptAllowance`: that endpoint's `TokenBudget` (its served, else declared, window less this LM's `max_tokens`), a `shared_served_message_counter` on its `/tokenize`, and a margin of `ROUTED_PROMPT_MARGIN_TOKENS` (32). It returns `None` on the entries whose upstream the router picks per request, and for any other `BodyBoundedLM`. `fit_text(text, allowance=)` (`token_budget`) bounds one free-text prompt to an allowance: a text whose UTF-8 bytes plus `SINGLE_TURN_TEMPLATE_TOKENS` (32) are within it is returned unchanged without a count; otherwise it is counted as a single user message and, when over, cut to its longest leading run of characters that fits together with `cut_notice(kept, total)`, the line appended to say what is shown. It raises `PromptBudgetExceededError` when the notice alone overflows and `TokenCountUnavailableError` when the endpoint cannot count. `TolerantRLM` applies it to every `llm_query` / `llm_query_batched` prompt.
 
 `RoutedLM` spends the endpoint's `num_retries` itself, only on `UpstreamRateLimited` and `UpstreamUnavailable` other than `UpstreamNotServing`; errors that are not provider or transport failures propagate unchanged. A timeout or refused connection carries the status litellm stamps on it (408 / 500) and is an `UpstreamUnavailable` regardless.
 

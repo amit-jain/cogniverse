@@ -23,6 +23,7 @@ from cogniverse_foundation.config.lm_endpoint_availability import (
     LMEndpointNotServing,
 )
 from cogniverse_foundation.config.routed_lm import (
+    ContextWindowExceeded,
     RoutedLMCallFailed,
     RouterDecodeFailed,
     UpstreamAuthRejected,
@@ -95,7 +96,9 @@ def _retry_after(recheck_in_s: float) -> int:
 def _routed(failure: RoutedLMCallFailed) -> LLMDependencyFailure:
     if isinstance(failure, UpstreamNotServing):
         condition = _NOT_SERVING
-    elif isinstance(failure, (UpstreamAuthRejected, RouterDecodeFailed)):
+    elif isinstance(
+        failure, (UpstreamAuthRejected, RouterDecodeFailed, ContextWindowExceeded)
+    ):
         condition = _REJECTED
     else:
         condition = _UNAVAILABLE

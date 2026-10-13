@@ -414,3 +414,82 @@ def test_a_bounded_candidate_fits_the_student_by_the_student_s_own_count(
         for record in caplog.records
         if "reason=DSPy failure" in record.getMessage()
     ] == []
+
+
+@skip_if_no_lm
+def test_an_overflowing_sub_query_is_cut_to_the_student_s_window_and_answered(
+    dspy_lm, student_endpoint
+):
+    """A free-text prompt carrying more evidence than the student's window
+    holds: sent as built it is refused and named a context overflow; cut by
+    the student's own count it is accepted, and that count is the
+    prompt_tokens the student reports."""
+    import litellm
+
+    from cogniverse_foundation.config.routed_lm import (
+        ContextWindowExceeded,
+        classify_routed_failure,
+    )
+    from cogniverse_foundation.config.semantic_router import create_routed_lm
+    from cogniverse_foundation.config.token_budget import (
+        TokenBudget,
+        cut_notice,
+        fit_text,
+    )
+    from cogniverse_foundation.config.unified_config import SemanticRouterConfig
+
+    instruction = "Say whether the evidence below mentions a servo. Evidence: "
+    prompt = instruction + str(
+        [{"segment_id": index, "text": _TRANSCRIPT * 2} for index in range(120)]
+    )
+    lm = create_dspy_lm(student_endpoint)
+
+    with pytest.raises(litellm.ContextWindowExceededError) as refused:
+        lm(prompt, cache=False)
+    failure = classify_routed_failure(
+        refused.value,
+        tenant_id="acme:prod",
+        tier="pro",
+        routed_model="openai/cogniverse-classification",
+    )
+    assert type(failure) is ContextWindowExceeded
+    assert (
+        failure.status,
+        failure.context_window,
+        failure.prompt_tokens,
+        failure.requested_output_tokens,
+    ) == (400, 8192, 7193, 1000)
+
+    routed = create_routed_lm(
+        endpoint=student_endpoint,
+        config=SemanticRouterConfig(
+            enabled=True, semantic_router_url="http://127.0.0.1:9/v1"
+        ),
+        tenant_id="acme:prod",
+        tier="pro",
+        call_site="orchestrator_agent",
+    )
+    allowance = routed.prompt_allowance()
+    assert allowance.budget == TokenBudget(
+        model=student_endpoint.model, context_window=8192, reserved_output=1000
+    )
+    assert allowance.tokens == 7160
+
+    fitted = fit_text(prompt, allowance=allowance)
+    kept = fitted.kept_chars
+    assert fitted.total_chars == len(prompt)
+    assert fitted.text == prompt[:kept] + cut_notice(kept, len(prompt))
+    assert fitted.text.startswith(instruction)
+    assert fitted.input_tokens <= 7160
+    one_more = [
+        {
+            "role": "user",
+            "content": prompt[: kept + 1] + cut_notice(kept + 1, len(prompt)),
+        }
+    ]
+    assert allowance.count_tokens(one_more) > 7160
+
+    before = len(lm.history)
+    lm(fitted.text, cache=False)
+    [entry] = lm.history[before:]
+    assert entry["usage"]["prompt_tokens"] == fitted.input_tokens

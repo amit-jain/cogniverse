@@ -31,6 +31,8 @@ from dspy.primitives.repl_types import REPLHistory
 from dspy.utils.exceptions import AdapterParseError
 
 from cogniverse_agents.inference.deno_check import is_deno_available
+from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
+from cogniverse_foundation.config.token_budget import fit_text
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +155,10 @@ class TolerantRLM(dspy.RLM):
     caller's expiry never truncates another's concurrent call on the same
     instance.
 
+    A prompt the generated program hands ``llm_query`` / ``llm_query_batched``
+    is bounded to the answering LM's input allowance before it is sent
+    (``_fit_prompt``).
+
     A model turn that does not parse into ``reasoning`` and ``code`` (an
     ``AdapterParseError``, typically a reply cut off at the token limit) is
     recorded as a failed iteration whose output tells the model what was
@@ -225,10 +231,52 @@ class TolerantRLM(dspy.RLM):
         return history.append(code="", output=_malformed_turn_output(error))
 
     def _make_llm_tools(self, *args, **kwargs) -> dict[str, Callable]:
-        return {
+        tools = {
             name: self._bounded_tool(tool)
             for name, tool in super()._make_llm_tools(*args, **kwargs).items()
         }
+        query, batched = tools["llm_query"], tools["llm_query_batched"]
+
+        @functools.wraps(query)
+        def llm_query(prompt: str) -> str:
+            self._raise_if_expired()
+            return query(self._fit_prompt(prompt))
+
+        @functools.wraps(batched)
+        def llm_query_batched(prompts: list[str]) -> list[str]:
+            self._raise_if_expired()
+            return batched([self._fit_prompt(prompt) for prompt in prompts])
+
+        return {**tools, "llm_query": llm_query, "llm_query_batched": llm_query_batched}
+
+    def _fit_prompt(self, prompt: str) -> str:
+        """``prompt`` bounded to what the answering LM's endpoint accepts.
+
+        The prompt is whatever the generated program built, so it can carry
+        the whole context variable. An LM that knows its allowance
+        (``BodyBoundedLM.prompt_allowance``) gets the prompt cut to it with
+        ``fit_text``; any other LM gets it unchanged.
+        """
+        lm = self.sub_lm if self.sub_lm is not None else dspy.settings.lm
+        if not isinstance(lm, BodyBoundedLM) or not isinstance(prompt, str):
+            return prompt
+        allowance = lm.prompt_allowance()
+        if allowance is None:
+            return prompt
+        fitted = fit_text(prompt, allowance=allowance)
+        if fitted.kept_chars < fitted.total_chars:
+            logger.warning(
+                "RLM sub-query prompt cut to %d of %d characters to fit %s: "
+                "context_window=%d reserved_output=%d margin=%d input_tokens=%d",
+                fitted.kept_chars,
+                fitted.total_chars,
+                allowance.budget.model,
+                allowance.budget.context_window,
+                allowance.budget.reserved_output,
+                allowance.margin,
+                fitted.input_tokens,
+            )
+        return fitted.text
 
     def _bounded_tool(self, tool: Callable) -> Callable:
         """Wrap an in-REPL model tool so it cannot run past the deadline."""

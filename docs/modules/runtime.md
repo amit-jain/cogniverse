@@ -1652,7 +1652,8 @@ caller's request.
 A non-streamed turn that failed on the chat LLM answers as the agents route
 does (`llm_dependency_failure`): 503 with `error.code="llm_unavailable"` when
 the LLM is unavailable, 502 with `"llm_request_rejected"` when it rejected the
-request, `error_type` naming the failure and `Retry-After` for a not-serving
+request (a refused credential, a request the router would not accept, or a
+`ContextWindowExceeded` prompt), `error_type` naming the failure and `Retry-After` for a not-serving
 endpoint. A raised detailed-report model failure (a 503, a reset, a timeout
 from the report LM) is a 503 `llm_unavailable`; it is not the 502
 `upstream_no_answer` branch, which is reserved for a returned envelope from
