@@ -983,7 +983,7 @@ class TestBrightVideoProbesOrchestrator:
         )
 
         async def _fixed_search_plan(
-            query, conversation_context="", gateway_context=""
+            query, conversation_context="", gateway_context="", **planning
         ):
             return OrchestrationPlan(
                 query=query,

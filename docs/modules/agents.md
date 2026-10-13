@@ -1520,8 +1520,12 @@ async def _process_impl(
     query = input.query
 
     # Planning, with the agents that can serve this tenant
+    planning_agents, withheld_agents = await self._tenant_planning(tenant_id)
     plan = await self._create_plan(
-        query, available_agents=await self._planning_agents(tenant_id)
+        query,
+        available_agents=planning_agents,
+        withheld_agents=withheld_agents,
+        requested_modalities=[*input.detected_modalities, input.modality],
     )
 
     # Action
@@ -1554,12 +1558,20 @@ modalities it retrieves is served by the tenant's servable profiles
 (`servable_tenant_profiles`, mapped through `MODALITY_PROFILE_TYPES`). A
 video-only tenant is therefore never planned an image or audio search. A
 store or registry outage raises `RuntimeError` naming the tenant instead of
-planning against a guess.
+planning against a guess. `_tenant_planning(tenant_id)` returns the same list
+with the withheld retrieval agents and the modalities each retrieves.
 
-**`_create_plan(query, conversation_context, gateway_context, *, available_agents) -> OrchestrationPlan`**
+**`_create_plan(query, conversation_context, gateway_context, *, available_agents, withheld_agents=None, requested_modalities=()) -> OrchestrationPlan`**
 
 Planning Phase: the DSPy planner proposes an agent sequence from
-`available_agents` (the `_planning_agents` list).
+`available_agents` (the `_planning_agents` list). Its instructions name only
+the preprocessing agents; every other agent reaches it through
+`available_agents`.
+
+Every dispatch the orchestrator makes for a run carries
+`step_context(tenant_id, session_id)` as its context: the tenant, the session
+and `orchestration_step`, which tells the runtime serving it that the dispatch
+is a step of a run and not an interaction to file in the wiki on its own.
 
 ```text
 async def _create_plan(
@@ -1583,13 +1595,16 @@ async def _create_plan(
 
     # Normalize the LM output into an executable plan:
     #   - "name" / "name_agent" aliases resolve to the offered name
-    #   - an agent not offered is dropped and listed in unavailable_agents
+    #   - an agent not offered is dropped and listed in unavailable_agents;
+    #     a retrieval agent withheld from the tenant is dropped without being
+    #     listed when requested_modalities are known and include none it
+    #     retrieves
     #   - a repeated agent keeps its first step only (results are keyed
     #     by agent name)
     #   - parallel_steps / dependency indices are remapped from the raw
     #     sequence to the surviving step positions
-    #   - an empty result falls back to a single search_agent step when
-    #     search_agent was offered
+    #   - a plan left with no execution agent ends with a search_agent step
+    #     when search_agent was offered
     ...
     return OrchestrationPlan(
         query=query,

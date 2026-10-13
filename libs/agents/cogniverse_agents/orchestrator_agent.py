@@ -23,7 +23,18 @@ import weakref
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    AbstractSet,
+    Any,
+    Collection,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+)
 
 import dspy
 import httpx
@@ -640,11 +651,9 @@ class OrchestrationSignature(dspy.Signature):
              available and the query's modality/domain should pick one.
          These preprocessing agents can run in parallel with each other; the
          execution agent depends on them.
-      2. End with exactly one execution agent (`search_agent`,
-         `summarizer_agent`, `detailed_report_agent`, `image_search_agent`,
-         `audio_analysis_agent`, `document_agent`, `coding_agent`,
-         `deep_research_agent`) matching the query's modality and
-         generation_type.
+      2. End with exactly one execution agent: an agent in
+         `available_agents` other than the preprocessing agents above, the one
+         matching the query's modality and generation_type.
       3. Only include agents from `available_agents`. Never hallucinate.
       4. For trivial queries where preprocessing adds no value, a single
          execution agent is acceptable.
@@ -1302,12 +1311,17 @@ class OrchestratorAgent(
                 logger.info(f"Workflow intelligence matched template: {template.name}")
         gateway_context = "; ".join(gateway_hints)
 
-        planning_agents = await self._planning_agents(tenant_id)
+        planning_agents, withheld_agents = await self._tenant_planning(tenant_id)
         plan = await self._create_plan(
             query,
             conversation_context,
             gateway_context,
             available_agents=planning_agents,
+            withheld_agents=withheld_agents,
+            requested_modalities=[
+                *(input.detected_modalities or []),
+                *([input.modality] if input.modality else []),
+            ],
         )
         agent_sequence = [step.agent_name for step in plan.steps]
         duplicate_agents = sorted(
@@ -1508,10 +1522,18 @@ class OrchestratorAgent(
                     )
 
     async def _planning_agents(self, tenant_id: str) -> List[str]:
-        """The registered agents a plan for ``tenant_id`` may use.
+        """The registered agents a plan for ``tenant_id`` may use."""
+        planning_agents, _ = await self._tenant_planning(tenant_id)
+        return planning_agents
+
+    async def _tenant_planning(
+        self, tenant_id: str
+    ) -> tuple[List[str], Dict[str, frozenset[str]]]:
+        """The registered agents a plan for ``tenant_id`` may use, and the
+        retrieval agents withheld from it with the modalities each retrieves.
 
         A retrieval agent (one whose declared modality and capabilities make
-        it the retrieval agent for that modality) is left out when the tenant
+        it the retrieval agent for that modality) is withheld when the tenant
         serves none of its modalities: it can only answer that the tenant has
         no such content. Every other registered agent is kept. The tenant's
         served modalities come from its servable profiles, so a store or
@@ -1549,6 +1571,7 @@ class OrchestratorAgent(
             ) from exc
 
         planning_agents = []
+        withheld: Dict[str, frozenset[str]] = {}
         for agent_name in self.registry.list_agents():
             agent_config = agents_config.get(agent_name)
             retrieves = set()
@@ -1577,9 +1600,10 @@ class OrchestratorAgent(
                     sorted(retrieves),
                     sorted(served),
                 )
+                withheld[agent_name] = frozenset(retrieves)
                 continue
             planning_agents.append(agent_name)
-        return planning_agents
+        return planning_agents, withheld
 
     async def _create_plan(
         self,
@@ -1588,16 +1612,28 @@ class OrchestratorAgent(
         gateway_context: str = "",
         *,
         available_agents: List[str],
+        withheld_agents: Optional[Mapping[str, AbstractSet[str]]] = None,
+        requested_modalities: Collection[str] = (),
     ) -> OrchestrationPlan:
         """
         Planning Phase: Create execution plan using LLM reasoning.
+
+        An agent the planner names outside ``available_agents`` is reported
+        in ``unavailable_agents``, with one exception: a retrieval agent
+        withheld from this tenant, named for a request whose modalities are
+        known and include none it retrieves, is dropped. The request did not
+        ask for what that agent finds, so nothing it asked for is missing.
+        A plan left with no execution agent ends with the search agent.
 
         Args:
             query: User query to analyze
             conversation_context: Formatted previous conversation turns
             gateway_context: Classification context from gateway agent
             available_agents: The agents the plan may use
-                (``_planning_agents``)
+            withheld_agents: The retrieval agents withheld from this tenant
+                and the modalities each retrieves (``_tenant_planning``)
+            requested_modalities: The modalities the request was detected to
+                ask for; empty when they are not known
 
         Returns:
             OrchestrationPlan with agent sequence and parallelization
@@ -1635,6 +1671,13 @@ class OrchestratorAgent(
                     parallel_groups.append(indices)
 
         unavailable_agents = []
+        withheld_agents = withheld_agents or {}
+        requested = {
+            _COVERAGE_MODALITY_ALIASES.get(modality, modality)
+            for modality in self._normalize_detected_modalities(
+                list(requested_modalities)
+            )
+        }
         # Build lookup for agent name normalization (LLM may add/omit _agent suffix)
         _agent_lookup = {name: name for name in registered_agents}
         for name in registered_agents:
@@ -1653,6 +1696,15 @@ class OrchestratorAgent(
         for i, agent_name in enumerate(agent_sequence):
             agent_name = _agent_lookup.get(agent_name, agent_name)
             if agent_name not in registered_agents:
+                retrieves = withheld_agents.get(agent_name)
+                if retrieves and requested and not requested & retrieves:
+                    logger.warning(
+                        f"LLM proposed agent '{agent_name}', which retrieves "
+                        f"{sorted(retrieves)}: this tenant serves none of it "
+                        f"and the request asks for {sorted(requested)}, "
+                        f"dropping it from the plan"
+                    )
+                    continue
                 logger.warning(
                     f"LLM proposed agent '{agent_name}', not available for "
                     f"this plan ({registered_agents}), skipping"
@@ -1691,14 +1743,18 @@ class OrchestratorAgent(
             for step_index, (_, agent_name) in enumerate(surviving)
         ]
 
-        # Terminal fallback: when the planner proposed only unknown agents
-        # (or proposed nothing), the executor would otherwise stall with
-        # "No steps ready to execute but execution incomplete". Drop in
-        # a single ``search`` step against the registered search agent so
-        # the loop still produces a retrieval pass. If ``search`` itself
-        # isn't registered, leave ``steps`` empty and let the caller
-        # surface the empty-plan condition.
-        if not steps:
+        # Terminal fallback: when no execution agent survives (the planner
+        # proposed only preprocessing or unavailable agents, or nothing), the
+        # run would otherwise have nothing to answer with, and with no step
+        # at all the executor would stall with "No steps ready to execute but
+        # execution incomplete". End the plan with a ``search`` step against
+        # the registered search agent, after every surviving step. If
+        # ``search`` itself isn't registered, leave ``steps`` as they are and
+        # let the caller surface the condition.
+        if not any(
+            _canonical_agent_name(step.agent_name) not in _ENRICHMENT_AGENTS
+            for step in steps
+        ):
             search_name = next(
                 (
                     candidate
@@ -1709,15 +1765,16 @@ class OrchestratorAgent(
             )
             if search_name is not None:
                 logger.warning(
-                    f"Planner produced 0 executable steps after filtering "
-                    f"{unavailable_agents}; falling back to a single "
+                    f"Planner produced no execution step "
+                    f"(proposed {agent_sequence}, unavailable "
+                    f"{unavailable_agents}); ending the plan with a "
                     f"'{search_name}' step"
                 )
                 steps.append(
                     AgentStep(
                         agent_name=search_name,
                         input_data={"query": query},
-                        depends_on=[],
+                        depends_on=list(range(len(steps))),
                         reasoning="Terminal fallback after planner produced no executable steps",
                     )
                 )
