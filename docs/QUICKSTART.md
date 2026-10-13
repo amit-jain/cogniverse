@@ -246,7 +246,7 @@ Via Telegram (after connecting the messaging gateway):
 /wiki lint            — Check wiki for orphan, stale, empty, or malformed pages
 ```
 
-Auto-filing triggers automatically when an interaction has 3+ extracted entities, comes from `detailed_report_agent` or `deep_research_agent`, or spans 4+ conversation turns.
+Auto-filing triggers automatically when an interaction has 3+ extracted entities, comes from `detailed_report_agent` or `deep_research_agent`, or spans 4+ conversation turns. An orchestrated run is one interaction: it is filed once, after it finishes, and only when it succeeded.
 
 ---
 

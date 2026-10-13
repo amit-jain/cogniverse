@@ -433,6 +433,23 @@ class OrchestratorDeps(AgentDeps):
     pass
 
 
+# Set in the context of every dispatch the orchestrator makes for a run, so
+# the receiver knows the dispatch is part of a run and not an interaction of
+# its own.
+ORCHESTRATION_STEP_CONTEXT_KEY = "orchestration_step"
+
+
+def step_context(tenant_id: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """The context of a dispatch the orchestrator makes as part of a run."""
+    context: Dict[str, Any] = {
+        "tenant_id": tenant_id,
+        ORCHESTRATION_STEP_CONTEXT_KEY: True,
+    }
+    if session_id:
+        context["session_id"] = session_id
+    return context
+
+
 # Terminal outcome of an orchestration and of each step inside it. A step
 # reporting one of FAILED_STEP_STATUSES produced no answer; PARTIAL_STATUS
 # means an answer exists but the plan did not complete.
@@ -985,7 +1002,7 @@ class OrchestratorAgent(
                     json={
                         "agent_name": sub_agent_name,
                         "query": query,
-                        "context": {"tenant_id": tenant_id},
+                        "context": step_context(tenant_id),
                     },
                     headers=trace_headers(),
                     timeout=getattr(ep, "timeout", 30),
@@ -1871,9 +1888,7 @@ class OrchestratorAgent(
 
                 # Prepare input (merge query with previous results if needed)
                 agent_input = step.input_data.copy()
-                context: Dict[str, Any] = {"tenant_id": tenant_id}
-                if session_id:
-                    context["session_id"] = session_id
+                context = step_context(tenant_id, session_id)
 
                 # Merge enrichment from every preprocessing agent that has
                 # completed so far, not just direct dependencies. The DSPy
@@ -2267,7 +2282,7 @@ class OrchestratorAgent(
             payload = {
                 "agent_name": endpoint.name,
                 "query": query,
-                "context": {"tenant_id": tenant_id},
+                "context": step_context(tenant_id),
                 "modality": modality,
                 "top_k": top_k,
                 "limit": top_k,
@@ -2573,9 +2588,7 @@ class OrchestratorAgent(
         if anchor is None:
             return []
 
-        context: Dict[str, Any] = {"tenant_id": tenant_id}
-        if session_id:
-            context["session_id"] = session_id
+        context = step_context(tenant_id, session_id)
 
         seed_subject = (
             missing_aspects[0] if missing_aspects else anchor["source_doc_id"]

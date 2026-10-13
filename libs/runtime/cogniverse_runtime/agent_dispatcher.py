@@ -1831,13 +1831,24 @@ class AgentDispatcher:
                 tenant_id, str(context_id), query, result
             )
 
-        entities = result.get("entities", [])
-        turn_count = len(conversation_history or []) // 2 + 1
-        self._spawn_background(
-            self._maybe_auto_file_wiki(
-                query, result, entities, agent_name, tenant_id, turn_count
-            )
+        from cogniverse_agents.orchestrator_agent import (
+            ORCHESTRATION_STEP_CONTEXT_KEY,
         )
+
+        # A run is one interaction: its steps are filed with it, by the
+        # dispatch that started it, never one by one while it is running.
+        if not context.get(ORCHESTRATION_STEP_CONTEXT_KEY):
+            turn_count = len(conversation_history or []) // 2 + 1
+            self._spawn_background(
+                self._maybe_auto_file_wiki(
+                    query,
+                    result,
+                    result.get("entities", []),
+                    agent_name,
+                    tenant_id,
+                    turn_count,
+                )
+            )
         return result
 
     @staticmethod
@@ -2426,6 +2437,9 @@ class AgentDispatcher:
         Resolves the per-tenant WikiManager via the router factory so each
         tenant's auto-filed pages land in their own wiki. Entity records from
         the extraction agent are projected to wiki titles first.
+
+        An orchestrated run is filed once, as the orchestrator's interaction,
+        with the entities its steps extracted, and only when it succeeded.
         """
         try:
             from cogniverse_agents.wiki.wiki_manager import WikiManager
@@ -2435,8 +2449,37 @@ class AgentDispatcher:
             if wiki_router._wiki_manager_factory is None:
                 return
 
+            run = response.get("orchestration_result")
+            if isinstance(run, dict):
+                if response.get("status") != "success":
+                    logger.info(
+                        "Wiki auto-filing skipped for the orchestrated run "
+                        "(tenant=%s): its status is %r",
+                        tenant_id,
+                        response.get("status"),
+                    )
+                    return
+                steps = {
+                    name: step
+                    for name, step in (run.get("agent_results") or {}).items()
+                    if isinstance(step, dict)
+                }
+                entities = [
+                    entity
+                    for step in steps.values()
+                    for entity in step.get("entities") or []
+                ]
+                filed_as = "orchestrator_agent"
+                filing_agents = [filed_as, *steps]
+            else:
+                filed_as = agent_name
+                filing_agents = [agent_name]
+
             titles = entity_titles(entities)
-            if not WikiManager._should_auto_file(titles, agent_name, turn_count):
+            if not any(
+                WikiManager._should_auto_file(titles, name, turn_count)
+                for name in filing_agents
+            ):
                 return
 
             response_text = response.get("answer")
@@ -2444,7 +2487,7 @@ class AgentDispatcher:
                 logger.info(
                     "Wiki auto-filing skipped for %s (tenant=%s): the dispatch "
                     "carried no answer text",
-                    agent_name,
+                    filed_as,
                     tenant_id,
                 )
                 return
@@ -2457,7 +2500,7 @@ class AgentDispatcher:
                     query=query,
                     response=response_text,
                     entities=titles,
-                    agent_name=agent_name,
+                    agent_name=filed_as,
                 ),
             )
         except Exception as exc:

@@ -932,6 +932,8 @@ After every agent dispatch, the system checks whether the interaction is substan
 - The agent is `detailed_report_agent` or `deep_research_agent`
 - The conversation has 4 or more turns
 
+An orchestrated run is one interaction. The dispatches the orchestrator makes for its steps carry `orchestration_step` in their context and file nothing, so no step of a run retrieves a page that run wrote. The run is filed once, by the dispatch that started it, as `orchestrator_agent`, with the entities its steps extracted, when any step meets a condition above, and only when the run's status is `success`.
+
 Auto-filing is fire-and-forget (non-blocking). Failures are logged but never surfaced to the user.
 
 #### Auto-Filing Flow

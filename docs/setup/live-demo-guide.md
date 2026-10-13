@@ -826,6 +826,8 @@ Interactions are automatically saved to the wiki when:
 - The agent is `detailed_report_agent` or `deep_research_agent`
 - The conversation spans 4+ turns
 
+An orchestrated run counts as one interaction, with the entities and agents of its steps: it is saved once, after it finishes, and only when it succeeded.
+
 ### REST API
 
 ```bash
