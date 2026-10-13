@@ -39,11 +39,13 @@ from cogniverse_core.common.models.whisper_transcription import (
     loudest_frame_dbfs,
     pcm16_wav_samples,
     reaches_chunk_end,
+    repeated_speech,
     response_format,
     sampling_fields,
     split_for_whisper,
     transcribe_in_chunks,
     wav_bytes,
+    word_agreement,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
@@ -53,6 +55,19 @@ LOGGER = logging.getLogger("whisper-transcription-test")
 RECORDED = Path(__file__).parent / "fixtures" / "vllm_whisper_chunk_answers.json"
 # A json answer looping on one phrase, as the servers answer some chunks.
 LOOP = " Go! Stop cooking in your safe!" * 30
+# A decode loop takes a different shape each time it is sampled: one loop per
+# fallback temperature, no two on the same phrase.
+LOOPS = tuple(
+    f" {phrase}" * 60
+    for phrase in (
+        "Go!",
+        "Stop cooking!",
+        "In your safe!",
+        "Over there!",
+        "Not again!",
+        "Run for it!",
+    )
+)
 
 
 def _noise(seconds: float, seed: int = 0) -> np.ndarray:
@@ -472,13 +487,13 @@ def test_a_json_answer_looping_on_every_attempt_raises_naming_the_chunk():
     audio = _noise(10.0)
     server = _Server(
         timed={0: [[(0.0, 4.0, " Go! Stop cooking in your safe!")]]},
-        text={0: [LOOP] * TRANSCRIBE_ATTEMPTS},
+        text={0: list(LOOPS)},
     )
 
     with pytest.raises(GarbledTranscriptError) as caught:
         _transcribe(audio, server)
 
-    ratio = compression_ratio(LOOP)
+    ratios = tuple(compression_ratio(loop) for loop in LOOPS)
     error = caught.value
     assert (
         error.source,
@@ -487,15 +502,166 @@ def test_a_json_answer_looping_on_every_attempt_raises_naming_the_chunk():
         error.end_s,
         error.compression_ratios,
         error.attempts,
-    ) == ("clip.wav", 0, 0.0, 10.0, (ratio,) * 6, 6)
+    ) == ("clip.wav", 0, 0.0, 10.0, ratios, 6)
     assert str(error) == (
         "clip.wav: chunk 0 (0.00-10.00s) came back unusable on all 6 attempts: "
-        f"6 repetition loops (compression ratio {', '.join([f'{ratio:.2f}'] * 6)}"
-        ", above 2.4) and 0 empty"
+        f"6 repetition loops (compression ratio "
+        f"{', '.join(f'{ratio:.2f}' for ratio in ratios)}, above 2.4) and 0 empty"
     )
     assert server.requests == [(0, "en", "verbose_json", 0.0)] + [
         (0, "en", "json", t) for t in FALLBACK_TEMPERATURES
     ]
+
+
+# The cluster server's json answers, one per fallback temperature, for the
+# first chunk of a ten-second clip played back to back (three plays a chunk):
+# every one compresses like a loop, and every one is what the audio says.
+_AND_BEAR = (
+    " I'm about to light a fire and bear a grill style. Hit, or at least try."
+    " Don't tell me I got it on the first try."
+)
+_HIT = (
+    " I'm about to light a fire in Bear Grylls style Hit or at least try"
+    " Don't tell me I got it on the first try"
+)
+_OR = (
+    " I'm about to light a fire in Bear Grylls style Or at least try"
+    " Don't tell me I got it on the first try"
+)
+REPEATED_SPEECH = (
+    _AND_BEAR * 3,
+    _HIT * 3,
+    _HIT * 3,
+    _OR * 3,
+    _OR * 3,
+    " I'm about to light a fire in Bear Grylls style Or at least try Don't tell"
+    " me I got it on the first time I'm about the light a fire in Bear Grylls"
+    " style Hit or at least try Don't tell me I got it on the first time I'm"
+    " about the light a fire in Bear Grylls style Hit or at least try Don't tell"
+    " me I got it on the first time",
+)
+# How that server answered the same chunk once at temperature 0.8: a loop that
+# formed under sampling, sharing next to nothing with the temperature-0 answer.
+FORMED_LOOP = (
+    " I'm about about to' douIy in by**I* O* b**\" About to :I*Ie at the ; * Well"
+    " I :P of.et the w* bo of. I.ast. I'll. I got about to! How '. We Are. a.e."
+    " i. I'll let. I. Star. Hit. Or, at. Try Get. How? The. At. I. Out. How?"
+    " About How? About How." + " About" * 300
+)
+
+
+def test_the_recorded_repeated_speech_compresses_like_a_loop():
+    assert [round(compression_ratio(answer), 2) for answer in REPEATED_SPEECH] == [
+        3.36,
+        3.34,
+        3.34,
+        3.25,
+        3.25,
+        3.01,
+    ]
+    assert [
+        round(word_agreement(REPEATED_SPEECH[0], answer), 2)
+        for answer in (*REPEATED_SPEECH, FORMED_LOOP)
+    ] == [1.0, 0.9, 0.9, 0.88, 0.88, 0.58, 0.05]
+    assert compression_ratio(FORMED_LOOP) > GARBLED_COMPRESSION_RATIO
+
+
+def test_speech_repeating_at_every_temperature_keeps_its_temperature_0_answer(
+    caplog,
+):
+    """Every json answer of the chunk repeats, in the same words up to the
+    highest temperature: the audio repeats, and the temperature-0 answer is
+    its transcript."""
+    audio = _noise(29.4)
+    server = _Server(timed={0: [[]] * 6}, text={0: list(REPEATED_SPEECH)})
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(audio, server)
+
+    assert server.requests == [
+        (0, "en", fmt, t)
+        for t in FALLBACK_TEMPERATURES
+        for fmt in ("verbose_json", "json")
+    ]
+    assert transcript["full_text"] == REPEATED_SPEECH[0].strip()
+    assert transcript["segments"] == _segments((0.0, 29.4, REPEATED_SPEECH[0].strip()))
+    assert [record.getMessage() for record in caplog.records][-1] == (
+        "clip.wav: chunk 0 (0.00-29.40s) repeats at every temperature and its "
+        "answer at temperature 0.8 agrees with the one at 0.0 (0.88): kept as "
+        "repeated speech"
+    )
+
+
+def test_a_loop_that_forms_under_sampling_does_not_pass_for_repeated_speech():
+    """The answers repeat at every temperature, but the ones at 0.8 and 1.0
+    are loops of their own: nothing corroborates the temperature-0 answer."""
+    audio = _noise(29.4)
+    answers = [*REPEATED_SPEECH[:4], FORMED_LOOP, FORMED_LOOP]
+    server = _Server(timed={0: [[]] * 6}, text={0: list(answers)})
+
+    with pytest.raises(GarbledTranscriptError) as caught:
+        _transcribe(audio, server)
+
+    assert caught.value.compression_ratios == tuple(
+        compression_ratio(answer) for answer in answers
+    )
+    assert caught.value.attempts == 6
+
+
+def test_one_high_temperature_answer_agreeing_is_enough():
+    """A loop formed at 0.8, and the answer at 1.0 still says what the one at
+    0.0 says."""
+    audio = _noise(29.4)
+    answers = [*REPEATED_SPEECH[:4], FORMED_LOOP, REPEATED_SPEECH[5]]
+    server = _Server(timed={0: [[]] * 6}, text={0: list(answers)})
+
+    transcript = _transcribe(audio, server)
+
+    assert transcript["full_text"] == REPEATED_SPEECH[0].strip()
+
+
+def _looped(**by_temperature: str) -> dict:
+    return {
+        float(temperature.lstrip("t").replace("_", ".")): ChunkTranscript(
+            text=text, language="en", segments=[]
+        )
+        for temperature, text in by_temperature.items()
+    }
+
+
+def test_repeated_speech_needs_an_agreeing_loop_at_a_loop_breaking_temperature():
+    first, hit, last = REPEATED_SPEECH[0], REPEATED_SPEECH[1], REPEATED_SPEECH[5]
+
+    kept, temperature, agreement = repeated_speech(_looped(t0_0=first, t1_0=last))
+    assert (kept.text, temperature, round(agreement, 2)) == (first, 1.0, 0.58)
+    # The best agreeing answer at 0.8 or above is the one named.
+    kept, temperature, agreement = repeated_speech(
+        _looped(t0_0=first, t0_8=REPEATED_SPEECH[4], t1_0=last)
+    )
+    assert (kept.text, temperature, round(agreement, 2)) == (first, 0.8, 0.88)
+    # Loops that agree only below 0.8 are how a decode loop behaves.
+    assert repeated_speech(_looped(t0_0=first, t0_2=hit, t0_4=hit, t0_6=hit)) is None
+    # No temperature-0 loop to keep.
+    assert repeated_speech(_looped(t0_8=first, t1_0=first)) is None
+    assert repeated_speech({}) is None
+    assert repeated_speech(_looped(t0_0=first, t0_8=FORMED_LOOP)) is None
+
+
+def test_word_agreement_is_the_share_of_words_two_answers_have_in_order():
+    assert word_agreement("a b c d", "A, b. c! d?") == 1.0
+    assert word_agreement("a b c d", "a b x y") == 0.5
+    assert word_agreement("a b c d", "a x y z") == 0.25
+    assert word_agreement("a b c d", "w x y z") == 0.0
+    assert word_agreement("", "a b") == 0.0
+    assert word_agreement("...", "a b") == 0.0
+
+
+def test_agreement_at_the_threshold_is_repeated_speech_and_below_it_is_not():
+    loop = " a b c d" * 40
+    assert whisper_transcription.REPEATED_SPEECH_AGREEMENT == 0.5
+    at = repeated_speech(_looped(t0_0=loop, t0_8=" a b x y" * 40))
+    assert (at[1], at[2]) == (0.8, 0.5)
+    assert repeated_speech(_looped(t0_0=loop, t0_8=" a x y z" * 40)) is None
 
 
 def test_loops_and_empty_answers_together_raise_as_garbled():

@@ -13,11 +13,15 @@ its words with the timed segments.
 An answer that is a repetition loop (compression ratio above
 ``GARBLED_COMPRESSION_RATIO``), or empty for a chunk whose loudest 25 ms frame
 reaches ``SILENCE_FLOOR_DBFS``, is asked again at the next of
-``FALLBACK_TEMPERATURES``. A chunk with no usable ``json`` answer and no usable
-timed answer running to its end raises ``GarbledTranscriptError`` (some answer
-looped) or ``EmptyTranscriptError``; one whose ``verbose_json`` answer is never
-usable keeps its text as one segment spanning the chunk. A silent chunk may
-come back empty.
+``FALLBACK_TEMPERATURES``. Speech that itself repeats compresses like a loop,
+but unlike a loop it comes back in the same words however it is sampled: a
+chunk whose ``json`` answer repeats at every temperature keeps its
+temperature-0 answer when an answer at ``LOOP_BREAKING_TEMPERATURE`` or above
+agrees with it (``repeated_speech``). A chunk with no usable ``json`` answer
+and no usable timed answer running to its end otherwise raises
+``GarbledTranscriptError`` (some answer looped) or ``EmptyTranscriptError``;
+one whose ``verbose_json`` answer is never usable keeps its text as one segment
+spanning the chunk. A silent chunk may come back empty.
 """
 
 from __future__ import annotations
@@ -58,6 +62,15 @@ SAMPLING_SEED = 0
 # An answer whose text compresses better than this is a repetition loop
 # (Whisper's threshold). Measured: answers at most 1.82, loops at least 3.07.
 GARBLED_COMPRESSION_RATIO = 2.4
+# The temperature by which sampling breaks a decode loop: of 15 recorded loops
+# on the cluster's server, none was still a loop at 0.8 or 1.0, and their
+# answers there shared at most 0.27 of their words with the loop.
+LOOP_BREAKING_TEMPERATURE = 0.8
+# Word agreement (difflib ratio) with the temperature-0 answer at or above
+# which an answer still repeating at LOOP_BREAKING_TEMPERATURE says the same
+# thing. Measured on a ten-second clip played back to back: 0.60 at the tenth
+# percentile of 41 such answers; a loop that formed at 0.8 instead scored 0.05.
+REPEATED_SPEECH_AGREEMENT = 0.5
 # Whisper's timestamp step, in seconds.
 TIMESTAMP_STEP_S = 0.02
 # Languages vLLM joins without a space between chunk texts.
@@ -494,6 +507,44 @@ def transcribe_in_chunks(
     }
 
 
+def word_agreement(first: str, second: str) -> float:
+    """How much of two answers' wording is shared, in order: 1.0 for the same
+    words, 0.0 for none in common or for an answer with no words."""
+    left = [word for word in map(_comparable, _units(first, False)) if word]
+    right = [word for word in map(_comparable, _units(second, False)) if word]
+    if not left or not right:
+        return 0.0
+    return SequenceMatcher(None, left, right, autojunk=False).ratio()
+
+
+def repeated_speech(
+    looped: Dict[float, ChunkTranscript],
+) -> Optional[Tuple[ChunkTranscript, float, float]]:
+    """The temperature-0 answer of a chunk whose answers looped, when the
+    audio itself repeats.
+
+    ``looped`` maps each temperature whose answer came back as a repetition
+    loop to that answer. Returns the temperature-0 answer with the temperature
+    and agreement of the answer that corroborates it: the one at
+    ``LOOP_BREAKING_TEMPERATURE`` or above that agrees with it most, when that
+    is at least ``REPEATED_SPEECH_AGREEMENT``. ``None`` otherwise.
+    """
+    first = looped.get(FALLBACK_TEMPERATURES[0])
+    if first is None:
+        return None
+    agreement, temperature = max(
+        (
+            (word_agreement(first.text, answer.text), temperature)
+            for temperature, answer in looped.items()
+            if temperature >= LOOP_BREAKING_TEMPERATURE
+        ),
+        default=(0.0, 0.0),
+    )
+    if agreement < REPEATED_SPEECH_AGREEMENT:
+        return None
+    return first, temperature, agreement
+
+
 def _transcribe_checked(
     chunk: AudioChunk,
     transcribe_chunk: ChunkRequest,
@@ -506,6 +557,7 @@ def _transcribe_checked(
     timed: Optional[ChunkTranscript] = None
     untimed: Optional[ChunkTranscript] = None
     loops: List[float] = []
+    looped: Dict[float, ChunkTranscript] = {}
 
     def usable(answer: ChunkTranscript, timestamps: bool, attempt: int) -> bool:
         ratio = compression_ratio(answer.text)
@@ -526,6 +578,7 @@ def _transcribe_checked(
             )
             if not timestamps:
                 loops.append(ratio)
+                looped[FALLBACK_TEMPERATURES[attempt - 1]] = answer
             return False
         if loudest < SILENCE_FLOOR_DBFS:
             return True
@@ -564,6 +617,21 @@ def _transcribe_checked(
         if untimed is not None and timed is not None:
             break
 
+    if untimed is None and not complete:
+        repeated = repeated_speech(looped)
+        if repeated is not None:
+            untimed, temperature, agreement = repeated
+            logger.warning(
+                "%s: chunk %d (%.2f-%.2fs) repeats at every temperature and its "
+                "answer at temperature %.1f agrees with the one at 0.0 (%.2f): "
+                "kept as repeated speech",
+                source,
+                chunk.index,
+                chunk.start_s,
+                chunk.end_s,
+                temperature,
+                agreement,
+            )
     if untimed is None and not complete:
         if loops:
             raise GarbledTranscriptError(

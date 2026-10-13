@@ -99,7 +99,16 @@ SPEECH_CLIP = (
     / "v_-IMXSEIabMM.mp4"
 )
 MODEL = get_inference_service_spec("vllm_asr").model_id
-LOOP = " Over and over and over." * 30
+# A decode loop takes a different shape each time it is sampled: one loop per
+# fallback temperature, no two on the same phrase.
+LOOPS = {
+    temperature: f" {phrase}" * 60
+    for temperature, phrase in zip(
+        FALLBACK_TEMPERATURES,
+        ("Over and over.", "Again.", "Round we go.", "Once more.", "And then.", "So."),
+        strict=True,
+    )
+}
 V, J = "verbose_json", "json"
 RECORDED = Path(__file__).parent / "fixtures" / "vllm_asr_cluster_speech_answers.json"
 
@@ -384,6 +393,63 @@ def test_every_chunk_follows_the_request_contract_on_the_cluster(
     )
 
 
+REPEATED_CLIP = (
+    Path(__file__).resolve().parents[3]
+    / "tests"
+    / "system"
+    / "resources"
+    / "videos"
+    / "v_-D1gdv_gQyw.mp4"
+)
+REPEATS = 36
+
+
+@pytest.fixture(scope="module")
+def repeated_speech_wav(tmp_path_factory):
+    """The first ten seconds of a clip's speech, played back to back."""
+    samples = pcm16_wav_samples(AudioProcessor._extract_audio_wav(REPEATED_CLIP))
+    path = tmp_path_factory.mktemp("repeated") / "ten_seconds_repeated.wav"
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(16000)
+        for _ in range(REPEATS):
+            out.writeframes(samples[:160_000].tobytes())
+    return path
+
+
+def test_speech_that_repeats_is_transcribed_on_the_cluster(
+    vllm_asr_url, repeated_speech_wav, tmp_path
+):
+    """Each chunk holds the same ten seconds three times, so a faithful answer
+    compresses like a decode loop. Whatever the server answers this run, the
+    transcription succeeds, and a chunk whose untimed answer repeated at every
+    temperature carries its temperature-0 answer."""
+    chunks = split_for_whisper(pcm16_wav_samples(repeated_speech_wav.read_bytes()))
+    assert len(chunks) == 13
+
+    with _Server(chunks, upstream=vllm_asr_url) as server:
+        transcript = _processor(server.url).transcribe_audio(
+            repeated_speech_wav, tmp_path
+        )
+
+    assert "error" not in transcript, transcript.get("error")
+    for chunk in chunks:
+        untimed = server.answers_of(chunk.index, J)
+        inside = [
+            s
+            for s in transcript["segments"]
+            if chunk.start_s <= s["start"] < chunk.end_s
+        ]
+        assert inside != [], chunk.index
+        if len(untimed) == TRANSCRIBE_ATTEMPTS and all(
+            compression_ratio(a["text"]) > 2.4 for a in untimed
+        ):
+            assert " ".join(s["text"] for s in inside) == " ".join(
+                untimed[0]["text"].split()
+            ), chunk.index
+
+
 def test_an_empty_timed_answer_is_asked_again_at_the_next_temperature(
     vllm_asr_url, speech_chunks, tmp_path
 ):
@@ -450,14 +516,18 @@ def test_an_untimed_answer_looping_on_every_attempt_fails_the_transcription(
     def blank_and_loop_chunk_1(index, fields):
         if index != 1:
             return None
-        return "" if fields["response_format"] == V else LOOP
+        return (
+            ""
+            if fields["response_format"] == V
+            else LOOPS[float(fields["temperature"])]
+        )
 
     with _Server(
         speech_chunks, upstream=vllm_asr_url, rewrite=blank_and_loop_chunk_1
     ) as server:
         transcript = _processor(server.url).transcribe_audio(SPEECH_CLIP, tmp_path)
 
-    ratios = ", ".join([f"{compression_ratio(LOOP):.2f}"] * TRANSCRIBE_ATTEMPTS)
+    ratios = ", ".join(f"{compression_ratio(loop):.2f}" for loop in LOOPS.values())
     assert transcript == {
         "video_id": SPEECH_CLIP.stem,
         "error": (

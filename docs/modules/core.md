@@ -2244,8 +2244,13 @@ temperature)` sends one request with `response_format(timestamps)` and
   25 ms frame reaches `SILENCE_FLOOR_DBFS` (-60); a timed answer is also
   unusable without segments. An unusable answer is asked again at the next of
   `FALLBACK_TEMPERATURES` (0.0, 0.2, 0.4, 0.6, 0.8, 1.0; `TRANSCRIBE_ATTEMPTS`
-  is 6). When neither a `json` answer nor a timed answer running to the end
-  is usable, the chunk raises
+  is 6). Speech that itself repeats compresses like a loop but comes back in
+  the same words however it is sampled: when every `json` answer looped and
+  one at `LOOP_BREAKING_TEMPERATURE` (0.8) or above agrees with the
+  temperature-0 answer (`word_agreement` at least
+  `REPEATED_SPEECH_AGREEMENT`, 0.5), `repeated_speech` keeps the
+  temperature-0 answer. Otherwise, when neither a `json` answer nor a timed
+  answer running to the end is usable, the chunk raises
   `GarbledTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
   `compression_ratios`, `attempts`) if any looped, else `EmptyTranscriptError`
   (`source`, `chunk_index`, `start_s`, `end_s`, `loudest_frame_dbfs`,

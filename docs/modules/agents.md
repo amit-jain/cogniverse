@@ -2680,8 +2680,9 @@ Whisper), each chunk of at most 30 s with timestamps and, unless the timed
 segments run to the end of the chunk, without, through
 `cogniverse_core.common.models.whisper_transcription`: the text comes from the
 untimed answer, timed by the timed answer's segments; an empty or looping
-answer is asked again at the next sampling temperature, and a chunk whose
-untimed text never comes back usable raises `EmptyTranscriptError` or
+answer is asked again at the next sampling temperature, an answer repeating
+in the same words at every temperature is kept as repeated speech, and a chunk
+whose untimed text otherwise never comes back usable raises `EmptyTranscriptError` or
 `GarbledTranscriptError`. The merged answer is mapped to a
 `TranscriptionResult(text, segments, language, confidence)`.
 The pinned vLLM response represents `duration` as a non-negative decimal
