@@ -413,11 +413,12 @@ async def test_an_unusable_answer_reaches_the_task_events_as_an_error_event(
 
     failure = unusable_failure(video, text)
     assert queued.closed is True
+    # The worker publishes a local path as its file name.
     assert _error_events(submitted.ingest_id, queued) == [
         {
             "event_type": "error",
             "error_type": "IngestPipelineError",
-            "error_message": failure,
+            "error_message": failure.replace(str(video), video.name),
             "recoverable": False,
         }
     ]
