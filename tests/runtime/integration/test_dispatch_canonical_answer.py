@@ -375,12 +375,14 @@ class TestEgressRefusalIsEnforcedForCodingAndOrchestrator:
         dispatcher = self._dispatcher_with_endpoints("coding_agent")
         _register(dispatcher, "coding_agent", ["coding", "code_generation"])
         calls: List[Any] = []
+        bound: List[Any] = []
 
         class _Verified(RuntimeError):
             pass
 
-        def record(agent_name, endpoints):
+        def record(agent_name, endpoints, endpoint_bindings):
             calls.append((agent_name, endpoints))
+            bound.append(endpoint_bindings)
             raise _Verified("verified")
 
         dispatcher.validate_dispatch_endpoints = record
@@ -397,17 +399,25 @@ class TestEgressRefusalIsEnforcedForCodingAndOrchestrator:
                 ],
             )
         ]
+        assert bound == [
+            {
+                ("localhost", 8080): ("localhost", 8080),
+                ("localhost", 11434): ("llm.example.com", 11434),
+            }
+        ]
 
     async def test_orchestration_dispatch_verifies_before_any_other_work(self):
         dispatcher = self._dispatcher_with_endpoints("orchestrator_agent")
         _register(dispatcher, "orchestrator_agent", ["orchestration", "planning"])
         calls: List[Any] = []
+        bound: List[Any] = []
 
         class _Verified(RuntimeError):
             pass
 
-        def record(agent_name, endpoints):
+        def record(agent_name, endpoints, endpoint_bindings):
             calls.append((agent_name, endpoints))
+            bound.append(endpoint_bindings)
             raise _Verified("verified")
 
         dispatcher.validate_dispatch_endpoints = record
@@ -420,6 +430,12 @@ class TestEgressRefusalIsEnforcedForCodingAndOrchestrator:
                 "orchestrator_agent",
                 [{"host": "llm.example.com", "port": 11434, "protocol": "tcp"}],
             )
+        ]
+        assert bound == [
+            {
+                ("localhost", 8080): ("localhost", 8080),
+                ("localhost", 11434): ("llm.example.com", 11434),
+            }
         ]
 
     async def test_unparseable_endpoint_does_not_fail_the_dispatch(self):

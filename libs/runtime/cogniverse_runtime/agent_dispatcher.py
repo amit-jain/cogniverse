@@ -1220,9 +1220,21 @@ class AgentDispatcher:
             from cogniverse_foundation.config.utils import get_config
 
             cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-            llm_primary = cfg.get_llm_config().primary
-            if llm_primary.api_base:
-                _add("llm", llm_primary.api_base, 11434)
+            from cogniverse_foundation.config.semantic_router import (
+                resolve_semantic_router_config,
+            )
+            from cogniverse_runtime.sandbox_http import DEFAULT_LLM_ADDRESS
+
+            # LM calls dial the semantic router when it is enabled, the
+            # configured endpoint otherwise.
+            router = resolve_semantic_router_config(cfg)
+            llm_base = (
+                router.semantic_router_url
+                if router.enabled and router.semantic_router_url
+                else cfg.get_llm_config().primary.api_base
+            )
+            if llm_base:
+                _add("llm", llm_base, DEFAULT_LLM_ADDRESS[1])
         except Exception as exc:  # noqa: BLE001 — log + degrade
             # Failure here silently drops the LLM endpoint from the
             # egress allow-list the surrounding code uses to authorize
@@ -1262,17 +1274,27 @@ class AgentDispatcher:
         Returns the violations; drift surfaces as a logged warning here and the
         CNI NetworkPolicy is the kernel deny.
         """
+        from cogniverse_runtime.sandbox_http import default_service_addresses
+
         kinds = self._egress_kinds_for(agent_name)
         sysep = self._system_endpoints(tenant_id)
         endpoints = [v for k, v in sysep.items() if k in kinds]
         if not endpoints:
             return []
-        return self.validate_dispatch_endpoints(agent_name, endpoints)
+        bindings = {
+            address: (sysep[kind]["host"], sysep[kind]["port"])
+            for kind, address in default_service_addresses().items()
+            if kind in sysep
+        }
+        return self.validate_dispatch_endpoints(
+            agent_name, endpoints, endpoint_bindings=bindings
+        )
 
     def validate_dispatch_endpoints(
         self,
         agent_name: str,
         endpoints: List[Dict[str, Any]],
+        endpoint_bindings: Optional[Dict[Any, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Verify each (host, port) endpoint matches the agent's egress policy.
 
@@ -1289,6 +1311,11 @@ class AgentDispatcher:
 
         Each ``endpoint`` dict must carry ``host`` and ``port`` keys; an
         optional ``protocol`` (default ``tcp``) is matched case-insensitively.
+
+        Policy rules name services at their default addresses, so
+        ``endpoint_bindings`` (rule address → deployed address) lets a rule
+        admit the address the deployment configures for that service, as the
+        policy-enforcing HTTP transport does.
         """
         if self._sandbox_manager is None:
             return []
@@ -1312,6 +1339,10 @@ class AgentDispatcher:
                     str(rule.get("protocol", "tcp")).lower(),
                 )
             )
+        for host, port, protocol in list(allow_set):
+            bound = (endpoint_bindings or {}).get((host, port))
+            if bound is not None:
+                allow_set.add((str(bound[0]).lower(), int(bound[1]), protocol))
 
         violations: List[Dict[str, Any]] = []
         for ep in endpoints:
