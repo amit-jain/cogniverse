@@ -460,7 +460,8 @@ def _configure_runtime_logging() -> None:
     """Attach a stream handler to the root logger under ``LOG_LEVEL``.
 
     Uvicorn configures only its own loggers; a pre-existing root handler
-    (pytest, an embedding host) is left in charge.
+    (pytest, an embedding host) is left in charge. The Vespa HTTP client's
+    per-response INFO record is emitted only under ``LOG_LEVEL=DEBUG``.
     """
     root = logging.getLogger()
     if root.handlers:
@@ -470,6 +471,9 @@ def _configure_runtime_logging() -> None:
     if level is None:
         raise ValueError(f"LOG_LEVEL={level_name!r} is not a logging level name")
     logging.basicConfig(level=level, format=_RUNTIME_LOG_FORMAT)
+    logging.getLogger("httpr").setLevel(
+        logging.DEBUG if level <= logging.DEBUG else logging.WARNING
+    )
 
 
 _configure_runtime_logging()

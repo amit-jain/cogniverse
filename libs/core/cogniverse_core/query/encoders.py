@@ -670,7 +670,7 @@ class QueryEncoderFactory:
 
         cached = cls._encoder_cache.get(cache_key)
         if cached is not None:
-            logger.info(f"Reusing cached encoder for key: {cache_key}")
+            logger.debug(f"Reusing cached encoder for key: {cache_key}")
             return cached
 
         with cls._encoder_cache_lock:

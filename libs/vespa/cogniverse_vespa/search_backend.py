@@ -1321,7 +1321,7 @@ class VespaSearchBackend(SearchBackend):
                     f"Available profiles: {list(profiles_snapshot.keys())}"
                 )
             profile_name = requested_profile
-            logger.info(f"[{correlation_id}] Using requested profile: {profile_name}")
+            logger.debug(f"[{correlation_id}] Using requested profile: {profile_name}")
         elif content_type == "video":
             tenant_for_default = query_dict.get("tenant_id")
             profile_name = self._selected_default_profile(
@@ -1343,7 +1343,7 @@ class VespaSearchBackend(SearchBackend):
                     f"Default profile '{profile_name}' for type 'video' not found "
                     f"in available profiles: {video_profiles}"
                 )
-            logger.info(
+            logger.debug(
                 f"[{correlation_id}] Using selected default video profile: "
                 f"{profile_name}"
             )
@@ -1359,7 +1359,7 @@ class VespaSearchBackend(SearchBackend):
             if len(type_profiles) == 1:
                 # Only one profile for this type - auto-select
                 profile_name = list(type_profiles.keys())[0]
-                logger.info(
+                logger.debug(
                     f"[{correlation_id}] Auto-selected single profile for type '{content_type}': {profile_name}"
                 )
             elif len(type_profiles) > 1:
@@ -1380,7 +1380,7 @@ class VespaSearchBackend(SearchBackend):
                         f"{list(type_profiles.keys())}"
                     )
 
-                logger.info(
+                logger.debug(
                     f"[{correlation_id}] Using default profile for type '{content_type}': {profile_name}"
                 )
             else:
@@ -1461,7 +1461,7 @@ class VespaSearchBackend(SearchBackend):
                 f"(base schema '{base_schema_name}', profile '{profile_name}'); "
                 "deploy it before searching this profile"
             )
-        logger.info(
+        logger.debug(
             f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}"
         )
 
@@ -1495,13 +1495,15 @@ class VespaSearchBackend(SearchBackend):
                     f"Available strategies: {list(available_strategies.keys())}"
                 )
             strategy_name = requested_strategy
-            logger.info(f"[{correlation_id}] Using requested strategy: {strategy_name}")
+            logger.debug(
+                f"[{correlation_id}] Using requested strategy: {strategy_name}"
+            )
         else:
             # 2. Auto-select based on profile
             if len(available_strategies) == 1:
                 # Only one strategy - auto-select
                 strategy_name = list(available_strategies.keys())[0]
-                logger.info(
+                logger.debug(
                     f"[{correlation_id}] Auto-selected single strategy: {strategy_name}"
                 )
             elif len(available_strategies) > 1:
@@ -1522,7 +1524,7 @@ class VespaSearchBackend(SearchBackend):
                         next(iter(available_strategies)),
                     )
 
-                logger.info(
+                logger.debug(
                     f"[{correlation_id}] Using default strategy: {strategy_name}"
                 )
             else:
@@ -1530,15 +1532,16 @@ class VespaSearchBackend(SearchBackend):
 
         self.schema_name = schema_name
 
-        logger.info(
+        logger.debug(
             f"[{correlation_id}] Query resolved: type={content_type}, profile={profile_name}, "
             f"schema={schema_name}, strategy={strategy_name}"
         )
 
         start_time = time.time()
+        encode_started = execute_started = None
 
         try:
-            logger.info(
+            logger.debug(
                 f"[{correlation_id}] Search request: query='{query_text}', "
                 f"limit={top_k}, fetch_limit={fetch_limit}, profile={profile_name}, "
                 f"strategy={strategy_name}"
@@ -1583,10 +1586,11 @@ class VespaSearchBackend(SearchBackend):
                         )
                     input_encoders[input_name] = request_encoder
 
-                logger.info(
+                logger.debug(
                     f"[{correlation_id}] Generating embeddings on-demand "
                     f"for strategy '{strategy_name}'"
                 )
+                encode_started = time.perf_counter()
                 encoded = {}
                 query_embeddings = {}
                 for input_name, encoder in input_encoders.items():
@@ -1621,7 +1625,10 @@ class VespaSearchBackend(SearchBackend):
             )
 
             def _execute_query(body: Dict[str, Any]):
-                logger.info(
+                nonlocal execute_started
+                if execute_started is None:
+                    execute_started = time.perf_counter()
+                logger.debug(
                     f"[{correlation_id}] Executing query: yql='{body.get('yql')}', "
                     f"ranking={body.get('ranking')}"
                 )
@@ -1683,9 +1690,17 @@ class VespaSearchBackend(SearchBackend):
                 latency_ms = (time.time() - start_time) * 1000
                 self.metrics.record_search(True, latency_ms, strategy_name)
 
+            completed = time.perf_counter()
+            encode_ms = (
+                (execute_started - encode_started) * 1000 if encode_started else 0.0
+            )
             logger.info(
                 f"[{correlation_id}] Search completed: {len(results)} results "
-                f"in {(time.time() - start_time) * 1000:.2f}ms"
+                f"in {(time.time() - start_time) * 1000:.2f}ms "
+                f"profile={profile_name} schema={schema_name} "
+                f"strategy={strategy_name} encode_ms={encode_ms:.2f} "
+                f"vespa_ms={(completed - execute_started) * 1000:.2f} "
+                f"query={query_text!r}"
             )
 
             return results
@@ -1785,10 +1800,10 @@ class VespaSearchBackend(SearchBackend):
             )
 
         # Log schema name being used
-        logger.info(
+        logger.debug(
             f"[{correlation_id}] Building query with schema_name='{schema_name}'"
         )
-        logger.info(f"[{correlation_id}] Ranking profile: '{ranking_profile}'")
+        logger.debug(f"[{correlation_id}] Ranking profile: '{ranking_profile}'")
 
         # Initialize query params. The default query profile caps hits at
         # 400, so raise the native limits per request to honor any top_k.
@@ -1810,7 +1825,7 @@ class VespaSearchBackend(SearchBackend):
         # Build filter conditions
         filter_conditions = self._build_filter_conditions(filters)
         if filter_conditions:
-            logger.info(f"[{correlation_id}] Applying filters: {filter_conditions}")
+            logger.debug(f"[{correlation_id}] Applying filters: {filter_conditions}")
 
         # Build YQL based on strategy configuration
         embedding_first = bool(
@@ -1946,29 +1961,29 @@ class VespaSearchBackend(SearchBackend):
                     )
 
         query_params["model.restrict"] = schema_name
-        logger.info(
+        logger.debug(
             f"[{correlation_id}] Set model.restrict='{query_params['model.restrict']}'"
         )
 
-        logger.info(
+        logger.debug(
             f"[{correlation_id}] Query params keys: {list(query_params.keys())}"
         )
         if "input.query(qt)" in query_params:
             qt_value = query_params["input.query(qt)"]
-            logger.info(
+            logger.debug(
                 f"[{correlation_id}] input.query(qt) type: {type(qt_value)}, is list: {isinstance(qt_value, list)}"
             )
             if isinstance(qt_value, list):
-                logger.info(
+                logger.debug(
                     f"[{correlation_id}] input.query(qt) length: {len(qt_value)}, first 5 values: {qt_value[:5] if qt_value else 'empty'}..."
                 )
         if "input.query(qtb)" in query_params:
             qtb_value = query_params["input.query(qtb)"]
-            logger.info(
+            logger.debug(
                 f"[{correlation_id}] input.query(qtb) type: {type(qtb_value)}, is list: {isinstance(qtb_value, list)}"
             )
             if isinstance(qtb_value, list):
-                logger.info(
+                logger.debug(
                     f"[{correlation_id}] input.query(qtb) length: {len(qtb_value)}, first 5 values: {qtb_value[:5] if qtb_value else 'empty'}..."
                 )
 
