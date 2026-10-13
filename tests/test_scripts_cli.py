@@ -243,8 +243,10 @@ _CI_SELECTION_COMMANDS = [
     " --ignore=tests/runtime/integration/test_ingestion_worker_e2e.py"
     " --ignore=tests/runtime/integration/test_llm_annotation_job.py"
     " --ignore=tests/runtime/integration/test_openai_compat_endpoint.py"
+    " --ignore=tests/runtime/integration/test_reconcile_tenant_orphans.py"
     " --ignore=tests/runtime/integration/test_runtime_startup_entrypoint.py"
     " --ignore=tests/runtime/integration/test_signature_variant_persistence.py"
+    " --ignore=tests/runtime/integration/test_tenant_delete_memory_schema.py"
     " --ignore=tests/runtime/integration/test_web_agent_workspace.py"
     " --ignore=tests/runtime/integration/test_web_client_ag_ui.py"
     " --ignore=tests/runtime/integration/test_web_ops_analytics.py"
@@ -283,6 +285,12 @@ _CI_SELECTION_COMMANDS = [
     " tests/runtime/integration/test_openai_compat_endpoint.py"
     " tests/runtime/integration/test_runtime_startup_entrypoint.py"
     " tests/runtime/integration/test_signature_variant_persistence.py"
+    " -m 'integration and ci_fast and not requires_lm' -v -p no:cacheprovider"
+    " --tb=long",
+    "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false TEST_LLM_MODEL=qwen2.5:0.5b"
+    " JAX_PLATFORM_NAME=cpu uv run python -m pytest"
+    " tests/runtime/integration/test_reconcile_tenant_orphans.py"
+    " tests/runtime/integration/test_tenant_delete_memory_schema.py"
     " -m 'integration and ci_fast and not requires_lm' -v -p no:cacheprovider"
     " --tb=long",
     "CARGO_NET_RETRY=10 CARGO_HTTP_MULTIPLEXING=false TEST_LLM_MODEL=qwen2.5:0.5b"
