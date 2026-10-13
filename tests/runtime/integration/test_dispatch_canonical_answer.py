@@ -299,8 +299,8 @@ class TestWikiAutoFileReadsTheAnswer:
 RUN_QUERY = "compare the bridge clips and write a report"
 RUN_ANSWER = "Both clips show the same bridge; the second is filmed at dusk."
 RUN_ENTITIES = [
-    {"text": "Tower Bridge", "type": "LOCATION", "context": "the bridge clips"},
-    {"text": "River Thames", "type": "LOCATION", "context": "over the river"},
+    {"text": "Tower Bridge", "type": "PLACE", "context": "the bridge clips"},
+    {"text": "River Thames", "type": "PLACE", "context": "over the river"},
     {"text": "Cyclist", "type": "PERSON", "context": "a cyclist crossing"},
 ]
 

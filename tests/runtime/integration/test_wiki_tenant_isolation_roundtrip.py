@@ -177,8 +177,8 @@ class TestARunNeverRetrievesItsOwnPages:
     QUERY = "compare the harbour clips and write a report"
     ANSWER = "Both harbour clips show the same tugboat; the second is at dawn."
     ENTITIES = [
-        {"text": "Tugboat Hercules", "type": "VEHICLE", "context": "the tugboat"},
-        {"text": "Harbour Lighthouse", "type": "LOCATION", "context": "the lighthouse"},
+        {"text": "Tugboat Hercules", "type": "CONCEPT", "context": "the tugboat"},
+        {"text": "Harbour Lighthouse", "type": "PLACE", "context": "the lighthouse"},
         {"text": "Dawn Shift", "type": "EVENT", "context": "at dawn"},
     ]
 
@@ -211,7 +211,7 @@ class TestARunNeverRetrievesItsOwnPages:
                 "entities": self.ENTITIES,
                 "entity_count": len(self.ENTITIES),
                 "has_entities": True,
-                "dominant_types": ["VEHICLE"],
+                "dominant_types": ["CONCEPT"],
             }
 
         async def run(query, context, tenant_id):
