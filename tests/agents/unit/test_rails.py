@@ -11,6 +11,11 @@ Tests:
 7. AgentBase.process() runs input/output rails
 """
 
+import json
+import logging
+import re
+from pathlib import Path
+
 import pytest
 
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
@@ -80,6 +85,126 @@ class TestTopicBoundaryRail:
     def test_name(self):
         rail = TopicBoundaryRail(allowed_topics=[])
         assert rail.name == "topic_boundary"
+
+
+class TestShippedInputRails:
+    """What the shipped configs put at the gateway front door."""
+
+    REPO_ROOT = Path(__file__).resolve().parents[3]
+    CLOSED_DOMAIN = [
+        "video",
+        "search",
+        "document",
+        "audio",
+        "image",
+        "summary",
+        "report",
+        "analysis",
+    ]
+
+    def _golden_queries(self):
+        golden = json.loads(
+            (
+                self.REPO_ROOT
+                / "data/testset/evaluation/sample_videos_retrieval_queries.json"
+            ).read_text()
+        )
+        return [row["query"] for row in golden]
+
+    @pytest.mark.parametrize(
+        "config_path", ["configs/config.json", "configs/examples/config.example.json"]
+    )
+    def test_golden_retrieval_queries_log_nothing(self, config_path, caplog):
+        """A retrieval query names content, not a modality: the shipped input
+        rails raise nothing and log nothing for any golden query."""
+        rails = json.loads((self.REPO_ROOT / config_path).read_text())["rails"]
+        config = RailsConfig(**rails)
+        chain = config.build_input_chain()
+        queries = self._golden_queries()
+
+        with caplog.at_level(logging.DEBUG, logger="cogniverse_core.agents.rails"):
+            for query in queries:
+                chain.check({"query": query})
+
+        assert len(queries) == 125
+        assert config.enabled is True
+        assert chain.rail_names == ["content_safety"]
+        assert [record.getMessage() for record in caplog.records] == []
+
+    def test_the_chart_config_ships_the_same_input_rails(self):
+        chart = (self.REPO_ROOT / "charts/cogniverse/files/config.json").read_text()
+
+        assert re.findall(r'"type": "(\w+)"', chart[chart.index('"rails": {') :])[
+            :1
+        ] == ["content_safety"]
+        assert chart.count("topic_boundary") == 0
+
+    def test_shipped_content_safety_still_blocks_its_patterns(self):
+        rails = json.loads((self.REPO_ROOT / "configs/config.json").read_text())[
+            "rails"
+        ]
+        chain = RailsConfig(**rails).build_input_chain()
+        (safety,) = rails["input_rails"]
+
+        for pattern in safety["params"]["blocked_patterns"]:
+            with pytest.raises(RailBlockedError) as blocked:
+                chain.check({"query": f"man lifting {pattern} now"})
+            assert str(blocked.value) == (
+                f"Blocked by content_safety: Content matched blocked pattern: {pattern}"
+            )
+
+    def test_a_modality_allowlist_flags_most_golden_queries(self, caplog):
+        """Why no topic allowlist ships: keyword matching against modality
+        names flags the content queries the product exists to answer."""
+        rail = TopicBoundaryRail(allowed_topics=self.CLOSED_DOMAIN)
+        queries = self._golden_queries()
+
+        with caplog.at_level(logging.WARNING, logger="cogniverse_core.agents.rails"):
+            for query in queries:
+                rail.check({"query": query})
+
+        flagged = [
+            query
+            for query in queries
+            if not any(topic in query.lower() for topic in self.CLOSED_DOMAIN)
+        ]
+        assert [record.getMessage() for record in caplog.records] == [
+            "topic_boundary (advisory): query outside allowed topics "
+            f"{self.CLOSED_DOMAIN}: {query[:120]!r}"
+            for query in flagged
+        ]
+        assert "man lifting" in flagged
+        assert len(flagged) == 77
+
+    def test_a_configured_topic_boundary_still_flags_an_off_topic_query(self, caplog):
+        chain = RailsConfig(
+            input_rails=[
+                {
+                    "type": "topic_boundary",
+                    "params": {"allowed_topics": self.CLOSED_DOMAIN},
+                }
+            ]
+        ).build_input_chain()
+
+        with caplog.at_level(logging.WARNING, logger="cogniverse_core.agents.rails"):
+            chain.check({"query": "find the video of the dirt bike crash"})
+            chain.check({"query": "what is the weather today"})
+
+        assert [record.getMessage() for record in caplog.records] == [
+            "topic_boundary (advisory): query outside allowed topics "
+            f"{self.CLOSED_DOMAIN}: 'what is the weather today'"
+        ]
+
+    def test_a_blocking_topic_boundary_still_blocks_an_off_topic_query(self):
+        rail = TopicBoundaryRail(allowed_topics=self.CLOSED_DOMAIN, advisory=False)
+
+        rail.check({"query": "search the audio for applause"})
+        with pytest.raises(RailBlockedError) as blocked:
+            rail.check({"query": "what is the weather today"})
+        assert str(blocked.value) == (
+            "Blocked by topic_boundary: Query is outside allowed topics: "
+            f"{self.CLOSED_DOMAIN}"
+        )
 
 
 class TestContentSafetyRail:

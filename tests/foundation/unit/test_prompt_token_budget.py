@@ -15,18 +15,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from cogniverse_foundation.config.token_budget import (
+    SINGLE_TURN_TEMPLATE_TOKENS,
     ContextWindowUnavailableError,
+    FittedText,
+    PromptAllowance,
     PromptBudgetExceededError,
     ResolvedContextWindow,
     TokenBudget,
     TokenCountUnavailableError,
+    cut_notice,
     extract_context_window,
     fetch_context_window,
     fit_messages,
+    fit_text,
     fitting_demonstrations,
     litellm_message_counter,
     resolve_context_window,
     served_message_counter,
+    shared_served_message_counter,
     split_demonstrations,
 )
 
@@ -907,3 +913,229 @@ class TestServedMessageCounter:
             server.shutdown()
         assert results == {index: 4 + index + 1 for index in range(threads)}
         assert len(received) == threads
+
+
+def _allowance(api_base: str, *, window: int, reserved: int, margin: int = 0):
+    return PromptAllowance(
+        budget=TokenBudget(
+            model=STUDENT_MODEL, context_window=window, reserved_output=reserved
+        ),
+        count_tokens=served_message_counter(api_base, STUDENT_MODEL, retries=0),
+        margin=margin,
+    )
+
+
+def _fixed_words(count: int) -> str:
+    """``count`` five-character words: ``text[:k]`` holds ceil(k / 5) of them."""
+
+    return "word " * count
+
+
+STUDENT_MODEL = "openai/google/gemma-4-e4b-it"
+# The stub counts four template tokens for the message and one per word; the
+# cut notice is fifteen words.
+NOTICE_WORDS = 15
+
+
+@pytest.mark.unit
+class TestFitTextToTheServedWindow:
+    """A free-text prompt has no demonstrations to drop: its tail is cut."""
+
+    def test_the_notice_names_what_was_kept(self):
+        assert cut_notice(405, 2000) == (
+            "\n\n[Cut to fit the model's context window: the first 405 of "
+            "2000 characters are shown.]"
+        )
+        assert len(cut_notice(405, 2000).split()) == NOTICE_WORDS
+
+    def test_a_text_small_enough_by_its_bytes_is_admitted_without_a_count(self):
+        server, api_base, received = _serve_tokenize()
+        text = "summarize the evidence"
+        try:
+            fitted = fit_text(
+                text, allowance=_allowance(api_base, window=200, reserved=100)
+            )
+        finally:
+            server.shutdown()
+        assert fitted == FittedText(
+            text=text, kept_chars=22, total_chars=22, input_tokens=None
+        )
+        assert fitted.text is text
+        assert SINGLE_TURN_TEMPLATE_TOKENS == 32
+        assert received == []
+
+    def test_a_text_within_the_allowance_is_counted_once_and_sent_unchanged(self):
+        server, api_base, received = _serve_tokenize()
+        text = _fixed_words(90)
+        try:
+            fitted = fit_text(
+                text, allowance=_allowance(api_base, window=200, reserved=100)
+            )
+        finally:
+            server.shutdown()
+        assert fitted == FittedText(
+            text=text, kept_chars=450, total_chars=450, input_tokens=94
+        )
+        assert fitted.text is text
+        assert received == [
+            (
+                "/tokenize",
+                {
+                    "model": "google/gemma-4-e4b-it",
+                    "messages": [{"role": "user", "content": text}],
+                },
+            )
+        ]
+
+    def test_an_overflowing_text_keeps_its_longest_leading_run_that_fits(self):
+        server, api_base, received = _serve_tokenize()
+        text = _fixed_words(400)
+        allowance = _allowance(api_base, window=200, reserved=100)
+        try:
+            fitted = fit_text(text, allowance=allowance)
+            fit_requests = len(received)
+            recount = allowance.count_tokens([{"role": "user", "content": fitted.text}])
+            one_more = allowance.count_tokens(
+                [{"role": "user", "content": text[:406] + cut_notice(406, 2000)}]
+            )
+        finally:
+            server.shutdown()
+        # 4 template + ceil(k / 5) words + 15 notice words <= 100  =>  k <= 405.
+        assert fitted == FittedText(
+            text=text[:405] + cut_notice(405, 2000),
+            kept_chars=405,
+            total_chars=2000,
+            input_tokens=100,
+        )
+        assert recount == 100
+        assert one_more == 101
+        # One count of the whole text, then a bisection over 2000 lengths.
+        assert fit_requests == 11
+
+    def test_the_margin_is_held_back_from_the_allowance(self):
+        server, api_base, _ = _serve_tokenize()
+        text = _fixed_words(400)
+        try:
+            fitted = fit_text(
+                text,
+                allowance=_allowance(api_base, window=200, reserved=100, margin=10),
+            )
+        finally:
+            server.shutdown()
+        assert fitted == FittedText(
+            text=text[:355] + cut_notice(355, 2000),
+            kept_chars=355,
+            total_chars=2000,
+            input_tokens=90,
+        )
+
+    def test_an_allowance_smaller_than_the_notice_names_the_budget(self):
+        server, api_base, _ = _serve_tokenize()
+        try:
+            with pytest.raises(PromptBudgetExceededError) as exc:
+                fit_text(
+                    _fixed_words(400),
+                    allowance=_allowance(api_base, window=110, reserved=100),
+                )
+        finally:
+            server.shutdown()
+        assert str(exc.value) == (
+            f"{STUDENT_MODEL} prompt does not fit the served context window: "
+            "context_window=110 reserved_output=100 input_budget=10 "
+            "input_tokens=19 after dropping all 0 few-shot demonstrations"
+        )
+
+    def test_an_unreachable_tokenizer_refuses_to_bound_an_uncounted_text(self):
+        server, api_base, _ = _serve_tokenize()
+        server.shutdown()
+        server.server_close()
+        root = api_base.removesuffix("/v1")
+        allowance = _allowance(api_base, window=200, reserved=100)
+        with pytest.raises(TokenCountUnavailableError) as exc:
+            fit_text(_fixed_words(400), allowance=allowance)
+        assert str(exc.value) == (
+            f"{root}/tokenize is unreachable, so the request cannot be counted "
+            f"with the tokenizer {STUDENT_MODEL} is served with"
+        )
+        # A text admitted by its bytes needs no count, so it still passes.
+        assert fit_text("ok", allowance=allowance) == FittedText(
+            text="ok", kept_chars=2, total_chars=2, input_tokens=None
+        )
+
+    def test_concurrent_fits_each_keep_their_own_text(self):
+        server, api_base, _ = _serve_tokenize()
+        allowance = _allowance(api_base, window=200, reserved=100)
+        threads = 8
+        barrier = threading.Barrier(threads)
+        results: dict[int, FittedText] = {}
+
+        def worker(index: int) -> None:
+            text = f"w{index}xx " * 400
+            barrier.wait()
+            results[index] = fit_text(text, allowance=allowance)
+
+        try:
+            pool = [
+                threading.Thread(target=worker, args=(index,))
+                for index in range(threads)
+            ]
+            for thread in pool:
+                thread.start()
+            for thread in pool:
+                thread.join()
+        finally:
+            server.shutdown()
+        assert results == {
+            index: FittedText(
+                text=(f"w{index}xx " * 400)[:405] + cut_notice(405, 2000),
+                kept_chars=405,
+                total_chars=2000,
+                input_tokens=100,
+            )
+            for index in range(threads)
+        }
+
+
+@pytest.mark.unit
+class TestSharedServedMessageCounter:
+    def test_eight_first_touches_build_one_counter(self, monkeypatch):
+        from cogniverse_foundation.config import token_budget
+
+        built: list[tuple] = []
+        build = token_budget.served_message_counter
+
+        def counting(api_base, model, **kwargs):
+            built.append((api_base, model, kwargs))
+            return build(api_base, model, **kwargs)
+
+        monkeypatch.setattr(token_budget, "served_message_counter", counting)
+        monkeypatch.setattr(token_budget, "_COUNTER_MEMO", {})
+        api_base = "http://127.0.0.1:9/v1"
+        threads = 8
+        barrier = threading.Barrier(threads)
+        counters: list = []
+
+        def worker() -> None:
+            barrier.wait()
+            counters.append(
+                shared_served_message_counter(api_base, STUDENT_MODEL, retries=2)
+            )
+
+        pool = [threading.Thread(target=worker) for _ in range(threads)]
+        for thread in pool:
+            thread.start()
+        for thread in pool:
+            thread.join()
+        assert built == [(api_base, STUDENT_MODEL, {"retries": 2})]
+        assert len(counters) == threads
+        assert {id(counter) for counter in counters} == {id(counters[0])}
+
+    def test_a_different_endpoint_gets_its_own_counter(self, monkeypatch):
+        from cogniverse_foundation.config import token_budget
+
+        monkeypatch.setattr(token_budget, "_COUNTER_MEMO", {})
+        first = shared_served_message_counter("http://127.0.0.1:9/v1", STUDENT_MODEL)
+        again = shared_served_message_counter("http://127.0.0.1:9/v1/", STUDENT_MODEL)
+        other = shared_served_message_counter("http://127.0.0.1:10/v1", STUDENT_MODEL)
+        assert again is first
+        assert other is not first

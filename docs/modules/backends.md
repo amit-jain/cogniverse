@@ -930,6 +930,22 @@ flowchart TD
 
 **Location:** `libs/vespa/cogniverse_vespa/search_backend.py` - `search()` method (starting line 592)
 
+**Request logging.** A completed search writes one INFO line; every other
+per-request line is DEBUG. A failed search writes one ERROR line
+(`[<id>] Search failed: ...`).
+
+```
+[<correlation-id>] Search completed: <n> results in <total>ms profile=<profile> schema=<tenant schema> strategy=<strategy> encode_ms=<ms> vespa_ms=<ms> query='<query text>'
+```
+
+| Field | Meaning |
+|---|---|
+| correlation id | UUID shared by the request's DEBUG lines |
+| `in <total>ms` | from strategy resolution to parsed results |
+| `encode_ms` | query encoding plus query build; `0.00` when the strategy reads no embeddings or the caller supplied them |
+| `vespa_ms` | Vespa round trip plus result parsing |
+| `query` | the query text as a Python `repr`, last on the line |
+
 **Profile Resolution Logic** (inline in search() method):
 ```python
 # Priority order:

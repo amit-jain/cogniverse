@@ -1,0 +1,103 @@
+"""An OpenAI-compatible endpoint on a local port, for LM wire tests.
+
+Serves ``GET /v1/models`` (with ``max_model_len`` when ``context_window`` is
+set), ``POST /tokenize`` (four template tokens per message plus one per
+whitespace-separated word) and ``POST /v1/chat/completions`` (answers
+``reply``, or ``chat_error`` as ``(status, error body)``). Every request body
+is appended to ``received`` as ``(path, body)``.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+
+
+@dataclass
+class LLMEndpointStub:
+    server: ThreadingHTTPServer
+    api_base: str
+    received: list = field(default_factory=list)
+
+    def posted(self, path: str) -> list[dict[str, Any]]:
+        return [body for seen, body in self.received if seen == path]
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def serve_llm_endpoint(
+    *,
+    model: str = "google/gemma-4-e4b-it",
+    context_window: int | None = None,
+    reply: str = "ok",
+    chat_error: tuple[int, dict[str, Any]] | None = None,
+) -> LLMEndpointStub:
+    received: list = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def _answer(self, status: int, payload: dict[str, Any]) -> None:
+            encoded = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+        def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler contract
+            received.append((self.path, None))
+            entry: dict[str, Any] = {"id": model, "object": "model"}
+            if context_window is not None:
+                entry["max_model_len"] = context_window
+            self._answer(200, {"object": "list", "data": [entry]})
+
+        def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler contract
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length))
+            received.append((self.path, body))
+            if self.path == "/tokenize":
+                count = sum(
+                    4 + len(str(message["content"]).split())
+                    for message in body["messages"]
+                )
+                self._answer(200, {"count": count, "tokens": []})
+                return
+            if chat_error is not None:
+                self._answer(*chat_error)
+                return
+            self._answer(
+                200,
+                {
+                    "id": "chatcmpl-stub",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": reply},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                },
+            )
+
+        def log_message(self, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return LLMEndpointStub(
+        server=server,
+        api_base=f"http://127.0.0.1:{server.server_address[1]}/v1",
+        received=received,
+    )

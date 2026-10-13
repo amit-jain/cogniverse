@@ -958,3 +958,152 @@ def test_malformed_tenant_metadata_refuses_orphan_removal(admin_client):
         "detail": "Tenant registry contains a row without tenant_full_id; refusing to reconcile orphans"
     }
     assert manager.delete_tenant_schemas_bulk.call_args_list == []
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_ingest_objects_the_store_refuses_leave_the_delete_pending_and_named(
+    admin_client, monkeypatch, caplog
+):
+    """One line names the tenant, how many objects were refused, the first of
+    them and the store's reason; the step reports the tenant not emptied."""
+    import logging
+
+    from cogniverse_runtime.ingestion_worker import minio_client
+
+    config_manager = tenant_manager._config_manager
+    system = config_manager.get_system_config()
+    system.minio_endpoint = "http://minio.invalid:9000"
+    config_manager.set_system_config(system)
+    asked: list[str] = []
+
+    def refuse_two(tenant_id):
+        asked.append(tenant_id)
+        return 5, {
+            "acme:prod/z.mp4": "AccessDenied: Access Denied.",
+            "acme:prod/a.mp4": "InternalError: disk offline",
+        }
+
+    monkeypatch.setattr(minio_client, "delete_tenant_objects", refuse_two)
+    caplog.set_level(logging.INFO, logger=tenant_manager.logger.name)
+
+    outcome = asyncio.run(
+        tenant_manager._delete_tenant_objects(config_manager, "acme:prod")
+    )
+
+    assert (outcome, asked) == ((5, False), ["acme:prod"])
+    assert [
+        (record.levelname, record.getMessage())
+        for record in caplog.records
+        if record.name == tenant_manager.logger.name
+    ] == [
+        (
+            "ERROR",
+            "Cannot delete 2 ingest object(s), the first acme:prod/a.mp4, of "
+            "deleted tenant acme:prod (InternalError: disk offline); the delete "
+            "stays pending and its retry, or the next create of the tenant, "
+            "removes it",
+        ),
+        ("INFO", "Deleted 5 ingest object(s) of deleted tenant acme:prod"),
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_no_object_store_configured_means_no_ingest_objects_to_delete(
+    admin_client, monkeypatch
+):
+    from cogniverse_runtime.ingestion_worker import minio_client
+
+    def never(_tenant_id):
+        raise AssertionError("the object store must not be called")
+
+    monkeypatch.setattr(minio_client, "delete_tenant_objects", never)
+
+    assert asyncio.run(
+        tenant_manager._delete_tenant_objects(
+            tenant_manager._config_manager, "acme:prod"
+        )
+    ) == (0, True)
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+@pytest.mark.parametrize("dry_run", ["true", "false"])
+def test_reconcile_ingest_orphans_route_removes_only_on_dry_run_false(
+    admin_client, monkeypatch, dry_run
+):
+    """The route's query parameter decides: the default and ``true`` list,
+    ``false`` deletes each orphan prefix and nothing else."""
+    from cogniverse_runtime.ingestion_worker import minio_client
+
+    client, backend, _, _ = admin_client
+    config_manager = tenant_manager._config_manager
+    system = config_manager.get_system_config()
+    system.minio_endpoint = "http://minio.invalid:9000"
+    config_manager.set_system_config(system)
+    backend.get_metadata_document.return_value = None
+    monkeypatch.setattr(
+        minio_client,
+        "tenant_prefix_usage",
+        lambda: {
+            "legit:legit": (4, 400),
+            "legit:legit0": (2, 20),
+            "gone:t1": (1, 7),
+            "legit": (1, 1),
+            "": (1, 1),
+        },
+    )
+    emptied: list[str] = []
+
+    def empty(tenant_id):
+        emptied.append(tenant_id)
+        return 1, {}
+
+    monkeypatch.setattr(minio_client, "delete_tenant_objects", empty)
+
+    resp = client.post(f"/admin/reconcile-ingest-orphans?dry_run={dry_run}")
+
+    removed = ["gone:t1", "legit:legit0"] if dry_run == "false" else []
+    assert (resp.status_code, resp.json()) == (
+        200,
+        {
+            "dry_run": dry_run == "true",
+            "deleted": removed,
+            "orphan_prefixes": [
+                {"prefix": "gone:t1", "objects": 1, "bytes": 7},
+                {"prefix": "legit:legit0", "objects": 2, "bytes": 20},
+            ],
+            "live_prefixes": ["legit:legit"],
+            "unrecognized_prefixes": ["", "legit"],
+        },
+    )
+    assert emptied == removed
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_reconcile_ingest_orphans_route_defaults_to_dry_run(admin_client, monkeypatch):
+    from cogniverse_runtime.ingestion_worker import minio_client
+
+    client, _, _, _ = admin_client
+    config_manager = tenant_manager._config_manager
+    system = config_manager.get_system_config()
+    system.minio_endpoint = "http://minio.invalid:9000"
+    config_manager.set_system_config(system)
+    monkeypatch.setattr(
+        minio_client, "tenant_prefix_usage", lambda: {"gone:t1": (1, 7)}
+    )
+
+    def never(_tenant_id):
+        raise AssertionError("a dry run must not delete")
+
+    monkeypatch.setattr(minio_client, "delete_tenant_objects", never)
+
+    resp = client.post("/admin/reconcile-ingest-orphans")
+
+    assert (resp.status_code, resp.json()["dry_run"], resp.json()["deleted"]) == (
+        200,
+        True,
+        [],
+    )

@@ -132,3 +132,46 @@ def test_missing_keyframe_is_skipped_not_raised(minio_env, minio, tmp_path):
         "segment_id": 0,
     }
     assert resolver.collect([hit], max_images=4) == []
+
+
+def _keys(minio, bucket: str) -> set:
+    keys: set = set()
+    pages = (
+        minio.boto3_client().get_paginator("list_objects_v2").paginate(Bucket=bucket)
+    )
+    for page in pages:
+        keys.update(entry["Key"] for entry in page.get("Contents", []))
+    return keys
+
+
+def test_delete_tenant_objects_empties_a_prefix_larger_than_one_page_and_batch(
+    minio_env, minio, monkeypatch
+):
+    """A listing page and a delete batch hold 1,000 keys each: a tenant with
+    more is emptied, and the tenant whose id its own id begins keeps every
+    object. ``tenant_prefix_usage`` counts both before and one after."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    bucket = f"media-{uuid.uuid4().hex[:8]}"
+    client = minio.boto3_client()
+    client.create_bucket(Bucket=bucket)
+    monkeypatch.setenv("MINIO_DEFAULT_BUCKET", bucket)
+    tenant_id, neighbour = "acme:prod", "acme:prod0"
+    mine = {f"{tenant_id}/keyframes/v/{index:04d}.jpg" for index in range(1003)}
+    theirs = {f"{neighbour}/a.mp4", f"{neighbour}/keyframes/v/0000.jpg"}
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        list(
+            pool.map(
+                lambda key: client.put_object(Bucket=bucket, Key=key, Body=b"xy"),
+                sorted(mine | theirs),
+            )
+        )
+
+    before = minio_client.tenant_prefix_usage()
+    outcome = minio_client.delete_tenant_objects(tenant_id)
+
+    assert before == {tenant_id: (1003, 2006), neighbour: (2, 4)}
+    assert outcome == (1003, {})
+    assert _keys(minio, bucket) == theirs
+    assert minio_client.tenant_prefix_usage() == {neighbour: (2, 4)}
+    assert minio_client.delete_tenant_objects(tenant_id) == (0, {})

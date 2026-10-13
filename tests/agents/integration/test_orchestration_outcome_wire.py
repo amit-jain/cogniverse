@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 from cogniverse_agents.background_memory_writes import drain_background_memory_writes
 from cogniverse_agents.orchestrator_agent import (
+    ORCHESTRATION_STEP_CONTEXT_KEY,
     AccumulatedEvidence,
     AgentStep,
     OrchestrationPlan,
@@ -47,6 +48,7 @@ CHILD_ERROR = (
 class _Runtime:
     def __init__(self):
         self.calls: list[tuple[str, str, str]] = []
+        self.contexts: list[dict] = []
         self.memory_writes: list[tuple[str, str]] = []
         self.memory_release = threading.Event()
         self.memory_release.set()
@@ -66,6 +68,7 @@ async def runtime(monkeypatch):
         body = await request.json()
         query = body["query"]
         state.calls.append((name, query, body["context"]["tenant_id"]))
+        state.contexts.append(body["context"])
         if query == "held-failure":
             state.entered.set()
             await asyncio.wait_for(state.release.wait(), 10)
@@ -88,7 +91,13 @@ async def runtime(monkeypatch):
 
     class PreparedOrchestrator(OrchestratorAgent):
         async def _create_plan(
-            self, query, conversation_context, gateway_context, *, available_agents
+            self,
+            query,
+            conversation_context,
+            gateway_context,
+            *,
+            available_agents,
+            **planning,
         ):
             return OrchestrationPlan(
                 query=query,
@@ -235,6 +244,19 @@ async def test_every_step_succeeding_is_a_success_and_is_remembered(runtime):
     assert result["orchestration_result"]["final_output"]["status"] == "success"
     assert runtime.memory_writes == [
         ("fine", "Executed 2/2 steps (2 successful). Plan: two required sources")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_every_step_is_dispatched_as_a_step_of_the_run(runtime):
+    """Each child request names itself a step, so the runtime that serves it
+    does not file it in the wiki as an interaction of its own."""
+    result = await _process(runtime, "fine")
+
+    assert result["status"] == "success"
+    assert runtime.contexts == [
+        {"tenant_id": TENANT, ORCHESTRATION_STEP_CONTEXT_KEY: True},
+        {"tenant_id": TENANT, ORCHESTRATION_STEP_CONTEXT_KEY: True},
     ]
 
 

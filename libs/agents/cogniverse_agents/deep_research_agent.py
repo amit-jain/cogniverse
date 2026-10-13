@@ -35,6 +35,11 @@ from cogniverse_foundation.config.semantic_router import (
 
 logger = logging.getLogger(__name__)
 
+# Where a hit carries the text a citation quotes, in the order it is read: the
+# description the dispatcher gives a grounding hit, a transcript, a wiki
+# page's content.
+_CITATION_TEXT_KEYS = ("description", "transcript", "content")
+
 
 class DeepResearchInput(AgentInput):
     query: str = Field(..., description="Research question")
@@ -509,7 +514,8 @@ class DeepResearchAgent(
 
     @staticmethod
     def _extract_citations(evidence: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-        """Extract citations from evidence results."""
+        """Extract citations from evidence results: each of a question's first
+        three hits with the text it carries, a wiki page with its content."""
         citations = []
         for e in evidence:
             results = e.get("results", [])
@@ -521,7 +527,14 @@ class DeepResearchAgent(
                                 "source": r.get(
                                     "document_id", r.get("video_id", "unknown")
                                 ),
-                                "text": r.get("description", r.get("transcript", "")),
+                                "text": next(
+                                    (
+                                        r[key]
+                                        for key in _CITATION_TEXT_KEYS
+                                        if r.get(key)
+                                    ),
+                                    "",
+                                ),
                                 "question": e.get("question", ""),
                             }
                         )

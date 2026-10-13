@@ -37,7 +37,16 @@ pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 RATE = 16000
 MODEL = "openai/whisper-large-v3-turbo"
-LOOP = " over and over" * 40
+# A decode loop takes a different shape each time it is sampled: one loop per
+# fallback temperature, no two on the same phrase.
+LOOPS = {
+    temperature: f" {phrase}" * 60
+    for temperature, phrase in zip(
+        FALLBACK_TEMPERATURES,
+        ("over and over", "again", "round we go", "once more", "and then", "so"),
+        strict=True,
+    )
+}
 
 
 def _tone_wav(path: Path, seconds: float, frequency: float) -> np.ndarray:
@@ -153,7 +162,7 @@ class _Whisper:
         if timed == "json":
             if key in self.untimed_unavailable:
                 return None
-            return {"text": LOOP if key in self.untimed_loop else text}
+            return {"text": LOOPS[temperature] if key in self.untimed_loop else text}
         return {
             "text": text,
             "language": "en",
@@ -270,7 +279,7 @@ def test_a_chunk_whose_text_loops_on_every_attempt_fails_the_transcription(
     tmp_path,
 ):
     clip = _clip(tmp_path, "spoken")
-    ratio = compression_ratio(LOOP)
+    ratios = ", ".join(f"{compression_ratio(loop):.2f}" for loop in LOOPS.values())
     with _Whisper(untimed_loop=[("spoken", 29.5)]) as whisper:
         transcript = _processor(whisper.url).transcribe_audio(clip, tmp_path)
 
@@ -279,7 +288,7 @@ def test_a_chunk_whose_text_loops_on_every_attempt_fails_the_transcription(
         "error": (
             f"{clip}: chunk 1 (29.50-45.00s) came back unusable on all "
             f"{TRANSCRIBE_ATTEMPTS} attempts: 6 repetition loops (compression "
-            f"ratio {', '.join([f'{ratio:.2f}'] * 6)}, above 2.4) and 0 empty"
+            f"ratio {ratios}, above 2.4) and 0 empty"
         ),
         "full_text": "",
         "segments": [],

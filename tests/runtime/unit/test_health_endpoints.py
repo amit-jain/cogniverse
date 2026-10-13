@@ -10,6 +10,7 @@ ready/healthy assertions reflect a genuinely reachable backend.
 
 import http.server
 import logging
+import os
 import threading
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
@@ -18,6 +19,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from cogniverse_foundation.config.lm_endpoint_availability import (
+    SERVING_FRESHNESS_S,
+)
 from cogniverse_runtime.routers import health
 
 
@@ -186,7 +190,14 @@ class TestHealthCheckFull:
             "dependencies",
         }
         assert data["dependencies"] == {
-            "llm": {"status": "not_called", "endpoints": []}
+            "llm": {
+                "status": "not_called",
+                "observed_by": {"scope": "worker", "pid": os.getpid()},
+                "freshness_window_s": SERVING_FRESHNESS_S,
+                "last_answered_at": None,
+                "last_answered_age_s": None,
+                "endpoints": [],
+            }
         }
         assert "registered" in data["backends"]
         assert "backends" in data["backends"]

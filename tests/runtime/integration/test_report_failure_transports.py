@@ -885,7 +885,13 @@ async def test_report_failure_is_an_unsuccessful_orchestrator_child(
 
     class PreparedOrchestrator(OrchestratorAgent):
         async def _create_plan(
-            self, query, conversation_context, gateway_context, *, available_agents
+            self,
+            query,
+            conversation_context,
+            gateway_context,
+            *,
+            available_agents,
+            **planning,
         ):
             return OrchestrationPlan(
                 query=query,

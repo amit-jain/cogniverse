@@ -14,7 +14,9 @@ request waits out the cold start and answers, so a timeout, a 5xx or a refused
 connection is recorded as ``failing`` and never stops the calls that follow.
 
 The state is per process and never probed in the background: any request to a
-deployed Modal endpoint, a probe included, boots a GPU container.
+deployed Modal endpoint, a probe included, boots a GPU container. An answer is
+therefore evidence only for a while: one older than ``SERVING_FRESHNESS_S`` is
+reported as ``idle``, with its age, instead of ``serving``.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 from urllib.parse import urlsplit, urlunsplit
 
+from cogniverse_foundation.inference_specs import INFERENCE_SERVICE_SPECS
 from cogniverse_foundation.telemetry.span_contract import (
     LLM_ENDPOINT_FAILED_FAST_ATTRIBUTE,
     LLM_ENDPOINT_RECHECK_IN_S_ATTRIBUTE,
@@ -53,7 +56,18 @@ PROBE_VERDICT_S = float(math.ceil(5 * _MEASURED_NOT_SERVING_ANSWER_MAX_S))
 # process tracks a handful; the bound only stops an unbounded key space.
 MAX_TRACKED_ENDPOINTS = 64
 
+# The chat LLM services whose scale-down window bounds how long an answer
+# says anything about the next call.
+CHAT_LLM_SERVICES = ("vllm_llm_student", "vllm_llm_teacher")
+
+# How long an answer counts as ``serving``: the shortest window after which an
+# idle chat endpoint scales to zero and its next call waits out a cold start.
+SERVING_FRESHNESS_S = float(
+    min(INFERENCE_SERVICE_SPECS[name].scaledown_window for name in CHAT_LLM_SERVICES)
+)
+
 SERVING = "serving"
+IDLE = "idle"
 NOT_SERVING = "not_serving"
 FAILING = "failing"
 
@@ -141,6 +155,9 @@ class _Observation:
     upstream_status: Optional[int]
     failure: Optional[str]
     observed_at: float
+    observed_clock: float = 0.0
+    last_answered_at: Optional[float] = None
+    last_answered_clock: Optional[float] = None
     recheck_at: Optional[float] = None
     probe: Optional[object] = None
     probe_started_at: Optional[float] = None
@@ -158,12 +175,14 @@ class LMEndpointAvailability:
         *,
         recheck_after_s: float = NOT_SERVING_RECHECK_S,
         probe_verdict_s: float = PROBE_VERDICT_S,
+        serving_freshness_s: float = SERVING_FRESHNESS_S,
         max_endpoints: int = MAX_TRACKED_ENDPOINTS,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
     ) -> None:
         self.recheck_after_s = recheck_after_s
         self.probe_verdict_s = probe_verdict_s
+        self.serving_freshness_s = serving_freshness_s
         self.max_endpoints = max_endpoints
         self._clock = clock
         self._wall_clock = wall_clock
@@ -171,6 +190,17 @@ class LMEndpointAvailability:
         self._lock = threading.Lock()
 
     def _record(self, endpoint: LMEndpoint, observation: _Observation) -> None:
+        """Store the outcome, keeping when the endpoint last answered. Caller
+        holds the lock."""
+        observation.observed_clock = self._clock()
+        if observation.state == SERVING:
+            observation.last_answered_at = observation.observed_at
+            observation.last_answered_clock = observation.observed_clock
+        else:
+            previous = self._observations.get(endpoint)
+            if previous is not None:
+                observation.last_answered_at = previous.last_answered_at
+                observation.last_answered_clock = previous.last_answered_clock
         self._observations[endpoint] = observation
         self._observations.move_to_end(endpoint)
         while len(self._observations) > self.max_endpoints:
@@ -287,14 +317,22 @@ class LMEndpointAvailability:
         with self._lock:
             now = self._clock()
             items = list(self._observations.items())
-            return [_describe(endpoint, seen, now) for endpoint, seen in items]
+            return [
+                _describe(endpoint, seen, now, self.serving_freshness_s)
+                for endpoint, seen in items
+            ]
 
     def clear(self) -> None:
         with self._lock:
             self._observations.clear()
 
 
-def _reason(seen: _Observation) -> str:
+def _reason(seen: _Observation, state: str, age_s: float) -> str:
+    if state == IDLE:
+        return (
+            f"answered its last call {age_s:.0f}s ago and has not been called "
+            "since; whether it still serves is unknown until the next call"
+        )
     if seen.state == NOT_SERVING:
         return (
             f"answered HTTP {seen.upstream_status}: nothing is deployed for this "
@@ -306,18 +344,32 @@ def _reason(seen: _Observation) -> str:
     return "answered its last call"
 
 
-def _describe(endpoint: LMEndpoint, seen: _Observation, now: float) -> dict[str, Any]:
+def _iso(wall: float) -> str:
+    return datetime.fromtimestamp(wall, tz=timezone.utc).isoformat()
+
+
+def _describe(
+    endpoint: LMEndpoint, seen: _Observation, now: float, serving_freshness_s: float
+) -> dict[str, Any]:
+    age_s = max(now - seen.observed_clock, 0.0)
+    state = seen.state
+    if state == SERVING and age_s > serving_freshness_s:
+        state = IDLE
+    answered = seen.last_answered_at is not None
     return {
         "endpoint": display_endpoint(endpoint.api_base),
         "model": endpoint.model,
         "route": endpoint.route,
-        "state": seen.state,
+        "state": state,
         "upstream_status": seen.upstream_status,
         "failure": seen.failure,
-        "reason": _reason(seen),
-        "observed_at": datetime.fromtimestamp(
-            seen.observed_at, tz=timezone.utc
-        ).isoformat(),
+        "reason": _reason(seen, state, age_s),
+        "observed_at": _iso(seen.observed_at),
+        "age_s": age_s,
+        "last_answered_at": _iso(seen.last_answered_at) if answered else None,
+        "last_answered_age_s": (
+            max(now - seen.last_answered_clock, 0.0) if answered else None
+        ),
         "recheck_in_s": (
             max(seen.recheck_at - now, 0.0) if seen.state == NOT_SERVING else None
         ),
@@ -333,13 +385,16 @@ def lm_endpoint_availability() -> LMEndpointAvailability:
 
 
 __all__ = [
+    "CHAT_LLM_SERVICES",
     "FAILING",
+    "IDLE",
     "MAX_TRACKED_ENDPOINTS",
     "NOT_SERVING",
     "NOT_SERVING_RECHECK_S",
     "NOT_SERVING_STATUS",
     "PROBE_VERDICT_S",
     "SERVING",
+    "SERVING_FRESHNESS_S",
     "LMEndpoint",
     "LMEndpointAvailability",
     "LMEndpointNotServing",

@@ -510,6 +510,40 @@ deployed set back after the redeploy, reporting 502 if a target survived.
 An unreachable or page-saturated tenant registry returns 503 rather than
 marking live tenants as orphans.
 
+### `cogniverse admin reconcile-ingest-orphans`
+
+Uploads and keyframes live in the ingest bucket under `<tenant>/`.
+`DELETE /admin/tenants/{id}` removes them; this command removes the
+prefixes of tenants that have no `tenant_metadata` record.
+
+```bash
+# Dry-run (default): list each orphan prefix with its object count and bytes
+cogniverse admin reconcile-ingest-orphans
+
+# Confirm: delete every object under each orphan prefix
+cogniverse admin reconcile-ingest-orphans --confirm
+```
+
+The CLI calls `POST /admin/reconcile-ingest-orphans?dry_run={true|false}`:
+
+```json
+{
+  "dry_run": true,
+  "deleted": [],
+  "orphan_prefixes": [{"prefix": "dead:t1", "objects": 14, "bytes": 5120331}],
+  "live_prefixes": ["acme:production"],
+  "unrecognized_prefixes": []
+}
+```
+
+Prefixes of registered tenants (`live_prefixes`) and prefixes that are not
+canonical `org:tenant` ids (`unrecognized_prefixes`) are never deleted. With
+`dry_run=false`, a prefix whose tenant was registered since the listing, or
+that could not be emptied, is kept and the call answers 502 naming it in
+`not_removed`; run it again. The call answers 503 and removes nothing when
+the bucket cannot be listed, the tenant registry cannot be read, or the
+registry holds no tenant while the bucket holds prefixes.
+
 A schema another process is deploying right now (activated in Vespa, its
 registry record not yet written — the state every new schema is in during
 its convergence wait) is not an orphan: it never appears in

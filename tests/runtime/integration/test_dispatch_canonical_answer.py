@@ -82,6 +82,10 @@ class _RecordingBackend:
         self.fed.append({"document": document, "kwargs": kwargs})
         return True
 
+    def conditional_put_document(self, document, **kwargs):
+        self.fed.append({"document": document, "kwargs": kwargs})
+        return True
+
 
 def _dispatcher(
     policies: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -292,6 +296,287 @@ class TestWikiAutoFileReadsTheAnswer:
         assert backend.fed == []
 
 
+RUN_QUERY = "compare the bridge clips and write a report"
+RUN_ANSWER = "Both clips show the same bridge; the second is filmed at dusk."
+RUN_ENTITIES = [
+    {"text": "Tower Bridge", "type": "LOCATION", "context": "the bridge clips"},
+    {"text": "River Thames", "type": "LOCATION", "context": "over the river"},
+    {"text": "Cyclist", "type": "PERSON", "context": "a cyclist crossing"},
+]
+
+
+def _run_envelope(status: str) -> Dict[str, Any]:
+    """The envelope ``_execute_orchestration_task`` returns for a run whose
+    entity extraction and report steps answered."""
+    return {
+        "status": status,
+        "agent": "orchestrator_agent",
+        "message": f"Orchestrated '{RUN_QUERY[:50]}' via A2A pipeline",
+        "orchestration_result": {
+            "query": RUN_QUERY,
+            "agent_results": {
+                "entity_extraction_agent": {
+                    "status": "success",
+                    "agent": "entity_extraction_agent",
+                    "entities": RUN_ENTITIES,
+                },
+                "detailed_report_agent": {
+                    "status": "success",
+                    "agent": "detailed_report_agent",
+                    "answer": RUN_ANSWER,
+                },
+            },
+            "final_output": {"status": status, "answer": RUN_ANSWER},
+        },
+        "gateway_context": None,
+    }
+
+
+def _wiki_on(monkeypatch) -> tuple[_RecordingBackend, List[str]]:
+    """A real WikiManager over a recording backend as every tenant's wiki, and
+    the tenants a manager was resolved for."""
+    from cogniverse_agents.wiki.wiki_manager import WikiManager
+    from cogniverse_runtime.routers import wiki as wiki_router
+
+    backend = _RecordingBackend()
+    manager = WikiManager(
+        backend_resolver=lambda: backend,
+        tenant_id=TENANT,
+        schema_name="wiki_pages_acme_acme",
+    )
+    monkeypatch.setattr(manager, "_generate_embedding", lambda *a, **k: [0.1] * 768)
+    resolved: List[str] = []
+
+    def factory(tenant_id: str):
+        resolved.append(tenant_id)
+        return manager
+
+    monkeypatch.setattr(wiki_router, "_wiki_manager_factory", factory)
+    return backend, resolved
+
+
+def _fed_pages(backend: _RecordingBackend) -> List[Dict[str, Any]]:
+    from cogniverse_sdk.document import DocumentFieldMapping
+
+    mapping = DocumentFieldMapping.from_dict(
+        json.loads(Path("configs/schemas/wiki_pages_schema.json").read_text())[
+            "document_mapping"
+        ]
+    )
+    return [fed["document"].to_schema_fields(mapping) for fed in backend.fed]
+
+
+class TestAnOrchestratedRunIsFiledOnce:
+    """A run is one interaction. Its steps file nothing while it runs, so no
+    later step can retrieve a page the run itself wrote; the run is filed by
+    the dispatch that started it, and only when it succeeded."""
+
+    async def _post_step(self, dispatcher: AgentDispatcher, context: Dict[str, Any]):
+        import httpx
+        from fastapi import FastAPI
+
+        from cogniverse_runtime.routers import agents as agents_router
+
+        app = FastAPI()
+        app.include_router(agents_router.router, prefix="/agents")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://runtime"
+        ) as client:
+            response = await client.post(
+                "/agents/detailed_report_agent/process",
+                json={
+                    "agent_name": "detailed_report_agent",
+                    "query": RUN_QUERY,
+                    "context": context,
+                },
+            )
+        assert response.status_code == 200, response.text
+        await _drain_background(dispatcher)
+        return response.json()
+
+    def _report_dispatcher(self, monkeypatch) -> AgentDispatcher:
+        from cogniverse_runtime.routers import agents as agents_router
+
+        dispatcher = _dispatcher()
+        _register(dispatcher, "detailed_report_agent", ["detailed_report"])
+
+        async def execute(query, tenant_id, context=None):
+            return {
+                "status": "success",
+                "agent": "detailed_report_agent",
+                "answer": RUN_ANSWER,
+            }
+
+        dispatcher._execute_detailed_report_task = execute
+        monkeypatch.setattr(agents_router, "_ensure_dispatcher", lambda: dispatcher)
+        return dispatcher
+
+    async def test_a_report_dispatched_on_its_own_is_filed(self, monkeypatch):
+        backend, resolved = _wiki_on(monkeypatch)
+        dispatcher = self._report_dispatcher(monkeypatch)
+
+        result = await self._post_step(dispatcher, {"tenant_id": TENANT})
+
+        assert result["answer"] == RUN_ANSWER
+        assert resolved == [TENANT]
+        assert [
+            (page["agent_used"], page["content"])
+            for page in _fed_pages(backend)
+            if page["page_type"] == "session"
+        ] == [("detailed_report_agent", RUN_ANSWER)]
+
+    async def test_the_same_report_as_a_step_of_a_run_files_nothing(self, monkeypatch):
+        """The context is the one the orchestrator sends with every step, over
+        the route its steps are posted to."""
+        from cogniverse_agents.orchestrator_agent import step_context
+
+        backend, resolved = _wiki_on(monkeypatch)
+        dispatcher = self._report_dispatcher(monkeypatch)
+
+        result = await self._post_step(dispatcher, step_context(TENANT, "sess-1"))
+
+        assert result["answer"] == RUN_ANSWER
+        assert (resolved, backend.fed) == ([], [])
+
+    async def _dispatch_run(self, monkeypatch, status: str):
+        backend, resolved = _wiki_on(monkeypatch)
+        dispatcher = _dispatcher()
+        _register(dispatcher, "orchestrator_agent", ["orchestration"])
+
+        async def execute(query, context, tenant_id):
+            return _run_envelope(status)
+
+        dispatcher._execute_orchestration_task = execute
+        result = await dispatcher.dispatch(
+            "orchestrator_agent", RUN_QUERY, context={"tenant_id": TENANT}
+        )
+        await _drain_background(dispatcher)
+        return result, backend, resolved
+
+    async def test_a_successful_run_is_filed_once_with_its_steps_entities(
+        self, monkeypatch
+    ):
+        result, backend, resolved = await self._dispatch_run(monkeypatch, "success")
+
+        assert result["answer"] == RUN_ANSWER
+        assert resolved == [TENANT]
+        pages = _fed_pages(backend)
+        assert sorted((page["page_type"], page["title"]) for page in pages) == [
+            ("index", f"Wiki Index — {TENANT}"),
+            ("session", f"Session — {RUN_QUERY}"),
+            ("topic", "Cyclist"),
+            ("topic", "River Thames"),
+            ("topic", "Tower Bridge"),
+        ]
+        [session] = [page for page in pages if page["page_type"] == "session"]
+        assert (session["agent_used"], session["content"]) == (
+            "orchestrator_agent",
+            RUN_ANSWER,
+        )
+        assert json.loads(session["entities"]) == [
+            "Tower Bridge",
+            "River Thames",
+            "Cyclist",
+        ]
+
+    async def test_a_partial_run_is_not_filed(self, monkeypatch, caplog):
+        with caplog.at_level(
+            logging.INFO, logger="cogniverse_runtime.agent_dispatcher"
+        ):
+            result, backend, resolved = await self._dispatch_run(monkeypatch, "partial")
+
+        assert result["answer"] == RUN_ANSWER
+        assert (resolved, backend.fed) == ([], [])
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if "auto-filing" in record.getMessage()
+        ] == [
+            f"Wiki auto-filing skipped for the orchestrated run (tenant={TENANT}): "
+            "its status is 'partial'"
+        ]
+
+    async def test_concurrent_steps_and_their_run_file_one_session(self, monkeypatch):
+        """Eight step dispatches and the run that owns them finish together:
+        the wiki holds the run's session and no step's."""
+        from cogniverse_agents.orchestrator_agent import step_context
+
+        backend, resolved = _wiki_on(monkeypatch)
+        dispatcher = _dispatcher()
+        _register(dispatcher, "orchestrator_agent", ["orchestration"])
+        _register(dispatcher, "detailed_report_agent", ["detailed_report"])
+        steps = 8
+        together = asyncio.Barrier(steps + 1)
+
+        async def report(query, tenant_id, context=None):
+            await together.wait()
+            return {
+                "status": "success",
+                "agent": "detailed_report_agent",
+                "answer": RUN_ANSWER,
+            }
+
+        async def run(query, context, tenant_id):
+            await together.wait()
+            return _run_envelope("success")
+
+        dispatcher._execute_detailed_report_task = report
+        dispatcher._execute_orchestration_task = run
+
+        await asyncio.gather(
+            dispatcher.dispatch(
+                "orchestrator_agent", RUN_QUERY, context={"tenant_id": TENANT}
+            ),
+            *(
+                dispatcher.dispatch(
+                    "detailed_report_agent", RUN_QUERY, context=step_context(TENANT)
+                )
+                for _ in range(steps)
+            ),
+        )
+        await _drain_background(dispatcher)
+
+        assert together.n_waiting == 0
+        assert resolved == [TENANT]
+        assert [
+            page["agent_used"]
+            for page in _fed_pages(backend)
+            if page["page_type"] == "session"
+        ] == ["orchestrator_agent"]
+
+    async def test_a_wiki_that_cannot_be_written_leaves_the_run_answered(
+        self, monkeypatch, caplog
+    ):
+        from cogniverse_runtime.routers import wiki as wiki_router
+
+        def unreachable(tenant_id: str):
+            raise ConnectionError("wiki backend refused the connection")
+
+        monkeypatch.setattr(wiki_router, "_wiki_manager_factory", unreachable)
+        dispatcher = _dispatcher()
+        _register(dispatcher, "orchestrator_agent", ["orchestration"])
+
+        async def execute(query, context, tenant_id):
+            return _run_envelope("success")
+
+        dispatcher._execute_orchestration_task = execute
+        with caplog.at_level(
+            logging.ERROR, logger="cogniverse_runtime.agent_dispatcher"
+        ):
+            result = await dispatcher.dispatch(
+                "orchestrator_agent", RUN_QUERY, context={"tenant_id": TENANT}
+            )
+            await _drain_background(dispatcher)
+
+        assert (result["status"], result["answer"]) == ("success", RUN_ANSWER)
+        assert [record.getMessage() for record in caplog.records] == [
+            f"Wiki auto-filing failed for orchestrator_agent (tenant={TENANT}): "
+            "ConnectionError: wiki backend refused the connection; "
+            "entities=3 items, item types={'dict'}, "
+            "dict keys={'context', 'text', 'type'}"
+        ]
+
+
 class TestEgressMapIsDerivedFromTheRegistry:
     def test_map_covers_a_newly_registered_agent(self):
         dispatcher = _dispatcher()
@@ -375,12 +660,14 @@ class TestEgressRefusalIsEnforcedForCodingAndOrchestrator:
         dispatcher = self._dispatcher_with_endpoints("coding_agent")
         _register(dispatcher, "coding_agent", ["coding", "code_generation"])
         calls: List[Any] = []
+        bound: List[Any] = []
 
         class _Verified(RuntimeError):
             pass
 
-        def record(agent_name, endpoints):
+        def record(agent_name, endpoints, endpoint_bindings):
             calls.append((agent_name, endpoints))
+            bound.append(endpoint_bindings)
             raise _Verified("verified")
 
         dispatcher.validate_dispatch_endpoints = record
@@ -397,17 +684,25 @@ class TestEgressRefusalIsEnforcedForCodingAndOrchestrator:
                 ],
             )
         ]
+        assert bound == [
+            {
+                ("localhost", 8080): ("localhost", 8080),
+                ("localhost", 11434): ("llm.example.com", 11434),
+            }
+        ]
 
     async def test_orchestration_dispatch_verifies_before_any_other_work(self):
         dispatcher = self._dispatcher_with_endpoints("orchestrator_agent")
         _register(dispatcher, "orchestrator_agent", ["orchestration", "planning"])
         calls: List[Any] = []
+        bound: List[Any] = []
 
         class _Verified(RuntimeError):
             pass
 
-        def record(agent_name, endpoints):
+        def record(agent_name, endpoints, endpoint_bindings):
             calls.append((agent_name, endpoints))
+            bound.append(endpoint_bindings)
             raise _Verified("verified")
 
         dispatcher.validate_dispatch_endpoints = record
@@ -420,6 +715,12 @@ class TestEgressRefusalIsEnforcedForCodingAndOrchestrator:
                 "orchestrator_agent",
                 [{"host": "llm.example.com", "port": 11434, "protocol": "tcp"}],
             )
+        ]
+        assert bound == [
+            {
+                ("localhost", 8080): ("localhost", 8080),
+                ("localhost", 11434): ("llm.example.com", 11434),
+            }
         ]
 
     async def test_unparseable_endpoint_does_not_fail_the_dispatch(self):

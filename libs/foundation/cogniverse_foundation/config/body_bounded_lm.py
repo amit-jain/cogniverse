@@ -36,6 +36,7 @@ from cogniverse_foundation.config.request_body import (
     messages_from,
     request_body_metrics,
 )
+from cogniverse_foundation.config.token_budget import PromptAllowance
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,11 @@ class BodyBoundedLM(dspy.LM):
     def availability_endpoint(self) -> LMEndpoint:
         """The endpoint this LM's calls are tracked under."""
         return LMEndpoint(api_base=self.kwargs.get("api_base"), model=self.model)
+
+    def prompt_allowance(self) -> Optional[PromptAllowance]:
+        """What a free-text prompt may weigh, or ``None`` when this LM does not
+        know the window its calls are served with."""
+        return None
 
     def _admit(self, endpoint: LMEndpoint) -> Optional[object]:
         try:

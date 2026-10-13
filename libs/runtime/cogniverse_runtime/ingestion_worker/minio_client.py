@@ -22,8 +22,18 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit
 
+# A removal runs inside a tenant delete or an operator's sweep: an object
+# store that does not answer fails it in seconds, and the caller's retry
+# finishes it.
+_REMOVAL_TIMEOUTS = {
+    "connect_timeout": 5,
+    "read_timeout": 30,
+    "retries": {"max_attempts": 2, "mode": "standard"},
+}
+_DELETE_BATCH = 1000
 
-def _client():
+
+def _client(**client_config):
     """Build a boto3 S3 client pointed at MinIO. boto3 is heavy to
     import; do it lazily so test paths that never upload don't pay
     the cost."""
@@ -44,7 +54,7 @@ def _client():
         endpoint_url=endpoint,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
-        config=Config(signature_version="s3v4"),
+        config=Config(signature_version="s3v4", **client_config),
         region_name="us-east-1",  # MinIO ignores; boto3 requires *some* region.
     )
 
@@ -194,3 +204,66 @@ def upload_keyframes(
         list(pool.map(_put, keyframe_paths, keys))
 
     return [f"s3://{bucket_name}/{key}" for key in keys]
+
+
+def _tenant_prefix(tenant_id: str) -> str:
+    """The key prefix every object of ``tenant_id`` is stored under. The
+    trailing slash keeps a tenant whose id begins another's apart from it."""
+    if not tenant_id or "/" in tenant_id:
+        raise ValueError(f"{tenant_id!r} names no tenant prefix")
+    return f"{tenant_id}/"
+
+
+def _objects_under(client, bucket_name: str, prefix: str):
+    """Yield ``(key, size)`` for every object under ``prefix``."""
+    pages = client.get_paginator("list_objects_v2").paginate(
+        Bucket=bucket_name, Prefix=prefix
+    )
+    for page in pages:
+        for entry in page.get("Contents", []):
+            yield entry["Key"], entry["Size"]
+
+
+def delete_tenant_objects(
+    tenant_id: str, *, bucket: Optional[str] = None
+) -> tuple[int, dict[str, str]]:
+    """Delete every object stored under ``{tenant_id}/``: its uploads and
+    keyframes.
+
+    Returns how many objects were deleted and, for each one the store refused
+    to delete, its key and the store's reason. A store that cannot be listed
+    or reached raises; objects deleted before that stay deleted, and a repeat
+    of the call deletes the rest.
+    """
+    bucket_name = bucket or _default_bucket()
+    prefix = _tenant_prefix(tenant_id)
+    client = _client(**_REMOVAL_TIMEOUTS)
+    keys = [key for key, _ in _objects_under(client, bucket_name, prefix)]
+    refused: dict[str, str] = {}
+    for start in range(0, len(keys), _DELETE_BATCH):
+        answer = client.delete_objects(
+            Bucket=bucket_name,
+            Delete={
+                "Objects": [
+                    {"Key": key} for key in keys[start : start + _DELETE_BATCH]
+                ],
+                "Quiet": True,
+            },
+        )
+        for error in answer.get("Errors", []):
+            refused[error["Key"]] = f"{error.get('Code')}: {error.get('Message')}"
+    return len(keys) - len(refused), refused
+
+
+def tenant_prefix_usage(*, bucket: Optional[str] = None) -> dict[str, tuple[int, int]]:
+    """Every top-level prefix of the bucket with its object count and total
+    bytes, keyed by the prefix without its trailing slash. Objects stored at
+    the bucket root are counted under ``""``."""
+    bucket_name = bucket or _default_bucket()
+    client = _client(**_REMOVAL_TIMEOUTS)
+    usage: dict[str, tuple[int, int]] = {}
+    for key, size in _objects_under(client, bucket_name, ""):
+        owner = key.split("/", 1)[0] if "/" in key else ""
+        objects, total = usage.get(owner, (0, 0))
+        usage[owner] = (objects + 1, total + size)
+    return usage

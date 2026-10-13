@@ -344,22 +344,6 @@
     "enabled": true,
     "input_rails": [
       {
-        "type": "topic_boundary",
-        "params": {
-          "advisory": true,
-          "allowed_topics": [
-            "video",
-            "search",
-            "document",
-            "audio",
-            "image",
-            "summary",
-            "report",
-            "analysis"
-          ]
-        }
-      },
-      {
         "type": "content_safety",
         "params": {
           "blocked_patterns": [

@@ -1557,6 +1557,39 @@ async def _delete_tenant_workflows(tenant_id: str) -> tuple[list[str], bool]:
     return sorted([*deleted, *failed]), not failed
 
 
+def _object_store_configured(config_manager) -> bool:
+    """Whether this deployment stores ingest uploads in an object store."""
+    return bool(config_manager.get_system_config().minio_endpoint)
+
+
+async def _delete_tenant_objects(config_manager, tenant_id: str) -> tuple[int, bool]:
+    """Delete the tenant's uploads and keyframes from the ingest bucket.
+    Returns how many objects were deleted and whether none is left. Nothing
+    raises: an object store that cannot be read, or an object it refuses to
+    delete, is logged at ERROR naming the tenant."""
+    from cogniverse_runtime.ingestion_worker import minio_client
+
+    try:
+        if not await asyncio.to_thread(_object_store_configured, config_manager):
+            return 0, True
+        removed, refused = await asyncio.to_thread(
+            minio_client.delete_tenant_objects, tenant_id
+        )
+    except Exception as exc:
+        _left_pending("remove the ingest objects", tenant_id, exc, "them")
+        return 0, False
+    if refused:
+        first = min(refused)
+        _not_removed(
+            f"delete {len(refused)} ingest object(s), the first {first},",
+            tenant_id,
+            refused[first],
+        )
+    if removed:
+        logger.info(f"Deleted {removed} ingest object(s) of deleted tenant {tenant_id}")
+    return removed, not refused
+
+
 class TenantRecordRetained(RuntimeError):
     """The ``tenant_metadata`` delete did not confirm and the record is
     still present."""
@@ -1727,7 +1760,7 @@ async def _delete_tenant(
             await asyncio.to_thread(schema_manager.delete_tenant_schemas, canonical_tid)
         )
         # Its schemas are gone, so is everything the config store holds for it,
-        # its telemetry projects, its schedules and its workflows. Schedules
+        # its telemetry projects, its schedules, its workflows and its uploads. Schedules
         # go before workflows are listed, so a run one spawns meanwhile is
         # listed and stopped too.
         state_rows, state_deleted = await asyncio.to_thread(
@@ -1738,6 +1771,11 @@ async def _delete_tenant(
             canonical_tid
         )
         workflows, workflows_deleted = await _delete_tenant_workflows(canonical_tid)
+        # Its tasks are cancelled and its schedules and workflows gone, so
+        # nothing uploads for it while its objects are removed.
+        objects, objects_deleted = await _delete_tenant_objects(
+            config_manager, canonical_tid
+        )
 
         # Allow schema-only orphans (no tenant_metadata record) to be cleaned
         # up — they're created by /ingestion/upload auto-deploy bypassing
@@ -1749,11 +1787,13 @@ async def _delete_tenant(
             and not projects
             and not schedules
             and not workflows
+            and not objects
             and not tasks_cancelled
             and tasks_settled
             and projects_deleted
             and schedules_deleted
             and workflows_deleted
+            and objects_deleted
         ):
             # Nothing existed to delete: the tenant id stays free to use.
             await asyncio.to_thread(clear_tenant_deleted, store, canonical_tid)
@@ -1833,8 +1873,8 @@ async def _delete_tenant(
                 )
 
         # Every step has completed, unless some of the tenant's state, telemetry
-        # projects, schedules or workflows could not be deleted or its tasks
-        # not cancelled: the delete then stays pending, and its retry or the
+        # projects, schedules, workflows or ingest objects could not be deleted
+        # or its tasks not cancelled: the delete then stays pending, and its retry or the
         # next create of the tenant finishes it. A failure to record completion
         # leaves it pending too, so the next create runs its steps again.
         try:
@@ -1844,6 +1884,7 @@ async def _delete_tenant(
                 and projects_deleted
                 and schedules_deleted
                 and workflows_deleted
+                and objects_deleted
             ):
                 await asyncio.to_thread(complete_tenant_delete, store, canonical_tid)
         except Exception as exc:
@@ -2206,6 +2247,156 @@ async def reconcile_orphans(
         "tenant_orphans_deleted": tenant_orphans_deleted,
         **diff,
     }
+
+
+def _ingest_prefix_usage() -> Dict[str, tuple]:
+    """Object count and bytes per top-level prefix of the ingest bucket."""
+    from cogniverse_runtime.ingestion_worker import minio_client
+
+    config_manager = _config_manager or _default_config_manager()
+    try:
+        configured = _object_store_configured(config_manager)
+    except Exception as exc:
+        raise _reconcile_unavailable(
+            "Cannot read the system config naming the object store.", exc
+        ) from exc
+    if not configured:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No object store is configured for this runtime; there is no "
+                "ingest bucket to reconcile."
+            ),
+        )
+    try:
+        return minio_client.tenant_prefix_usage()
+    except Exception as exc:
+        raise _reconcile_unavailable(
+            "Cannot list the ingest bucket; refusing to reconcile its orphans.",
+            exc,
+        ) from exc
+
+
+def _prefix_tenant(prefix: str) -> Optional[str]:
+    """The tenant an ingest prefix belongs to: the prefix itself when it is a
+    canonical ``org:tenant`` id, else None."""
+    org, separator, name = prefix.partition(":")
+    if not (org and separator and name):
+        return None
+    try:
+        canonical = canonical_tenant_id(prefix)
+    except ValueError:
+        return None
+    if canonical != prefix or canonical == SYSTEM_TENANT_ID:
+        return None
+    return canonical
+
+
+def _list_ingest_orphans() -> Dict[str, list]:
+    """Diff the ingest bucket's top-level prefixes against the tenant set.
+
+    A prefix is an orphan when it is a tenant id with no tenant_metadata
+    record. A prefix that is not a tenant id is reported as unrecognized and
+    never removed. A tenant registry that reads as empty while the bucket
+    holds prefixes is refused: every prefix would read as an orphan.
+    """
+    usage = _ingest_prefix_usage()
+    with metadata_backend() as backend:
+        live_tenants = _live_tenant_ids(backend)
+    if usage and not live_tenants:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Tenant registry holds no tenants while the ingest bucket holds "
+                f"{len(usage)} prefix(es); refusing to reconcile ingest orphans "
+                "(this would remove every tenant's uploads)"
+            ),
+        )
+    orphans: list = []
+    live: list = []
+    unrecognized: list = []
+    for prefix, (objects, size) in sorted(usage.items()):
+        owner = _prefix_tenant(prefix)
+        if owner is None:
+            unrecognized.append(prefix)
+        elif owner in live_tenants:
+            live.append(prefix)
+        else:
+            orphans.append({"prefix": prefix, "objects": objects, "bytes": size})
+    return {
+        "orphan_prefixes": orphans,
+        "live_prefixes": live,
+        "unrecognized_prefixes": unrecognized,
+    }
+
+
+async def _remove_ingest_orphan(prefix: str) -> Optional[str]:
+    """Delete one orphan prefix's objects. Returns None when none is left, or
+    why the prefix was kept. The tenant registry is read again first, so a
+    tenant created since the listing keeps its uploads."""
+    from cogniverse_runtime.ingestion_worker import minio_client
+
+    try:
+        if await get_tenant_internal(prefix) is not None:
+            return "a tenant with this id is registered now"
+        _removed, refused = await asyncio.to_thread(
+            minio_client.delete_tenant_objects, prefix
+        )
+    except HTTPException as exc:
+        return f"HTTP {exc.status_code}: {exc.detail}"
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+    if refused:
+        first = min(refused)
+        return f"{len(refused)} object(s) refused, the first {first}: {refused[first]}"
+    return None
+
+
+@router.post("/reconcile-ingest-orphans")
+async def reconcile_ingest_orphans(
+    dry_run: Annotated[
+        bool, Query(description="Report orphan prefixes without removing them.")
+    ] = True,
+) -> Dict:
+    """Report the ingest bucket's prefixes whose tenant is gone, optionally
+    remove their objects.
+
+    ``dry_run=true`` lists each orphan prefix with its object count and bytes
+    and changes nothing. ``dry_run=false`` deletes every object under each
+    orphan prefix; prefixes of registered tenants and prefixes that are not
+    tenant ids are never touched. A prefix that could not be emptied answers
+    502 naming it, after every other orphan was removed.
+    """
+    diff = await asyncio.to_thread(_list_ingest_orphans)
+    deleted: list = []
+    kept: Dict[str, str] = {}
+    if not dry_run:
+        for orphan in diff["orphan_prefixes"]:
+            reason = await _remove_ingest_orphan(orphan["prefix"])
+            if reason is None:
+                deleted.append(orphan["prefix"])
+            else:
+                kept[orphan["prefix"]] = reason
+        if deleted:
+            logger.info(
+                f"Removed the ingest objects of {len(deleted)} prefix(es) with no "
+                f"tenant_metadata record: {deleted}"
+            )
+        if kept:
+            for prefix, reason in sorted(kept.items()):
+                logger.error(f"Ingest orphan prefix {prefix} was not removed: {reason}")
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "ingest_orphans_not_removed",
+                    "message": (
+                        f"{len(kept)} orphan prefix(es) were not removed; retry."
+                    ),
+                    "not_removed": sorted(kept),
+                    "deleted": deleted,
+                },
+            )
+    return {"dry_run": dry_run, "deleted": deleted, **diff}
 
 
 # ============================================================================

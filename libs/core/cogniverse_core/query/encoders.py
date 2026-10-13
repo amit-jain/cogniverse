@@ -295,6 +295,48 @@ class ClapTextQueryEncoder(QueryEncoder):
         return get_inference_service_spec("clap_embed").output_dimension
 
 
+class DenseQueryEncoder:
+    """Adapts a SemanticEmbedder to the ``.encode(text) -> ndarray`` shape the
+    search path calls for on-demand query encoding of dense profiles."""
+
+    def __init__(self, embedder):
+        self._embedder = embedder
+
+    def encode(self, query_text: str):
+        return self._embedder.encode(query_text, is_query=True)
+
+
+def is_dense_profile(profile_config: dict) -> bool:
+    """Whether the profile's queries are encoded by the semantic embedder."""
+    embedding_type = str(profile_config.get("embedding_type") or "").lower()
+    encoder_name = str(profile_config.get("encoder") or "").lower()
+    return embedding_type == "dense" or encoder_name == "denseon"
+
+
+def profile_query_model(profile_config: dict) -> Optional[str]:
+    """The model that encodes a profile's text queries.
+
+    A profile that carries a second, acoustic embedding names its transcript
+    model in ``semantic_model`` (the key ingestion embeds the transcript with)
+    and its acoustic model in ``embedding_model``; queries use the transcript
+    model, since that is the embedding the rank profiles score.
+    """
+    return profile_config.get("semantic_model") or profile_config.get("embedding_model")
+
+
+def query_encoder_identity(profile_config: dict) -> tuple:
+    """What tells one profile's query encoder from another's within a config.
+
+    Profiles with equal identities encode a query to the same embeddings.
+    """
+    return (
+        is_dense_profile(profile_config),
+        profile_query_model(profile_config),
+        (profile_config.get("inference_services") or {}).get("embedding"),
+        (profile_config.get("schema_config") or {}).get("embedding_dim"),
+    )
+
+
 # The text encoder of each inference service that embeds a document field
 # other than the profile's own embedding. A profile names the service under
 # the field's name in ``inference_services``.
@@ -574,20 +616,41 @@ class QueryEncoderFactory:
                 f"Unknown profile: {profile}. Available profiles: {list(video_profiles.keys())}"
             )
 
-        profile_config = video_profiles[profile]
+        return cls.create_for_profile(
+            profile, video_profiles[profile], config, model_name=model_name
+        )
 
-        # Use provided model_name or get from config. A profile that carries a
-        # second, acoustic embedding names its ColBERT transcript model in
-        # semantic_model (the key ingestion embeds the transcript with) and its
-        # acoustic model in embedding_model; the query encoder must use the
-        # transcript model, since that is the embedding the rank profiles score.
+    @classmethod
+    def create_for_profile(
+        cls,
+        profile: str,
+        profile_config: dict,
+        config: Optional["SystemConfig"],
+        *,
+        model_name: Optional[str] = None,
+    ) -> QueryEncoder:
+        """The query encoder ``profile_config`` declares.
+
+        The one place a profile is turned into a query encoder: a dense
+        profile resolves to the shared semantic embedder, every other profile
+        to the cached encoder of its query model (``profile_query_model``)
+        unless ``model_name`` overrides it. ``config`` supplies the inference
+        service URLs; only a dense profile can be resolved without one.
+        """
+        if is_dense_profile(profile_config):
+            from cogniverse_core.common.models.semantic_embedder import (
+                get_semantic_embedder,
+            )
+
+            remote_url = (
+                _resolve_inference_url(profile, profile_config, config)
+                if config is not None
+                else None
+            )
+            return DenseQueryEncoder(get_semantic_embedder(remote_url=remote_url))
+
         if not model_name:
-            if profile_config.get("model_loader") == "colbert":
-                model_name = profile_config.get("semantic_model") or profile_config.get(
-                    "embedding_model"
-                )
-            else:
-                model_name = profile_config.get("embedding_model")
+            model_name = profile_query_model(profile_config)
             if not model_name:
                 raise ValueError(f"No embedding_model specified for profile: {profile}")
 
@@ -607,7 +670,7 @@ class QueryEncoderFactory:
 
         cached = cls._encoder_cache.get(cache_key)
         if cached is not None:
-            logger.info(f"Reusing cached encoder for key: {cache_key}")
+            logger.debug(f"Reusing cached encoder for key: {cache_key}")
             return cached
 
         with cls._encoder_cache_lock:

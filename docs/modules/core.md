@@ -312,6 +312,10 @@ Three concrete rails (raise `RailBlockedError` on violation):
   not block) because coarse keyword matching would otherwise reject legitimate
   natural-language queries; set `advisory=False` to hard-block (only with a
   deliberately broad `allowed_topics`).
+  The shipped configs carry no topic boundary: a retrieval query names content
+  ("man lifting"), not a modality, so no keyword allowlist describes the
+  search domain. Add one only for a deployment whose queries share a closed
+  vocabulary.
 - **`ContentSafetyRail(blocked_patterns)`** — blocks input/output matching any regex
   (e.g. prompt-injection phrases, `<script>`).
 - **`OutputFormatRail(required_fields)`** — enforces required output fields + types.
@@ -324,7 +328,6 @@ Rails are configured under the `rails` block in `config.json`
 "rails": {
   "enabled": true,
   "input_rails": [
-    {"type": "topic_boundary", "params": {"advisory": true, "allowed_topics": ["video", "search"]}},
     {"type": "content_safety", "params": {"blocked_patterns": ["ignore previous instructions", "<script>"]}}
   ],
   "output_rails": []
@@ -948,6 +951,16 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 | `ColPaliQueryEncoder(...)` / `ColQwenQueryEncoder(...)` | — | Thin factory functions over `ColPaliFamilyQueryEncoder` with `model_loader="colpali"`/`"colqwen"` |
 | `XClipQueryEncoder` | X-CLIP | Single-vector 768-d; remote via the `video_embed` sidecar; encodes video and text into one space |
 | `ClapTextQueryEncoder` | CLAP | Single-vector 512-d; remote via the `clap_embed` sidecar's `/embed/text`; text in the space of the stored acoustic embeddings |
+
+`QueryEncoderFactory.create_for_profile(profile, profile_config, config)` is
+the one place a profile becomes a query encoder; `create_encoder` looks the
+profile up and calls it, `VespaSearchBackend` calls it for a search that
+supplies no encoder, and the search agent's profile fan-out reaches it through
+`build_query_encoder`. A dense profile (`embedding_type: dense` or
+`encoder: denseon`) resolves to `DenseQueryEncoder` over the shared semantic
+embedder. Any other profile is encoded with `profile_query_model(profile_config)`
+(`semantic_model`, else `embedding_model`), and
+`query_encoder_identity(profile_config)` tells which profiles share an encoder.
 
 `QueryEncoderFactory._create_encoder_instance` resolves the encoder in this
 order: `profile_config["model_loader"]` (authoritative) → model-name substring
@@ -2231,8 +2244,13 @@ temperature)` sends one request with `response_format(timestamps)` and
   25 ms frame reaches `SILENCE_FLOOR_DBFS` (-60); a timed answer is also
   unusable without segments. An unusable answer is asked again at the next of
   `FALLBACK_TEMPERATURES` (0.0, 0.2, 0.4, 0.6, 0.8, 1.0; `TRANSCRIBE_ATTEMPTS`
-  is 6). When neither a `json` answer nor a timed answer running to the end
-  is usable, the chunk raises
+  is 6). Speech that itself repeats compresses like a loop but comes back in
+  the same words however it is sampled: when every `json` answer looped and
+  one at `LOOP_BREAKING_TEMPERATURE` (0.8) or above agrees with the
+  temperature-0 answer (`word_agreement` at least
+  `REPEATED_SPEECH_AGREEMENT`, 0.5), `repeated_speech` keeps the
+  temperature-0 answer. Otherwise, when neither a `json` answer nor a timed
+  answer running to the end is usable, the chunk raises
   `GarbledTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
   `compression_ratios`, `attempts`) if any looped, else `EmptyTranscriptError`
   (`source`, `chunk_index`, `start_s`, `end_s`, `loudest_frame_dbfs`,

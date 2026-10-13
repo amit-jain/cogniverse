@@ -144,6 +144,7 @@ The `cogniverse` CLI manages the full stack:
 | `cogniverse sandbox sync` | Sync OpenShell gateway mTLS certs into the cluster (after rotation) |
 | `cogniverse sandbox status` | Show OpenShell gateway status and cluster sync state |
 | `cogniverse secrets sync` | Re-sync cluster Secrets (`hf-token`, `cogniverse-messaging-secrets`) from env vars, `./.env`, or `~/.env` |
+| `cogniverse admin reconcile-ingest-orphans` | Find (and, with `--confirm`, delete) uploads of tenants that no longer exist |
 | `cogniverse admin reconcile-orphans` | Find (and, with `--confirm`, drop) Vespa schema orphans not in the schema registry |
 | `cogniverse admin merge-article-nodes` | Report (and, with `--apply`, perform) merges of KG nodes `the_<id>` / `a_<id>` / `an_<id>` into the tenant's `<id>` node; `--tenant` scopes to one tenant; `--exclude ID` (repeatable) never merges that article id |
 | `cogniverse admin invite <tenant_id>` | Mint a messaging invite token; prints the `/start <token>` the user sends to the bot |
@@ -931,6 +932,8 @@ After every agent dispatch, the system checks whether the interaction is substan
 - The agent is `detailed_report_agent` or `deep_research_agent`
 - The conversation has 4 or more turns
 
+An orchestrated run is one interaction. The dispatches the orchestrator makes for its steps carry `orchestration_step` in their context and file nothing, so no step of a run retrieves a page that run wrote. The run is filed once, by the dispatch that started it, as `orchestrator_agent`, with the entities its steps extracted, when any step meets a condition above, and only when the run's status is `success`.
+
 Auto-filing is fire-and-forget (non-blocking). Failures are logged but never surfaced to the user.
 
 #### Auto-Filing Flow
@@ -1221,6 +1224,10 @@ GET /health
   "dependencies": {
     "llm": {
       "status": "not_serving",
+      "observed_by": {"scope": "worker", "pid": 41},
+      "freshness_window_s": 300.0,
+      "last_answered_at": null,
+      "last_answered_age_s": null,
       "endpoints": [
         {
           "endpoint": "http://cogniverse-semantic-router-envoy:8801/v1",
@@ -1231,6 +1238,9 @@ GET /health
           "failure": null,
           "reason": "answered HTTP 404: nothing is deployed for this model; calls fail fast until the next recheck",
           "observed_at": "2026-10-01T17:10:07.512301+00:00",
+          "age_s": 8.6,
+          "last_answered_at": null,
+          "last_answered_age_s": null,
           "recheck_in_s": 21.4
         }
       ]
@@ -1242,7 +1252,12 @@ GET /health
 `status` is `healthy`, `degraded` (the chat LLM is `not_serving` or `failing`;
 search still serves) or, with HTTP 503, `unhealthy` (the search backend is
 unreachable). `dependencies.llm.status` is `not_called` until this worker
-process has made an LM call.
+process has made an LM call, `serving` when an endpoint answered within
+`freshness_window_s`, and `idle` when every answer is older than that: the
+LLM is observed from request traffic, never probed, so an old answer does not
+say the endpoint is still warm. `age_s` and `last_answered_age_s` give the
+age of each observation. Each worker process reports only its own calls;
+`observed_by.pid` names the one that answered.
 
 ### Python SDK Reference
 

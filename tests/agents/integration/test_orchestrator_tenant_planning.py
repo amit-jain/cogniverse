@@ -180,6 +180,117 @@ class TestPlanningFollowsTheTenantsModalities:
         ]
         assert plan.unavailable_agents == ["image_search_agent"]
 
+    async def test_the_withheld_agents_are_named_with_what_they_retrieve(
+        self, config_manager
+    ):
+        tenant_id = _video_tenant(config_manager)
+        orchestrator = _orchestrator(config_manager, tenant_id)
+
+        planning, withheld = await orchestrator._tenant_planning(tenant_id)
+
+        assert planning == await orchestrator._planning_agents(tenant_id)
+        assert withheld == {
+            "image_search_agent": frozenset({"image"}),
+            "audio_analysis_agent": frozenset({"audio"}),
+            "document_agent": frozenset({"document"}),
+        }
+
+    async def test_a_withheld_agent_the_request_did_not_ask_for_is_dropped(
+        self, config_manager
+    ):
+        """A video request on a video tenant, planned as query enhancement
+        then image search: the image step is dropped, not reported, and the
+        plan ends with the search agent instead of with no execution step."""
+        tenant_id = _video_tenant(config_manager)
+        orchestrator = _orchestrator(config_manager, tenant_id)
+        planning, withheld = await orchestrator._tenant_planning(tenant_id)
+        orchestrator.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="query_enhancement_agent,image_search_agent",
+                parallel_steps="",
+                reasoning="sharpen the query, then find the clips",
+            )
+        )
+
+        plan = await orchestrator._create_plan(
+            "find videos of a man washing dishes in a kitchen sink",
+            available_agents=planning,
+            withheld_agents=withheld,
+            requested_modalities=["video"],
+        )
+
+        assert [(step.agent_name, step.depends_on) for step in plan.steps] == [
+            ("query_enhancement_agent", []),
+            ("search_agent", [0]),
+        ]
+        assert plan.unavailable_agents == []
+
+    async def test_a_withheld_agent_the_request_asked_for_is_reported(
+        self, config_manager
+    ):
+        """The same plan for a request detected to ask for images: the tenant
+        cannot serve them, and the plan says so."""
+        tenant_id = _video_tenant(config_manager)
+        orchestrator = _orchestrator(config_manager, tenant_id)
+        planning, withheld = await orchestrator._tenant_planning(tenant_id)
+        orchestrator.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="image_search_agent,search_agent",
+                parallel_steps="",
+                reasoning="find the photos and the clips",
+            )
+        )
+
+        plan = await orchestrator._create_plan(
+            "photos and videos of a man washing dishes",
+            available_agents=planning,
+            withheld_agents=withheld,
+            requested_modalities=["Image", "video"],
+        )
+
+        assert [step.agent_name for step in plan.steps] == ["search_agent"]
+        assert plan.unavailable_agents == ["image_search_agent"]
+
+    async def test_an_agent_no_tenant_has_is_reported_whatever_was_asked(
+        self, config_manager
+    ):
+        tenant_id = _video_tenant(config_manager)
+        orchestrator = _orchestrator(config_manager, tenant_id)
+        planning, withheld = await orchestrator._tenant_planning(tenant_id)
+        orchestrator.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="hologram_agent,search_agent",
+                parallel_steps="",
+                reasoning="find the clips",
+            )
+        )
+
+        plan = await orchestrator._create_plan(
+            "videos of a man washing dishes",
+            available_agents=planning,
+            withheld_agents=withheld,
+            requested_modalities=["video"],
+        )
+
+        assert [step.agent_name for step in plan.steps] == ["search_agent"]
+        assert plan.unavailable_agents == ["hologram_agent"]
+
+    async def test_the_planner_instructions_name_no_agent_a_tenant_may_lack(self):
+        """The planner is told which agents exist through ``available_agents``
+        alone; its instructions name only the preprocessing agents."""
+        import re
+
+        from cogniverse_agents.orchestrator_agent import OrchestrationSignature
+
+        named = set(re.findall(r"`(\w+_agent)`", OrchestrationSignature.instructions))
+
+        assert named <= set(_SHIPPED["agents"])
+        assert named == {
+            "entity_extraction_agent",
+            "query_enhancement_agent",
+            "profile_selection_agent",
+        }
+
     async def test_concurrent_plans_for_two_tenants_never_bleed(self, config_manager):
         video = _video_tenant(config_manager)
         document = _document_tenant(config_manager)

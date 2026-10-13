@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +16,7 @@ from redis.asyncio import Redis
 from redis.exceptions import ConnectionError
 
 from cogniverse_core.common.models.whisper_transcription import (
+    FALLBACK_TEMPERATURES,
     TRANSCRIBE_ATTEMPTS,
     compression_ratio,
     pcm16_wav_samples,
@@ -108,16 +110,26 @@ def failing_asr():
         thread.join(5)
 
 
-LOOP = " I'm gonna do it!" * 40
+# A decode loop takes a different shape each time it is sampled: one loop per
+# fallback temperature, no two on the same phrase.
+LOOPS = {
+    temperature: f" {phrase}" * 60
+    for temperature, phrase in zip(
+        FALLBACK_TEMPERATURES,
+        ("I'm gonna do it!", "Do it!", "Gonna!", "Watch me!", "Here I go!", "Now!"),
+        strict=True,
+    )
+}
+_TEMPERATURE = re.compile(rb'name="temperature"\r\n\r\n([^\r]*)\r\n')
 UPLOAD_NAME = "gonna-do-it.mp4"
 
 
-@pytest.fixture(params=["", LOOP], ids=["empty", "loop"])
+@pytest.fixture(params=[None, LOOPS], ids=["empty", "loop"])
 def unusable_asr(request):
     """Answers every transcription the way the cluster's ROCm Whisper answers
     some: HTTP 200 with an empty transcript, or a repetition loop, and no
     segments."""
-    text = request.param
+    loops = request.param
     posts: list[int] = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -130,8 +142,10 @@ def unusable_asr(request):
             self.wfile.write(b'{"data":[{"id":"openai/whisper-tiny"}]}')
 
         def do_POST(self):
-            self.rfile.read(int(self.headers["Content-Length"]))
+            sent = self.rfile.read(int(self.headers["Content-Length"]))
             posts.append(len(posts))
+            temperature = float(_TEMPERATURE.search(sent).group(1))
+            text = loops[temperature] if loops else ""
             body = json.dumps(
                 {"text": text, "language": "en", "duration": "1.0", "segments": []}
             ).encode()
@@ -145,7 +159,7 @@ def unusable_asr(request):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}", posts, text
+        yield f"http://127.0.0.1:{server.server_port}", posts, loops
     finally:
         server.shutdown()
         server.server_close()
@@ -306,13 +320,14 @@ async def test_local_transcription_failure_fails_the_job(job_redis, tmp_path):
     assert await idempotency.get_done_ingest_id(job_redis, submitted.sha) is None
 
 
-def unusable_failure(video: Path, text: str) -> str:
-    """The pipeline's error for ``video`` when every answer is ``text``."""
+def unusable_failure(video: Path, loops: dict | None) -> str:
+    """The pipeline's error for ``video`` when every answer is empty, or is
+    its temperature's loop from ``loops``."""
     (chunk,) = split_for_whisper(
         pcm16_wav_samples(AudioProcessor._extract_audio_wav(video))
     )
-    if text:
-        ratios = ", ".join([f"{compression_ratio(text):.2f}"] * TRANSCRIBE_ATTEMPTS)
+    if loops:
+        ratios = ", ".join(f"{compression_ratio(loop):.2f}" for loop in loops.values())
         reason = (
             f"(0.00-{chunk.end_s:.2f}s) came back unusable on all "
             f"{TRANSCRIBE_ATTEMPTS} attempts: {TRANSCRIBE_ATTEMPTS} repetition "
@@ -398,11 +413,12 @@ async def test_an_unusable_answer_reaches_the_task_events_as_an_error_event(
 
     failure = unusable_failure(video, text)
     assert queued.closed is True
+    # The worker publishes a local path as its file name.
     assert _error_events(submitted.ingest_id, queued) == [
         {
             "event_type": "error",
             "error_type": "IngestPipelineError",
-            "error_message": failure,
+            "error_message": failure.replace(str(video), video.name),
             "recoverable": False,
         }
     ]

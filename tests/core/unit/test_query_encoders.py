@@ -601,3 +601,105 @@ class TestSharedQueryEncoder:
                 shared.encode("q")
             assert caught.value is gap
         assert builds == [1]
+
+
+def _shipped_profiles() -> dict:
+    import json
+    from pathlib import Path
+
+    return json.loads(
+        (Path(__file__).resolve().parents[3] / "configs" / "config.json").read_text()
+    )["backend"]["profiles"]
+
+
+class TestProfileQueryEncoderResolution:
+    """One rule turns a profile into its query encoder, whoever asks."""
+
+    def test_query_model_prefers_the_transcript_model(self):
+        from cogniverse_core.query.encoders import profile_query_model
+
+        assert profile_query_model(
+            {"embedding_model": "acoustic/model", "semantic_model": "text/model"}
+        ) == ("text/model")
+        assert profile_query_model({"embedding_model": "only/model"}) == "only/model"
+        assert profile_query_model({}) is None
+
+    def test_identity_separates_every_shipped_encoder(self):
+        from cogniverse_core.query.encoders import query_encoder_identity
+
+        identities = {
+            name: query_encoder_identity(body)
+            for name, body in _shipped_profiles().items()
+        }
+
+        assert identities["audio_clap_semantic"] == (
+            False,
+            "lightonai/LateOn",
+            "colbert_pylate",
+            128,
+        )
+        assert identities["wiki_semantic"] == (True, "lightonai/DenseOn", None, None)
+        assert identities["audio_clap_semantic"] == identities["document_text_semantic"]
+        assert identities["code_lateon_mv"] != identities["lateon_mv"]
+
+    def test_a_dense_profile_resolves_to_the_semantic_embedder(self):
+        from cogniverse_core.common.models import semantic_embedder
+        from cogniverse_core.query.encoders import DenseQueryEncoder
+
+        wiki = _shipped_profiles()["wiki_semantic"]
+        config = _build_system_config("wiki_semantic", wiki)
+        previous = (
+            semantic_embedder._CONFIGURED_REMOTE_URL,
+            semantic_embedder._CONFIGURED_MODEL_NAME,
+        )
+        semantic_embedder.configure_semantic_embedder_defaults(
+            remote_url="http://denseon.test:8000", model_name=None
+        )
+        try:
+            via_name = QueryEncoderFactory.create_encoder(
+                "wiki_semantic", config=config
+            )
+            via_body = QueryEncoderFactory.create_for_profile(
+                "wiki_semantic", wiki, None
+            )
+            expected = semantic_embedder.get_semantic_embedder()
+        finally:
+            semantic_embedder.configure_semantic_embedder_defaults(
+                remote_url=previous[0], model_name=previous[1]
+            )
+
+        assert (type(via_name), type(via_body)) == (
+            DenseQueryEncoder,
+            DenseQueryEncoder,
+        )
+        assert via_name._embedder is expected
+        assert via_body._embedder is expected
+        assert dict(QueryEncoderFactory._encoder_cache) == {}
+
+    def test_a_dense_profile_without_an_endpoint_is_a_config_gap(self):
+        from cogniverse_core.common.models import semantic_embedder
+
+        wiki = _shipped_profiles()["wiki_semantic"]
+        config = _build_system_config("wiki_semantic", wiki)
+        previous = (
+            semantic_embedder._CONFIGURED_REMOTE_URL,
+            semantic_embedder._CONFIGURED_MODEL_NAME,
+        )
+        semantic_embedder.configure_semantic_embedder_defaults(
+            remote_url=None, model_name=None
+        )
+        try:
+            with pytest.raises(EncoderNotConfiguredError) as caught:
+                build_query_encoder("wiki_semantic", config=config)
+        finally:
+            semantic_embedder.configure_semantic_embedder_defaults(
+                remote_url=previous[0], model_name=previous[1]
+            )
+
+        assert caught.value.profile == "wiki_semantic"
+        assert str(caught.value) == (
+            "Profile 'wiki_semantic' declares a query encoder that could not be "
+            "built: SemanticEmbedderNotConfiguredError: No semantic embedder "
+            "endpoint is configured: set COGNIVERSE_SEMANTIC_EMBED_URL or the "
+            "'denseon' entry of INFERENCE_SERVICE_URLS"
+        )

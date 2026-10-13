@@ -9,6 +9,8 @@ demonstrations. A request that still overflows with no demonstrations left
 raises with the window, the reservation, the measured input and the number
 of demonstrations dropped. ``fitting_demonstrations`` sizes a compiled
 program's demonstrations to the window before the program is sent at all.
+``fit_text`` bounds one free-text prompt, which has no demonstrations to drop,
+by cutting its tail and saying so in the prompt.
 """
 
 from __future__ import annotations
@@ -41,6 +43,15 @@ TOKENIZE_TIMEOUT_SECONDS = 30.0
 _MAX_MEMOIZED_WINDOWS = 32
 _WINDOW_MEMO: "dict[tuple[str, str], ResolvedContextWindow]" = {}
 _WINDOW_MEMO_LOCK = threading.Lock()
+
+
+# One counter, and so one HTTP client, per (endpoint, model, retries).
+_MAX_MEMOIZED_COUNTERS = 32
+_COUNTER_MEMO: "dict[tuple[str, str, int], TokenCounter]" = {}
+_COUNTER_MEMO_LOCK = threading.Lock()
+
+# Tokens a served chat template adds around one user message, at most.
+SINGLE_TURN_TEMPLATE_TOKENS = 32
 
 
 def clear_context_window_memo() -> None:
@@ -275,6 +286,120 @@ def served_message_counter(
         return tokens
 
     return count
+
+
+def shared_served_message_counter(
+    api_base: str, model: str, *, retries: int = 1
+) -> TokenCounter:
+    """The process's ``served_message_counter`` for an endpoint and model.
+
+    Built once per ``(api_base, model, retries)`` and shared by every caller,
+    so a serving path that counts on each request reuses one HTTP client.
+    """
+
+    key = (api_base.rstrip("/"), model, retries)
+    with _COUNTER_MEMO_LOCK:
+        counter = _COUNTER_MEMO.get(key)
+        if counter is None:
+            counter = served_message_counter(api_base, model, retries=retries)
+            if len(_COUNTER_MEMO) >= _MAX_MEMOIZED_COUNTERS:
+                _COUNTER_MEMO.pop(next(iter(_COUNTER_MEMO)))
+            _COUNTER_MEMO[key] = counter
+        return counter
+
+
+@dataclass(frozen=True, slots=True)
+class PromptAllowance:
+    """A budget, the counter that measures against it, and tokens held back."""
+
+    budget: TokenBudget
+    count_tokens: TokenCounter
+    margin: int = 0
+
+    @property
+    def tokens(self) -> int:
+        """Tokens a prompt may occupy."""
+
+        return self.budget.input_budget - self.margin
+
+
+@dataclass(frozen=True, slots=True)
+class FittedText:
+    """A prompt text that fits its allowance, and how much of it was kept.
+
+    ``input_tokens`` is ``None`` when the text was admitted by its size alone.
+    """
+
+    text: str
+    kept_chars: int
+    total_chars: int
+    input_tokens: int | None
+
+
+def cut_notice(kept_chars: int, total_chars: int) -> str:
+    """The line ``fit_text`` ends a cut prompt with."""
+
+    return (
+        f"\n\n[Cut to fit the model's context window: the first {kept_chars} "
+        f"of {total_chars} characters are shown.]"
+    )
+
+
+def fit_text(text: str, *, allowance: PromptAllowance) -> FittedText:
+    """Bound one user prompt to ``allowance`` by cutting its tail.
+
+    A text that fits is returned unchanged. One whose UTF-8 bytes plus
+    ``SINGLE_TURN_TEMPLATE_TOKENS`` are within the allowance is admitted
+    without a count, since a token spans at least one byte. Otherwise the
+    text is counted as a single user message, and one over the allowance is
+    cut to its longest leading run of characters that fits together with
+    ``cut_notice``, found by bisection, each probe counted the same way.
+
+    Raises ``PromptBudgetExceededError`` when the notice alone overflows, and
+    whatever ``allowance.count_tokens`` raises when it cannot count.
+    """
+
+    limit = allowance.tokens
+    total = len(text)
+    if len(text.encode("utf-8")) + SINGLE_TURN_TEMPLATE_TOKENS <= limit:
+        return FittedText(
+            text=text, kept_chars=total, total_chars=total, input_tokens=None
+        )
+
+    def count(candidate: str) -> int:
+        return allowance.count_tokens([{"role": "user", "content": candidate}])
+
+    tokens = count(text)
+    if tokens <= limit:
+        return FittedText(
+            text=text, kept_chars=total, total_chars=total, input_tokens=tokens
+        )
+
+    def cut(kept: int) -> str:
+        return text[:kept] + cut_notice(kept, total)
+
+    fitted: tuple[int, int] | None = None
+    low, high = 0, total - 1
+    while low <= high:
+        middle = (low + high) // 2
+        tokens = count(cut(middle))
+        if tokens <= limit:
+            fitted = (middle, tokens)
+            low = middle + 1
+        else:
+            high = middle - 1
+    if fitted is None:
+        raise PromptBudgetExceededError(
+            model=allowance.budget.model,
+            context_window=allowance.budget.context_window,
+            reserved_output=allowance.budget.reserved_output,
+            input_tokens=tokens,
+            dropped_demos=0,
+        )
+    kept, tokens = fitted
+    return FittedText(
+        text=cut(kept), kept_chars=kept, total_chars=total, input_tokens=tokens
+    )
 
 
 def extract_context_window(body: Any) -> int | None:

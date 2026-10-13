@@ -1520,8 +1520,12 @@ async def _process_impl(
     query = input.query
 
     # Planning, with the agents that can serve this tenant
+    planning_agents, withheld_agents = await self._tenant_planning(tenant_id)
     plan = await self._create_plan(
-        query, available_agents=await self._planning_agents(tenant_id)
+        query,
+        available_agents=planning_agents,
+        withheld_agents=withheld_agents,
+        requested_modalities=[*input.detected_modalities, input.modality],
     )
 
     # Action
@@ -1554,12 +1558,20 @@ modalities it retrieves is served by the tenant's servable profiles
 (`servable_tenant_profiles`, mapped through `MODALITY_PROFILE_TYPES`). A
 video-only tenant is therefore never planned an image or audio search. A
 store or registry outage raises `RuntimeError` naming the tenant instead of
-planning against a guess.
+planning against a guess. `_tenant_planning(tenant_id)` returns the same list
+with the withheld retrieval agents and the modalities each retrieves.
 
-**`_create_plan(query, conversation_context, gateway_context, *, available_agents) -> OrchestrationPlan`**
+**`_create_plan(query, conversation_context, gateway_context, *, available_agents, withheld_agents=None, requested_modalities=()) -> OrchestrationPlan`**
 
 Planning Phase: the DSPy planner proposes an agent sequence from
-`available_agents` (the `_planning_agents` list).
+`available_agents` (the `_planning_agents` list). Its instructions name only
+the preprocessing agents; every other agent reaches it through
+`available_agents`.
+
+Every dispatch the orchestrator makes for a run carries
+`step_context(tenant_id, session_id)` as its context: the tenant, the session
+and `orchestration_step`, which tells the runtime serving it that the dispatch
+is a step of a run and not an interaction to file in the wiki on its own.
 
 ```text
 async def _create_plan(
@@ -1583,13 +1595,16 @@ async def _create_plan(
 
     # Normalize the LM output into an executable plan:
     #   - "name" / "name_agent" aliases resolve to the offered name
-    #   - an agent not offered is dropped and listed in unavailable_agents
+    #   - an agent not offered is dropped and listed in unavailable_agents;
+    #     a retrieval agent withheld from the tenant is dropped without being
+    #     listed when requested_modalities are known and include none it
+    #     retrieves
     #   - a repeated agent keeps its first step only (results are keyed
     #     by agent name)
     #   - parallel_steps / dependency indices are remapped from the raw
     #     sequence to the surviving step positions
-    #   - an empty result falls back to a single search_agent step when
-    #     search_agent was offered
+    #   - a plan left with no execution agent ends with a search_agent step
+    #     when search_agent was offered
     ...
     return OrchestrationPlan(
         query=query,
@@ -1875,9 +1890,10 @@ SearchAgent was enhanced to support ensemble mode, allowing it to query multiple
 (the profiles whose search ran) and `degraded` (`(profile, reason)` for a leg
 that could not encode its query or whose search raised, with `reason` in
 `encode_failed` / `search_failed`; a leg is `encode_failed` when its search
-raised a typed encoder fault). Profiles sharing an embedding model share one
-`SharedQueryEncoder`, so one encode, and a leg encodes only when its ranking
-strategy needs embeddings. `SearchOutput.profiles` names the legs that ran and
+raised a typed encoder fault). Each leg's encoder is the one its profile
+declares (`build_query_encoder`, the resolution `POST /search` uses); profiles
+with the same `query_encoder_identity` share one `SharedQueryEncoder`, so one
+encode, and a leg encodes only when its ranking strategy needs embeddings. `SearchOutput.profiles` names the legs that ran and
 `SearchOutput.degraded_profiles` the ones that did not, so a caller reports a
 partial ensemble as partial. Every leg failing raises. The legs run on a pool
 of their own that is shut down without waiting, so a caller whose budget
@@ -2664,8 +2680,9 @@ Whisper), each chunk of at most 30 s with timestamps and, unless the timed
 segments run to the end of the chunk, without, through
 `cogniverse_core.common.models.whisper_transcription`: the text comes from the
 untimed answer, timed by the timed answer's segments; an empty or looping
-answer is asked again at the next sampling temperature, and a chunk whose
-untimed text never comes back usable raises `EmptyTranscriptError` or
+answer is asked again at the next sampling temperature, an answer repeating
+in the same words at every temperature is kept as repeated speech, and a chunk
+whose untimed text otherwise never comes back usable raises `EmptyTranscriptError` or
 `GarbledTranscriptError`. The merged answer is mapped to a
 `TranscriptionResult(text, segments, language, confidence)`.
 The pinned vLLM response represents `duration` as a non-negative decimal
@@ -4621,6 +4638,17 @@ reached after expiry, so the computation stops rather than continuing
 unobserved. The overrun is therefore bounded by the model call in flight when
 the deadline passes. The same check guards `aforward`/`acall`. `process` is
 synchronous; async callers run it through `asyncio.to_thread`.
+
+A prompt the generated program passes to `llm_query` / `llm_query_batched` can
+carry the whole context variable. `TolerantRLM` bounds each one to the input
+allowance of the LM answering it (`BodyBoundedLM.prompt_allowance()`, known
+for a routed LM on the classification entry) with `fit_text`: a prompt within
+the allowance is sent unchanged; a longer one keeps its leading characters,
+ends with a line saying how many of them are shown, and is logged at WARNING.
+A serving endpoint that cannot report its window or count the prompt raises
+`ContextWindowUnavailableError` / `TokenCountUnavailableError` and no
+completion is requested. An LM with no known allowance sends the prompt as
+built.
 
 A model reply that does not parse into `reasoning` and `code` (dspy's
 `AdapterParseError`, typically a reply cut off at `max_tokens`) is recorded as

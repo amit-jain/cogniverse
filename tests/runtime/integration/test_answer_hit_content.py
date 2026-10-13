@@ -201,6 +201,40 @@ SOURCES = {
     },
 }
 
+# A wiki page reaches an answer agent by its title; its content is what a
+# citation of it quotes.
+WIKI_PAGE = {
+    "profile": "wiki_semantic",
+    "ranking": "bm25",
+    "query": "ferry timetable winter crossing",
+    "documents": [
+        (
+            "wiki_session_answer_content_t1_ferry",
+            {
+                "doc_id": "wiki_session_answer_content_t1_ferry",
+                "tenant_id": TENANT,
+                "page_type": "session",
+                "title": "Session — ferry timetable",
+                "content": (
+                    "The winter ferry timetable drops the last crossing at nine."
+                ),
+                "slug": "ferry-timetable",
+                "query": "when is the last ferry",
+                "agent_used": "summarizer_agent",
+                "entities": "[]",
+                "sources": "[]",
+                "cross_references": "[]",
+                "update_count": 1,
+                "created_at": "2026-10-13T00:00:00+00:00",
+                "updated_at": "2026-10-13T00:00:00+00:00",
+            },
+        ),
+    ],
+    "title": "Session — ferry timetable",
+    "content": "The winter ferry timetable drops the last crossing at nine.",
+}
+CITED = {**SOURCES, "wiki": WIKI_PAGE}
+
 _OUTPUT_FIELD = re.compile(r"^\d+\. `(\w+)` \(([^)]*)\)", re.MULTILINE)
 _QUERY_INPUT = re.compile(r"\[\[ ## query ## \]\]\n(.*?)\n")
 _CONTENT_INPUT = re.compile(r"\[\[ ## content ## \]\]\n(.*?)\n\n\[\[ ## ", re.DOTALL)
@@ -367,7 +401,7 @@ def content_config_manager(content_vespa, resolved_inference_endpoints):
             },
         )
     )
-    for source in SOURCES.values():
+    for source in CITED.values():
         name = source["profile"]
         config_manager.add_backend_profile(
             BackendProfileConfig.from_dict(
@@ -393,12 +427,11 @@ def seeded_sources(content_vespa, content_config_manager):
         schema_loader=FilesystemSchemaLoader(_REPO_ROOT / "configs" / "schemas"),
     )
     schemas = [
-        _SHIPPED_PROFILES[source["profile"]]["schema_name"]
-        for source in SOURCES.values()
+        _SHIPPED_PROFILES[source["profile"]]["schema_name"] for source in CITED.values()
     ]
     backend.schema_registry.deploy_schemas(TENANT, schemas)
     app = Vespa(url="http://localhost", port=content_vespa["http_port"])
-    for source, schema in zip(SOURCES.values(), schemas, strict=True):
+    for source, schema in zip(CITED.values(), schemas, strict=True):
         tenant_schema = backend.get_tenant_schema_name(TENANT, schema)
         for data_id, fields in source["documents"]:
             response = app.feed_data_point(
@@ -474,6 +507,27 @@ async def test_a_grounding_hit_carries_its_sources_title_and_content(
         source["content"],
     )
     assert hit["text_content"] == source["content"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", sorted(CITED))
+async def test_a_deep_research_citation_quotes_the_hit_it_cites(
+    answer_dispatcher, kind
+):
+    from cogniverse_agents.deep_research_agent import DeepResearchAgent
+
+    source = CITED[kind]
+    hit = await _grounded_hit(answer_dispatcher, source)
+
+    assert DeepResearchAgent._extract_citations(
+        [{"question": source["query"], "results": [hit]}]
+    ) == [
+        {
+            "source": hit["document_id"],
+            "text": source["content"],
+            "question": source["query"],
+        }
+    ]
 
 
 @pytest.mark.asyncio

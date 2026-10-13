@@ -62,7 +62,7 @@ class SearchService:
 
         get_telemetry_manager()
 
-        logger.info("SearchService initialized (profile-agnostic)")
+        logger.debug("SearchService initialized (profile-agnostic)")
 
     def _get_profile_config(self, profile: str, tenant_id: str) -> Dict[str, Any]:
         """Resolve ``profile`` for ``tenant_id`` as the backend and ingestion see it.
@@ -239,7 +239,7 @@ class SearchService:
             profile_config, result_granularity
         )
 
-        logger.info(f"Searching profile={profile} tenant={tenant_id}")
+        logger.debug(f"Searching profile={profile} tenant={tenant_id}")
 
         with search_span(
             tenant_id=tenant_id,
@@ -251,7 +251,7 @@ class SearchService:
         ) as search_span_ctx:
             search_span_ctx.set_attribute("result_granularity", result_granularity)
             if ranking_strategy:
-                logger.info(f"Using ranking strategy: {ranking_strategy}")
+                logger.debug(f"Using ranking strategy: {ranking_strategy}")
 
             # The backend resolves the ranking strategy (requested or
             # auto-selected) and builds and runs the profile's encoder only

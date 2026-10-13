@@ -42,10 +42,12 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION}
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --package cogniverse-runtime --extra all --no-dev --frozen && \
     uv sync --only-group runtime-models --inexact --frozen && \
-    uv pip install pylate --no-deps && \
-    uv pip install datasets && \
-    uv pip install -e ./libs/telemetry-phoenix && \
-    /app/.venv/bin/python -c "import umap" && \
+    uv export --frozen --no-hashes --no-emit-workspace --all-packages --all-groups \
+        -o /tmp/locked.txt && \
+    uv pip install pylate --no-deps -c /tmp/locked.txt && \
+    uv pip install datasets -c /tmp/locked.txt && \
+    uv pip install -e ./libs/telemetry-phoenix -c /tmp/locked.txt && \
+    /app/.venv/bin/python -c "import umap, transformers, datasets" && \
     rm -rf /root/.cache/pip
 
 # Runtime stage

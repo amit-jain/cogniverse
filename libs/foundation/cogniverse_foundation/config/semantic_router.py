@@ -226,7 +226,9 @@ def create_routed_lm(
     ``RoutedLMCallFailed`` subclass naming the tenant, the tier, the routed
     model and the upstream status, so a credential refusal is distinguishable
     from a quota, an outage and a request the router would not accept.
-    Successful completions record their served model on the current span.
+    Successful completions record their served model on the current span. An
+    LM on the classification entry also carries ``endpoint`` as the endpoint
+    serving it, which bounds free-text prompts (``RoutedLM.prompt_allowance``).
     """
     routed = apply_semantic_routing(
         endpoint=endpoint,
@@ -238,14 +240,29 @@ def create_routed_lm(
     if not config.enabled:
         return create_dspy_lm(routed, tenant_id=tenant_id)
 
-    from cogniverse_foundation.config.routed_lm import RoutedLM
+    from cogniverse_foundation.config.routed_lm import RoutedLM, ServingEndpoint
 
+    # The classification entry serves every tier from the endpoint the call
+    # site is configured with; the other entries pick an upstream per request.
+    served_by = (
+        ServingEndpoint(
+            api_base=endpoint.api_base,
+            model=endpoint.model,
+            context_window=endpoint.context_window,
+            num_retries=endpoint.num_retries,
+        )
+        if routed.model == config.classification_model
+        and endpoint.api_base
+        and endpoint.api_base != config.semantic_router_url
+        else None
+    )
     return RoutedLM(
         routed.model,
         tenant_id=tenant_id,
         cache_tenant_id=tenant_id,
         tier=tier,
         vision_model=config.vision_model,
+        served_by=served_by,
         student_model=(
             config.classification_model
             if routed.model in (config.routed_model, config.short_reasoning_model)

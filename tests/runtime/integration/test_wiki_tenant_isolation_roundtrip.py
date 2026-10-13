@@ -166,3 +166,119 @@ class TestWikiTenantIsolationRoundTrip:
         second_mgr = managers["wiki_cache_test"]
 
         assert first_mgr is second_mgr
+
+
+@pytest.mark.integration
+class TestARunNeverRetrievesItsOwnPages:
+    """The dispatcher files an orchestrated run once, after it succeeded. A
+    step of the run files nothing, so the tenant's wiki holds nothing of the
+    run for a later step to retrieve while it is still running."""
+
+    QUERY = "compare the harbour clips and write a report"
+    ANSWER = "Both harbour clips show the same tugboat; the second is at dawn."
+    ENTITIES = [
+        {"text": "Tugboat Hercules", "type": "VEHICLE", "context": "the tugboat"},
+        {"text": "Harbour Lighthouse", "type": "LOCATION", "context": "the lighthouse"},
+        {"text": "Dawn Shift", "type": "EVENT", "context": "at dawn"},
+    ]
+
+    def _dispatcher(self, config_manager):
+        from cogniverse_core.common.agent_models import AgentEndpoint
+        from cogniverse_core.registries.agent_registry import AgentRegistry
+        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+
+        dispatcher = AgentDispatcher(
+            agent_registry=AgentRegistry(
+                tenant_id="test:unit", config_manager=config_manager
+            ),
+            config_manager=config_manager,
+            schema_loader=None,
+        )
+        for name, capabilities in (
+            ("entity_extraction_agent", ["entity_extraction"]),
+            ("orchestrator_agent", ["orchestration"]),
+        ):
+            dispatcher._registry.register_agent(
+                AgentEndpoint(
+                    name=name, url="http://localhost:8003", capabilities=capabilities
+                )
+            )
+
+        async def extract(agent_name, query, context, tenant_id):
+            return {
+                "status": "success",
+                "agent": "entity_extraction_agent",
+                "entities": self.ENTITIES,
+                "entity_count": len(self.ENTITIES),
+                "has_entities": True,
+                "dominant_types": ["VEHICLE"],
+            }
+
+        async def run(query, context, tenant_id):
+            return {
+                "status": "success",
+                "agent": "orchestrator_agent",
+                "message": "Orchestrated the comparison",
+                "orchestration_result": {
+                    "query": query,
+                    "agent_results": {
+                        "entity_extraction_agent": await extract(
+                            "entity_extraction_agent", query, context, tenant_id
+                        ),
+                    },
+                    "final_output": {"status": "success", "answer": self.ANSWER},
+                },
+            }
+
+        dispatcher._execute_generic_agent = extract
+        dispatcher._execute_orchestration_task = run
+        return dispatcher
+
+    @pytest.mark.asyncio
+    async def test_steps_file_nothing_and_the_finished_run_is_searchable(
+        self, per_tenant_wiki_app, config_manager
+    ):
+        import asyncio
+        import uuid
+
+        from cogniverse_agents.orchestrator_agent import step_context
+
+        _, managers = per_tenant_wiki_app
+        tenant = f"wikirun{uuid.uuid4().hex[:8]}:t1"
+        dispatcher = self._dispatcher(config_manager)
+
+        async def drain():
+            while dispatcher._background_tasks:
+                await asyncio.gather(*list(dispatcher._background_tasks))
+
+        step = await dispatcher.dispatch(
+            "entity_extraction_agent", self.QUERY, context=step_context(tenant)
+        )
+        await drain()
+        after_step = dict(managers)
+
+        result = await dispatcher.dispatch(
+            "orchestrator_agent", self.QUERY, context={"tenant_id": tenant}
+        )
+        await drain()
+
+        assert step["entities"] == self.ENTITIES
+        assert tenant not in after_step
+        assert result["answer"] == self.ANSWER
+        hits = await asyncio.to_thread(managers[tenant].search, "tugboat dawn", 10)
+        [index] = [hit for hit in hits if hit["page_type"] == "index"]
+        assert index["content"].splitlines()[:3] == [
+            f"# Wiki Index — {tenant}",
+            "",
+            "_4 pages: 3 topics, 1 sessions._",
+        ]
+        assert sorted(
+            (hit["page_type"], hit["title"], hit["content"])
+            for hit in hits
+            if hit is not index
+        ) == [
+            ("session", f"Session — {self.QUERY}", self.ANSWER),
+            ("topic", "Dawn Shift", self.ANSWER),
+            ("topic", "Harbour Lighthouse", self.ANSWER),
+            ("topic", "Tugboat Hercules", self.ANSWER),
+        ]

@@ -64,6 +64,27 @@ class TestConfigureRuntimeLogging:
             runtime_main._configure_runtime_logging()
             assert root.level == logging.DEBUG
 
+    @pytest.mark.parametrize(
+        ("log_level", "http_client_level"),
+        [
+            ("INFO", logging.WARNING),
+            ("WARNING", logging.WARNING),
+            ("DEBUG", logging.DEBUG),
+        ],
+    )
+    def test_http_client_response_lines_need_debug(
+        self, monkeypatch, log_level, http_client_level
+    ):
+        monkeypatch.setenv("LOG_LEVEL", log_level)
+        http_client = logging.getLogger("httpr")
+        saved = http_client.level
+        try:
+            with _bare_root_logger():
+                runtime_main._configure_runtime_logging()
+                assert http_client.level == http_client_level
+        finally:
+            http_client.setLevel(saved)
+
     def test_unknown_log_level_raises(self, monkeypatch):
         monkeypatch.setenv("LOG_LEVEL", "LOUD")
         with _bare_root_logger():

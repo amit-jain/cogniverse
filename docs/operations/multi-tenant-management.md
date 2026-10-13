@@ -145,6 +145,7 @@ The tenant management service (`libs/runtime/cogniverse_runtime/admin/tenant_man
 | DELETE | `/admin/tenants/{tenant_full_id}` | Delete tenant and all data. Same canonicalization as GET. | None (open) |
 | DELETE | `/admin/organizations/{org_id}` | Delete organization and all tenants | None (open) |
 | POST | `/admin/reconcile-orphans?dry_run={true\|false}` | List Vespa-only schema orphans, optionally drop them all in one redeploy. See [Orphan reconciliation](../operations/multi-tenant-ops.md#orphan-reconciliation). | None (open) |
+| POST | `/admin/reconcile-ingest-orphans?dry_run={true\|false}` | List ingest-bucket prefixes whose tenant has no record, optionally delete their objects. See [Orphan reconciliation](../operations/multi-tenant-ops.md#orphan-reconciliation). | None (open) |
 | GET | `/admin/schemas/drift` | List tenant schemas registered with a definition other than the shipped one, with Vespa's reason for each the startup migration could not redeploy. See [Schema changes in a release](../operations/multi-tenant-ops.md#schema-changes-in-a-release). | None (open) |
 
 > `DELETE /admin/tenants/{id}` redeploys the Vespa application package

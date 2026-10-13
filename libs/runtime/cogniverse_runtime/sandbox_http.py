@@ -105,6 +105,22 @@ def _url_address(url: str) -> Address:
     return parsed.hostname or "", 443 if parsed.scheme == "https" else 80
 
 
+# The address policy rules name the chat LLM at.
+DEFAULT_LLM_ADDRESS: Address = ("localhost", 11434)
+
+
+def default_service_addresses() -> Dict[str, Address]:
+    """The address a policy rule names each system service at, by the kind
+    the dispatcher's egress check knows it as."""
+    from cogniverse_foundation.config.unified_config import SystemConfig
+
+    default = SystemConfig()
+    return {
+        "vespa": _url_address(f"{default.backend_url}:{default.backend_port}"),
+        "llm": DEFAULT_LLM_ADDRESS,
+    }
+
+
 def deployed_endpoint_bindings(system_config: Any) -> Dict[Address, Address]:
     """Map each service's ``SystemConfig`` default address to the address
     ``system_config`` configures for it: the runtime's A2A endpoint
