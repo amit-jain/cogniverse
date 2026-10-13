@@ -2106,7 +2106,7 @@ CMD ["python", "-m", "cogniverse_runtime.runtime_cli", \
      "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-The shipped `libs/runtime/Dockerfile` runs `uv sync --package cogniverse-runtime --extra all --no-dev --frozen`, then `uv sync --only-group runtime-models --inexact --frozen` to install the pinned `en_core_web_sm` spaCy model from the lock.
+The shipped `libs/runtime/Dockerfile` runs `uv sync --package cogniverse-runtime --extra all --no-dev --frozen`, then `uv sync --only-group runtime-models --inexact --frozen` to install the pinned `en_core_web_sm` spaCy model from the lock. `pylate`, `datasets` and the `cogniverse-telemetry-phoenix` plugin are then installed with `uv pip install -c` against the lock's own export (`uv export --frozen`), so they and everything they pull in land at their `uv.lock` versions, and the build imports `umap`, `transformers` and `datasets` before it finishes.
 
 The runtime image sets `LITELLM_LOCAL_MODEL_COST_MAP=True`, so litellm loads its bundled model cost map instead of fetching it from raw.githubusercontent.com on a process's first LM call. Every chart workload that runs cogniverse code (runtime, ingestor, quality monitor and the Argo workflow steps) runs that image and leaves the value as the image sets it.
 
