@@ -1875,9 +1875,10 @@ SearchAgent was enhanced to support ensemble mode, allowing it to query multiple
 (the profiles whose search ran) and `degraded` (`(profile, reason)` for a leg
 that could not encode its query or whose search raised, with `reason` in
 `encode_failed` / `search_failed`; a leg is `encode_failed` when its search
-raised a typed encoder fault). Profiles sharing an embedding model share one
-`SharedQueryEncoder`, so one encode, and a leg encodes only when its ranking
-strategy needs embeddings. `SearchOutput.profiles` names the legs that ran and
+raised a typed encoder fault). Each leg's encoder is the one its profile
+declares (`build_query_encoder`, the resolution `POST /search` uses); profiles
+with the same `query_encoder_identity` share one `SharedQueryEncoder`, so one
+encode, and a leg encodes only when its ranking strategy needs embeddings. `SearchOutput.profiles` names the legs that ran and
 `SearchOutput.degraded_profiles` the ones that did not, so a caller reports a
 partial ensemble as partial. Every leg failing raises. The legs run on a pool
 of their own that is shut down without waiting, so a caller whose budget

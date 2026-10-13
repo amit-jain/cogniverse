@@ -952,6 +952,16 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 | `XClipQueryEncoder` | X-CLIP | Single-vector 768-d; remote via the `video_embed` sidecar; encodes video and text into one space |
 | `ClapTextQueryEncoder` | CLAP | Single-vector 512-d; remote via the `clap_embed` sidecar's `/embed/text`; text in the space of the stored acoustic embeddings |
 
+`QueryEncoderFactory.create_for_profile(profile, profile_config, config)` is
+the one place a profile becomes a query encoder; `create_encoder` looks the
+profile up and calls it, `VespaSearchBackend` calls it for a search that
+supplies no encoder, and the search agent's profile fan-out reaches it through
+`build_query_encoder`. A dense profile (`embedding_type: dense` or
+`encoder: denseon`) resolves to `DenseQueryEncoder` over the shared semantic
+embedder. Any other profile is encoded with `profile_query_model(profile_config)`
+(`semantic_model`, else `embedding_model`), and
+`query_encoder_identity(profile_config)` tells which profiles share an encoder.
+
 `QueryEncoderFactory._create_encoder_instance` resolves the encoder in this
 order: `profile_config["model_loader"]` (authoritative) → model-name substring
 → profile-name substring, raising `ValueError` if none match. When a profile

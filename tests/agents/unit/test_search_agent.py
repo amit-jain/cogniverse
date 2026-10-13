@@ -2375,7 +2375,7 @@ class TestEnsembleEncodeDedupe:
             return np.zeros((2, 128), dtype=np.float32)
 
         def fake_create_encoder(profile, model, config=None):
-            created_encoders.append(model)
+            created_encoders.append((profile, model))
             return SimpleNamespace(encode=counting_encode)
 
         agent = SearchAgent.__new__(SearchAgent)
@@ -2419,7 +2419,8 @@ class TestEnsembleEncodeDedupe:
         assert len(encode_calls) == 2, (
             f"expected one encode per distinct model, got {len(encode_calls)}"
         )
-        assert created_encoders == ["m_shared"]
+        # The factory picks the model from the profile; the agent names none.
+        assert created_encoders == [("p_shared_1", None)]
         assert sorted(searched_profiles) == ["p_active", "p_shared_1", "p_shared_2"]
 
     @pytest.mark.asyncio
@@ -2474,7 +2475,7 @@ class TestEnsembleEncodeDedupe:
         from cogniverse_core.query import encoders as enc_mod
 
         def create_encoder(profile, model, config=None):
-            if model == "m_other":
+            if (profile, model) == ("p_other", None):
                 raise ValueError("Profile 'p_other' specifies no URL")
             return SimpleNamespace(encode=lambda _q: np.zeros((2, 128)))
 

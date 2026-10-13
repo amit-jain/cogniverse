@@ -44,6 +44,7 @@ from cogniverse_core.query.encoders import (
     EncoderUnavailableError,
     SharedQueryEncoder,
     build_query_encoder,
+    query_encoder_identity,
 )
 from cogniverse_core.registries.backend_registry import (
     get_backend_registry,
@@ -1237,17 +1238,18 @@ class SearchAgent(
 
         import asyncio
 
-        # One SharedQueryEncoder per distinct model: the backend encodes
+        # One SharedQueryEncoder per distinct encoder: the backend encodes
         # through it only when a leg's ranking strategy needs embeddings, and
-        # profiles sharing a model share one encode. Every leg runs in the
+        # profiles sharing an encoder share one encode. Every leg runs in the
         # thread pool below, so encoder construction and encode stay off the
         # event loop.
         backend_config_data = self.search_config.get("backend", {})
         profiles_config = backend_config_data.get("profiles", {})
 
-        def _encode_unit(profile_name: str) -> str:
-            """Profiles map to the model that encodes for them; unknown
-            profiles and the active profile use the agent's own encoder."""
+        def _encode_unit(profile_name: str):
+            """Profiles whose query encoders are the same share one encode;
+            unknown profiles and the active profile use the agent's own
+            encoder."""
             if profile_name not in profiles_config:
                 logger.warning(
                     f"Profile {profile_name} not found in config, using active profile encoder"
@@ -1255,11 +1257,9 @@ class SearchAgent(
                 return "__active__"
             if profile_name == self.active_profile:
                 return "__active__"
-            return profiles_config[profile_name].get(
-                "embedding_model", "TomoroAI/tomoro-colqwen3-embed-4b"
-            )
+            return query_encoder_identity(profiles_config[profile_name])
 
-        shared_by_unit: Dict[str, SharedQueryEncoder] = {}
+        shared_by_unit: Dict[Any, SharedQueryEncoder] = {}
         encoder_by_profile: Dict[str, SharedQueryEncoder] = {}
         for profile_name in profiles:
             unit = _encode_unit(profile_name)
@@ -1273,7 +1273,6 @@ class SearchAgent(
                             build_query_encoder,
                             profile_name,
                             config=self.search_config,
-                            model_name=unit,
                         ),
                         service=self._encoder_service(profile_name),
                     )

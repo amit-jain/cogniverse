@@ -725,17 +725,6 @@ class ConnectionPool:
             self._available.clear()
 
 
-class _DenseQueryEncoder:
-    """Adapts a SemanticEmbedder to the ``.encode(text) -> ndarray`` shape the
-    search path calls for on-demand query encoding of dense profiles."""
-
-    def __init__(self, embedder):
-        self._embedder = embedder
-
-    def encode(self, query_text: str):
-        return self._embedder.encode(query_text, is_query=True)
-
-
 class VespaSearchBackend(SearchBackend):
     """Production-ready Vespa search backend"""
 
@@ -1185,9 +1174,9 @@ class VespaSearchBackend(SearchBackend):
 
     def _resolve_encoder_for_profile(self, profile_name, profile_config, tenant_id):
         """Build the query encoder a profile declares so callers that delegate
-        encoding to the backend need not thread one. Dense profiles resolve to
-        the shared SemanticEmbedder; multi-vector profiles to the video encoder
-        factory.
+        encoding to the backend need not thread one. Resolution is
+        ``QueryEncoderFactory.create_for_profile``, the path every caller
+        that supplies its own encoder also takes.
 
         Raises:
             EncoderNotConfiguredError: the profile declares no usable encoder
@@ -1198,46 +1187,37 @@ class VespaSearchBackend(SearchBackend):
         from cogniverse_core.query.encoders import (
             EncoderNotConfiguredError,
             EncoderUnavailableError,
+            QueryEncoderFactory,
+            is_dense_profile,
+            profile_query_model,
         )
 
-        embedding_type = str(profile_config.get("embedding_type") or "").lower()
-        encoder_name = str(profile_config.get("encoder") or "").lower()
         try:
-            if embedding_type == "dense" or encoder_name == "denseon":
-                from cogniverse_core.common.models.semantic_embedder import (
-                    get_semantic_embedder,
-                )
-
-                return _DenseQueryEncoder(
-                    get_semantic_embedder(
-                        remote_url=self._profile_inference_url(
-                            profile_name, profile_config, tenant_id
-                        )
+            if not is_dense_profile(profile_config):
+                if not profile_query_model(profile_config):
+                    raise EncoderNotConfiguredError(
+                        f"Profile {profile_name!r} declares neither "
+                        f"'semantic_model' nor 'embedding_model', so no query "
+                        f"encoder can be built. Add one to the profile or pass "
+                        f"'query_embeddings'.",
+                        profile=profile_name,
                     )
-                )
+                if self._config_manager is None:
+                    raise EncoderNotConfiguredError(
+                        f"Profile {profile_name!r} needs a config_manager to "
+                        f"resolve its query encoder, but this backend was built "
+                        f"without one.",
+                        profile=profile_name,
+                    )
+            cfg = None
+            if self._config_manager is not None:
+                from cogniverse_foundation.config.utils import get_config
 
-            model_name = profile_config.get("semantic_model") or profile_config.get(
-                "embedding_model"
-            )
-            if not model_name:
-                raise EncoderNotConfiguredError(
-                    f"Profile {profile_name!r} declares neither 'semantic_model' "
-                    f"nor 'embedding_model', so no query encoder can be built. "
-                    f"Add one to the profile or pass 'query_embeddings'.",
-                    profile=profile_name,
+                cfg = get_config(
+                    tenant_id=tenant_id, config_manager=self._config_manager
                 )
-            if self._config_manager is None:
-                raise EncoderNotConfiguredError(
-                    f"Profile {profile_name!r} needs a config_manager to resolve "
-                    f"its query encoder, but this backend was built without one.",
-                    profile=profile_name,
-                )
-            from cogniverse_core.query.encoders import QueryEncoderFactory
-            from cogniverse_foundation.config.utils import get_config
-
-            cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-            return QueryEncoderFactory.create_encoder(
-                profile_name, model_name, config=cfg
+            return QueryEncoderFactory.create_for_profile(
+                profile_name, profile_config, cfg
             )
         except (EncoderNotConfiguredError, EncoderUnavailableError):
             raise

@@ -122,22 +122,19 @@ def test_hybrid_audio_encoder_uses_semantic_model():
         "embedding_type": "multi_vector",
     }
 
+    config = {"backend": {"profiles": {"audio": profile}}}
     with (
+        patch("cogniverse_foundation.config.utils.get_config", return_value=config),
         patch(
-            "cogniverse_foundation.config.utils.get_config",
-            return_value={"backend": {"profiles": {"audio": profile}}},
-        ),
-        patch(
-            "cogniverse_core.query.encoders.QueryEncoderFactory.create_encoder",
+            "cogniverse_core.query.encoders.QueryEncoderFactory."
+            "_create_encoder_instance",
             return_value=MagicMock(),
-        ) as create_encoder,
+        ) as create_encoder_instance,
     ):
         backend._resolve_encoder_for_profile("audio", profile, "acme:content")
 
-    create_encoder.assert_called_once_with(
-        "audio",
-        "lightonai/LateOn",
-        config={"backend": {"profiles": {"audio": profile}}},
+    create_encoder_instance.assert_called_once_with(
+        "lightonai/LateOn", "audio", profile, config
     )
 
 
