@@ -2285,23 +2285,38 @@ temperature)` sends one request with `response_format(timestamps)` and
   `attempts`). When no `verbose_json` answer is usable, the text spans the
   chunk. A silent chunk may come back empty. A request that fails is not
   repeated.
-- A chunk's first `verbose_json` answer carrying per-segment `avg_logprob`,
-  when asked at or below `NON_SPEECH_JUDGED_TEMPERATURE` (0.2: the answer at
-  0.0, or the one at 0.2 when that came back empty), is judged by their mean
-  weighted by segment duration (`segments_avg_logprob`, kept as
-  `ChunkTranscript.avg_logprob`). Below `NON_SPEECH_AVG_LOGPROB` (-1.0) the
-  answer is improbable, and it is compared with the chunk's `json` answer at
-  the same temperature (or the one already kept). When that holds no speech
-  words (`speech_words`) or agrees with it (`word_agreement` at least 0.5),
-  the chunk is not speech: it gets an empty transcript, is asked nothing
-  more, and names no language for later chunks. Otherwise the `json` answer
-  carries speech the timed decode missed (Elephant Dream's opening lines,
-  timed as "I'm sorry." at -1.63): the chunk is transcribed from its `json`
-  answers alone, as one segment spanning it. Measured on the cluster's
-  server, speech scores at least -0.53 at 0.0 and -0.41 at 0.2, and music
-  the server answers with a phrase ("I'm going to go.") or a sound
-  annotation at most -1.05. A "Thank you." the server gives music at -0.79
-  to -0.91 is kept.
+- A timed answer is doubted when it is improbable or does not locate what it
+  says. Improbable: the chunk's first `verbose_json` answer carrying
+  per-segment `avg_logprob`, asked at or below `NON_SPEECH_JUDGED_TEMPERATURE`
+  (0.2: the answer at 0.0, or the one at 0.2 when that came back empty),
+  averages, weighted by segment duration (`segments_avg_logprob`, kept as
+  `ChunkTranscript.avg_logprob`), below `NON_SPEECH_AVG_LOGPROB` (-1.0).
+  Unlocated (`unlocated_phrase`): a usable timed answer that is one segment
+  spanning the chunk (to within `UNLOCATED_END_S`, 0.1 s, of its end) with at
+  most `UNLOCATED_PHRASE_WORDS` (12) speech words.
+- A doubted answer is resolved against the chunk's `json` answer at the same
+  temperature, or the one already kept. When that carries more speech words
+  and does not agree with it, it is speech the timed decode missed (Elephant
+  Dream's opening lines, timed as "I'm sorry." at -1.63): the chunk is
+  transcribed from its `json` answers alone, as one segment spanning it, a
+  `json` answer of at most 12 speech words only when `phrase_heard` confirms
+  it. Otherwise an unlocated phrase `phrase_heard` confirms is the timed
+  answer ("Follow me!" under Elephant Dream's score); any other doubted chunk
+  is not speech: it gets an empty transcript and is asked nothing more.
+- `phrase_heard(phrase, chunk, transcribe_chunk, language)` asks the chunk's
+  `phrase_windows` (`PHRASE_WINDOW_S`, 10 s, every `PHRASE_WINDOW_HOP_S`,
+  2.5 s, the last ending with the chunk) with timestamps at 0.0, until two
+  windows starting at most half a window apart each say the phrase
+  (`word_agreement` at least 0.5, or every one of its speech words) at a mean
+  log-probability of at least -1.0. A line of up to 7.5 s lies whole in two
+  such windows; the phrases the cluster's server gives music ("Thank you.",
+  "I'm sorry.", subtitle credits) recurred in no two.
+- `speech_words` leaves out sound annotations (`*Ding*`, `[Music]`,
+  `(laughs)`, `♪`) and the bare words Whisper captions music with
+  (`MUSIC_CAPTIONS`: "Music", "Музыка", "Müzik", ...).
+- A `json` answer that is the opening words of the looping timed answer asked
+  with it, fewer than all of them, is that loop cut short and counts as a
+  loop.
 - `transcribe_in_chunks(..., drop_garbled=True)` (the ingest path) leaves a
   chunk raising `GarbledTranscriptError` out of the transcript, logs it at
   WARNING and lists it under `dropped_chunks` (`chunk_index`, `start_s`,

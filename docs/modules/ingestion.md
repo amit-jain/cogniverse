@@ -1526,9 +1526,9 @@ six answers agree on, else a usable answer that holds only sound annotations;
 a chunk with none of these, and any other chunk whose `json` answer never
 comes back usable, raises `GarbledTranscriptError` or `EmptyTranscriptError`
 naming the chunk and its time range; a silent chunk may come back empty, as
-does a chunk whose timed answer at temperature 0 (or 0.2, when that one is
-empty) is improbable (mean token log-probability below -1.0) while its `json`
-answer carries no other speech. A chunk raising `GarbledTranscriptError` is left
+does a chunk whose timed answer is improbable (temperature 0 or 0.2, mean
+token log-probability below -1.0) or one segment spanning the chunk that no two
+nearby 10 s windows repeat, while its `json` answer carries no other speech. A chunk raising `GarbledTranscriptError` is left
 out of the transcript, which lists it under `dropped_chunks` (`chunk_index`,
 `start_s`, `end_s`, `compression_ratios`); the ingest's terminal result and
 the upload response carry that list as `transcript_dropped_chunks`. The

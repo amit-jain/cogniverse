@@ -835,7 +835,7 @@ class TestAudioAnalysisAgent:
             ).group(1)
             for request in captured_requests
         ] == [b"verbose_json", b"json"]
-        assert (result.text, result.segments, result.language) == ("", [], "unknown")
+        assert (result.text, result.segments, result.language) == ("", [], "en")
 
     @pytest.mark.asyncio
     async def test_transcription_outage_propagates_without_leaking_key(

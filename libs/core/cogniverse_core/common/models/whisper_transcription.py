@@ -25,11 +25,14 @@ looped) or ``EmptyTranscriptError``; one whose ``verbose_json`` answer is
 never usable keeps its text as one segment spanning the chunk. A silent chunk
 may come back empty.
 
-A chunk's first ``verbose_json`` answer carrying per-segment ``avg_logprob``,
-asked at or below ``NON_SPEECH_JUDGED_TEMPERATURE``, is improbable when they
-average below ``NON_SPEECH_AVG_LOGPROB``. The chunk is then not speech, and
-gets an empty transcript, unless its ``json`` answer carries other speech
-words; then no timed answer is used and its text spans the chunk.
+A timed answer is doubted when improbable (the chunk's first one carrying
+per-segment ``avg_logprob``, asked at or below
+``NON_SPEECH_JUDGED_TEMPERATURE``, averages below ``NON_SPEECH_AVG_LOGPROB``)
+or unlocated (``unlocated_phrase``). A doubted chunk whose ``json`` answer
+carries other speech is transcribed from its ``json`` answers alone; an
+unlocated phrase ``phrase_heard`` confirms is kept; any other doubted chunk is
+not speech and gets an empty transcript. A ``json`` answer that opens a
+looping timed answer and stops short of it counts as that loop.
 ``transcribe_in_chunks(drop_garbled=True)`` leaves out a chunk that raises
 ``GarbledTranscriptError`` and records it under ``dropped_chunks``, raising
 only when every chunk does.
@@ -93,6 +96,28 @@ NON_SPEECH_AVG_LOGPROB = -1.0
 # the answer at 0.2 when the one at 0.0 came back empty. Measured: speech at
 # 0.2 at least -0.41; at 0.4 sampling took a speech chunk to -1.38.
 NON_SPEECH_JUDGED_TEMPERATURE = 0.2
+# A timed answer that is one segment spanning the whole chunk, with at most
+# this many speech words, did not locate what it says. On the cluster's
+# server every music chunk answered with a phrase ("Thank you.", "I'm sorry.",
+# subtitle credits) came back that way at -0.15 to -0.91, in at most nine
+# words, as did one real line under a score ("Follow me!", -0.82); other real
+# speech in one spanning segment held 15 words or more.
+UNLOCATED_PHRASE_WORDS = 12
+# How far short of a chunk's end such a segment may stop: the server ended
+# "Thank you." over Big Buck Bunny's last 5.70 s at 5.66 s.
+UNLOCATED_END_S = 0.1
+# Such a phrase is checked against windows of the chunk this long, this far
+# apart: it is speech when two windows starting at most half a window apart
+# each answer with it (word_agreement at least REPEATED_SPEECH_AGREEMENT, or
+# every one of its words) at a mean log-probability of at least
+# NON_SPEECH_AVG_LOGPROB. A line of up to PHRASE_WINDOW_S - PHRASE_WINDOW_HOP_S
+# seconds lies whole in two such windows; the music phrases recurred in no two.
+PHRASE_WINDOW_S = 10.0
+PHRASE_WINDOW_HOP_S = 2.5
+# Bare words Whisper captions music with, as it does "*music*".
+MUSIC_CAPTIONS = frozenset(
+    {"music", "musik", "musique", "música", "musica", "музыка", "müzik"}
+)
 # Whisper's timestamp step, in seconds.
 TIMESTAMP_STEP_S = 0.02
 # Languages vLLM joins without a space between chunk texts.
@@ -723,12 +748,85 @@ _ANNOTATION = re.compile(r"\*[^*]*\*|\[[^\]]*\]|\([^)]*\)|[♪♫]")
 
 def speech_words(text: str) -> List[str]:
     """The words of an answer outside sound annotations (``*Ding*``,
-    ``[Music]``, ``(laughs)``, ``♪``)."""
+    ``[Music]``, ``(laughs)``, ``♪``, a bare ``Music``)."""
     return [
         word
         for word in map(_comparable, _units(_ANNOTATION.sub(" ", text), False))
-        if word
+        if word and word not in MUSIC_CAPTIONS
     ]
+
+
+def _cut_short(text: str, loop: str) -> bool:
+    """Whether ``text`` is the opening words of ``loop``, fewer than all of
+    them: the same decode stopped early. On the cluster's server
+    v_-vnSFKJNB94 chunk 1 answered in json " The", or the first 18 words,
+    beside a 104-word timed loop opening with them; no json answer to speech
+    was such a prefix."""
+    words = [_comparable(word) for word in _units(text, False)]
+    looped = [_comparable(word) for word in _units(loop, False)]
+    return bool(words) and len(words) < len(looped) and looped[: len(words)] == words
+
+
+def unlocated_phrase(answer: ChunkTranscript, duration: float) -> bool:
+    """Whether a timed answer is one segment spanning a chunk of ``duration``
+    seconds (to within ``UNLOCATED_END_S`` of its end) with at most
+    ``UNLOCATED_PHRASE_WORDS`` speech words."""
+    return (
+        len(answer.segments) == 1
+        and float(answer.segments[0]["start"]) < TIMESTAMP_STEP_S
+        and float(answer.segments[0]["end"]) > duration - UNLOCATED_END_S
+        and len(speech_words(answer.text)) <= UNLOCATED_PHRASE_WORDS
+    )
+
+
+def phrase_windows(chunk: AudioChunk) -> List[AudioChunk]:
+    """The windows a phrase is checked against: ``PHRASE_WINDOW_S`` long (or
+    the chunk less one hop, when shorter), every ``PHRASE_WINDOW_HOP_S``, the
+    last ending with the chunk."""
+    total = len(chunk.samples)
+    hop = int(PHRASE_WINDOW_HOP_S * WHISPER_SAMPLE_RATE)
+    width = min(int(PHRASE_WINDOW_S * WHISPER_SAMPLE_RATE), total - hop)
+    if width <= 0:
+        return [chunk]
+    starts = list(range(0, total - width, hop)) + [total - width]
+    return [
+        AudioChunk(
+            chunk.index,
+            chunk.start_sample + start,
+            chunk.samples[start : start + width],
+        )
+        for start in sorted(set(starts))
+    ]
+
+
+def _says(window: ChunkTranscript, phrase: str) -> bool:
+    if window.avg_logprob is None or window.avg_logprob < NON_SPEECH_AVG_LOGPROB:
+        return False
+    words = set(speech_words(phrase))
+    return bool(words) and (
+        word_agreement(window.text, phrase) >= REPEATED_SPEECH_AGREEMENT
+        or words <= set(speech_words(window.text))
+    )
+
+
+def phrase_heard(
+    phrase: str,
+    chunk: AudioChunk,
+    transcribe_chunk: ChunkRequest,
+    language: Optional[str],
+) -> bool:
+    """Whether two ``phrase_windows`` of ``chunk`` starting at most half a
+    window apart each answer with ``phrase`` at temperature 0.0; asks only
+    until two do."""
+    heard: List[int] = []
+    for window in phrase_windows(chunk):
+        answer = transcribe_chunk(window, language, True, FALLBACK_TEMPERATURES[0])
+        if not _says(answer, phrase):
+            continue
+        if heard and window.start_sample - heard[-1] <= len(window.samples) // 2:
+            return True
+        heard.append(window.start_sample)
+    return False
 
 
 def _majority_answer(
@@ -776,6 +874,29 @@ def _transcribe_checked(
 
     def usable(answer: ChunkTranscript, timestamps: bool, attempt: int) -> bool:
         ratio = compression_ratio(answer.text)
+        loop = timed_asked.get(FALLBACK_TEMPERATURES[attempt - 1])
+        if (
+            not timestamps
+            and ratio <= GARBLED_COMPRESSION_RATIO
+            and loop is not None
+            and compression_ratio(loop.text) > GARBLED_COMPRESSION_RATIO
+            and _cut_short(answer.text, loop.text)
+        ):
+            logger.warning(
+                "%s: chunk %d (%.2f-%.2fs) json answer %r on attempt %d of %d at "
+                "temperature %.1f is a timed repetition loop cut short",
+                source,
+                chunk.index,
+                chunk.start_s,
+                chunk.end_s,
+                answer.text,
+                attempt,
+                TRANSCRIBE_ATTEMPTS,
+                FALLBACK_TEMPERATURES[attempt - 1],
+            )
+            loops.append(compression_ratio(loop.text))
+            looped[FALLBACK_TEMPERATURES[attempt - 1]] = answer
+            return False
         if ratio > GARBLED_COMPRESSION_RATIO:
             logger.warning(
                 "%s: chunk %d (%.2f-%.2fs) came back as a repetition loop in %s "
@@ -822,15 +943,20 @@ def _transcribe_checked(
     candidates: Dict[float, ChunkTranscript] = {}
     usable_at: List[float] = []
     judged = False
-    # The judged timed answer when its mean log-probability is below
-    # NON_SPEECH_AVG_LOGPROB, with its temperature; once a json answer
-    # carrying other speech refutes it, no timed answer is asked or used.
-    improbable: Optional[Tuple[ChunkTranscript, float]] = None
+    # A timed answer that may not be speech, with its temperature: the judged
+    # one when improbable (below NON_SPEECH_AVG_LOGPROB), or a usable one that
+    # is an unlocated_phrase. It is resolved against the json answer asked
+    # with it; once a json answer carrying other speech refutes it, no timed
+    # answer is asked or used.
+    doubted: Optional[Tuple[ChunkTranscript, float]] = None
     refuted = False
+    timed_asked: Dict[float, ChunkTranscript] = {}
     for attempt, temperature in enumerate(FALLBACK_TEMPERATURES, start=1):
         asked: Optional[ChunkTranscript] = None
-        if timed is None and not refuted:
-            answer = transcribe_chunk(chunk, named, True, temperature)
+        if timed is None and doubted is None and not refuted:
+            answer = timed_asked[temperature] = transcribe_chunk(
+                chunk, named, True, temperature
+            )
             named = answer.language or named
             if (
                 not judged
@@ -839,10 +965,15 @@ def _transcribe_checked(
             ):
                 judged = True
                 if answer.avg_logprob < NON_SPEECH_AVG_LOGPROB:
-                    improbable = (answer, temperature)
-            if improbable is None and usable(answer, True, attempt):
-                timed, timed_temperature = answer, temperature
-                complete = reaches_chunk_end(timed.segments, duration)
+                    doubted = (answer, temperature)
+            if doubted is None and usable(answer, True, attempt):
+                if answer.avg_logprob is not None and unlocated_phrase(
+                    answer, duration
+                ):
+                    doubted = (answer, temperature)
+                else:
+                    timed, timed_temperature = answer, temperature
+                    complete = reaches_chunk_end(timed.segments, duration)
         first = looped.get(FALLBACK_TEMPERATURES[0])
         if untimed is None and complete and first is None:
             break
@@ -857,40 +988,65 @@ def _transcribe_checked(
                 if fit:
                     usable_at.append(temperature)
                 untimed = _settled(first, candidates, usable_at, chunk, source, logger)
-        if improbable is not None and not refuted:
-            claimed, claimed_at = improbable
+        if doubted is not None:
+            claimed, claimed_at = doubted
+            doubted = None
             said = asked if asked is not None else untimed
             agreement = word_agreement(said.text, claimed.text)
-            if not speech_words(said.text) or agreement >= REPEATED_SPEECH_AGREEMENT:
+            said_words = len(speech_words(said.text))
+            claimed_words = len(speech_words(claimed.text))
+            improbable = claimed.avg_logprob < NON_SPEECH_AVG_LOGPROB
+            doubt = (
+                f"has mean log-probability {claimed.avg_logprob:.2f} < "
+                f"{NON_SPEECH_AVG_LOGPROB}"
+                if improbable
+                else "spans the chunk in one segment"
+            )
+            if (
+                said_words > claimed_words
+                and agreement < REPEATED_SPEECH_AGREEMENT
+                and (
+                    said_words > UNLOCATED_PHRASE_WORDS
+                    or phrase_heard(said.text, chunk, transcribe_chunk, named)
+                )
+            ):
                 logger.warning(
-                    "%s: chunk %d (%.2f-%.2fs) timed answer %r at temperature "
-                    "%.1f has mean log-probability %.2f < %s and the json answer "
-                    "carries no other speech: not speech, kept no text",
+                    "%s: chunk %d (%.2f-%.2fs) timed answer %r at temperature %.1f "
+                    "%s but the json answer carries other speech (%.2f): "
+                    "transcribed from json answers alone",
                     source,
                     chunk.index,
                     chunk.start_s,
                     chunk.end_s,
                     claimed.text,
                     claimed_at,
-                    claimed.avg_logprob,
-                    NON_SPEECH_AVG_LOGPROB,
+                    doubt,
+                    agreement,
                 )
-                return ChunkTranscript(text="", language=None, segments=[])
-            logger.warning(
-                "%s: chunk %d (%.2f-%.2fs) timed answer %r at temperature %.1f "
-                "has mean log-probability %.2f < %s but the json answer carries "
-                "other speech (%.2f): transcribed from json answers alone",
-                source,
-                chunk.index,
-                chunk.start_s,
-                chunk.end_s,
-                claimed.text,
-                claimed_at,
-                claimed.avg_logprob,
-                NON_SPEECH_AVG_LOGPROB,
-                agreement,
-            )
-            refuted = True
+                refuted = True
+            elif (
+                not improbable
+                and claimed_words
+                and phrase_heard(claimed.text, chunk, transcribe_chunk, named)
+            ):
+                timed, timed_temperature = claimed, claimed_at
+                complete = reaches_chunk_end(timed.segments, duration)
+            else:
+                logger.warning(
+                    "%s: chunk %d (%.2f-%.2fs) timed answer %r at temperature %.1f "
+                    "%s and %s: not speech, kept no text",
+                    source,
+                    chunk.index,
+                    chunk.start_s,
+                    chunk.end_s,
+                    claimed.text,
+                    claimed_at,
+                    doubt,
+                    "the json answer carries no other speech"
+                    if improbable
+                    else "no two nearby windows say it",
+                )
+                return ChunkTranscript(text="", language=named, segments=[])
         if untimed is not None and (timed is not None or refuted):
             break
 
