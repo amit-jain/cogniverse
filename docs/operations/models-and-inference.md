@@ -330,8 +330,8 @@ from. The endpoint is
 clients send each 30 s chunk as `verbose_json` (timings) and, unless the timed
 segments run to the end of the chunk, as `json` (text), plus one request per
 answer that comes back empty or as a repetition loop. A chunk whose timed
-answer at temperature 0 (or 0.2, when that one is empty) is not speech is
-asked nothing more.
+answer at temperature 0 (or 0.2, when that one is empty) is improbable and
+whose `json` answer carries no other speech is asked nothing more.
 
 ### CLAP acoustic embeddings (`clap_embed` sidecar)
 

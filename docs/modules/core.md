@@ -2290,11 +2290,18 @@ temperature)` sends one request with `response_format(timestamps)` and
   0.0, or the one at 0.2 when that came back empty), is judged by their mean
   weighted by segment duration (`segments_avg_logprob`, kept as
   `ChunkTranscript.avg_logprob`). Below `NON_SPEECH_AVG_LOGPROB` (-1.0) the
-  chunk is not speech: it gets an empty transcript, is not asked again, and
-  names no language for later chunks. Measured on the cluster's server,
-  speech scores at least -0.53 at 0.0 and -0.41 at 0.2, and music the server
-  answers with a phrase ("I'm going to go.") or a sound annotation at most
-  -1.05. A "Thank you." the server gives music at -0.79 to -0.91 is kept.
+  answer is improbable, and it is compared with the chunk's `json` answer at
+  the same temperature (or the one already kept). When that holds no speech
+  words (`speech_words`) or agrees with it (`word_agreement` at least 0.5),
+  the chunk is not speech: it gets an empty transcript, is asked nothing
+  more, and names no language for later chunks. Otherwise the `json` answer
+  carries speech the timed decode missed (Elephant Dream's opening lines,
+  timed as "I'm sorry." at -1.63): the chunk is transcribed from its `json`
+  answers alone, as one segment spanning it. Measured on the cluster's
+  server, speech scores at least -0.53 at 0.0 and -0.41 at 0.2, and music
+  the server answers with a phrase ("I'm going to go.") or a sound
+  annotation at most -1.05. A "Thank you." the server gives music at -0.79
+  to -0.91 is kept.
 - `transcribe_in_chunks(..., drop_garbled=True)` (the ingest path) leaves a
   chunk raising `GarbledTranscriptError` out of the transcript, logs it at
   WARNING and lists it under `dropped_chunks` (`chunk_index`, `start_s`,

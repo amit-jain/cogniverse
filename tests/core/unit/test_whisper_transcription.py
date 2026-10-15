@@ -1523,9 +1523,11 @@ def test_a_timed_answer_running_to_the_chunk_end_is_kept_without_json(name):
 def test_a_timed_answer_past_the_chunk_end_is_clamped_and_music_kept_empty():
     """Music the server times past the chunk's end as "Thank you.": the
     segment is clamped to the chunk, and the answer (mean log-probability
-    -1.05) is not speech, so the chunk keeps no text."""
+    -1.05) is not speech, as the json answer the server gave the same chunk
+    (" you") carries no other speech, so the chunk keeps no text."""
     name = "live/vnSFKJNB94/3/verbose_json/past_duration"
     replay = _Replay([name], [])
+    replay.scripts["json"].append({"text": " you"})
     answer = _recording()["answers"][name]
     duration = answer["chunk_len_s"]
     chunk = AudioChunk(0, 0, _noise(duration))
@@ -1535,7 +1537,7 @@ def test_a_timed_answer_past_the_chunk_end_is_clamped_and_music_kept_empty():
 
     assert parsed.segments == [{"start": 0.0, "end": duration, "text": "Thank you."}]
     assert round(parsed.avg_logprob, 2) == -1.05
-    assert replay.requests == [("verbose_json", 0.0)]
+    assert replay.requests == [("verbose_json", 0.0), ("json", 0.0)]
     assert (transcript["full_text"], transcript["segments"]) == ("", [])
 
 
@@ -1889,17 +1891,17 @@ def test_the_recorded_timed_answers_at_0_0_fall_either_side_of_the_threshold():
 
 def test_a_chunk_whose_timed_answer_is_improbable_is_transcribed_empty(caplog):
     """Music: the timed answer at 0.0 is a phrase (mean log-probability
-    -1.21) and the json answers are a loop of sound annotations. The chunk is
-    not speech; it is not asked again and keeps no text."""
+    -1.21) and the json answer at 0.0 a loop of sound annotations. The chunk
+    is not speech; it is asked nothing more and keeps no text."""
     ladder = _ladders()[8]
     server, transcript, decisions = _ladder_transcribed(ladder, caplog)
 
-    assert server.requests == [("verbose_json", 0.0)]
+    assert server.requests == [("verbose_json", 0.0), ("json", 0.0)]
     assert (transcript["full_text"], transcript["segments"]) == ("", [])
     assert decisions == [
         'clip.wav: chunk 0 (0.00-29.70s) timed answer " I\'m going to go." at '
-        "temperature 0.0 has mean log-probability -1.21 < -1.0: not speech, "
-        "kept no text"
+        "temperature 0.0 has mean log-probability -1.21 < -1.0 and the json "
+        "answer carries no other speech: not speech, kept no text"
     ]
 
 
@@ -1919,13 +1921,15 @@ def test_a_chunk_whose_timed_answer_at_0_0_is_empty_is_judged_at_0_2(caplog):
     assert decisions == [
         "clip.wav: chunk 0 (0.00-29.30s) timed answer \" I'm going to go back to "
         'the next one." at temperature 0.2 has mean log-probability -1.54 < '
-        "-1.0: not speech, kept no text"
+        "-1.0 and the json answer carries no other speech: not speech, kept no "
+        "text"
     ]
 
 
 def test_a_looping_music_chunk_is_judged_by_its_timed_answer_at_0_2(caplog):
     """The same music with the recorded log-probabilities: the timed answer
-    at 0.0 is empty, the one at 0.2 (-1.14) is not speech."""
+    at 0.0 is empty, the one at 0.2 (-1.14) is improbable and the json answer
+    at 0.2 holds only sound annotations: not speech."""
     ladder = _ladders()[7]
     server, transcript, decisions = _ladder_transcribed(ladder, caplog)
 
@@ -1933,13 +1937,66 @@ def test_a_looping_music_chunk_is_judged_by_its_timed_answer_at_0_2(caplog):
         ("verbose_json", 0.0),
         ("json", 0.0),
         ("verbose_json", 0.2),
+        ("json", 0.2),
     ]
     assert (transcript["full_text"], transcript["segments"]) == ("", [])
     assert decisions == [
         f"clip.wav: chunk 0 (0.00-29.70s) timed answer {server.raw('verbose_json', 0.2)!r} "
-        "at temperature 0.2 has mean log-probability -1.14 < -1.0: not speech, "
-        "kept no text"
+        "at temperature 0.2 has mean log-probability -1.14 < -1.0 and the json "
+        "answer carries no other speech: not speech, kept no text"
     ]
+
+
+# Elephant Dream's first chunk on the cluster's server: an improbable timed
+# answer over Proog's opening lines, which the json answer carries.
+ELEPHANT_TIMED = " I'm sorry."
+ELEPHANT_SPEECH = (
+    " At the left we can see... we can see... at the right we can see the hat"
+    " snarlers. Everything is safe, perfectly safe. Emo? Emo?"
+)
+
+
+def _improbable_then(json_text: str):
+    requests: list[tuple[str, float]] = []
+
+    def server(chunk, language, timestamps, temperature=0.0):
+        requests.append((response_format(timestamps), temperature))
+        if timestamps:
+            return ChunkTranscript(
+                text=ELEPHANT_TIMED,
+                language="en",
+                segments=_segments((0.0, 2.0, ELEPHANT_TIMED)),
+                avg_logprob=-1.63,
+            )
+        return ChunkTranscript(text=json_text, language=None, segments=[])
+
+    return server, requests
+
+
+def test_speech_in_the_json_answer_outweighs_an_improbable_timed_one(caplog):
+    server, requests = _improbable_then(ELEPHANT_SPEECH)
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(_noise(29.4), server)
+
+    assert requests == [("verbose_json", 0.0), ("json", 0.0)]
+    assert transcript["segments"] == _segments(
+        (0.0, 29.4, " ".join(ELEPHANT_SPEECH.split()))
+    )
+    assert [record.getMessage() for record in caplog.records] == [
+        'clip.wav: chunk 0 (0.00-29.40s) timed answer " I\'m sorry." at '
+        "temperature 0.0 has mean log-probability -1.63 < -1.0 but the json "
+        "answer carries other speech (0.00): transcribed from json answers alone"
+    ]
+
+
+def test_a_json_answer_repeating_an_improbable_timed_one_is_not_speech():
+    server, requests = _improbable_then(ELEPHANT_TIMED)
+
+    transcript = _transcribe(_noise(29.4), server)
+
+    assert requests == [("verbose_json", 0.0), ("json", 0.0)]
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
 
 
 def test_a_timed_answer_above_0_2_is_not_judged():
@@ -1994,7 +2051,11 @@ def test_a_chunk_judged_not_speech_names_no_language_for_the_next(caplog):
     requests: list[tuple[int, str | None, str]] = []
     transcript = _transcribe(audio, server, language=None)
 
-    assert requests == [(0, None, "verbose_json"), (1, None, "verbose_json")]
+    assert requests == [
+        (0, None, "verbose_json"),
+        (0, "en", "json"),
+        (1, None, "verbose_json"),
+    ]
     assert {key: transcript[key] for key in ("full_text", "language")} == {
         "full_text": "Bonjour à tous.",
         "language": "fr",

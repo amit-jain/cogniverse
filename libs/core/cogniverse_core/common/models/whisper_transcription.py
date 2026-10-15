@@ -25,11 +25,14 @@ looped) or ``EmptyTranscriptError``; one whose ``verbose_json`` answer is
 never usable keeps its text as one segment spanning the chunk. A silent chunk
 may come back empty.
 
-A chunk whose first ``verbose_json`` answer carrying per-segment
-``avg_logprob``, asked at or below ``NON_SPEECH_JUDGED_TEMPERATURE``, averages
-below ``NON_SPEECH_AVG_LOGPROB`` is not speech, and gets an empty transcript. ``transcribe_in_chunks(drop_garbled=True)`` leaves
-out a chunk that raises ``GarbledTranscriptError`` and records it under
-``dropped_chunks``, raising only when every chunk does.
+A chunk's first ``verbose_json`` answer carrying per-segment ``avg_logprob``,
+asked at or below ``NON_SPEECH_JUDGED_TEMPERATURE``, is improbable when they
+average below ``NON_SPEECH_AVG_LOGPROB``. The chunk is then not speech, and
+gets an empty transcript, unless its ``json`` answer carries other speech
+words; then no timed answer is used and its text spans the chunk.
+``transcribe_in_chunks(drop_garbled=True)`` leaves out a chunk that raises
+``GarbledTranscriptError`` and records it under ``dropped_chunks``, raising
+only when every chunk does.
 """
 
 from __future__ import annotations
@@ -819,9 +822,16 @@ def _transcribe_checked(
     candidates: Dict[float, ChunkTranscript] = {}
     usable_at: List[float] = []
     judged = False
+    # The judged timed answer when its mean log-probability is below
+    # NON_SPEECH_AVG_LOGPROB, with its temperature; once a json answer
+    # carrying other speech refutes it, no timed answer is asked or used.
+    improbable: Optional[Tuple[ChunkTranscript, float]] = None
+    refuted = False
     for attempt, temperature in enumerate(FALLBACK_TEMPERATURES, start=1):
-        if timed is None:
+        asked: Optional[ChunkTranscript] = None
+        if timed is None and not refuted:
             answer = transcribe_chunk(chunk, named, True, temperature)
+            named = answer.language or named
             if (
                 not judged
                 and temperature <= NON_SPEECH_JUDGED_TEMPERATURE
@@ -829,29 +839,15 @@ def _transcribe_checked(
             ):
                 judged = True
                 if answer.avg_logprob < NON_SPEECH_AVG_LOGPROB:
-                    logger.warning(
-                        "%s: chunk %d (%.2f-%.2fs) timed answer %r at "
-                        "temperature %.1f has mean log-probability %.2f < %s: "
-                        "not speech, kept no text",
-                        source,
-                        chunk.index,
-                        chunk.start_s,
-                        chunk.end_s,
-                        answer.text,
-                        temperature,
-                        answer.avg_logprob,
-                        NON_SPEECH_AVG_LOGPROB,
-                    )
-                    return ChunkTranscript(text="", language=None, segments=[])
-            named = answer.language or named
-            if usable(answer, True, attempt):
+                    improbable = (answer, temperature)
+            if improbable is None and usable(answer, True, attempt):
                 timed, timed_temperature = answer, temperature
                 complete = reaches_chunk_end(timed.segments, duration)
         first = looped.get(FALLBACK_TEMPERATURES[0])
         if untimed is None and complete and first is None:
             break
         if untimed is None:
-            answer = transcribe_chunk(chunk, named, False, temperature)
+            answer = asked = transcribe_chunk(chunk, named, False, temperature)
             fit = usable(answer, False, attempt)
             if first is None:
                 if fit:
@@ -861,7 +857,41 @@ def _transcribe_checked(
                 if fit:
                     usable_at.append(temperature)
                 untimed = _settled(first, candidates, usable_at, chunk, source, logger)
-        if untimed is not None and timed is not None:
+        if improbable is not None and not refuted:
+            claimed, claimed_at = improbable
+            said = asked if asked is not None else untimed
+            agreement = word_agreement(said.text, claimed.text)
+            if not speech_words(said.text) or agreement >= REPEATED_SPEECH_AGREEMENT:
+                logger.warning(
+                    "%s: chunk %d (%.2f-%.2fs) timed answer %r at temperature "
+                    "%.1f has mean log-probability %.2f < %s and the json answer "
+                    "carries no other speech: not speech, kept no text",
+                    source,
+                    chunk.index,
+                    chunk.start_s,
+                    chunk.end_s,
+                    claimed.text,
+                    claimed_at,
+                    claimed.avg_logprob,
+                    NON_SPEECH_AVG_LOGPROB,
+                )
+                return ChunkTranscript(text="", language=None, segments=[])
+            logger.warning(
+                "%s: chunk %d (%.2f-%.2fs) timed answer %r at temperature %.1f "
+                "has mean log-probability %.2f < %s but the json answer carries "
+                "other speech (%.2f): transcribed from json answers alone",
+                source,
+                chunk.index,
+                chunk.start_s,
+                chunk.end_s,
+                claimed.text,
+                claimed_at,
+                claimed.avg_logprob,
+                NON_SPEECH_AVG_LOGPROB,
+                agreement,
+            )
+            refuted = True
+        if untimed is not None and (timed is not None or refuted):
             break
 
     if (

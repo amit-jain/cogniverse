@@ -804,8 +804,9 @@ class TestAudioAnalysisAgent:
     async def test_an_improbable_timed_answer_is_transcribed_as_no_speech(
         self, tmp_path, monkeypatch
     ):
-        """Music the server answers with a phrase it gives little probability:
-        the chunk transcribes empty and is not asked again."""
+        """Music the server answers with a phrase it gives little probability,
+        timed and untimed alike: the chunk transcribes empty and is asked
+        nothing more."""
         clip = tmp_path / "audio.wav"
         _write_tone(clip, seconds=1.5)
         response = {
@@ -828,11 +829,12 @@ class TestAudioAnalysisAgent:
             agent._whisper_endpoint = base_url
             result = await agent.transcribe_audio(f"file://{clip}")
 
-        assert len(captured_requests) == 1
-        assert (
-            b'name="response_format"\r\n\r\nverbose_json\r\n'
-            in (captured_requests[0]["body"])
-        )
+        assert [
+            re.search(
+                rb'name="response_format"\r\n\r\n([a-z_]+)\r\n', request["body"]
+            ).group(1)
+            for request in captured_requests
+        ] == [b"verbose_json", b"json"]
         assert (result.text, result.segments, result.language) == ("", [], "unknown")
 
     @pytest.mark.asyncio
