@@ -25,9 +25,9 @@ looped) or ``EmptyTranscriptError``; one whose ``verbose_json`` answer is
 never usable keeps its text as one segment spanning the chunk. A silent chunk
 may come back empty.
 
-A chunk whose ``verbose_json`` answer at 0.0 carries per-segment
-``avg_logprob`` averaging below ``NON_SPEECH_AVG_LOGPROB`` is not speech, and
-gets an empty transcript. ``transcribe_in_chunks(drop_garbled=True)`` leaves
+A chunk whose first ``verbose_json`` answer carrying per-segment
+``avg_logprob``, asked at or below ``NON_SPEECH_JUDGED_TEMPERATURE``, averages
+below ``NON_SPEECH_AVG_LOGPROB`` is not speech, and gets an empty transcript. ``transcribe_in_chunks(drop_garbled=True)`` leaves
 out a chunk that raises ``GarbledTranscriptError`` and records it under
 ``dropped_chunks``, raising only when every chunk does.
 """
@@ -79,12 +79,17 @@ LOOP_BREAKING_TEMPERATURE = 0.8
 # thing. Measured on a ten-second clip played back to back: 0.60 at the tenth
 # percentile of 41 such answers; a loop that formed at 0.8 instead scored 0.05.
 REPEATED_SPEECH_AGREEMENT = 0.5
-# Mean token log-probability of the timed answer at temperature 0.0, weighted
-# by segment duration, below which a chunk holds no speech (Whisper's
-# logprob_threshold). Measured on the cluster's server: speech chunks at least
-# -0.53; music the server answers with text at most -1.05, but for two
-# "Thank you." answers at -0.79 and -0.91.
+# Mean token log-probability of a chunk's timed answer, weighted by segment
+# duration, below which the chunk holds no speech (Whisper's
+# logprob_threshold). Measured on the cluster's server at 0.0: speech chunks
+# at least -0.53; music the server answers with text at most -1.05, but for
+# two "Thank you." answers at -0.79 and -0.91.
 NON_SPEECH_AVG_LOGPROB = -1.0
+# The highest temperature whose timed answer is judged against
+# NON_SPEECH_AVG_LOGPROB: the first one carrying log-probabilities, which is
+# the answer at 0.2 when the one at 0.0 came back empty. Measured: speech at
+# 0.2 at least -0.41; at 0.4 sampling took a speech chunk to -1.38.
+NON_SPEECH_JUDGED_TEMPERATURE = 0.2
 # Whisper's timestamp step, in seconds.
 TIMESTAMP_STEP_S = 0.02
 # Languages vLLM joins without a space between chunk texts.
@@ -813,27 +818,31 @@ def _transcribe_checked(
     # temperature: none is kept before the loop-breaking ones are compared.
     candidates: Dict[float, ChunkTranscript] = {}
     usable_at: List[float] = []
+    judged = False
     for attempt, temperature in enumerate(FALLBACK_TEMPERATURES, start=1):
         if timed is None:
             answer = transcribe_chunk(chunk, named, True, temperature)
             if (
-                temperature == FALLBACK_TEMPERATURES[0]
+                not judged
+                and temperature <= NON_SPEECH_JUDGED_TEMPERATURE
                 and answer.avg_logprob is not None
-                and answer.avg_logprob < NON_SPEECH_AVG_LOGPROB
             ):
-                logger.warning(
-                    "%s: chunk %d (%.2f-%.2fs) timed answer %r at temperature "
-                    "0.0 has mean log-probability %.2f < %s: not speech, "
-                    "kept no text",
-                    source,
-                    chunk.index,
-                    chunk.start_s,
-                    chunk.end_s,
-                    answer.text,
-                    answer.avg_logprob,
-                    NON_SPEECH_AVG_LOGPROB,
-                )
-                return ChunkTranscript(text="", language=None, segments=[])
+                judged = True
+                if answer.avg_logprob < NON_SPEECH_AVG_LOGPROB:
+                    logger.warning(
+                        "%s: chunk %d (%.2f-%.2fs) timed answer %r at "
+                        "temperature %.1f has mean log-probability %.2f < %s: "
+                        "not speech, kept no text",
+                        source,
+                        chunk.index,
+                        chunk.start_s,
+                        chunk.end_s,
+                        answer.text,
+                        temperature,
+                        answer.avg_logprob,
+                        NON_SPEECH_AVG_LOGPROB,
+                    )
+                    return ChunkTranscript(text="", language=None, segments=[])
             named = answer.language or named
             if usable(answer, True, attempt):
                 timed, timed_temperature = answer, temperature

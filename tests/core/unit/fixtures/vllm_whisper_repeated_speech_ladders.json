@@ -2309,6 +2309,187 @@
      }
     }
    ]
+  },
+  {
+   "clip": "v_-vnSFKJNB94.mp4",
+   "chunk": 2,
+   "chunk_len_s": 29.3,
+   "loudest_frame_dbfs": -26.9,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " *Loud noise*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I'm going to go."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I'm going to go back."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I'm going to go back."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " Sorry!"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Staff 구하세요"
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.3",
+      "segments": []
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I'm going to go back to the next one.",
+      "language": "en",
+      "duration": "29.3",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.3,
+        "text": " I'm going to go back to the next one.",
+        "avg_logprob": -1.5357223737698336
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I'm going to go back to the next one.",
+      "language": "en",
+      "duration": "29.3",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.3,
+        "text": " I'm going to go back to the next one.",
+        "avg_logprob": -1.5357223737698336
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I'm going to go back.",
+      "language": "en",
+      "duration": "29.3",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.3,
+        "text": " I'm going to go back.",
+        "avg_logprob": -1.4128910021649466
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " Staff 구청  We are drawing a drawing set  We are drawing the drawing set  Through motion to enjoy the sound  We have the outputण Western of the sound  How to restore the sound of the sound of the sound of the sound  We are drawing the sound of the sound of the sound of the sound of a sound",
+      "language": "en",
+      "duration": "29.3",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 3.46,
+        "text": " Staff 구청",
+        "avg_logprob": -6.375530672073364
+       },
+       {
+        "start": 3.46,
+        "end": 7.4,
+        "text": " We are drawing a drawing set",
+        "avg_logprob": -3.8457991629838943
+       },
+       {
+        "start": 7.4,
+        "end": 10.94,
+        "text": " We are drawing the drawing set",
+        "avg_logprob": -1.9047780632972717
+       },
+       {
+        "start": 10.94,
+        "end": 15.1,
+        "text": " Through motion to enjoy the sound",
+        "avg_logprob": -5.020563557744026
+       },
+       {
+        "start": 15.1,
+        "end": 20.18,
+        "text": " We have the outputण Western of the sound",
+        "avg_logprob": -4.48365053286155
+       },
+       {
+        "start": 20.18,
+        "end": 24.080000000000002,
+        "text": " How to restore the sound of the sound of the sound of the sound",
+        "avg_logprob": -1.8494801064953208
+       },
+       {
+        "start": 24.080000000000002,
+        "end": 29.3,
+        "text": " We are drawing the sound of the sound of the sound of the sound of a sound",
+        "avg_logprob": -0.6348391641911707
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Staff 구하세요. проф Williams.",
+      "language": "en",
+      "duration": "29.3",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.3,
+        "text": " Staff 구하세요. проф Williams.",
+        "avg_logprob": -7.045618620183733
+       }
+      ]
+     }
+    }
+   ]
   }
  ]
 }

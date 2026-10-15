@@ -1648,6 +1648,7 @@ def test_the_recorded_ladders_keep_their_shape():
         ("v_-vnSFKJNB94.mp4", 1),
         ("big_buck_bunny_clip.mp4", 11),
         ("big_buck_bunny_clip.mp4", 7),
+        ("v_-vnSFKJNB94.mp4", 2),
     ]
     assert {
         type(segment["avg_logprob"])
@@ -1827,10 +1828,20 @@ def test_a_chunk_with_no_faithful_answer_raises_rather_than_keeping_one(caplog):
     ]
 
 
+def _without_log_probabilities(ladder: dict) -> dict:
+    """``ladder`` as a server reporting no ``avg_logprob`` would answer it."""
+    stripped = json.loads(json.dumps(ladder))
+    for answer in stripped["answers"]:
+        for segment in answer["body"].get("segments") or []:
+            del segment["avg_logprob"]
+    return stripped
+
+
 def test_a_timed_answer_disagreeing_after_a_loop_times_nothing(caplog):
-    """Music: the json answers are sound annotations; the timed answer at 0.2
-    is speech the json answers do not contain, so it supplies no words."""
-    ladder = _ladders()[7]
+    """Music, from a server reporting no log-probabilities: the json answers
+    are sound annotations; the timed answer at 0.2 is speech the json answers
+    do not contain, so it supplies no words."""
+    ladder = _without_log_probabilities(_ladders()[7])
     server, transcript, decisions = _ladder_transcribed(ladder, caplog)
 
     assert transcript["segments"] == _segments(
@@ -1871,6 +1882,7 @@ def test_the_recorded_timed_answers_at_0_0_fall_either_side_of_the_threshold():
         -0.67,
         None,
         -1.21,
+        None,
     ]
     assert NON_SPEECH_AVG_LOGPROB == -1.0
 
@@ -1889,6 +1901,75 @@ def test_a_chunk_whose_timed_answer_is_improbable_is_transcribed_empty(caplog):
         "temperature 0.0 has mean log-probability -1.21 < -1.0: not speech, "
         "kept no text"
     ]
+
+
+def test_a_chunk_whose_timed_answer_at_0_0_is_empty_is_judged_at_0_2(caplog):
+    """Music: the timed answer at 0.0 is empty and the json one a sound
+    annotation; the timed answer at 0.2 is a phrase (-1.54) that would
+    otherwise supply the chunk's words."""
+    ladder = _ladders()[9]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == [
+        ("verbose_json", 0.0),
+        ("json", 0.0),
+        ("verbose_json", 0.2),
+    ]
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.30s) timed answer \" I'm going to go back to "
+        'the next one." at temperature 0.2 has mean log-probability -1.54 < '
+        "-1.0: not speech, kept no text"
+    ]
+
+
+def test_a_looping_music_chunk_is_judged_by_its_timed_answer_at_0_2(caplog):
+    """The same music with the recorded log-probabilities: the timed answer
+    at 0.0 is empty, the one at 0.2 (-1.14) is not speech."""
+    ladder = _ladders()[7]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == [
+        ("verbose_json", 0.0),
+        ("json", 0.0),
+        ("verbose_json", 0.2),
+    ]
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
+    assert decisions == [
+        f"clip.wav: chunk 0 (0.00-29.70s) timed answer {server.raw('verbose_json', 0.2)!r} "
+        "at temperature 0.2 has mean log-probability -1.14 < -1.0: not speech, "
+        "kept no text"
+    ]
+
+
+def test_a_timed_answer_above_0_2_is_not_judged():
+    audio = _noise(10.0)
+    server = _Server(
+        timed={
+            0: [
+                [],
+                [],
+                [(0.0, 10.0, " speech the sampling made improbable")],
+            ]
+        },
+        text={0: [" speech the sampling made improbable"] * 3},
+    )
+
+    def low_at_0_4(chunk, language, timestamps, temperature=0.0):
+        answer = server(chunk, language, timestamps, temperature)
+        if timestamps and temperature == 0.4:
+            return ChunkTranscript(
+                text=answer.text,
+                language=answer.language,
+                segments=answer.segments,
+                avg_logprob=-1.38,
+            )
+        return answer
+
+    transcript = _transcribe(audio, low_at_0_4)
+
+    assert transcript["full_text"] == "speech the sampling made improbable"
+    assert server.requests[-1] == (0, "en", "verbose_json", 0.4)
 
 
 def test_a_chunk_judged_not_speech_names_no_language_for_the_next(caplog):
