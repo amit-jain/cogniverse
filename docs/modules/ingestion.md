@@ -1518,9 +1518,11 @@ the `verbose_json` segments (`whisper_transcription.align_text` in
 every later request. Segment times count from the start of the file. An answer
 that is a repetition loop, or empty for a chunk whose loudest 25 ms frame
 reaches -60 dBFS, is sent again at the next sampling temperature, up to six
-times; a chunk whose `json` answer repeats at every temperature in the same
-words keeps its temperature-0 answer as repeated speech; any other chunk whose
-`json` answer never comes back usable fails the
+times; once a chunk's `json` answer at temperature 0 has looped, no later
+answer is kept before the answers at 0.8 and above are compared with it: one
+that agrees keeps the temperature-0 answer as repeated speech, otherwise the
+lowest-temperature answer one of them corroborates, else the first usable one;
+any other chunk whose `json` answer never comes back usable fails the
 transcription with `GarbledTranscriptError` or `EmptyTranscriptError` naming
 the chunk and its time range; a silent chunk may come back empty. A failed
 transcription returns the `error` dict, which fails the pipeline's

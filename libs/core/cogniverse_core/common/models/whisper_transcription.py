@@ -14,14 +14,16 @@ An answer that is a repetition loop (compression ratio above
 ``GARBLED_COMPRESSION_RATIO``), or empty for a chunk whose loudest 25 ms frame
 reaches ``SILENCE_FLOOR_DBFS``, is asked again at the next of
 ``FALLBACK_TEMPERATURES``. Speech that itself repeats compresses like a loop,
-but unlike a loop it comes back in the same words however it is sampled: a
-chunk whose ``json`` answer repeats at every temperature keeps its
-temperature-0 answer when an answer at ``LOOP_BREAKING_TEMPERATURE`` or above
-agrees with it (``repeated_speech``). A chunk with no usable ``json`` answer
-and no usable timed answer running to its end otherwise raises
-``GarbledTranscriptError`` (some answer looped) or ``EmptyTranscriptError``;
-one whose ``verbose_json`` answer is never usable keeps its text as one segment
-spanning the chunk. A silent chunk may come back empty.
+but unlike a decode loop it comes back in the same words however it is
+sampled. So once a chunk's ``json`` answer at 0.0 has looped, an answer at
+``LOOP_BREAKING_TEMPERATURE`` or above is compared with it before any is kept:
+one that agrees keeps the 0.0 answer as repeated speech (``repeated_speech``);
+otherwise the first that did not loop is kept, after both loop-breaking
+temperatures are asked. A chunk with no usable ``json`` answer and no usable
+timed answer running to its end raises ``GarbledTranscriptError`` (some answer
+looped) or ``EmptyTranscriptError``; one whose ``verbose_json`` answer is
+never usable keeps its text as one segment spanning the chunk. A silent chunk
+may come back empty.
 """
 
 from __future__ import annotations
@@ -518,24 +520,24 @@ def word_agreement(first: str, second: str) -> float:
 
 
 def repeated_speech(
-    looped: Dict[float, ChunkTranscript],
+    answers: Dict[float, ChunkTranscript],
 ) -> Optional[Tuple[ChunkTranscript, float, float]]:
-    """The temperature-0 answer of a chunk whose answers looped, when the
-    audio itself repeats.
+    """The temperature-0 answer of a chunk whose temperature-0 answer looped,
+    when the audio itself repeats.
 
-    ``looped`` maps each temperature whose answer came back as a repetition
-    loop to that answer. Returns the temperature-0 answer with the temperature
-    and agreement of the answer that corroborates it: the one at
-    ``LOOP_BREAKING_TEMPERATURE`` or above that agrees with it most, when that
-    is at least ``REPEATED_SPEECH_AGREEMENT``. ``None`` otherwise.
+    ``answers`` maps temperatures asked to their json answers; the one at 0.0
+    is the loop. Returns it with the temperature and agreement of the answer
+    that corroborates it: the one at ``LOOP_BREAKING_TEMPERATURE`` or above
+    that agrees with it most, when that is at least
+    ``REPEATED_SPEECH_AGREEMENT``. ``None`` otherwise.
     """
-    first = looped.get(FALLBACK_TEMPERATURES[0])
+    first = answers.get(FALLBACK_TEMPERATURES[0])
     if first is None:
         return None
     agreement, temperature = max(
         (
             (word_agreement(first.text, answer.text), temperature)
-            for temperature, answer in looped.items()
+            for temperature, answer in answers.items()
             if temperature >= LOOP_BREAKING_TEMPERATURE
         ),
         default=(0.0, 0.0),
@@ -543,6 +545,75 @@ def repeated_speech(
     if agreement < REPEATED_SPEECH_AGREEMENT:
         return None
     return first, temperature, agreement
+
+
+def _settled(
+    first: ChunkTranscript,
+    candidates: Dict[float, ChunkTranscript],
+    usable_at: List[float],
+    chunk: AudioChunk,
+    source: str,
+    logger: logging.Logger,
+) -> Optional[ChunkTranscript]:
+    """The json answer a chunk keeps once its answer at 0.0 (``first``) looped,
+    or ``None`` while that is not yet decided.
+
+    ``candidates`` are the later json answers by temperature, ``usable_at``
+    the temperatures whose answer neither looped nor came back empty. Nothing
+    is decided before an answer at ``LOOP_BREAKING_TEMPERATURE`` or above is
+    in. One that agrees with ``first`` keeps ``first`` as repeated speech
+    (``repeated_speech``). Once every temperature is asked, the
+    lowest-temperature candidate that an answer at another loop-breaking
+    temperature corroborates (``word_agreement`` at least
+    ``REPEATED_SPEECH_AGREEMENT``) is kept — one asked at a loop-breaking
+    temperature only when usable, as a loop there formed under sampling —
+    else the lowest-temperature usable one; with neither, ``None``.
+    """
+    breaking = {
+        temperature: answer
+        for temperature, answer in candidates.items()
+        if temperature >= LOOP_BREAKING_TEMPERATURE
+    }
+    if not breaking:
+        return None
+    repeated = repeated_speech({FALLBACK_TEMPERATURES[0]: first, **breaking})
+    if repeated is not None:
+        kept, corroborating, agreement = repeated
+        logger.warning(
+            "%s: chunk %d (%.2f-%.2fs) looped at temperature 0.0 and its answer "
+            "at temperature %.1f agrees with it (%.2f): kept as repeated speech",
+            source,
+            chunk.index,
+            chunk.start_s,
+            chunk.end_s,
+            corroborating,
+            agreement,
+        )
+        return kept
+    if len(candidates) < TRANSCRIBE_ATTEMPTS - 1:
+        return None
+    for temperature, answer in sorted(candidates.items()):
+        if temperature >= LOOP_BREAKING_TEMPERATURE and temperature not in usable_at:
+            continue
+        corroborating = [
+            other
+            for other_temperature, other in breaking.items()
+            if other_temperature != temperature
+            and word_agreement(answer.text, other.text) >= REPEATED_SPEECH_AGREEMENT
+        ]
+        if corroborating:
+            logger.warning(
+                "%s: chunk %d (%.2f-%.2fs) looped at temperature 0.0 and no "
+                "answer repeats it: kept the answer at temperature %.1f, which "
+                "an answer at a loop-breaking temperature agrees with",
+                source,
+                chunk.index,
+                chunk.start_s,
+                chunk.end_s,
+                temperature,
+            )
+            return answer
+    return candidates[min(usable_at)] if usable_at else None
 
 
 def _transcribe_checked(
@@ -601,37 +672,52 @@ def _transcribe_checked(
 
     duration = len(chunk.samples) / WHISPER_SAMPLE_RATE
     complete = False
+    timed_temperature = 0.0
+    # Once the json answer at 0.0 looped, every later json answer by
+    # temperature: none is kept before the loop-breaking ones are compared.
+    candidates: Dict[float, ChunkTranscript] = {}
+    usable_at: List[float] = []
     for attempt, temperature in enumerate(FALLBACK_TEMPERATURES, start=1):
         if timed is None:
             answer = transcribe_chunk(chunk, named, True, temperature)
             named = answer.language or named
             if usable(answer, True, attempt):
-                timed = answer
+                timed, timed_temperature = answer, temperature
                 complete = reaches_chunk_end(timed.segments, duration)
-        if untimed is None and complete:
+        first = looped.get(FALLBACK_TEMPERATURES[0])
+        if untimed is None and complete and first is None:
             break
         if untimed is None:
             answer = transcribe_chunk(chunk, named, False, temperature)
-            if usable(answer, False, attempt):
-                untimed = answer
+            fit = usable(answer, False, attempt)
+            if first is None:
+                if fit:
+                    untimed = answer
+            elif temperature > FALLBACK_TEMPERATURES[0]:
+                candidates[temperature] = answer
+                if fit:
+                    usable_at.append(temperature)
+                untimed = _settled(first, candidates, usable_at, chunk, source, logger)
         if untimed is not None and timed is not None:
             break
 
-    if untimed is None and not complete:
-        repeated = repeated_speech(looped)
-        if repeated is not None:
-            untimed, temperature, agreement = repeated
-            logger.warning(
-                "%s: chunk %d (%.2f-%.2fs) repeats at every temperature and its "
-                "answer at temperature %.1f agrees with the one at 0.0 (%.2f): "
-                "kept as repeated speech",
-                source,
-                chunk.index,
-                chunk.start_s,
-                chunk.end_s,
-                temperature,
-                agreement,
-            )
+    if (
+        untimed is not None
+        and timed is not None
+        and timed_temperature >= LOOP_BREAKING_TEMPERATURE
+        and word_agreement(timed.text, untimed.text) < REPEATED_SPEECH_AGREEMENT
+    ):
+        logger.warning(
+            "%s: chunk %d (%.2f-%.2fs) timed answer at temperature %.1f does not "
+            "agree with the transcript (%.2f): not used for timing",
+            source,
+            chunk.index,
+            chunk.start_s,
+            chunk.end_s,
+            timed_temperature,
+            word_agreement(timed.text, untimed.text),
+        )
+        timed = None
     if untimed is None and not complete:
         if loops:
             raise GarbledTranscriptError(

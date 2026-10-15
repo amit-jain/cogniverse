@@ -1,0 +1,1242 @@
+{
+ "server": {
+  "model": "openai/whisper-large-v3-turbo",
+  "recorded": "2026-10-15",
+  "service": "cogniverse-vllm-asr on k3d-cogniverse-e2e"
+ },
+ "ladders": [
+  {
+   "clip": "tracked_video_audio_x36.wav",
+   "chunk": 4,
+   "chunk_len_s": 29.2,
+   "loudest_frame_dbfs": -15.2,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style or at least try Don't tell me I got another first try I'm about to light a fire and bear a grill style or at least try Don't tell me I got another first try I'm about to light a fire and bear a grill style or at least try"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " I got it on the first try... I'm about to wanna fire Bear Grylls style... Or at least try. Don't tell me I got it on the first try. I'm about to wanna fire Bear Grylls style... Or at least try... Don't tell me I got it on the first try! I'm about to wanna fire Bear Grylls style... Or at least try..."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Sorry I gotta hurt stuff but they'll have firerawdęvateergirlstyle Lee's job filth out five BR gor zostaal it least time about five BR arrivप style it least job A pop pop file I got other birthast up good about the light of fire<|24.08|><|24.08|> Bearनies style it elite job"
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.0,
+        "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+       },
+       {
+        "start": 7.0,
+        "end": 17.0,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+       },
+       {
+        "start": 17.0,
+        "end": 29.2,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.0,
+        "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+       },
+       {
+        "start": 7.0,
+        "end": 17.0,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+       },
+       {
+        "start": 17.0,
+        "end": 29.2,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 6.8,
+        "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+       },
+       {
+        "start": 9.28,
+        "end": 16.88,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+       },
+       {
+        "start": 19.6,
+        "end": 29.2,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try.  Ha ha ha don't tell me I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. Ha ha ha don't tell me I got another first try. I'm about to light a fire and bear grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.92,
+        "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try."
+       },
+       {
+        "start": 7.92,
+        "end": 29.2,
+        "text": " Ha ha ha don't tell me I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. Ha ha ha don't tell me I got another first try. I'm about to light a fire and bear grill style. Hit or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " I got it on the first try...  I'm about to fire Bear Grylls-style...  or at least try...  *laughs* Don't tell ya I got it on the first try...  I'm about to fire Bear Grylls-style... or at least try...  -ohhh...  don't tell ya I got it on the first try...  I'm about to fire Bear Grylls-style... or at least try...",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 3.3000000000000003,
+        "text": " I got it on the first try..."
+       },
+       {
+        "start": 3.3000000000000003,
+        "end": 6.2,
+        "text": " I'm about to fire Bear Grylls-style..."
+       },
+       {
+        "start": 6.2,
+        "end": 9.38,
+        "text": " or at least try..."
+       },
+       {
+        "start": 9.38,
+        "end": 13.280000000000001,
+        "text": " *laughs* Don't tell ya I got it on the first try..."
+       },
+       {
+        "start": 13.280000000000001,
+        "end": 16.42,
+        "text": " I'm about to fire Bear Grylls-style... or at least try..."
+       },
+       {
+        "start": 16.42,
+        "end": 19.26,
+        "text": " -ohhh..."
+       },
+       {
+        "start": 19.26,
+        "end": 23.26,
+        "text": " don't tell ya I got it on the first try..."
+       },
+       {
+        "start": 23.26,
+        "end": 29.2,
+        "text": " I'm about to fire Bear Grylls-style... or at least try..."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " I Got Anotherroc проф Williams.  in cuantovate alkohatsu.  Bearessionalsia ג'l.  at leastاع the역प Westerners. in cuantovate conocогда Balanceterrorik.  at least  at least cocoh Mandनies.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " I Got Anotherroc проф Williams."
+       },
+       {
+        "start": 3.3000000000000003,
+        "end": 6.0,
+        "text": " in cuantovate alkohatsu."
+       },
+       {
+        "start": 14.32,
+        "end": 16.32,
+        "text": " Bearessionalsia ג'l."
+       },
+       {
+        "start": 10.92,
+        "end": 26.86,
+        "text": " at leastاع the역प Westerners. in cuantovate conocогда Balanceterrorik."
+       },
+       {
+        "start": 26.5,
+        "end": 28.080000000000002,
+        "text": " at least"
+       },
+       {
+        "start": 28.080000000000002,
+        "end": 29.2,
+        "text": " at least cocoh Mandनies."
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "tracked_video_audio_x36.wav",
+   "chunk": 11,
+   "chunk_len_s": 29.2,
+   "loudest_frame_dbfs": -15.2,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit, or at least try. I'm about to light a fire and bear grill style. Hit, or at least try. I'm about to light a fire and bear grill style. Hit, or at least try. I'm about to light a fire and bear grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I.."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I!���� douyyyvate activatedanstAnir��ervession МУЗЫКАермермермерм scarclpm Harvey Ha�理!!. inạạạạạạạạàiài papelnессессессессессессессессzustzust nostravvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv DAVID � Her anime кğimizikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaиту Ha Buddhist�이�이�이�이�이�이�이�이�이 d d d d d d d d d d d d d d d d d d d d d d d d d d d d�이�이�이�이�이�이�이�이�이�이�이�이�이�이�이�이�이�이yyyy!!!!!个ranranranran d d d d d d d d d dạo itemsaffaff"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For the first try! Ha ha don't tell me I got another first try! I'm about to light a fire and be a grill style. Hit! Or at least try. Ha ha don't tell me I got another first try! I'm about to light a fire and be a grill style. Hit! Or at least try. Hahaha don't tell me I got another first try! I'm about to light a fire and be a grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " For 구 alone cause that's a long time in peace. Based on the biginda berville footprint of income. It makes it so very simple. * arrivण Western nest. in the end* If I didn't see it, because it's gonna make it like this."
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.2,
+        "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.2,
+        "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " try. Don't tell me I got another first try. I'm about to fire Bear Grylls style. Or at least try.  Don't tell me I got another first try. I'm about to fire Bear Grylls style. Or at least try.  Don't tell me I got another first try. I'm about to fire Bear Grylls style.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 10.32,
+        "text": " try. Don't tell me I got another first try. I'm about to fire Bear Grylls style. Or at least try."
+       },
+       {
+        "start": 12.96,
+        "end": 20.32,
+        "text": " Don't tell me I got another first try. I'm about to fire Bear Grylls style. Or at least try."
+       },
+       {
+        "start": 22.96,
+        "end": 29.2,
+        "text": " Don't tell me I got another first try. I'm about to fire Bear Grylls style."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 6.0,
+        "text": " try haha don't tell me i got another first try haha"
+       },
+       {
+        "start": 6.0,
+        "end": 16.0,
+        "text": " I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha"
+       },
+       {
+        "start": 16.0,
+        "end": 25.580000000000002,
+        "text": " I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha"
+       },
+       {
+        "start": 25.580000000000002,
+        "end": 29.2,
+        "text": " I'm about to light a fire and bear grills style"
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For this trough  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style  Or at least trough.  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style  Or at least trough  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " For this trough"
+       },
+       {
+        "start": 2.94,
+        "end": 4.94,
+        "text": " Don't tell me, I got another first trough"
+       },
+       {
+        "start": 7.0200000000000005,
+        "end": 9.02,
+        "text": " I'm about to light a fire and bear grill style"
+       },
+       {
+        "start": 9.66,
+        "end": 11.66,
+        "text": " Or at least trough."
+       },
+       {
+        "start": 13.5,
+        "end": 15.74,
+        "text": " Don't tell me, I got another first trough"
+       },
+       {
+        "start": 16.84,
+        "end": 18.84,
+        "text": " I'm about to light a fire and bear grill style"
+       },
+       {
+        "start": 19.44,
+        "end": 21.44,
+        "text": " Or at least trough"
+       },
+       {
+        "start": 23.12,
+        "end": 25.12,
+        "text": " Don't tell me, I got another first trough"
+       },
+       {
+        "start": 27.2,
+        "end": 29.2,
+        "text": " I'm about to light a fire and bear grill style"
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " For this trroc  Don't tell me, I got another first trroc  I'm about to light a fire Nor' at least tr dost  Don't tell me, I got another first tr DIE  I'm about to light a fire Nor' at least trener  I'm about to light a fire Nor' at least tr dl post  I'm about to light a fire Nor' at least tr rad compost  I'm about to light a fire Nor' at least tr DAVID",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " For this trroc"
+       },
+       {
+        "start": 2.94,
+        "end": 4.94,
+        "text": " Don't tell me, I got another first trroc"
+       },
+       {
+        "start": 7.0200000000000005,
+        "end": 9.02,
+        "text": " I'm about to light a fire Nor' at least tr dost"
+       },
+       {
+        "start": 12.9,
+        "end": 14.9,
+        "text": " Don't tell me, I got another first tr DIE"
+       },
+       {
+        "start": 15.860000000000001,
+        "end": 17.900000000000002,
+        "text": " I'm about to light a fire Nor' at least trener"
+       },
+       {
+        "start": 22.240000000000002,
+        "end": 24.64,
+        "text": " I'm about to light a fire Nor' at least tr dl post"
+       },
+       {
+        "start": 25.28,
+        "end": 27.28,
+        "text": " I'm about to light a fire Nor' at least tr rad compost"
+       },
+       {
+        "start": 27.28,
+        "end": 29.2,
+        "text": " I'm about to light a fire Nor' at least tr DAVID"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "tracked_video_audio_x36.wav",
+   "chunk": 11,
+   "chunk_len_s": 29.2,
+   "loudest_frame_dbfs": -15.2,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " I Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For the first try! Ha ha don't tell me I got another first try! I'm about to light a fire and be a grill style. Hit! Or at least try. Ha ha don't tell me I got another first try! I'm about to light a fire and be a grill style. Hit! Or at least try. Hahaha don't tell me I got another first try! I'm about to light a fire and be a grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " For 구 alone cause that's a long time in peace. Based on the biginda berville footprint of income. It makes it so very simple. * arrivण Western nest. in the end* If I didn't see it, because it's gonna make it like this."
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.2,
+        "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.2,
+        "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.2",
+      "segments": []
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 6.0,
+        "text": " try haha don't tell me i got another first try haha"
+       },
+       {
+        "start": 6.0,
+        "end": 16.0,
+        "text": " I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha"
+       },
+       {
+        "start": 16.0,
+        "end": 25.580000000000002,
+        "text": " I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha"
+       },
+       {
+        "start": 25.580000000000002,
+        "end": 29.2,
+        "text": " I'm about to light a fire and bear grills style"
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For this trough  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style  Or at least trough.  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style  Or at least trough  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " For this trough"
+       },
+       {
+        "start": 2.94,
+        "end": 4.94,
+        "text": " Don't tell me, I got another first trough"
+       },
+       {
+        "start": 7.0200000000000005,
+        "end": 9.02,
+        "text": " I'm about to light a fire and bear grill style"
+       },
+       {
+        "start": 9.66,
+        "end": 11.66,
+        "text": " Or at least trough."
+       },
+       {
+        "start": 13.5,
+        "end": 15.74,
+        "text": " Don't tell me, I got another first trough"
+       },
+       {
+        "start": 16.84,
+        "end": 18.84,
+        "text": " I'm about to light a fire and bear grill style"
+       },
+       {
+        "start": 19.44,
+        "end": 21.44,
+        "text": " Or at least trough"
+       },
+       {
+        "start": 23.12,
+        "end": 25.12,
+        "text": " Don't tell me, I got another first trough"
+       },
+       {
+        "start": 27.2,
+        "end": 29.2,
+        "text": " I'm about to light a fire and bear grill style"
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " For this trroc  Don't tell me, I got another first trroc  I'm about to light a fire Nor' at least tr dost  Don't tell me, I got another first tr DIE  I'm about to light a fire Nor' at least trener  I'm about to light a fire Nor' at least tr dl post  I'm about to light a fire Nor' at least tr rad compost",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " For this trroc"
+       },
+       {
+        "start": 2.94,
+        "end": 4.94,
+        "text": " Don't tell me, I got another first trroc"
+       },
+       {
+        "start": 7.0200000000000005,
+        "end": 9.02,
+        "text": " I'm about to light a fire Nor' at least tr dost"
+       },
+       {
+        "start": 12.9,
+        "end": 14.9,
+        "text": " Don't tell me, I got another first tr DIE"
+       },
+       {
+        "start": 15.860000000000001,
+        "end": 17.900000000000002,
+        "text": " I'm about to light a fire Nor' at least trener"
+       },
+       {
+        "start": 22.240000000000002,
+        "end": 24.64,
+        "text": " I'm about to light a fire Nor' at least tr dl post"
+       },
+       {
+        "start": 25.28,
+        "end": 29.2,
+        "text": " I'm about to light a fire Nor' at least tr rad compost"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "tracked_video_audio_x36.wav",
+   "chunk": 10,
+   "chunk_len_s": 29.6,
+   "loudest_frame_dbfs": -15.2,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " Don't tell me I got it on the first try. I'm about to light a fire and bear a grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear a grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear a grill style. Or at least"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " haha don't tell me i got another first try haha i'm about to light a fire and bear grill style hit or at least try haha don't tell me i got another first try haha i'm about to light a fire and bear grill style hit or at least try haha don't tell me i got another first try haha i'm about to light a fire and bear grill style hit or at least try"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " haha don't tell me i got another first try! i'm about to light a fire Bear Grylls style hit or at least try haha don't tell me I got another first try! i'm about to light a fire Bear Grylls style hit or at least try haha don't tell me I got another first try haha i'm about to light a fire Bear Grylls style hit or at least try"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Hah! Don't tell me. I got it on the first try. I'm bervrous on fire Bear Grylls style or at least try * arrivण Western nest. in the end* bo-terror I got it on the first try. I'm about to lieन Father Bear Grylls style or at least try. Hah! Don't tell me. I got it on the first try. I'm about to lieствен fire Bear Grylls style or at least try."
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.6",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.6,
+        "text": " Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try.",
+      "language": "en",
+      "duration": "29.6",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.6,
+        "text": " Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.6",
+      "segments": []
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " haha don't tell me i got another first try  haha I'm about to light a fire and bear grill style. Or at least try. haha don't tell me i got another first try haha  I'm about to light a fire and bear grill style. Hit or at least try. haha don't tell me i got another first try haha  I'm about to light a fire and bear grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.6",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.5600000000000005,
+        "text": " haha don't tell me i got another first try"
+       },
+       {
+        "start": 4.5600000000000005,
+        "end": 15.44,
+        "text": " haha I'm about to light a fire and bear grill style. Or at least try. haha don't tell me i got another first try haha"
+       },
+       {
+        "start": 15.44,
+        "end": 25.580000000000002,
+        "text": " I'm about to light a fire and bear grill style. Hit or at least try. haha don't tell me i got another first try haha"
+       },
+       {
+        "start": 25.580000000000002,
+        "end": 29.6,
+        "text": " I'm about to light a fire and bear grill style. Hit or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " haha don't tell me i got another first try  haha I'm about the light of fire and bear grill style. Or at least try. haha don't tell me i got another first try haha  I'm about the light of fire and bear grill style. Hit or at least try. haha don't tell me i got another first try haha  I'm about the light of fire and bear grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.6",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.5600000000000005,
+        "text": " haha don't tell me i got another first try"
+       },
+       {
+        "start": 4.5600000000000005,
+        "end": 15.44,
+        "text": " haha I'm about the light of fire and bear grill style. Or at least try. haha don't tell me i got another first try haha"
+       },
+       {
+        "start": 15.44,
+        "end": 25.580000000000002,
+        "text": " I'm about the light of fire and bear grill style. Hit or at least try. haha don't tell me i got another first try haha"
+       },
+       {
+        "start": 25.580000000000002,
+        "end": 29.6,
+        "text": " I'm about the light of fire and bear grill style. Hit or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " haha don't tell me i got another first  try haha  I'm bervrous on fire גrire enjoy  or at least try haha don't tell me i got another first  try hahaterror I'm about to low  at one fire  barनies or at least try haha  don't tell me i got another first try hahaаю  I'm about to low at one fire bear grille13  Get high expertive vendo  Ifl serious experience mo Torah DAVID  I above to low at one street foolável  I got another first try haha�이크 atau resol Buddhist  throw 단 Yinley bilingual clothing smokinglim  most Jayle picturescontinor life  I don't tell me I got another first try hahapolit Still �이 I'm about to have a fire in bear gree его style  hit or at least try ho fotos ever thought era ^^ divided by Alexei  I'm about to have a fire far in bear grills style",
+      "language": "en",
+      "duration": "29.6",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.3,
+        "text": " haha don't tell me i got another first"
+       },
+       {
+        "start": 4.3,
+        "end": 6.36,
+        "text": " try haha"
+       },
+       {
+        "start": 6.36,
+        "end": 9.24,
+        "text": " I'm bervrous on fire גrire enjoy"
+       },
+       {
+        "start": 9.24,
+        "end": 14.24,
+        "text": " or at least try haha don't tell me i got another first"
+       },
+       {
+        "start": 14.24,
+        "end": 18.18,
+        "text": " try hahaterror I'm about to low"
+       },
+       {
+        "start": 18.18,
+        "end": 24.080000000000002,
+        "text": " at one fire"
+       },
+       {
+        "start": 24.080000000000002,
+        "end": 16.42,
+        "text": " barनies or at least try haha"
+       },
+       {
+        "start": 16.42,
+        "end": 19.38,
+        "text": " don't tell me i got another first try hahaаю"
+       },
+       {
+        "start": 19.38,
+        "end": 21.1,
+        "text": " I'm about to low at one fire bear grille13"
+       },
+       {
+        "start": 21.1,
+        "end": 23.32,
+        "text": " Get high expertive vendo"
+       },
+       {
+        "start": 23.32,
+        "end": 24.22,
+        "text": " Ifl serious experience mo Torah DAVID"
+       },
+       {
+        "start": 24.22,
+        "end": 25.48,
+        "text": " I above to low at one street foolável"
+       },
+       {
+        "start": 25.48,
+        "end": 26.7,
+        "text": " I got another first try haha�이크 atau resol Buddhist"
+       },
+       {
+        "start": 26.7,
+        "end": 27.76,
+        "text": " throw 단 Yinley bilingual clothing smokinglim"
+       },
+       {
+        "start": 27.76,
+        "end": 27.740000000000002,
+        "text": " most Jayle picturescontinor life"
+       },
+       {
+        "start": 27.740000000000002,
+        "end": 25.740000000000002,
+        "text": " I don't tell me I got another first try hahapolit Still"
+       },
+       {
+        "start": 25.740000000000002,
+        "end": 22.64,
+        "text": "�이 I'm about to have a fire in bear gree его style"
+       },
+       {
+        "start": 22.64,
+        "end": 25.7,
+        "text": " hit or at least try ho fotos ever thought era ^^ divided by Alexei"
+       },
+       {
+        "start": 25.7,
+        "end": 29.6,
+        "text": " I'm about to have a fire far in bear grills style"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "v_-IMXSEIabMM.mp4",
+   "chunk": 3,
+   "chunk_len_s": 29.5,
+   "loudest_frame_dbfs": -13.4,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hyp,. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia. DR. DR. DR. DR. SOUDOS, DR. DR. DR. DR. SOUDOS: Dress in layers. And as you start getting heated up, you take a top layer off to cool off a little bit. If you're going to be out there for a long time, you start to break a sweat, then you calm down. The sweat wets your clothes, the clothes stay wet. Now they get cold, and that's how you become hypothermic."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia. DR. DR. DR. DR. CHRISTOPHER SAUTO: Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit. If you're going to be out there for a long time, you start to break a sweat, then you calm down. The sweat wets your clothes, the clothes stay wet. Now they get cold. And that's how you become hypothermic."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia. DR. DR. DR. Souto: Dress in layers. And as you start getting heated up, you take a top layer off to cool off a little bit. If you're going to be out there for a long time, you start to break a sweat, then you calm down. The sweat wets your clothes. The clothes stay wet. Now they get cold. And that's how you become hypothermic."
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.  Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.  Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit.  If you're going to be out there for a long time, you start to break a sweat, then you calm down.  The sweat wets your clothes, the clothes stay wet, now they get cold and that's how you become hypothermic.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.0,
+        "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping."
+       },
+       {
+        "start": 7.0,
+        "end": 13.0,
+        "text": " Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia."
+       },
+       {
+        "start": 13.0,
+        "end": 19.0,
+        "text": " Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit."
+       },
+       {
+        "start": 19.0,
+        "end": 23.0,
+        "text": " If you're going to be out there for a long time, you start to break a sweat, then you calm down."
+       },
+       {
+        "start": 23.0,
+        "end": 29.5,
+        "text": " The sweat wets your clothes, the clothes stay wet, now they get cold and that's how you become hypothermic."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.  Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.  Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.0,
+        "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping."
+       },
+       {
+        "start": 7.0,
+        "end": 13.0,
+        "text": " Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia."
+       },
+       {
+        "start": 13.0,
+        "end": 19.0,
+        "text": " Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel,  usually after slipping. Dr. Souto says the other thing to remember is to dress properly  to prevent hypothermia. Dr. Souto: Dress in layers. And as you start getting heated up,  you take a top layer off to cool off a little bit. If you're going to be out there for a  long time, you start to break a sweat, then you calm down. The sweat wets your clothes,  the clothes stay wet, now they get cold and that's how you become hypothermic.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 5.76,
+        "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel,"
+       },
+       {
+        "start": 5.76,
+        "end": 11.0,
+        "text": " usually after slipping. Dr. Souto says the other thing to remember is to dress properly"
+       },
+       {
+        "start": 11.0,
+        "end": 16.16,
+        "text": " to prevent hypothermia. Dr. Souto: Dress in layers. And as you start getting heated up,"
+       },
+       {
+        "start": 16.16,
+        "end": 19.88,
+        "text": " you take a top layer off to cool off a little bit. If you're going to be out there for a"
+       },
+       {
+        "start": 19.88,
+        "end": 24.98,
+        "text": " long time, you start to break a sweat, then you calm down. The sweat wets your clothes,"
+       },
+       {
+        "start": 24.98,
+        "end": 29.5,
+        "text": " the clothes stay wet, now they get cold and that's how you become hypothermic."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.  Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.  DR. DR. DR. SOUTO, MD, DR. DR. DR. DR. SOUTOS: Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit.  If you're going to be out there for a long time, you start to break a sweat, then you calm down, the sweat wets your clothes, the clothes stay wet, now they get cold and that's how you become hypothermic.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.0,
+        "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping."
+       },
+       {
+        "start": 7.0,
+        "end": 12.72,
+        "text": " Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia."
+       },
+       {
+        "start": 12.72,
+        "end": 18.72,
+        "text": " DR. DR. DR. SOUTO, MD, DR. DR. DR. DR. SOUTOS: Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit."
+       },
+       {
+        "start": 18.72,
+        "end": 29.5,
+        "text": " If you're going to be out there for a long time, you start to break a sweat, then you calm down, the sweat wets your clothes, the clothes stay wet, now they get cold and that's how you become hypothermic."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.  Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.  DR. DR. SOUDOS: Dress in layers, and as you start getting heated up you take the top layer off to cool off a little bit.  If you're going to be out there for a long time, you start to break a sweat, then you calm down.  The sweat wets your clothes, the clothes stay wet, now they get cold, and that's how you become hypothermic.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.36,
+        "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping."
+       },
+       {
+        "start": 7.36,
+        "end": 12.72,
+        "text": " Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia."
+       },
+       {
+        "start": 12.72,
+        "end": 18.5,
+        "text": " DR. DR. SOUDOS: Dress in layers, and as you start getting heated up you take the top layer off to cool off a little bit."
+       },
+       {
+        "start": 18.5,
+        "end": 23.04,
+        "text": " If you're going to be out there for a long time, you start to break a sweat, then you calm down."
+       },
+       {
+        "start": 23.04,
+        "end": 29.5,
+        "text": " The sweat wets your clothes, the clothes stay wet, now they get cold, and that's how you become hypothermic."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually  after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.  DR. DR. CHRISTOPHER SAUTO : Dress in layers. And as you start getting heatup you take a top  layer off to cool off a little bit. If you're going to be out there for a long time and you  start to break a sweat then you calm down. The sweat wets your clothes, the clothes stay  wet, now they get cold and that's how you become hypothermic.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 6.24,
+        "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually"
+       },
+       {
+        "start": 6.24,
+        "end": 12.72,
+        "text": " after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia."
+       },
+       {
+        "start": 13.18,
+        "end": 16.78,
+        "text": " DR. DR. CHRISTOPHER SAUTO : Dress in layers. And as you start getting heatup you take a top"
+       },
+       {
+        "start": 16.78,
+        "end": 20.62,
+        "text": " layer off to cool off a little bit. If you're going to be out there for a long time and you"
+       },
+       {
+        "start": 20.62,
+        "end": 25.8,
+        "text": " start to break a sweat then you calm down. The sweat wets your clothes, the clothes stay"
+       },
+       {
+        "start": 25.8,
+        "end": 29.5,
+        "text": " wet, now they get cold and that's how you become hypothermic."
+       }
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

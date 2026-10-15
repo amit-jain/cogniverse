@@ -2259,11 +2259,19 @@ temperature)` sends one request with `response_format(timestamps)` and
   unusable without segments. An unusable answer is asked again at the next of
   `FALLBACK_TEMPERATURES` (0.0, 0.2, 0.4, 0.6, 0.8, 1.0; `TRANSCRIBE_ATTEMPTS`
   is 6). Speech that itself repeats compresses like a loop but comes back in
-  the same words however it is sampled: when every `json` answer looped and
-  one at `LOOP_BREAKING_TEMPERATURE` (0.8) or above agrees with the
-  temperature-0 answer (`word_agreement` at least
-  `REPEATED_SPEECH_AGREEMENT`, 0.5), `repeated_speech` keeps the
-  temperature-0 answer. Otherwise, when neither a `json` answer nor a timed
+  the same words however it is sampled, which a decode loop does not. Once the
+  `json` answer at 0.0 has looped, no later `json` answer is kept before one
+  at `LOOP_BREAKING_TEMPERATURE` (0.8) or above is compared with it: the first
+  of those that agrees with it (`word_agreement` at least
+  `REPEATED_SPEECH_AGREEMENT`, 0.5) keeps the temperature-0 answer as
+  repeated speech (`repeated_speech`) and no further `json` answer is asked.
+  When neither agrees, once every temperature is asked, the lowest-temperature
+  answer that an answer at another loop-breaking temperature agrees with is
+  kept (one asked at 0.8 or above only when it did not loop), else the
+  lowest-temperature usable one. While the `json` answer at 0.0 looped, a
+  timed answer running to the end does not stop the `json` answers; a timed
+  answer kept at 0.8 or above that does not agree with the transcript is not
+  used for timing. Otherwise, when neither a `json` answer nor a timed
   answer running to the end is usable, the chunk raises
   `GarbledTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
   `compression_ratios`, `attempts`) if any looped, else `EmptyTranscriptError`
