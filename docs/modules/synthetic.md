@@ -812,6 +812,11 @@ rejected rather than being treated as UTC. A supplied timestamp that cannot be
 parsed raises `ValueError` with the rejected value instead of silently
 producing default temporal patterns.
 
+`topic_source_text(...)` in `cogniverse_synthetic.topics` returns the first
+canonical field carrying descriptive text, with markdown emphasis markers
+(`**`, `__`) and list bullets (`* `, `• `) removed, so a topic never carries
+layout a query could not repeat.
+
 `TopicSaliency.salient_span(...)` in `cogniverse_synthetic.topics` scores every
 contiguous word window of a sentence by inverse document frequency over the
 sampled batch and keeps only self-contained windows. A window is self-contained

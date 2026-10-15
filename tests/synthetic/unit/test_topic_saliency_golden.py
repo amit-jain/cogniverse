@@ -273,10 +273,27 @@ def test_ingested_segment_recording_belongs_to_its_shipped_video():
     assert [set(record) for record in records] == [
         {"topic", "description", "schema_name", "profile_name"}
     ] * 10
-    # The recorded field is the one production reads for topic text.
+    # The recorded field is the one production reads for topic text, its
+    # markdown emphasis and bullets removed.
     assert [topic_source_text(record) for record in records] == [
-        normalize_text(record["description"]) for record in records
+        topic_source_text({"description": record["description"]}) for record in records
     ]
+    assert topic_source_text(records[2]) == (
+        "This video frame depicts an outdoor scene where a man is engaged in an "
+        "activity near a small pile of wood. Objects: A small pile of cut logs and "
+        "pieces of wood is visible on the ground. A makeshift structure or "
+        "support, possibly a log or thick branch, is positioned vertically among "
+        "the wood. A piece of blue and white patterned fabric or tarp is visible "
+        "on the ground to the left of the wood pile. The ground is covered in dry "
+        "dirt and sparse, light-colored vegetation. People: One man is present, "
+        "wearing a bright yellow t-shirt and dark shorts. He has short, dark hair "
+        "and is leaning over the wood pile. Actions: The man is actively using a "
+        "small orange or red tool (possibly a knife or small axe) to work on or "
+        "near the wood pile. He is crouched down, focused on the task. Scene "
+        "Setting: The setting is outdoors, appearing to be a dry, natural area "
+        "like a field or campsite. The lighting suggests daylight. Visible Text: "
+        "No discernible text is visible in the frame."
+    )
 
 
 def test_ingested_segment_captions_pin_the_complete_topic_set():
