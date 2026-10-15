@@ -210,7 +210,8 @@ adapter LM and prompt overlay, and counted against the bound LM's
 come most important first and are kept while they fit, the next one cut to
 fit; `head` and `tail` are always kept, and shedding a line is logged at
 WARNING. Rendering and counting run off the event loop. One `PromptLines`
-input is fitted per call; a module calling more than one predictor raises
+input is fitted per call; a module that calls no predictor sends no request
+and gets every line; a module calling more than one predictor raises
 `ValueError`, an LM that knows no allowance raises
 `ContextWindowUnavailableError`, and a head and tail that overflow alone raise
 `PromptBudgetExceededError` — no request is sent in either case.

@@ -201,8 +201,9 @@ class BodyBoundedLM(dspy.LM):
 
         The endpoint's served window (else ``declared_context_window``) less
         the completion this LM reserves, counted through the endpoint's
-        ``/tokenize`` with this LM's retries and request timeout
-        (``TOKENIZE_TIMEOUT_SECONDS`` when it sets none).
+        ``/tokenize`` with this LM's retries; reading the window and counting
+        wait up to this LM's request timeout (``TOKENIZE_TIMEOUT_SECONDS``
+        when it sets none).
 
         Raises:
             ContextWindowUnavailableError: the endpoint publishes no window
@@ -219,8 +220,12 @@ class BodyBoundedLM(dspy.LM):
                 f"{self.model} reserves no completion tokens, so the input "
                 f"allowance of its context window is undefined"
             )
+        timeout = float(self.kwargs.get("timeout") or TOKENIZE_TIMEOUT_SECONDS)
         window = resolve_context_window(
-            api_base, declared=self.declared_context_window, model=self.model
+            api_base,
+            declared=self.declared_context_window,
+            model=self.model,
+            timeout_seconds=timeout,
         )
         return PromptAllowance(
             budget=TokenBudget(
@@ -232,9 +237,7 @@ class BodyBoundedLM(dspy.LM):
                 api_base,
                 self.model,
                 retries=int(self.num_retries or 0),
-                timeout_seconds=float(
-                    self.kwargs.get("timeout") or TOKENIZE_TIMEOUT_SECONDS
-                ),
+                timeout_seconds=timeout,
             ),
         )
 

@@ -22,6 +22,11 @@ from cogniverse_foundation.config.routed_lm import (
     UpstreamRateLimited,
     UpstreamUnavailable,
 )
+from cogniverse_foundation.config.token_budget import (
+    ContextWindowUnavailableError,
+    PromptBudgetExceededError,
+    TokenCountUnavailableError,
+)
 from cogniverse_runtime.llm_dependency import llm_dependency_failure
 from cogniverse_runtime.routers import agents as agents_router
 
@@ -162,6 +167,44 @@ class TestTheAnswerFollowsTheFailureType:
             (502, "llm_request_rejected", "BadRequestError", 400, "m", None),
             (503, "llm_unavailable", "APIConnectionError", None, "m", None),
         ]
+
+
+class TestAPromptThatCannotBeSizedIsAnLLMFailure:
+    def test_an_unreadable_window_or_tokenizer_is_503(self):
+        window = ContextWindowUnavailableError("window unreadable")
+        count = TokenCountUnavailableError("tokenizer unreachable")
+        assert [_answer(e) for e in (window, count)] == [
+            (503, "llm_unavailable", "ContextWindowUnavailableError", None, None, None),
+            (503, "llm_unavailable", "TokenCountUnavailableError", None, None, None),
+        ]
+
+    def test_a_prompt_that_cannot_fit_is_502_naming_the_model(self):
+        failure = PromptBudgetExceededError(
+            model="openai/google/gemma-4-e4b-it",
+            context_window=8192,
+            reserved_output=1000,
+            input_tokens=7300,
+            dropped_demos=0,
+        )
+        assert _answer(failure) == (
+            502,
+            "llm_request_rejected",
+            "PromptBudgetExceededError",
+            None,
+            "openai/google/gemma-4-e4b-it",
+            None,
+        )
+
+    def test_a_window_read_failure_raised_through_an_agent_is_found(self):
+        try:
+            try:
+                raise ContextWindowUnavailableError("window unreadable")
+            except ContextWindowUnavailableError as exc:
+                raise RuntimeError("Summarization failed") from exc
+        except RuntimeError as wrapped:
+            assert llm_dependency_failure(wrapped).failure == (
+                "ContextWindowUnavailableError"
+            )
 
 
 class TestOnlyACauseIsAttributedToTheLLM:

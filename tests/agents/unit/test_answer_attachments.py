@@ -333,10 +333,15 @@ async def test_zero_hit_text_does_not_hide_real_lm_connection_failure(build_agen
     )
     with pytest.raises(Exception) as exc:
         await answer(agent, "summary", [])
-    assert type(exc.value).__name__ == "InternalServerError"
-    assert (
-        str(exc.value)
-        == "litellm.InternalServerError: InternalServerError: OpenAIException - Connection error."
+    # The endpoint is read for its window before the request is sent.
+    assert type(exc.value).__name__ == "ContextWindowUnavailableError"
+    assert str(exc.value) == (
+        "openai/test at http://127.0.0.1:29071/v1 publishes no context window and "
+        "declares none, so no request budget can be derived"
+    )
+    assert str(exc.value.__cause__) == (
+        "http://127.0.0.1:29071/v1/models is unreachable, so the served context "
+        "window is unknown and no request budget can be derived"
     )
 
 
@@ -357,10 +362,14 @@ async def test_report_lm_failure_propagates_after_attachment_shedding(build_agen
     )
     with pytest.raises(Exception) as raised:
         await answer(agent, "report", [DEAD_IMAGE])
-    assert type(raised.value).__name__ == "InternalServerError"
+    assert type(raised.value).__name__ == "ContextWindowUnavailableError"
     assert str(raised.value) == (
-        "litellm.InternalServerError: InternalServerError: OpenAIException - "
-        "Connection error."
+        "openai/test at http://127.0.0.1:29071/v1 publishes no context window and "
+        "declares none, so no request budget can be derived"
+    )
+    assert str(raised.value.__cause__) == (
+        "http://127.0.0.1:29071/v1/models is unreachable, so the served context "
+        "window is unknown and no request budget can be derived"
     )
     assert _REPORT_CALL_STATE.get() == {
         "keyframes_attached": 0,

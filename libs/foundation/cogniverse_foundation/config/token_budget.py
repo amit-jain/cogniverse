@@ -633,6 +633,7 @@ def resolve_context_window(
     *,
     declared: int | None,
     model: str,
+    timeout_seconds: float = CONTEXT_WINDOW_TIMEOUT_SECONDS,
 ) -> ResolvedContextWindow:
     """The window to budget against: what the endpoint serves, else ``declared``.
 
@@ -649,7 +650,9 @@ def resolve_context_window(
         memoized = _WINDOW_MEMO.get(key)
         if memoized is not None:
             return memoized
-        resolved = _read_context_window(api_base, declared=declared, model=model)
+        resolved = _read_context_window(
+            api_base, declared=declared, model=model, timeout_seconds=timeout_seconds
+        )
         if len(_WINDOW_MEMO) >= _MAX_MEMOIZED_WINDOWS:
             _WINDOW_MEMO.pop(next(iter(_WINDOW_MEMO)))
         _WINDOW_MEMO[key] = resolved
@@ -661,11 +664,12 @@ def _read_context_window(
     *,
     declared: int | None,
     model: str,
+    timeout_seconds: float,
 ) -> ResolvedContextWindow:
     """Read the window from the endpoint, falling back to ``declared``."""
 
     try:
-        served = fetch_context_window(api_base)
+        served = fetch_context_window(api_base, timeout_seconds=timeout_seconds)
     except ContextWindowUnavailableError as exc:
         if declared is None:
             raise ContextWindowUnavailableError(

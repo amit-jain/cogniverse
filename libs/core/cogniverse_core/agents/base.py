@@ -210,7 +210,8 @@ def _fitted_prompt_lines(
     that fits the bound LM's allowance for the request ``call_module`` sends.
 
     The request is rendered by the bound adapter from the signature and
-    demonstrations of the module's one predictor.
+    demonstrations of the module's one predictor; a module that calls no
+    predictor sends no request, and gets every line.
 
     Raises:
         ContextWindowUnavailableError: the bound LM knows no allowance.
@@ -233,6 +234,9 @@ def _fitted_prompt_lines(
     [field] = fields
     prompt: PromptLines = inputs[field]
     predictors = call_module.predictors()
+    if not predictors:
+        # A module that calls no predictor sends no request to fit.
+        return {**inputs, field: "\n".join([*prompt.head, *prompt.lines, *prompt.tail])}
     if len(predictors) != 1:
         raise ValueError(
             f"{type(call_module).__name__} calls {len(predictors)} predictors; "

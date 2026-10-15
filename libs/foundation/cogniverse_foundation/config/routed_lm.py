@@ -82,8 +82,9 @@ ROUTED_PROMPT_MARGIN_TOKENS = 32
 class ServingEndpoint:
     """A model endpoint the router serves a routed model from.
 
-    ``request_timeout`` is how long a count on its ``/tokenize`` may take, as
-    long as a completion from it may.
+    ``request_timeout`` is how long reading its window or a count on its
+    ``/tokenize`` may take: as long as a completion from it may, so a cold
+    endpoint is waited for rather than refused.
     """
 
     api_base: str
@@ -97,7 +98,10 @@ class ServingEndpoint:
         tokens reserved: the served (else declared) window less those and
         ``ROUTED_PROMPT_MARGIN_TOKENS``, counted through ``/tokenize``."""
         window = resolve_context_window(
-            self.api_base, declared=self.context_window, model=self.model
+            self.api_base,
+            declared=self.context_window,
+            model=self.model,
+            timeout_seconds=self.request_timeout,
         )
         return PromptAllowance(
             budget=TokenBudget(

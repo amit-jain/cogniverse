@@ -566,3 +566,49 @@ class TestADirectLMKnowsItsEndpointsAllowance:
     def test_an_lm_naming_no_endpoint_has_no_allowance(self):
         lm = create_dspy_lm(LLMEndpointConfig(model="openai/gpt-4o-mini"))
         assert lm.prompt_allowance() is None
+
+
+class TestAColdEndpointIsWaitedFor:
+    def test_a_window_listed_after_the_listing_timeout_is_read(self):
+        """A scaled-to-zero endpoint answers its listing only once it is up:
+        the window is read within the endpoint's request timeout, not the
+        five seconds a listing is otherwise given."""
+        import json
+        import time
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        from cogniverse_foundation.config.token_budget import (
+            CONTEXT_WINDOW_TIMEOUT_SECONDS,
+        )
+
+        class Cold(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler contract
+                time.sleep(CONTEXT_WINDOW_TIMEOUT_SECONDS + 1)
+                body = json.dumps(
+                    {"data": [{"id": "google/gemma-4-e4b-it", "max_model_len": 8192}]}
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Cold)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            api_base = f"http://127.0.0.1:{server.server_address[1]}/v1"
+            budget = (
+                ServingEndpoint(api_base=api_base, model=STUDENT, request_timeout=30.0)
+                .allowance(1000)
+                .budget
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        assert CONTEXT_WINDOW_TIMEOUT_SECONDS == 5.0
+        assert budget == TokenBudget(
+            model=STUDENT, context_window=8192, reserved_output=1000
+        )

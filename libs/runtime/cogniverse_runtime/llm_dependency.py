@@ -2,8 +2,9 @@
 
 The chat LLM is a dependency the caller cannot fix, so its failure is never an
 opaque 500. An LLM that is unavailable -- nothing deployed (404), not
-answering, overloaded -- is a 503; one that rejected the request cogniverse
-sent -- a refused credential, a body the router would not accept -- is a 502.
+answering, overloaded, its context window or tokenizer unreadable -- is a 503;
+one that rejected the request cogniverse sent -- a refused credential, a body
+the router would not accept, a prompt that cannot fit its window -- is a 502.
 A not-serving endpoint also says when it is rechecked, as ``Retry-After``.
 
 The answer is built from the failure's typed fields, never from its text,
@@ -28,6 +29,11 @@ from cogniverse_foundation.config.routed_lm import (
     RouterDecodeFailed,
     UpstreamAuthRejected,
     UpstreamNotServing,
+)
+from cogniverse_foundation.config.token_budget import (
+    ContextWindowUnavailableError,
+    PromptBudgetExceededError,
+    TokenCountUnavailableError,
 )
 
 LLM_UNAVAILABLE = "llm_unavailable"
@@ -137,6 +143,23 @@ def _provider(failure: openai.APIError) -> LLMDependencyFailure:
     )
 
 
+def _budget(failure: RuntimeError) -> LLMDependencyFailure:
+    """A prompt that could not be sized to the window: the window or the
+    tokenizer could not be read (unavailable), or the request cannot fit it
+    (rejected)."""
+    return LLMDependencyFailure(
+        condition=(
+            _REJECTED
+            if isinstance(failure, PromptBudgetExceededError)
+            else _UNAVAILABLE
+        ),
+        failure=type(failure).__name__,
+        upstream_status=None,
+        model=getattr(failure, "model", None),
+        retry_after_s=None,
+    )
+
+
 def llm_dependency_failure(exc: BaseException) -> Optional[LLMDependencyFailure]:
     """The LLM failure ``exc`` is or was explicitly raised from, else ``None``.
 
@@ -154,6 +177,15 @@ def llm_dependency_failure(exc: BaseException) -> Optional[LLMDependencyFailure]
                 return _not_serving(current)
             if isinstance(current, openai.APIError):
                 return _provider(current)
+            if isinstance(
+                current,
+                (
+                    ContextWindowUnavailableError,
+                    TokenCountUnavailableError,
+                    PromptBudgetExceededError,
+                ),
+            ):
+                return _budget(current)
             current = current.__cause__
     return None
 
