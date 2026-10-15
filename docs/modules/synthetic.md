@@ -787,7 +787,10 @@ For `entity_rich`, the backend query remains schema-safe and the returned
 documents are filtered by text fields that the selected profile's pipeline
 produces: the configured description field when description generation is
 enabled and the configured transcript field when transcription is enabled.
-Each enabled field must contain non-empty text. A missing required field mapping
+Each enabled field must contain non-empty text. Newest documents are paged until
+they span as many distinct sources as the sample asks for (or the backend runs
+out), then round-robined across sources like `diverse`, so the frames of one
+newly ingested video cannot fill the sample. A missing required field mapping
 fails before a live backend call; a profile that produces neither field is
 invalid for an `entity_rich` query.
 

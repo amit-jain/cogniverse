@@ -213,7 +213,7 @@ class BackendQuerier:
             results: List[Dict[str, Any]] = []
             offset = 0
             previous_page_ids: tuple[str, ...] | None = None
-            while len(results) < sample_size:
+            while True:
                 yql = self._build_yql(
                     schema_name,
                     query_size,
@@ -251,11 +251,14 @@ class BackendQuerier:
                         for field in entity_fields
                     )
                 )
-                if len(page) < query_size:
+                sources = {
+                    self._source_key(document, source_id_field) for document in results
+                }
+                if len(sources) >= sample_size or len(page) < query_size:
                     break
                 offset += query_size
 
-            if strategy == "diverse":
+            if strategy in ("diverse", "entity_rich"):
                 results = self._spread_across_sources(
                     results,
                     sample_size,
