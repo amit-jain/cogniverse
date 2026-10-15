@@ -197,7 +197,10 @@ class _BodyLimitedChatEndpoint:
     """A real chat-completions endpoint with Envoy's buffered-body contract.
 
     ``body_limit=None`` refuses every request, which is the 413 the cluster
-    served before the allowance existed.
+    served before the allowance existed. Like the vLLM behind the router it
+    publishes its window on ``/v1/models`` and counts on ``/tokenize`` (four
+    tokens per message plus one per word), which are asked directly and are
+    not chat requests.
     """
 
     def __init__(self, *, body_limit: Optional[int]):
@@ -211,8 +214,30 @@ class _BodyLimitedChatEndpoint:
             def log_message(self, *args):  # noqa: A003 - silence the stdlib logger
                 return
 
+            def _json(self, payload: dict) -> None:
+                encoded = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def do_GET(self):  # noqa: N802 - stdlib handler name
+                self._json({"data": [{"id": "stub-model", "max_model_len": 32768}]})
+
             def do_POST(self):  # noqa: N802 - stdlib handler name
                 body = self.rfile.read(int(self.headers["Content-Length"]))
+                if self.path == "/tokenize":
+                    messages = json.loads(body)["messages"]
+                    self._json(
+                        {
+                            "count": sum(
+                                4 + len(str(message["content"]).split())
+                                for message in messages
+                            )
+                        }
+                    )
+                    return
                 endpoint.request_bytes.append(len(body))
                 limit = endpoint._body_limit
                 if limit is None or len(body) > limit:
