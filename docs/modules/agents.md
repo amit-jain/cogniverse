@@ -4642,7 +4642,8 @@ synchronous; async callers run it through `asyncio.to_thread`.
 A prompt the generated program passes to `llm_query` / `llm_query_batched` can
 carry the whole context variable. `TolerantRLM` bounds each one to the input
 allowance of the LM answering it (`BodyBoundedLM.prompt_allowance()`, known
-for a routed LM on the classification entry) with `fit_text`: a prompt within
+for a direct LM with an `api_base` and a routed LM whose serving endpoints are
+known) with `fit_text`: a prompt within
 the allowance is sent unchanged; a longer one keeps its leading characters,
 ends with a line saying how many of them are shown, and is logged at WARNING.
 A serving endpoint that cannot report its window or count the prompt raises

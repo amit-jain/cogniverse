@@ -404,7 +404,9 @@ async def test_generic_dispatch_binds_tenant_routed_lm(dispatcher, monkeypatch):
 
     captured: dict = {}
 
-    def _fake_create_routed_lm(ep, router, tenant_id, tier, call_site):
+    def _fake_create_routed_lm(
+        ep, router, tenant_id, tier, call_site, pro_endpoint=None
+    ):
         captured["tenant_id"] = tenant_id
         captured["tier"] = tier
         return sentinel_lm
@@ -515,7 +517,7 @@ async def test_generic_dispatch_resolves_the_tenant_tier_off_the_loop(
     sentinel = MagicMock(name="tenant_routed_lm")
     calls: list = []
 
-    def _create(endpoint, router, tenant_id, tier, call_site):
+    def _create(endpoint, router, tenant_id, tier, call_site, pro_endpoint=None):
         calls.append((threading.get_ident(), call_site, tenant_id))
         time.sleep(block_s)
         return sentinel

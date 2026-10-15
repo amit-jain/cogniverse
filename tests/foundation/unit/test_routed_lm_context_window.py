@@ -1,11 +1,14 @@
-"""A request larger than the model's window is named as that, and a routed LM
-on the classification entry knows the allowance of the endpoint serving it."""
+"""A request larger than the model's window is named as that, and an LM knows
+the allowance of every endpoint that may serve its calls."""
 
 from __future__ import annotations
+
+import threading
 
 import litellm
 import pytest
 
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.routed_lm import (
     RETRYABLE,
     ROUTED_PROMPT_MARGIN_TOKENS,
@@ -16,13 +19,19 @@ from cogniverse_foundation.config.routed_lm import (
     UpstreamUnavailable,
     classify_routed_failure,
 )
-from cogniverse_foundation.config.semantic_router import create_routed_lm
+from cogniverse_foundation.config.semantic_router import (
+    TEACHER_SERVICE,
+    create_routed_lm,
+    pro_tier_endpoint,
+)
 from cogniverse_foundation.config.token_budget import (
     ContextWindowUnavailableError,
     TokenBudget,
+    TokenCountUnavailableError,
     clear_context_window_memo,
 )
 from cogniverse_foundation.config.unified_config import (
+    LLMConfig,
     LLMEndpointConfig,
     SemanticRouterConfig,
 )
@@ -210,11 +219,14 @@ class TestRoutedPromptAllowance:
             serving.close()
 
         assert lm.model == CLASSIFICATION
-        assert lm.served_by == ServingEndpoint(
-            api_base=serving.api_base,
-            model=STUDENT,
-            context_window=None,
-            num_retries=2,
+        assert lm.served_by == (
+            ServingEndpoint(
+                api_base=serving.api_base,
+                model=STUDENT,
+                context_window=None,
+                num_retries=2,
+                request_timeout=120.0,
+            ),
         )
         assert allowance.budget == TokenBudget(
             model=STUDENT, context_window=8192, reserved_output=1000
@@ -239,7 +251,7 @@ class TestRoutedPromptAllowance:
         lm = _routed_lm("http://127.0.0.1:10/v1", endpoint, "summarizer_agent")
 
         assert lm.model == "openai/auto"
-        assert lm.served_by is None
+        assert lm.served_by == ()
         assert lm.prompt_allowance() is None
 
     def test_an_endpoint_already_addressing_the_router_serves_nothing_itself(self):
@@ -287,3 +299,270 @@ class TestRoutedPromptAllowance:
             f"{STUDENT} at {dead} publishes no context window and declares "
             "none, so no request budget can be derived"
         )
+
+
+TEACHER = "openai/Qwen/Qwen3-14B-AWQ"
+SUMMARIZER = "summarizer_agent"
+ROUTER = "http://127.0.0.1:10/v1"
+
+
+def _endpoint(api_base: str, model: str = STUDENT, **fields) -> LLMEndpointConfig:
+    return LLMEndpointConfig(
+        model=model, api_base=api_base, max_tokens=1000, num_retries=0, **fields
+    )
+
+
+def _serving(api_base: str, model: str = STUDENT, **fields) -> ServingEndpoint:
+    return ServingEndpoint(
+        api_base=api_base,
+        model=model,
+        num_retries=0,
+        request_timeout=120.0,
+        **fields,
+    )
+
+
+def _tiered_lm(tier: str, call_site: str, student: str, teacher: str | None):
+    return create_routed_lm(
+        endpoint=_endpoint(student),
+        config=SemanticRouterConfig(enabled=True, semantic_router_url=ROUTER),
+        tenant_id=TENANT,
+        tier=tier,
+        call_site=call_site,
+        pro_endpoint=None if teacher is None else _endpoint(teacher, TEACHER),
+    )
+
+
+class TestTheEndpointsServingARoutedLM:
+    """Which endpoints a routed LM's prompt has to fit, per tier and entry."""
+
+    STUDENT_BASE = "http://127.0.0.1:11/v1"
+    TEACHER_BASE = "http://127.0.0.1:12/v1"
+
+    @pytest.mark.parametrize(
+        ("tier", "call_site", "teacher", "served"),
+        [
+            ("pro", SUMMARIZER, True, ("teacher", "student")),
+            ("pro", "deep_research_decomposition", True, ("teacher", "student")),
+            ("pro", SUMMARIZER, False, ()),
+            ("pro", "orchestrator_agent", True, ("student",)),
+            ("free", SUMMARIZER, True, ("student",)),
+            ("default", SUMMARIZER, True, ("student",)),
+            ("free", "orchestrator_agent", False, ("student",)),
+        ],
+    )
+    def test_each_tier_and_entry_names_its_endpoints(
+        self, tier, call_site, teacher, served
+    ):
+        lm = _tiered_lm(
+            tier, call_site, self.STUDENT_BASE, self.TEACHER_BASE if teacher else None
+        )
+        endpoints = {
+            "student": _serving(self.STUDENT_BASE),
+            "teacher": _serving(self.TEACHER_BASE, TEACHER),
+        }
+        assert lm.served_by == tuple(endpoints[name] for name in served)
+
+    def test_the_vision_entry_and_the_fallback_student_are_served_by_the_student(
+        self,
+    ):
+        lm = _tiered_lm("pro", SUMMARIZER, self.STUDENT_BASE, self.TEACHER_BASE)
+
+        assert (lm._vision.model, lm._vision.served_by) == (
+            "openai/cogniverse-vision",
+            (_serving(self.STUDENT_BASE),),
+        )
+        assert (lm._student.model, lm._student.served_by) == (
+            CLASSIFICATION,
+            (_serving(self.STUDENT_BASE),),
+        )
+
+    def test_a_student_serving_the_pro_tier_is_named_once(self):
+        student = _endpoint(self.STUDENT_BASE)
+        lm = create_routed_lm(
+            endpoint=student,
+            config=SemanticRouterConfig(enabled=True, semantic_router_url=ROUTER),
+            tenant_id=TENANT,
+            tier="pro",
+            call_site=SUMMARIZER,
+            pro_endpoint=student,
+        )
+        assert lm.served_by == (_serving(self.STUDENT_BASE),)
+
+
+class TestAPromptMustFitEveryServingEndpoint:
+    def test_a_pro_summary_is_budgeted_by_the_teacher_and_the_student(self):
+        student = serve_llm_endpoint(context_window=8192)
+        teacher = serve_llm_endpoint(model="Qwen/Qwen3-14B-AWQ", context_window=4096)
+        lm = _tiered_lm("pro", SUMMARIZER, student.api_base, teacher.api_base)
+        messages = [{"role": "user", "content": "one two three"}]
+        try:
+            allowance = lm.prompt_allowance_for(messages)
+            counted = allowance.count_tokens(messages)
+        finally:
+            student.close()
+            teacher.close()
+
+        # The teacher's 4096 - 1000 - 32 binds; both stubs count 7.
+        assert allowance.budget == TokenBudget(
+            model=TEACHER, context_window=4096, reserved_output=1000
+        )
+        assert allowance.tokens == 3064
+        assert counted == 7
+        assert teacher.posted("/tokenize") == [
+            {"model": "Qwen/Qwen3-14B-AWQ", "messages": messages}
+        ]
+        assert student.posted("/tokenize") == [
+            {"model": "google/gemma-4-e4b-it", "messages": messages}
+        ]
+
+    def test_a_request_carrying_an_image_is_budgeted_by_the_student_alone(self):
+        student = serve_llm_endpoint(context_window=8192)
+        teacher = serve_llm_endpoint(model="Qwen/Qwen3-14B-AWQ", context_window=4096)
+        lm = _tiered_lm("pro", SUMMARIZER, student.api_base, teacher.api_base)
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AAAA"},
+                    },
+                ],
+            }
+        ]
+        try:
+            allowance = lm.prompt_allowance_for(messages)
+            allowance.count_tokens(messages)
+        finally:
+            student.close()
+            teacher.close()
+
+        assert allowance.budget == TokenBudget(
+            model=STUDENT, context_window=8192, reserved_output=1000
+        )
+        assert allowance.tokens == 7160
+        assert teacher.received == []
+        assert [path for path, _ in student.received] == ["/v1/models", "/tokenize"]
+
+    def test_a_pro_entry_with_an_unknown_upstream_has_no_allowance(self):
+        lm = _tiered_lm("pro", SUMMARIZER, "http://127.0.0.1:11/v1", None)
+        assert lm.prompt_allowance_for([{"role": "user", "content": "x"}]) is None
+
+    def test_a_teacher_that_cannot_count_stops_the_count(self):
+        student = serve_llm_endpoint(context_window=8192)
+        lm = create_routed_lm(
+            endpoint=_endpoint(student.api_base),
+            config=SemanticRouterConfig(enabled=True, semantic_router_url=ROUTER),
+            tenant_id=TENANT,
+            tier="pro",
+            call_site=SUMMARIZER,
+            pro_endpoint=_endpoint(
+                "http://127.0.0.1:9/v1", TEACHER, context_window=4096
+            ),
+        )
+        try:
+            allowance = lm.prompt_allowance()
+            with pytest.raises(TokenCountUnavailableError) as raised:
+                allowance.count_tokens([{"role": "user", "content": "x"}])
+        finally:
+            student.close()
+
+        assert str(raised.value) == (
+            "http://127.0.0.1:9/tokenize is unreachable, so the request cannot "
+            f"be counted with the tokenizer {TEACHER} is served with"
+        )
+
+    def test_concurrent_first_counts_read_each_window_once(self):
+        student = serve_llm_endpoint(context_window=8192)
+        teacher = serve_llm_endpoint(model="Qwen/Qwen3-14B-AWQ", context_window=4096)
+        lm = _tiered_lm("pro", SUMMARIZER, student.api_base, teacher.api_base)
+        threads = 8
+        barrier = threading.Barrier(threads)
+        counts: dict[int, int] = {}
+
+        def worker(index: int) -> None:
+            messages = [{"role": "user", "content": "word " * index}]
+            barrier.wait()
+            counts[index] = lm.prompt_allowance().count_tokens(messages)
+
+        pool = [threading.Thread(target=worker, args=(i,)) for i in range(threads)]
+        try:
+            for thread in pool:
+                thread.start()
+            for thread in pool:
+                thread.join()
+        finally:
+            student.close()
+            teacher.close()
+
+        assert counts == {index: 4 + index for index in range(threads)}
+        assert student.received.count(("/v1/models", None)) == 1
+        assert teacher.received.count(("/v1/models", None)) == 1
+        assert len(student.posted("/tokenize")) == threads
+        assert len(teacher.posted("/tokenize")) == threads
+
+
+class TestTheProTierEndpoint:
+    STUDENT_ENDPOINT = _endpoint("http://127.0.0.1:11/v1")
+    TEACHER_ENDPOINT = _endpoint("http://127.0.0.1:12/v1", TEACHER)
+
+    def test_a_deployed_teacher_serves_the_pro_tier(self):
+        llm = LLMConfig(primary=self.STUDENT_ENDPOINT, teacher=self.TEACHER_ENDPOINT)
+        assert (
+            pro_tier_endpoint(
+                llm, {TEACHER_SERVICE: "http://teacher"}, self.STUDENT_ENDPOINT
+            )
+            is self.TEACHER_ENDPOINT
+        )
+        assert TEACHER_SERVICE == "vllm_llm_teacher"
+
+    def test_without_a_deployed_teacher_the_student_serves_the_pro_tier(self):
+        llm = LLMConfig(primary=self.STUDENT_ENDPOINT, teacher=self.TEACHER_ENDPOINT)
+        assert (
+            pro_tier_endpoint(llm, {"vllm_asr": "http://asr"}, self.STUDENT_ENDPOINT)
+            is self.STUDENT_ENDPOINT
+        )
+
+    def test_a_deployed_teacher_without_an_endpoint_is_unknown(self):
+        llm = LLMConfig(primary=self.STUDENT_ENDPOINT)
+        assert (
+            pro_tier_endpoint(
+                llm, {TEACHER_SERVICE: "http://teacher"}, self.STUDENT_ENDPOINT
+            )
+            is None
+        )
+
+
+class TestADirectLMKnowsItsEndpointsAllowance:
+    def test_the_served_window_and_tokenizer_bound_a_direct_lm(self):
+        serving = serve_llm_endpoint(context_window=8192)
+        lm = create_dspy_lm(_endpoint(serving.api_base, request_timeout=45.0))
+        try:
+            allowance = lm.prompt_allowance()
+            counted = allowance.count_tokens([{"role": "user", "content": "a b"}])
+        finally:
+            serving.close()
+
+        assert allowance.budget == TokenBudget(
+            model=STUDENT, context_window=8192, reserved_output=1000
+        )
+        assert (allowance.margin, allowance.tokens, counted) == (0, 7192, 6)
+        assert [path for path, _ in serving.received] == ["/v1/models", "/tokenize"]
+
+    def test_the_declared_window_bounds_a_listing_without_one(self):
+        serving = serve_llm_endpoint()
+        lm = create_dspy_lm(_endpoint(serving.api_base, context_window=4096))
+        try:
+            budget = lm.prompt_allowance().budget
+        finally:
+            serving.close()
+
+        assert budget == TokenBudget(
+            model=STUDENT, context_window=4096, reserved_output=1000
+        )
+
+    def test_an_lm_naming_no_endpoint_has_no_allowance(self):
+        lm = create_dspy_lm(LLMEndpointConfig(model="openai/gpt-4o-mini"))
+        assert lm.prompt_allowance() is None

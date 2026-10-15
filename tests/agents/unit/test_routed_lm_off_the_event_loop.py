@@ -52,7 +52,7 @@ def _blocking_routed_lm(monkeypatch, sink, block_s=BLOCK_S):
     """Replace the LM build with a blocking one that records its thread."""
     sentinels: dict = {}
 
-    def _create(endpoint, router, tenant_id, tier, call_site):
+    def _create(endpoint, router, tenant_id, tier, call_site, pro_endpoint=None):
         sink.append((threading.get_ident(), call_site, tenant_id, tier))
         time.sleep(block_s)
         return sentinels.setdefault(

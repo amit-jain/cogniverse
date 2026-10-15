@@ -39,18 +39,6 @@ class BudgetedLM(BodyBoundedLM):
     _budget: TokenBudget | None = None
     _counter = None
 
-    def __init__(
-        self,
-        model: str,
-        *,
-        declared_context_window: int | None = None,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(model, **kwargs)
-        # A plain attribute, never a dspy kwarg: everything in self.kwargs is
-        # forwarded to litellm as a request parameter.
-        self.declared_context_window = declared_context_window
-
     @property
     def budget(self) -> TokenBudget:
         """The endpoint's input allowance, read from the served model once."""

@@ -36,7 +36,15 @@ from cogniverse_foundation.config.request_body import (
     messages_from,
     request_body_metrics,
 )
-from cogniverse_foundation.config.token_budget import PromptAllowance
+from cogniverse_foundation.config.token_budget import (
+    TOKENIZE_TIMEOUT_SECONDS,
+    ContextWindowUnavailableError,
+    Messages,
+    PromptAllowance,
+    TokenBudget,
+    resolve_context_window,
+    shared_served_message_counter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +76,9 @@ class BodyBoundedLM(dspy.LM):
     unless the endpoint answered 404 inside the recheck window
     (``lm_endpoint_availability``): then the call raises
     ``LMEndpointNotServing`` without being sent.
+
+    ``declared_context_window`` is the window the endpoint's configuration
+    declares, budgeted against when the endpoint publishes none.
     """
 
     def __init__(
@@ -77,6 +88,7 @@ class BodyBoundedLM(dspy.LM):
         cache_tenant_id: str | None = None,
         response_cache: TenantScopedLMCache | None = None,
         response_cache_enabled: bool = True,
+        declared_context_window: int | None = None,
         **kwargs: Any,
     ) -> None:
         if cache_tenant_id:
@@ -100,6 +112,7 @@ class BodyBoundedLM(dspy.LM):
             else lm_response_cache()
         )
         self.response_cache_enabled = response_cache_enabled
+        self.declared_context_window = declared_context_window
 
     def for_tenant(self, tenant_id: str) -> "BodyBoundedLM":
         """This LM, answering for ``tenant_id``.
@@ -183,9 +196,52 @@ class BodyBoundedLM(dspy.LM):
         return LMEndpoint(api_base=self.kwargs.get("api_base"), model=self.model)
 
     def prompt_allowance(self) -> Optional[PromptAllowance]:
-        """What a free-text prompt may weigh, or ``None`` when this LM does not
-        know the window its calls are served with."""
-        return None
+        """What a prompt may weigh at the endpoint this LM calls, or ``None``
+        for an LM that names no ``api_base``.
+
+        The endpoint's served window (else ``declared_context_window``) less
+        the completion this LM reserves, counted through the endpoint's
+        ``/tokenize`` with this LM's retries and request timeout
+        (``TOKENIZE_TIMEOUT_SECONDS`` when it sets none).
+
+        Raises:
+            ContextWindowUnavailableError: the endpoint publishes no window
+                and none is declared, or this LM reserves no completion.
+        """
+        api_base = self.kwargs.get("api_base")
+        if not api_base:
+            return None
+        reserved = self.kwargs.get("max_tokens") or self.kwargs.get(
+            "max_completion_tokens"
+        )
+        if not reserved:
+            raise ContextWindowUnavailableError(
+                f"{self.model} reserves no completion tokens, so the input "
+                f"allowance of its context window is undefined"
+            )
+        window = resolve_context_window(
+            api_base, declared=self.declared_context_window, model=self.model
+        )
+        return PromptAllowance(
+            budget=TokenBudget(
+                model=self.model,
+                context_window=window.tokens,
+                reserved_output=int(reserved),
+            ),
+            count_tokens=shared_served_message_counter(
+                api_base,
+                self.model,
+                retries=int(self.num_retries or 0),
+                timeout_seconds=float(
+                    self.kwargs.get("timeout") or TOKENIZE_TIMEOUT_SECONDS
+                ),
+            ),
+        )
+
+    def prompt_allowance_for(self, messages: Messages) -> Optional[PromptAllowance]:
+        """What ``messages`` may weigh at the endpoint this LM would send them
+        to (``prompt_allowance``)."""
+        return self.prompt_allowance()
 
     def _admit(self, endpoint: LMEndpoint) -> Optional[object]:
         try:

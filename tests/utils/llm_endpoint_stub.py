@@ -16,6 +16,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 
+class _ConcurrentServer(ThreadingHTTPServer):
+    # socketserver's listen backlog of 5 resets connections when concurrency
+    # tests connect several clients at once.
+    request_queue_size = 64
+
+
 @dataclass
 class LLMEndpointStub:
     server: ThreadingHTTPServer
@@ -94,10 +100,11 @@ def serve_llm_endpoint(
         def log_message(self, *args):
             return
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = _ConcurrentServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return LLMEndpointStub(
         server=server,
         api_base=f"http://127.0.0.1:{server.server_address[1]}/v1",
         received=received,
     )
+

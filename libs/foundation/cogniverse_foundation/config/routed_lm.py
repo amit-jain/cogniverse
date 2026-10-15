@@ -53,9 +53,12 @@ from cogniverse_foundation.config.request_body import (
 )
 from cogniverse_foundation.config.semantic_router import record_served_model
 from cogniverse_foundation.config.token_budget import (
+    TOKENIZE_TIMEOUT_SECONDS,
     ContextWindowUnavailableError,
+    Messages,
     PromptAllowance,
     TokenBudget,
+    combined_allowance,
     resolve_context_window,
     shared_served_message_counter,
 )
@@ -77,12 +80,39 @@ ROUTED_PROMPT_MARGIN_TOKENS = 32
 
 @dataclass(frozen=True, slots=True)
 class ServingEndpoint:
-    """The model endpoint behind a router entry that one endpoint serves."""
+    """A model endpoint the router serves a routed model from.
+
+    ``request_timeout`` is how long a count on its ``/tokenize`` may take, as
+    long as a completion from it may.
+    """
 
     api_base: str
     model: str
     context_window: Optional[int] = None
     num_retries: int = 1
+    request_timeout: float = TOKENIZE_TIMEOUT_SECONDS
+
+    def allowance(self, reserved_output: int) -> PromptAllowance:
+        """What a prompt may weigh here with ``reserved_output`` completion
+        tokens reserved: the served (else declared) window less those and
+        ``ROUTED_PROMPT_MARGIN_TOKENS``, counted through ``/tokenize``."""
+        window = resolve_context_window(
+            self.api_base, declared=self.context_window, model=self.model
+        )
+        return PromptAllowance(
+            budget=TokenBudget(
+                model=self.model,
+                context_window=window.tokens,
+                reserved_output=reserved_output,
+            ),
+            count_tokens=shared_served_message_counter(
+                self.api_base,
+                self.model,
+                retries=self.num_retries,
+                timeout_seconds=self.request_timeout,
+            ),
+            margin=ROUTED_PROMPT_MARGIN_TOKENS,
+        )
 
 
 class RoutedLMCallFailed(RuntimeError):
@@ -356,9 +386,12 @@ class RoutedLM(BodyBoundedLM):
     tier and routed model it belongs to, and owns the retry policy: the
     endpoint's ``num_retries`` applies only to statuses a retry can answer.
 
-    ``served_by`` names the model endpoint the router serves this LM's routed
-    model from, when one endpoint always does. ``prompt_allowance`` is then
-    that endpoint's input allowance, counted with its tokenizer.
+    ``served_by`` names every model endpoint the router may serve this LM's
+    calls from on its tier; it is empty when which endpoints is not known.
+    ``prompt_allowance`` is then what a prompt may weigh to fit each of them,
+    counted with each one's tokenizer. ``student_endpoint`` serves the vision
+    entry this LM hands image-bearing calls to and the student a pro call
+    falls back to.
     """
 
     def __init__(
@@ -369,13 +402,15 @@ class RoutedLM(BodyBoundedLM):
         tier: str,
         vision_model: str | None = None,
         student_model: str | None = None,
-        served_by: ServingEndpoint | None = None,
+        served_by: tuple[ServingEndpoint, ...] = (),
+        student_endpoint: ServingEndpoint | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(model, **kwargs)
         self.tenant_id = tenant_id
         self.tier = tier
         self.served_by = served_by
+        student_served_by = (student_endpoint,) if student_endpoint else ()
         # The endpoint's retry allowance, spent here rather than inside
         # litellm, which retries by status class and would re-send a rejected
         # credential.
@@ -387,12 +422,17 @@ class RoutedLM(BodyBoundedLM):
                 student_model,
                 tenant_id=tenant_id,
                 tier=tier,
+                served_by=student_served_by,
                 **{**kwargs, "num_retries": 0},
             )
         self._vision: RoutedLM | None = None
         if vision_model and vision_model != model:
             self._vision = RoutedLM(
-                vision_model, tenant_id=tenant_id, tier=tier, **kwargs
+                vision_model,
+                tenant_id=tenant_id,
+                tier=tier,
+                served_by=student_served_by,
+                **kwargs,
             )
 
     def availability_endpoint(self) -> LMEndpoint:
@@ -403,19 +443,18 @@ class RoutedLM(BodyBoundedLM):
         )
 
     def prompt_allowance(self) -> Optional[PromptAllowance]:
-        """What a prompt may weigh at the endpoint serving this LM's calls.
+        """What a prompt may weigh to fit every endpoint serving this LM's calls.
 
-        ``None`` when the router chooses the upstream per request. Otherwise
-        the serving endpoint's context window less the completion this LM
-        reserves and ``ROUTED_PROMPT_MARGIN_TOKENS``, counted through that
-        endpoint's ``/tokenize``.
+        ``None`` when ``served_by`` is empty. Otherwise each endpoint's window
+        less the completion this LM reserves and ``ROUTED_PROMPT_MARGIN_TOKENS``,
+        counted through its ``/tokenize`` and combined
+        (``combined_allowance``).
 
         Raises:
-            ContextWindowUnavailableError: the serving endpoint publishes no
+            ContextWindowUnavailableError: a serving endpoint publishes no
                 window and declares none, or this LM reserves no completion.
         """
-        served_by = self.served_by
-        if served_by is None:
+        if not self.served_by:
             return None
         reserved = self.kwargs.get("max_tokens") or self.kwargs.get(
             "max_completion_tokens"
@@ -423,24 +462,17 @@ class RoutedLM(BodyBoundedLM):
         if not reserved:
             raise ContextWindowUnavailableError(
                 f"{self.model} reserves no completion tokens, so the input "
-                f"allowance of {served_by.model} is undefined"
+                f"allowance of {', '.join(e.model for e in self.served_by)} "
+                f"is undefined"
             )
-        window = resolve_context_window(
-            served_by.api_base,
-            declared=served_by.context_window,
-            model=served_by.model,
+        return combined_allowance(
+            [endpoint.allowance(int(reserved)) for endpoint in self.served_by]
         )
-        return PromptAllowance(
-            budget=TokenBudget(
-                model=served_by.model,
-                context_window=window.tokens,
-                reserved_output=int(reserved),
-            ),
-            count_tokens=shared_served_message_counter(
-                served_by.api_base, served_by.model, retries=served_by.num_retries
-            ),
-            margin=ROUTED_PROMPT_MARGIN_TOKENS,
-        )
+
+    def prompt_allowance_for(self, messages: Messages) -> Optional[PromptAllowance]:
+        """The allowance of the entry ``messages`` are sent on: the vision
+        entry's for a request carrying image parts, else this LM's."""
+        return self._carrier(None, messages).prompt_allowance()
 
     def _carrier(self, prompt, messages):
         if self._vision is None:
