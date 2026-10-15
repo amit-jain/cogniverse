@@ -15,6 +15,7 @@ from cogniverse_synthetic.generators.profile import ProfileGenerator
 from cogniverse_synthetic.generators.workflow import WorkflowGenerator
 from cogniverse_synthetic.topics import (
     TopicSaliency,
+    topic_source_text,
 )
 from cogniverse_synthetic.topics import (
     extract_topic as saliency_extract_topic,
@@ -322,3 +323,26 @@ def test_first_field_extractor_does_not_share_the_saliency_extractors_name():
     assert not hasattr(generators_base, "extract_topic")
     assert callable(generators_base.first_topic_field)
     assert callable(topics.extract_topic)
+
+
+# A frame description the cluster's VLM wrote for v_-vnSFKJNB94's closing card.
+CONTACT_CARD = (
+    "This is a static, text-based image with a black background. The visible "
+    "text is presented in white and blue font colors and provides contact "
+    "information: * **diver:** Michal Navratil (in blue) * **email:** "
+    "michal.navratil@hotmail.com * **Phone number:** +420 773 232 III There are "
+    "no people, objects (other than text), or scene settings depicted, other "
+    "than the digital presentation of the text itself."
+)
+
+
+def test_topic_source_text_drops_markdown_emphasis_and_bullets():
+    assert topic_source_text({"description": CONTACT_CARD}) == (
+        "This is a static, text-based image with a black background. The visible "
+        "text is presented in white and blue font colors and provides contact "
+        "information: diver: Michal Navratil (in blue) email: "
+        "michal.navratil@hotmail.com Phone number: +420 773 232 III There are "
+        "no people, objects (other than text), or scene settings depicted, other "
+        "than the digital presentation of the text itself."
+    )
+    assert topic_source_text({"description": "*Squeak* *Squeak*"}) is None

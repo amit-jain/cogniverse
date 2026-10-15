@@ -29,12 +29,15 @@ import requests
 
 from cogniverse_core.common.models.whisper_transcription import (
     FALLBACK_TEMPERATURES,
+    LOOP_BREAKING_TEMPERATURE,
+    REPEATED_SPEECH_AGREEMENT,
     TRANSCRIBE_ATTEMPTS,
     compression_ratio,
     pcm16_wav_samples,
     reaches_chunk_end,
     response_format,
     split_for_whisper,
+    word_agreement,
 )
 from cogniverse_foundation.inference_specs import get_inference_service_spec
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
@@ -285,14 +288,30 @@ def test_the_recorded_cluster_answers_keep_their_shape(speech_chunks):
 
 
 def test_a_partial_timed_answer_and_json_loops_replayed_keep_every_word(
-    speech_chunks, tmp_path
+    speech_chunks, tmp_path, caplog
 ):
     # Recorded at temperature 0 from the cluster: chunk 3's timed answer stops
-    # at 23.0 of 29.5 s, and its json answer loops at 0.0, 0.2 and 0.4.
-    with _Server(speech_chunks, answer=_replayed) as server:
+    # at 23.0 of 29.5 s, and its json answer loops at 0.0, 0.2 and 0.4. The
+    # answer at 0.6 is kept once those at 0.8 and 1.0 are compared: neither
+    # repeats the loop, and the one at 0.8 says what the one at 0.6 says.
+    with (
+        _Server(speech_chunks, answer=_replayed) as server,
+        caplog.at_level(logging.WARNING, logger="test"),
+    ):
         transcript = _processor(server.url).transcribe_audio(SPEECH_CLIP, tmp_path)
 
     assert "error" not in transcript, transcript.get("error")
+    third = speech_chunks[3]
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "no answer repeats it" in record.getMessage()
+    ] == [
+        f"{SPEECH_CLIP}: chunk 3 ({third.start_s:.2f}-{third.end_s:.2f}s) looped "
+        "at temperature 0.0 and no answer repeats it: kept the answer at "
+        "temperature 0.6, which an answer at a loop-breaking temperature agrees "
+        "with"
+    ]
     assert server.requests == [
         (0, V, 0.0),
         (1, V, 0.0),
@@ -302,13 +321,14 @@ def test_a_partial_timed_answer_and_json_loops_replayed_keep_every_word(
         (3, J, 0.2),
         (3, J, 0.4),
         (3, J, 0.6),
+        (3, J, 0.8),
+        (3, J, 1.0),
         (4, V, 0.0),
         (4, J, 0.0),
     ]
-    assert server.languages == [None] + ["en"] * 9
+    assert server.languages == [None] + ["en"] * 11
     loops = [answer["text"] for answer in server.answers_of(3, J)[:3]]
     assert [compression_ratio(text) > 2.4 for text in loops] == [True] * 3
-    third = speech_chunks[3]
     chunk_3 = [
         segment
         for segment in transcript["segments"]
@@ -349,7 +369,8 @@ def test_concurrent_transcriptions_through_one_processor_match_a_lone_one(
             together = list(pool.map(run, range(3)))
 
     assert "error" not in alone, alone.get("error")
-    assert sorted(server.requests) == sorted(server.requests[:10] * 4)
+    assert len(server.requests) == 48
+    assert sorted(server.requests) == sorted(server.requests[:12] * 4)
     for transcript in together:
         assert {
             key: transcript[key] for key in transcript if key != "transcription_time"
@@ -419,35 +440,62 @@ def repeated_speech_wav(tmp_path_factory):
 
 
 def test_speech_that_repeats_is_transcribed_on_the_cluster(
-    vllm_asr_url, repeated_speech_wav, tmp_path
+    vllm_asr_url, repeated_speech_wav, tmp_path, caplog
 ):
     """Each chunk holds the same ten seconds three times, so a faithful answer
     compresses like a decode loop. Whatever the server answers this run, the
-    transcription succeeds, and a chunk whose untimed answer repeated at every
-    temperature carries its temperature-0 answer."""
+    transcription succeeds, and a chunk whose json answer at 0.0 looped is
+    decided at the loop-breaking temperatures: the first answer there that
+    agrees with it keeps it as repeated speech, and json is asked no further."""
     chunks = split_for_whisper(pcm16_wav_samples(repeated_speech_wav.read_bytes()))
     assert len(chunks) == 13
 
-    with _Server(chunks, upstream=vllm_asr_url) as server:
+    with (
+        _Server(chunks, upstream=vllm_asr_url) as server,
+        caplog.at_level(logging.WARNING, logger="test"),
+    ):
         transcript = _processor(server.url).transcribe_audio(
             repeated_speech_wav, tmp_path
         )
 
     assert "error" not in transcript, transcript.get("error")
+    expected: set[str] = set()
     for chunk in chunks:
-        untimed = server.answers_of(chunk.index, J)
         inside = [
             s
             for s in transcript["segments"]
             if chunk.start_s <= s["start"] < chunk.end_s
         ]
         assert inside != [], chunk.index
-        if len(untimed) == TRANSCRIBE_ATTEMPTS and all(
-            compression_ratio(a["text"]) > 2.4 for a in untimed
-        ):
-            assert " ".join(s["text"] for s in inside) == " ".join(
-                untimed[0]["text"].split()
-            ), chunk.index
+        asked = [t for fmt, t in server.of_chunk(chunk.index) if fmt == J]
+        answers = {
+            t: answer["text"]
+            for t, answer in zip(asked, server.answers_of(chunk.index, J), strict=True)
+        }
+        if 0.0 not in answers or compression_ratio(answers[0.0]) <= 2.4:
+            continue
+        agreeing = [
+            (t, word_agreement(answers[0.0], answers[t]))
+            for t in asked
+            if t >= LOOP_BREAKING_TEMPERATURE
+            and word_agreement(answers[0.0], answers[t]) >= REPEATED_SPEECH_AGREEMENT
+        ]
+        if agreeing:
+            temperature, agreement = agreeing[0]
+            assert asked == [t for t in FALLBACK_TEMPERATURES if t <= temperature]
+            expected.add(
+                f"{repeated_speech_wav}: chunk {chunk.index} "
+                f"({chunk.start_s:.2f}-{chunk.end_s:.2f}s) looped at temperature "
+                f"0.0 and its answer at temperature {temperature:.1f} agrees with "
+                f"it ({agreement:.2f}): kept as repeated speech"
+            )
+    kept = {
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().endswith("kept as repeated speech")
+    }
+    assert expected != set()
+    assert kept == expected
 
 
 def test_an_empty_timed_answer_is_asked_again_at_the_next_temperature(
@@ -472,28 +520,66 @@ def test_an_empty_timed_answer_is_asked_again_at_the_next_temperature(
 
 
 def test_a_chunk_never_timed_keeps_its_untimed_text_as_one_segment(
-    vllm_asr_url, speech_chunks, tmp_path
+    vllm_asr_url, speech_chunks, tmp_path, caplog
 ):
+    """Chunk 1's timed answers come back empty, so its json answer spans it.
+    Which json answer that is follows from what the server answered: the one
+    at 0.0 when it did not loop; otherwise the one the comparison at the
+    loop-breaking temperatures names."""
     chunk = speech_chunks[1]
 
-    with _Server(
-        speech_chunks,
-        upstream=vllm_asr_url,
-        rewrite=lambda index, fields: (
-            "" if (index, fields["response_format"]) == (1, V) else None
-        ),
-    ) as server:
+    with (
+        _Server(
+            speech_chunks,
+            upstream=vllm_asr_url,
+            rewrite=lambda index, fields: (
+                "" if (index, fields["response_format"]) == (1, V) else None
+            ),
+        ) as server,
+        caplog.at_level(logging.WARNING, logger="test"),
+    ):
         transcript = _processor(server.url).transcribe_audio(SPEECH_CLIP, tmp_path)
 
     assert "error" not in transcript, transcript.get("error")
-    untimed = server.answers_of(1, J)
-    usable = [compression_ratio(a["text"]) <= 2.4 for a in untimed]
-    assert usable == [False] * (len(untimed) - 1) + [True]
+    asked = [t for fmt, t in server.of_chunk(1) if fmt == J]
+    texts = dict(zip(asked, (a["text"] for a in server.answers_of(1, J)), strict=True))
+    decisions = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith(f"{SPEECH_CLIP}: chunk 1 (")
+        and (
+            "kept as repeated speech" in record.getMessage()
+            or "no answer repeats it" in record.getMessage()
+            or "other answers agree with" in record.getMessage()
+        )
+    ]
+    if compression_ratio(texts[0.0]) <= 2.4:
+        assert (asked, decisions) == ([0.0], [])
+        kept = texts[0.0]
+    elif decisions and decisions[0].endswith("kept as repeated speech"):
+        [decision] = decisions
+        temperature = float(
+            re.search(r"answer at temperature (\d\.\d) agrees", decision).group(1)
+        )
+        assert temperature >= LOOP_BREAKING_TEMPERATURE
+        assert asked == [t for t in FALLBACK_TEMPERATURES if t <= temperature]
+        kept = texts[0.0]
+    else:
+        assert asked == list(FALLBACK_TEMPERATURES)
+        named = re.findall(
+            r"kept the answer at temperature (\d\.\d)", "".join(decisions)
+        )
+        temperature = (
+            float(named[0])
+            if named
+            else min(t for t in asked[1:] if compression_ratio(texts[t]) <= 2.4)
+        )
+        kept = texts[temperature]
     assert server.of_chunk(1) == [
         (fmt, t)
         for i, t in enumerate(FALLBACK_TEMPERATURES)
         for fmt in (V, J)
-        if fmt == V or i < len(untimed)
+        if fmt == V or i < len(asked)
     ]
     assert [
         segment
@@ -503,12 +589,12 @@ def test_a_chunk_never_timed_keeps_its_untimed_text_as_one_segment(
         {
             "start": chunk.start_s,
             "end": chunk.start_s + len(chunk.samples) / 16000,
-            "text": " ".join(untimed[-1]["text"].split()),
+            "text": " ".join(kept.split()),
         }
     ]
 
 
-def test_an_untimed_answer_looping_on_every_attempt_fails_the_transcription(
+def test_an_untimed_answer_looping_on_every_attempt_is_left_out_of_the_transcript(
     vllm_asr_url, speech_chunks, tmp_path
 ):
     chunk = speech_chunks[1]
@@ -527,24 +613,32 @@ def test_an_untimed_answer_looping_on_every_attempt_fails_the_transcription(
     ) as server:
         transcript = _processor(server.url).transcribe_audio(SPEECH_CLIP, tmp_path)
 
-    ratios = ", ".join(f"{compression_ratio(loop):.2f}" for loop in LOOPS.values())
-    assert transcript == {
-        "video_id": SPEECH_CLIP.stem,
-        "error": (
-            f"{SPEECH_CLIP}: chunk 1 ({chunk.start_s:.2f}-{chunk.end_s:.2f}s) came "
-            f"back unusable on all {TRANSCRIBE_ATTEMPTS} attempts: "
-            f"{TRANSCRIBE_ATTEMPTS} repetition loops (compression ratio {ratios}, "
-            "above 2.4) and 0 empty"
-        ),
-        "full_text": "",
-        "segments": [],
+    dropped = [
+        {
+            "chunk_index": 1,
+            "start_s": chunk.start_s,
+            "end_s": chunk.end_s,
+            "compression_ratios": [compression_ratio(loop) for loop in LOOPS.values()],
+        }
+    ]
+    owners = {
+        next(
+            candidate.index
+            for candidate in speech_chunks
+            if candidate.start_s <= segment["start"] < candidate.end_s
+        )
+        for segment in transcript["segments"]
     }
+    assert "error" not in transcript
+    assert transcript["dropped_chunks"] == dropped
+    assert owners == {c.index for c in speech_chunks} - {1}
     assert server.of_chunk(1) == [
         (fmt, t) for t in FALLBACK_TEMPERATURES for fmt in (V, J)
     ]
-    assert not (
-        tmp_path / "transcripts" / f"{SPEECH_CLIP.stem}_transcript.json"
-    ).exists()
+    written = json.loads(
+        (tmp_path / "transcripts" / f"{SPEECH_CLIP.stem}_transcript.json").read_text()
+    )
+    assert written["dropped_chunks"] == dropped
 
 
 def test_a_server_answering_empty_for_speech_fails_the_transcription(

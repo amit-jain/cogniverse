@@ -201,8 +201,8 @@ SOURCES = {
     },
 }
 
-# A wiki page reaches an answer agent by its title; its content is what a
-# citation of it quotes.
+# A wiki page reaches an answer agent by its title and its page content, which
+# is also what a citation of it quotes.
 WIKI_PAGE = {
     "profile": "wiki_semantic",
     "ranking": "bm25",
@@ -231,6 +231,7 @@ WIKI_PAGE = {
         ),
     ],
     "title": "Session — ferry timetable",
+    "content_type": "wiki",
     "content": "The winter ferry timetable drops the last crossing at nine.",
 }
 CITED = {**SOURCES, "wiki": WIKI_PAGE}
@@ -242,7 +243,13 @@ _CONTENT_INPUT = re.compile(r"\[\[ ## content ## \]\]\n(.*?)\n\n\[\[ ## ", re.DO
 
 class _AnswerProvider:
     """OpenAI-compatible provider that fills whatever outputs it is asked for
-    and records every request's messages."""
+    and records every request's messages.
+
+    Like vLLM it publishes its window on ``/v1/models`` and counts a request
+    on ``/tokenize``: four tokens per message plus one per whitespace-separated
+    word."""
+
+    WINDOW = 8192
 
     def __init__(self) -> None:
         self.requests: list[list[dict]] = []
@@ -253,8 +260,29 @@ class _AnswerProvider:
             def log_message(self, *args):
                 pass
 
+            def _json(self, payload: dict) -> None:
+                encoded = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def do_GET(self):
+                self._json(
+                    {
+                        "object": "list",
+                        "data": [
+                            {"id": "answer-content", "max_model_len": provider.WINDOW}
+                        ],
+                    }
+                )
+
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path == "/tokenize":
+                    self._json({"count": _word_count(body["messages"])})
+                    return
                 with provider.lock:
                     provider.requests.append(body["messages"])
                 system = next(
@@ -328,6 +356,10 @@ class _AnswerProvider:
             for message in messages
             if message["role"] == "user"
         ]
+
+
+def _word_count(messages: list[dict]) -> int:
+    return sum(4 + len(str(message["content"]).split()) for message in messages)
 
 
 def _filled(kind: str) -> object:
@@ -494,11 +526,11 @@ async def _grounded_hit(dispatcher, source) -> dict:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", sorted(SOURCES))
+@pytest.mark.parametrize("kind", sorted(CITED))
 async def test_a_grounding_hit_carries_its_sources_title_and_content(
     answer_dispatcher, kind
 ):
-    source = SOURCES[kind]
+    source = CITED[kind]
     hit = await _grounded_hit(answer_dispatcher, source)
 
     assert (hit["title"], hit["content_type"], hit["description"]) == (
@@ -531,11 +563,11 @@ async def test_a_deep_research_citation_quotes_the_hit_it_cites(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", sorted(SOURCES))
+@pytest.mark.parametrize("kind", sorted(CITED))
 async def test_the_summarizer_hands_the_lm_each_hits_title_and_content(
     answer_dispatcher, answer_provider, kind
 ):
-    source = SOURCES[kind]
+    source = CITED[kind]
     score = (await _grounded_hit(answer_dispatcher, source))["score"]
 
     result = await answer_dispatcher._execute_summarization_task(
@@ -551,11 +583,11 @@ async def test_the_summarizer_hands_the_lm_each_hits_title_and_content(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", sorted(SOURCES))
+@pytest.mark.parametrize("kind", sorted(CITED))
 async def test_the_detailed_report_hands_the_lm_each_hits_title_and_content(
     answer_dispatcher, answer_provider, kind
 ):
-    source = SOURCES[kind]
+    source = CITED[kind]
     score = (await _grounded_hit(answer_dispatcher, source))["score"]
 
     result = await answer_dispatcher._execute_detailed_report_task(

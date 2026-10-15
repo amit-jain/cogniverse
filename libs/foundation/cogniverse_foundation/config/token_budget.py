@@ -10,7 +10,10 @@ raises with the window, the reservation, the measured input and the number
 of demonstrations dropped. ``fitting_demonstrations`` sizes a compiled
 program's demonstrations to the window before the program is sent at all.
 ``fit_text`` bounds one free-text prompt, which has no demonstrations to drop,
-by cutting its tail and saying so in the prompt.
+by cutting its tail and saying so in the prompt. ``fit_lines`` keeps the
+leading lines of a prompt field that fit, most important first.
+``combined_allowance`` is the allowance of a request any of several endpoints
+may serve.
 """
 
 from __future__ import annotations
@@ -45,9 +48,9 @@ _WINDOW_MEMO: "dict[tuple[str, str], ResolvedContextWindow]" = {}
 _WINDOW_MEMO_LOCK = threading.Lock()
 
 
-# One counter, and so one HTTP client, per (endpoint, model, retries).
+# One counter, and so one HTTP client, per (endpoint, model, retries, timeout).
 _MAX_MEMOIZED_COUNTERS = 32
-_COUNTER_MEMO: "dict[tuple[str, str, int], TokenCounter]" = {}
+_COUNTER_MEMO: "dict[tuple[str, str, int, float], TokenCounter]" = {}
 _COUNTER_MEMO_LOCK = threading.Lock()
 
 # Tokens a served chat template adds around one user message, at most.
@@ -289,19 +292,26 @@ def served_message_counter(
 
 
 def shared_served_message_counter(
-    api_base: str, model: str, *, retries: int = 1
+    api_base: str,
+    model: str,
+    *,
+    retries: int = 1,
+    timeout_seconds: float = TOKENIZE_TIMEOUT_SECONDS,
 ) -> TokenCounter:
     """The process's ``served_message_counter`` for an endpoint and model.
 
-    Built once per ``(api_base, model, retries)`` and shared by every caller,
-    so a serving path that counts on each request reuses one HTTP client.
+    Built once per ``(api_base, model, retries, timeout_seconds)`` and shared
+    by every caller, so a serving path that counts on each request reuses one
+    HTTP client.
     """
 
-    key = (api_base.rstrip("/"), model, retries)
+    key = (api_base.rstrip("/"), model, retries, timeout_seconds)
     with _COUNTER_MEMO_LOCK:
         counter = _COUNTER_MEMO.get(key)
         if counter is None:
-            counter = served_message_counter(api_base, model, retries=retries)
+            counter = served_message_counter(
+                api_base, model, retries=retries, timeout_seconds=timeout_seconds
+            )
             if len(_COUNTER_MEMO) >= _MAX_MEMOIZED_COUNTERS:
                 _COUNTER_MEMO.pop(next(iter(_COUNTER_MEMO)))
             _COUNTER_MEMO[key] = counter
@@ -402,6 +412,146 @@ def fit_text(text: str, *, allowance: PromptAllowance) -> FittedText:
     )
 
 
+def combined_allowance(allowances: Sequence[PromptAllowance]) -> PromptAllowance:
+    """One allowance a request meets exactly when it meets each of ``allowances``.
+
+    A request any of several endpoints may serve has to fit every one of their
+    windows, each counted with its own tokenizer. The result carries the
+    budget and margin of the allowance with the fewest tokens; its counter
+    asks every endpoint and reports the largest overrun of its own allowance,
+    shifted onto that one, so a count is within ``tokens`` exactly when it is
+    within every endpoint's.
+    """
+
+    if not allowances:
+        raise ValueError("a combined allowance needs at least one allowance")
+    if len(allowances) == 1:
+        return allowances[0]
+    binding = min(allowances, key=lambda allowance: allowance.tokens)
+
+    def count(messages: Messages) -> int:
+        return binding.tokens + max(
+            allowance.count_tokens(messages) - allowance.tokens
+            for allowance in allowances
+        )
+
+    return PromptAllowance(
+        budget=binding.budget, count_tokens=count, margin=binding.margin
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class FittedLines:
+    """A text of whole lines that fits its allowance, and what it kept.
+
+    ``kept_lines`` lines are whole; ``cut_chars`` is how much of the line
+    after them was kept, ``None`` when none was.
+    """
+
+    text: str
+    kept_lines: int
+    cut_chars: int | None
+    total_lines: int
+    input_tokens: int
+
+
+def line_cut_notice(kept_chars: int, total_chars: int) -> str:
+    """What ``fit_lines`` appends to the line it cuts."""
+
+    return (
+        f" [cut to fit the model's context window: the first {kept_chars} of "
+        f"{total_chars} characters are shown]"
+    )
+
+
+def fit_lines(
+    lines: Sequence[str],
+    *,
+    allowance: PromptAllowance,
+    render: Callable[[str], Messages],
+    head: Sequence[str] = (),
+    tail: Sequence[str] = (),
+) -> FittedLines:
+    """The leading ``lines`` that fit ``allowance`` in the request ``render``
+    builds around them.
+
+    ``render(text)`` is the request a text is sent in, counted with
+    ``allowance.count_tokens``. The text is ``head``, the kept lines, then
+    ``tail``, joined by newlines; ``lines`` come most important first. When
+    every line fits, the text is returned after one count. Otherwise the
+    longest leading run of whole lines that fits is found by bisection, and
+    the line after it is cut to its longest leading run of characters that
+    fits together with ``line_cut_notice``, also by bisection; it is left out
+    when no character of it fits.
+
+    Raises ``PromptBudgetExceededError`` when ``head`` and ``tail`` alone
+    overflow, and whatever ``allowance.count_tokens`` raises when it cannot
+    count.
+    """
+
+    limit = allowance.tokens
+    total = len(lines)
+
+    def compose(kept: int, cut: int | None = None) -> str:
+        parts = [*head, *lines[:kept]]
+        if cut is not None:
+            line = lines[kept]
+            parts.append(line[:cut] + line_cut_notice(cut, len(line)))
+        parts.extend(tail)
+        return "\n".join(parts)
+
+    def count(text: str) -> int:
+        return allowance.count_tokens(render(text))
+
+    tokens = count(compose(total))
+    if tokens <= limit:
+        return FittedLines(
+            text=compose(total),
+            kept_lines=total,
+            cut_chars=None,
+            total_lines=total,
+            input_tokens=tokens,
+        )
+
+    whole: tuple[int, int] | None = None
+    low, high = 0, total - 1
+    while low <= high:
+        middle = (low + high) // 2
+        tokens = count(compose(middle))
+        if tokens <= limit:
+            whole = (middle, tokens)
+            low = middle + 1
+        else:
+            high = middle - 1
+    if whole is None:
+        raise PromptBudgetExceededError(
+            model=allowance.budget.model,
+            context_window=allowance.budget.context_window,
+            reserved_output=allowance.budget.reserved_output,
+            input_tokens=tokens,
+            dropped_demos=0,
+        )
+    kept, tokens = whole
+
+    cut: int | None = None
+    low, high = 1, len(lines[kept]) - 1
+    while low <= high:
+        middle = (low + high) // 2
+        probed = count(compose(kept, middle))
+        if probed <= limit:
+            cut, tokens = middle, probed
+            low = middle + 1
+        else:
+            high = middle - 1
+    return FittedLines(
+        text=compose(kept, cut),
+        kept_lines=kept,
+        cut_chars=cut,
+        total_lines=total,
+        input_tokens=tokens,
+    )
+
+
 def extract_context_window(body: Any) -> int | None:
     """The ``max_model_len`` an OpenAI-compatible ``/v1/models`` body reports."""
 
@@ -483,6 +633,7 @@ def resolve_context_window(
     *,
     declared: int | None,
     model: str,
+    timeout_seconds: float = CONTEXT_WINDOW_TIMEOUT_SECONDS,
 ) -> ResolvedContextWindow:
     """The window to budget against: what the endpoint serves, else ``declared``.
 
@@ -499,7 +650,9 @@ def resolve_context_window(
         memoized = _WINDOW_MEMO.get(key)
         if memoized is not None:
             return memoized
-        resolved = _read_context_window(api_base, declared=declared, model=model)
+        resolved = _read_context_window(
+            api_base, declared=declared, model=model, timeout_seconds=timeout_seconds
+        )
         if len(_WINDOW_MEMO) >= _MAX_MEMOIZED_WINDOWS:
             _WINDOW_MEMO.pop(next(iter(_WINDOW_MEMO)))
         _WINDOW_MEMO[key] = resolved
@@ -511,11 +664,12 @@ def _read_context_window(
     *,
     declared: int | None,
     model: str,
+    timeout_seconds: float,
 ) -> ResolvedContextWindow:
     """Read the window from the endpoint, falling back to ``declared``."""
 
     try:
-        served = fetch_context_window(api_base)
+        served = fetch_context_window(api_base, timeout_seconds=timeout_seconds)
     except ContextWindowUnavailableError as exc:
         if declared is None:
             raise ContextWindowUnavailableError(

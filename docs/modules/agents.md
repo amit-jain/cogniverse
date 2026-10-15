@@ -2583,6 +2583,18 @@ Attachment failures appear in summary/research degradation metadata and in the
 report's `report_degraded_reason`. Summary key points and report recommendations
 remain paired with their generated text.
 
+The three put their hits in one prompt field as `PromptLines`
+(`docs/modules/core.md`), so the field holds the hits that fit the context
+window of the model the call is sent to — on a routed LM every endpoint the
+router may serve it from (`docs/modules/foundation.md`). The summary's
+`content` takes its results most relevant first, then the key themes and
+visual insights; the report's `content` takes `Total Results: N`, then its
+first ten results in order; the deep-research `evidence` takes one line per
+hit, `[<sub-question>] <title> (<content_type>, relevance N.NN): <text>`, in
+rank order across sub-questions — every sub-question's first hit, then every
+second — with a sub-question that found nothing as `[<sub-question>] No
+results`.
+
 ### 11. AudioAnalysisAgent
 
 **Location:** `libs/agents/cogniverse_agents/audio_analysis_agent.py`
@@ -2680,10 +2692,14 @@ Whisper), each chunk of at most 30 s with timestamps and, unless the timed
 segments run to the end of the chunk, without, through
 `cogniverse_core.common.models.whisper_transcription`: the text comes from the
 untimed answer, timed by the timed answer's segments; an empty or looping
-answer is asked again at the next sampling temperature, an answer repeating
-in the same words at every temperature is kept as repeated speech, and a chunk
-whose untimed text otherwise never comes back usable raises `EmptyTranscriptError` or
-`GarbledTranscriptError`. The merged answer is mapped to a
+answer is asked again at the next sampling temperature, a looping answer at
+temperature 0 is compared with the answers at the loop-breaking temperatures
+before any later answer is kept (one agreeing keeps it as repeated speech), and
+a chunk whose untimed text otherwise never comes back usable raises `EmptyTranscriptError` or
+`GarbledTranscriptError`; a chunk whose timed answer is improbable (temperature 0 or
+0.2, a token log-probability below -1.0) or one segment spanning the chunk that
+no two nearby windows of it repeat, and whose untimed answer carries no other
+speech, is not speech and comes back empty. The merged answer is mapped to a
 `TranscriptionResult(text, segments, language, confidence)`.
 The pinned vLLM response represents `duration` as a non-negative decimal
 string; the agent validates that exact wire type and converts it to seconds
@@ -4642,7 +4658,8 @@ synchronous; async callers run it through `asyncio.to_thread`.
 A prompt the generated program passes to `llm_query` / `llm_query_batched` can
 carry the whole context variable. `TolerantRLM` bounds each one to the input
 allowance of the LM answering it (`BodyBoundedLM.prompt_allowance()`, known
-for a routed LM on the classification entry) with `fit_text`: a prompt within
+for a direct LM with an `api_base` and a routed LM whose serving endpoints are
+known) with `fit_text`: a prompt within
 the allowance is sent unchanged; a longer one keeps its leading characters,
 ends with a line saying how many of them are shown, and is logged at WARNING.
 A serving endpoint that cannot report its window or count the prompt raises

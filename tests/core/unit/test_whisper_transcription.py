@@ -25,6 +25,8 @@ from cogniverse_core.common.models.model_loaders import RemoteWhisperLoader
 from cogniverse_core.common.models.whisper_transcription import (
     FALLBACK_TEMPERATURES,
     GARBLED_COMPRESSION_RATIO,
+    NON_SPEECH_AVG_LOGPROB,
+    PHRASE_WINDOW_S,
     SAMPLING_SEED,
     TRANSCRIBE_ATTEMPTS,
     AudioChunk,
@@ -38,10 +40,13 @@ from cogniverse_core.common.models.whisper_transcription import (
     lenient_chunk_answer,
     loudest_frame_dbfs,
     pcm16_wav_samples,
+    phrase_windows,
     reaches_chunk_end,
     repeated_speech,
     response_format,
     sampling_fields,
+    segments_avg_logprob,
+    speech_words,
     split_for_whisper,
     transcribe_in_chunks,
     wav_bytes,
@@ -458,19 +463,21 @@ def test_a_chunk_never_timed_keeps_its_json_text_as_one_segment():
 
 
 def test_a_looping_json_answer_is_asked_again_at_the_next_temperature(caplog):
+    """The loop at 0.0 is not what the audio says: no answer at a
+    loop-breaking temperature repeats it. The answer at 0.2 is kept once the
+    one at 0.8 corroborates it."""
     audio = _noise(10.0)
+    said = " Go! Stop cooking in your safe!"
     server = _Server(
-        timed={0: [[(0.0, 4.0, " Go! Stop cooking in your safe!")]]},
-        text={0: [LOOP, " Go! Stop cooking in your safe!"]},
+        timed={0: [[(0.0, 4.0, said)]]},
+        text={0: [LOOP, *[said] * 5]},
     )
 
     with caplog.at_level(logging.WARNING, logger=LOGGER.name):
         transcript = _transcribe(audio, server)
 
-    assert server.requests == [
-        (0, "en", "verbose_json", 0.0),
-        (0, "en", "json", 0.0),
-        (0, "en", "json", 0.2),
+    assert server.requests == [(0, "en", "verbose_json", 0.0)] + [
+        (0, "en", "json", t) for t in FALLBACK_TEMPERATURES
     ]
     assert transcript["full_text"] == "Go! Stop cooking in your safe!"
     assert transcript["segments"] == _segments(
@@ -479,7 +486,10 @@ def test_a_looping_json_answer_is_asked_again_at_the_next_temperature(caplog):
     assert [record.getMessage() for record in caplog.records] == [
         "clip.wav: chunk 0 (0.00-10.00s) came back as a repetition loop in json "
         f"(compression ratio {compression_ratio(LOOP):.2f} > 2.4) on attempt 1 of "
-        f"{TRANSCRIBE_ATTEMPTS} at temperature 0.0"
+        f"{TRANSCRIBE_ATTEMPTS} at temperature 0.0",
+        "clip.wav: chunk 0 (0.00-10.00s) looped at temperature 0.0 and no answer "
+        "repeats it: kept the answer at temperature 0.2, which an answer at a "
+        "loop-breaking temperature agrees with",
     ]
 
 
@@ -578,34 +588,135 @@ def test_speech_repeating_at_every_temperature_keeps_its_temperature_0_answer(
     with caplog.at_level(logging.WARNING, logger=LOGGER.name):
         transcript = _transcribe(audio, server)
 
+    # Kept as soon as the answer at 0.8 agrees: json is not asked at 1.0.
+    assert server.requests == [
+        (0, "en", fmt, t)
+        for t in FALLBACK_TEMPERATURES[:-1]
+        for fmt in ("verbose_json", "json")
+    ] + [(0, "en", "verbose_json", 1.0)]
+    assert transcript["full_text"] == REPEATED_SPEECH[0].strip()
+    assert transcript["segments"] == _segments((0.0, 29.4, REPEATED_SPEECH[0].strip()))
+    loudest = split_for_whisper(audio)[0].loudest_frame_dbfs
+    assert [record.getMessage() for record in caplog.records][-2:] == [
+        "clip.wav: chunk 0 (0.00-29.40s) looped at temperature 0.0 and its "
+        "answer at temperature 0.8 agrees with it (0.88): kept as repeated speech",
+        f"clip.wav: chunk 0 (0.00-29.40s, loudest frame {loudest:.1f} dBFS) came "
+        "back with an empty verbose_json transcript on attempt 6 of 6 at "
+        "temperature 1.0",
+    ]
+
+
+def test_a_loop_formed_at_both_loop_breaking_temperatures_leaves_the_majority(
+    caplog,
+):
+    """The answers at 0.8 and 1.0 are loops of their own and corroborate
+    nothing; the four answers below them repeat the same speech, so the
+    temperature-0 one, which three others agree with, is kept."""
+    audio = _noise(29.4)
+    answers = [*REPEATED_SPEECH[:4], FORMED_LOOP, FORMED_LOOP]
+    server = _Server(timed={0: [[]] * 6}, text={0: list(answers)})
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(audio, server)
+
+    assert transcript["full_text"] == REPEATED_SPEECH[0].strip()
     assert server.requests == [
         (0, "en", fmt, t)
         for t in FALLBACK_TEMPERATURES
         for fmt in ("verbose_json", "json")
     ]
-    assert transcript["full_text"] == REPEATED_SPEECH[0].strip()
-    assert transcript["segments"] == _segments((0.0, 29.4, REPEATED_SPEECH[0].strip()))
-    assert [record.getMessage() for record in caplog.records][-1] == (
-        "clip.wav: chunk 0 (0.00-29.40s) repeats at every temperature and its "
-        "answer at temperature 0.8 agrees with the one at 0.0 (0.88): kept as "
-        "repeated speech"
-    )
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "agree with" in record.getMessage()
+    ] == [
+        "clip.wav: chunk 0 (0.00-29.40s) looped at temperature 0.0 and no answer "
+        "at a loop-breaking temperature corroborates another: kept the answer at "
+        "temperature 0.0, which 3 of the other answers agree with"
+    ]
+    assert whisper_transcription.MAJORITY_SUPPORT == 2
 
 
-def test_a_loop_that_forms_under_sampling_does_not_pass_for_repeated_speech():
-    """The answers repeat at every temperature, but the ones at 0.8 and 1.0
-    are loops of their own: nothing corroborates the temperature-0 answer."""
+def test_three_answers_agreeing_keep_the_chunk_when_the_other_three_broke(caplog):
+    """As the cluster's server answered one chunk live: repeated speech at 0.0,
+    0.2 and 0.4; from 0.6 up, a stutter, a loop formed under sampling and an
+    answer sharing none of their words. Half the answers agree, so the
+    temperature-0 one is kept rather than failing the chunk."""
     audio = _noise(29.4)
-    answers = [*REPEATED_SPEECH[:4], FORMED_LOOP, FORMED_LOOP]
+    stutter = " I'm about about to light a lot to light to light to light."
+    answers = [
+        *REPEATED_SPEECH[:3],
+        stutter,
+        FORMED_LOOP,
+        " about that's about they in by about the far",
+    ]
+    server = _Server(timed={0: [[]] * 6}, text={0: list(answers)})
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(audio, server)
+
+    assert transcript["full_text"] == REPEATED_SPEECH[0].strip()
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "agree with" in record.getMessage()
+    ] == [
+        "clip.wav: chunk 0 (0.00-29.40s) looped at temperature 0.0 and no answer "
+        "at a loop-breaking temperature corroborates another: kept the answer at "
+        "temperature 0.0, which 2 of the other answers agree with"
+    ]
+    assert [round(word_agreement(answers[0], other), 2) for other in answers[3:]] == [
+        0.2,
+        0.05,
+        0.05,
+    ]
+
+
+def test_answers_with_no_majority_and_no_corroboration_raise_as_garbled():
+    """Six answers that say six different things: no faithful one exists."""
+    audio = _noise(29.4)
+    answers = [
+        LOOP,
+        " The ferry leaves at nine.",
+        " Bring the red folder tomorrow.",
+        LOOPS[1],
+        " Nobody answered the phone.",
+        " Paint dries slowly in winter.",
+    ]
     server = _Server(timed={0: [[]] * 6}, text={0: list(answers)})
 
     with pytest.raises(GarbledTranscriptError) as caught:
         _transcribe(audio, server)
 
-    assert caught.value.compression_ratios == tuple(
-        compression_ratio(answer) for answer in answers
+    assert caught.value.compression_ratios == (
+        compression_ratio(LOOP),
+        compression_ratio(LOOPS[1]),
     )
-    assert caught.value.attempts == 6
+    assert str(caught.value).endswith(
+        f"2 repetition loops (compression ratio {compression_ratio(LOOP):.2f}, "
+        f"{compression_ratio(LOOPS[1]):.2f}, above 2.4) and 4 empty"
+    )
+
+
+def test_a_sound_annotation_is_kept_when_no_answer_is_speech():
+    """A loop of sound annotations at 0.0 and annotations after it: no answer
+    carries speech, so the lowest-temperature usable one is the transcript."""
+    audio = _noise(29.4)
+    answers = [
+        " *Squeak*" * 40,
+        " *Ding*",
+        " *Demonic music*",
+        " [Music]",
+        " *Balloon sound*",
+        " (laughs)",
+    ]
+    server = _Server(timed={0: [[]] * 6}, text={0: list(answers)})
+
+    transcript = _transcribe(audio, server)
+
+    assert transcript["full_text"] == "*Ding*"
+    assert [speech_words(answer) for answer in answers] == [[]] * 6
+    assert speech_words(" *Ding* Sorry! [Music] what (laughs) ♪") == ["sorry", "what"]
 
 
 def test_one_high_temperature_answer_agreeing_is_enough():
@@ -1389,7 +1500,6 @@ def test_no_segment_reaches_into_the_next_chunk():
         "live/IMXSEIabMM/0/verbose_json",
         "live/IMXSEIabMM/1/verbose_json",
         "live/IMXSEIabMM/3/verbose_json",
-        "live/vnSFKJNB94/3/verbose_json/past_duration",
     ],
 )
 def test_a_timed_answer_running_to_the_chunk_end_is_kept_without_json(name):
@@ -1410,6 +1520,27 @@ def test_a_timed_answer_running_to_the_chunk_end_is_kept_without_json(name):
         }
         for segment in answer["body"]["segments"]
     ]
+
+
+def test_a_timed_answer_past_the_chunk_end_is_clamped_and_music_kept_empty():
+    """Music the server times past the chunk's end as "Thank you.": the
+    segment is clamped to the chunk, and the answer (mean log-probability
+    -1.05) is not speech, as the json answer the server gave the same chunk
+    (" you") carries no other speech, so the chunk keeps no text."""
+    name = "live/vnSFKJNB94/3/verbose_json/past_duration"
+    replay = _Replay([name], [])
+    replay.scripts["json"].append({"text": " you"})
+    answer = _recording()["answers"][name]
+    duration = answer["chunk_len_s"]
+    chunk = AudioChunk(0, 0, _noise(duration))
+
+    parsed = lenient_chunk_answer(answer["body"], chunk)
+    transcript = _replay(name, replay)
+
+    assert parsed.segments == [{"start": 0.0, "end": duration, "text": "Thank you."}]
+    assert round(parsed.avg_logprob, 2) == -1.05
+    assert replay.requests == [("verbose_json", 0.0), ("json", 0.0)]
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
 
 
 def test_running_to_the_chunk_end_allows_less_than_one_timestamp_step():
@@ -1436,8 +1567,8 @@ def test_running_to_the_chunk_end_allows_less_than_one_timestamp_step():
 def test_a_looping_timed_answer_running_to_the_end_is_asked_again():
     audio = _noise(10.0)
     server = _Server(
-        timed={0: [[(0.0, 10.0, LOOP)], [(0.0, 10.0, " Go! Stop cooking.")]]},
-        text={0: [" Go! Stop cooking."]},
+        timed={0: [[(0.0, 10.0, LOOP)], [(0.0, 10.0, " Stop cooking, go!")]]},
+        text={0: [" Stop cooking, go!"]},
     )
 
     transcript = _transcribe(audio, server)
@@ -1447,7 +1578,7 @@ def test_a_looping_timed_answer_running_to_the_end_is_asked_again():
         (0, "en", "json", 0.0),
         (0, "en", "verbose_json", 0.2),
     ]
-    assert transcript["segments"] == _segments((0.0, 10.0, "Go! Stop cooking."))
+    assert transcript["segments"] == _segments((0.0, 10.0, "Stop cooking, go!"))
 
 
 def test_a_timestamp_equal_to_the_duration_at_its_resolution_is_not_logged(caplog):
@@ -1466,3 +1597,930 @@ def test_a_timestamp_equal_to_the_duration_at_its_resolution_is_not_logged(caplo
     assert [record.getMessage() for record in caplog.records] == [
         "segment time 29.41s is past the chunk's 29.40s; clamped"
     ]
+
+
+# Whole fallback ladders the cluster's server answered (both formats at every
+# temperature) for chunks of the tracked clip's ten seconds played back to
+# back, and for a speech clip whose answer at 0.0 is a decode loop.
+LADDERS = (
+    Path(__file__).parent / "fixtures" / "vllm_whisper_repeated_speech_ladders.json"
+)
+
+
+def _ladders() -> list[dict]:
+    return json.loads(LADDERS.read_text())["ladders"]
+
+
+class _LadderServer:
+    """Answers each request with the recorded answer for its format and
+    temperature, and records the requests."""
+
+    def __init__(self, ladder: dict):
+        self.answers = {
+            (answer["response_format"], answer["temperature"]): answer["body"]
+            for answer in ladder["answers"]
+        }
+        self.requests: list[tuple[str, float]] = []
+
+    def __call__(self, chunk, language, timestamps, temperature=0.0):
+        fmt = response_format(timestamps)
+        self.requests.append((fmt, temperature))
+        return lenient_chunk_answer(self.answers[(fmt, temperature)], chunk)
+
+    def raw(self, fmt: str, temperature: float) -> str:
+        return self.answers[(fmt, temperature)]["text"]
+
+    def text(self, fmt: str, temperature: float) -> str:
+        return " ".join(self.raw(fmt, temperature).split())
+
+
+def test_the_recorded_ladders_keep_their_shape():
+    from cogniverse_foundation.inference_specs import get_inference_service_spec
+
+    document = json.loads(LADDERS.read_text())
+    assert document["server"]["model"] == (
+        get_inference_service_spec("vllm_asr").model_id
+    )
+    ladders = document["ladders"]
+    assert [(ladder["clip"], ladder["chunk"]) for ladder in ladders] == [
+        ("tracked_video_audio_x36.wav", 4),
+        ("tracked_video_audio_x36.wav", 11),
+        ("tracked_video_audio_x36.wav", 11),
+        ("tracked_video_audio_x36.wav", 10),
+        ("v_-IMXSEIabMM.mp4", 3),
+        ("tracked_video_audio_x36.wav", 7),
+        ("v_-vnSFKJNB94.mp4", 1),
+        ("big_buck_bunny_clip.mp4", 11),
+        ("big_buck_bunny_clip.mp4", 7),
+        ("v_-vnSFKJNB94.mp4", 2),
+    ]
+    assert {
+        type(segment["avg_logprob"])
+        for ladder in ladders
+        for answer in ladder["answers"]
+        if answer["response_format"] == "verbose_json"
+        for segment in answer["body"]["segments"]
+    } == {float}
+    for ladder in ladders:
+        assert sorted(
+            (answer["response_format"], answer["temperature"])
+            for answer in ladder["answers"]
+        ) == sorted(
+            (response_format(timestamps), temperature)
+            for timestamps in (True, False)
+            for temperature in FALLBACK_TEMPERATURES
+        )
+        assert ladder["loudest_frame_dbfs"] > whisper_transcription.SILENCE_FLOOR_DBFS
+
+
+def _ladder_transcribed(ladder: dict, caplog) -> tuple[_LadderServer, dict, list[str]]:
+    server = _LadderServer(ladder)
+    audio = _noise(ladder["chunk_len_s"])
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(audio, server)
+    decisions = [
+        record.getMessage()
+        for record in caplog.records
+        if "repetition loop" not in record.getMessage()
+        and "empty" not in record.getMessage()
+    ]
+    return server, transcript, decisions
+
+
+def _asked_through(last_json: float) -> list[tuple[str, float]]:
+    """Both formats up to ``last_json``, then the timed answer alone."""
+    asked = [
+        (fmt, t)
+        for t in FALLBACK_TEMPERATURES
+        if t <= last_json
+        for fmt in ("verbose_json", "json")
+    ]
+    return asked + [("verbose_json", t) for t in FALLBACK_TEMPERATURES if t > last_json]
+
+
+def test_an_answer_at_1_0_that_does_not_loop_is_compared_before_it_is_kept(caplog):
+    """Every answer up to 0.8 repeats the ten seconds three times; the one at
+    1.0 does not loop and says something else (0.09 of the words). The answer
+    at 0.8 repeats the one at 0.0, which is kept, and the timed answer at 1.0
+    that disagrees with it times nothing."""
+    ladder = _ladders()[0]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == _asked_through(0.8)
+    assert transcript["full_text"] == server.text("json", 0.0)
+    assert transcript["segments"] == _segments(
+        (0.0, ladder["chunk_len_s"], server.text("json", 0.0))
+    )
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.20s) looped at temperature 0.0 and its answer "
+        "at temperature 0.8 agrees with it (0.73): kept as repeated speech",
+        "clip.wav: chunk 0 (0.00-29.20s) timed answer at temperature 1.0 does not "
+        "agree with the transcript (0.13): not used for timing",
+    ]
+    assert (
+        round(word_agreement(server.text("json", 1.0), transcript["full_text"]), 2)
+        == 0.09
+    )
+
+
+def test_a_low_temperature_answer_that_does_not_loop_waits_for_the_comparison(
+    caplog,
+):
+    """The answer at 0.4 is three words; it does not loop, and keeping it
+    would drop the chunk's speech. The answer at 0.8 repeats the one at 0.0."""
+    ladder = _ladders()[1]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert compression_ratio(server.raw("json", 0.4)) < GARBLED_COMPRESSION_RATIO
+    assert server.requests == _asked_through(0.8)
+    assert transcript["full_text"] == server.text("json", 0.0)
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.20s) looped at temperature 0.0 and its answer "
+        "at temperature 0.8 agrees with it (0.62): kept as repeated speech",
+    ]
+
+
+def test_a_decode_loop_at_0_0_keeps_the_answer_a_loop_breaking_one_corroborates(
+    caplog,
+):
+    """The answer at 0.0 is a decode loop (compression 21.4) nothing repeats;
+    the one at 0.2 repeats the ten seconds three times and the one at 0.8
+    agrees with it."""
+    ladder = _ladders()[2]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert round(compression_ratio(server.raw("json", 0.0)), 1) == 21.4
+    assert server.requests == _asked_through(1.0)
+    assert transcript["full_text"] == server.text("json", 0.2)
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.20s) looped at temperature 0.0 and no answer "
+        "repeats it: kept the answer at temperature 0.2, which an answer at a "
+        "loop-breaking temperature agrees with",
+    ]
+
+
+def test_a_timed_answer_that_disagrees_at_1_0_times_nothing(caplog):
+    ladder = _ladders()[3]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == _asked_through(0.8)
+    assert transcript["segments"] == _segments(
+        (0.0, ladder["chunk_len_s"], server.text("json", 0.0))
+    )
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.60s) looped at temperature 0.0 and its answer "
+        "at temperature 0.8 agrees with it (0.88): kept as repeated speech",
+        "clip.wav: chunk 0 (0.00-29.60s) timed answer at temperature 1.0 does not "
+        "agree with the transcript (0.45): not used for timing",
+    ]
+
+
+def test_a_timed_answer_at_0_0_that_runs_to_the_end_needs_no_json(caplog):
+    """The json answer at 0.0 would be a decode loop; the timed one is not and
+    runs to the end of the chunk, so it is the transcript."""
+    ladder = _ladders()[4]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == [("verbose_json", 0.0)]
+    assert transcript["full_text"] == server.text("verbose_json", 0.0)
+    assert decisions == []
+
+
+def test_both_loop_breaking_answers_broken_keep_the_majority(caplog):
+    """Repeated speech up to 0.6; at 0.8 a loop formed under sampling and at
+    1.0 an answer sharing a fifth of its words. The temperature-0 answer, which
+    the three answers below 0.8 agree with, is kept."""
+    ladder = _ladders()[5]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == _asked_through(1.0)
+    assert transcript["full_text"] == server.text("json", 0.0)
+    assert decisions[0] == (
+        "clip.wav: chunk 0 (0.00-29.70s) looped at temperature 0.0 and no answer "
+        "at a loop-breaking temperature corroborates another: kept the answer at "
+        "temperature 0.0, which 3 of the other answers agree with"
+    )
+    assert (
+        round(word_agreement(server.text("json", 1.0), server.text("json", 0.0)), 2)
+        == 0.23
+    )
+
+
+def test_a_chunk_with_no_faithful_answer_raises_rather_than_keeping_one(caplog):
+    """Every json answer disagrees with every other; the timed answer at 0.8
+    has nothing to agree with. The chunk raises instead of keeping one."""
+    ladder = _ladders()[6]
+    server = _LadderServer(ladder)
+
+    with (
+        caplog.at_level(logging.WARNING, logger=LOGGER.name),
+        pytest.raises(GarbledTranscriptError) as caught,
+    ):
+        _transcribe(_noise(ladder["chunk_len_s"]), server)
+
+    assert str(caught.value) == (
+        "clip.wav: chunk 0 (0.00-29.00s) came back unusable on all 6 attempts: "
+        "4 repetition loops (compression ratio 3.58, 5.70, 6.28, 36.47, above 2.4) "
+        "and 2 empty"
+    )
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "nothing to agree with" in record.getMessage()
+    ] == [
+        "clip.wav: chunk 0 (0.00-29.00s) has no faithful json answer and its timed "
+        "answer at temperature 0.8 has nothing to agree with: not used"
+    ]
+
+
+def _without_log_probabilities(ladder: dict) -> dict:
+    """``ladder`` as a server reporting no ``avg_logprob`` would answer it."""
+    stripped = json.loads(json.dumps(ladder))
+    for answer in stripped["answers"]:
+        for segment in answer["body"].get("segments") or []:
+            del segment["avg_logprob"]
+    return stripped
+
+
+def test_a_timed_answer_disagreeing_after_a_loop_times_nothing(caplog):
+    """Music, from a server reporting no log-probabilities: the json answers
+    are sound annotations; the timed answer at 0.2 is speech the json answers
+    do not contain, so it supplies no words."""
+    ladder = _without_log_probabilities(_ladders()[7])
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert transcript["segments"] == _segments(
+        (0.0, ladder["chunk_len_s"], server.text("json", 0.4))
+    )
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.70s) looped at temperature 0.0 and no answer "
+        "repeats it: kept the answer at temperature 0.4, which an answer at a "
+        "loop-breaking temperature agrees with",
+        "clip.wav: chunk 0 (0.00-29.70s) timed answer at temperature 0.2 does not "
+        "agree with the transcript (0.00): not used for timing",
+    ]
+
+
+def test_the_recorded_timed_answers_at_0_0_fall_either_side_of_the_threshold():
+    """Speech, including the chunks whose answers loop, scores well above
+    the threshold; the music the server answers with a phrase below it."""
+    means = [
+        lenient_chunk_answer(
+            next(
+                answer["body"]
+                for answer in ladder["answers"]
+                if (answer["response_format"], answer["temperature"])
+                == ("verbose_json", 0.0)
+            ),
+            AudioChunk(0, 0, _noise(ladder["chunk_len_s"])),
+        ).avg_logprob
+        for ladder in _ladders()
+    ]
+
+    assert [None if mean is None else round(mean, 2) for mean in means] == [
+        -0.25,
+        -0.19,
+        -0.19,
+        -0.17,
+        -0.14,
+        -0.19,
+        -0.67,
+        None,
+        -1.21,
+        None,
+    ]
+    assert NON_SPEECH_AVG_LOGPROB == -1.0
+
+
+def test_a_chunk_whose_timed_answer_is_improbable_is_transcribed_empty(caplog):
+    """Music: the timed answer at 0.0 is a phrase (mean log-probability
+    -1.21) and the json answer at 0.0 a loop of sound annotations. The chunk
+    is not speech; it is asked nothing more and keeps no text."""
+    ladder = _ladders()[8]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == [("verbose_json", 0.0), ("json", 0.0)]
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
+    assert decisions == [
+        'clip.wav: chunk 0 (0.00-29.70s) timed answer " I\'m going to go." at '
+        "temperature 0.0 has mean log-probability -1.21 < -1.0 and the json "
+        "answer carries no other speech: not speech, kept no text"
+    ]
+
+
+def test_a_chunk_whose_timed_answer_at_0_0_is_empty_is_judged_at_0_2(caplog):
+    """Music: the timed answer at 0.0 is empty and the json one a sound
+    annotation; the timed answer at 0.2 is a phrase (-1.54) that would
+    otherwise supply the chunk's words."""
+    ladder = _ladders()[9]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == [
+        ("verbose_json", 0.0),
+        ("json", 0.0),
+        ("verbose_json", 0.2),
+    ]
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.30s) timed answer \" I'm going to go back to "
+        'the next one." at temperature 0.2 has mean log-probability -1.54 < '
+        "-1.0 and the json answer carries no other speech: not speech, kept no "
+        "text"
+    ]
+
+
+def test_a_looping_music_chunk_is_judged_by_its_timed_answer_at_0_2(caplog):
+    """The same music with the recorded log-probabilities: the timed answer
+    at 0.0 is empty, the one at 0.2 (-1.14) is improbable and the json answer
+    at 0.2 holds only sound annotations: not speech."""
+    ladder = _ladders()[7]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == [
+        ("verbose_json", 0.0),
+        ("json", 0.0),
+        ("verbose_json", 0.2),
+        ("json", 0.2),
+    ]
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
+    assert decisions == [
+        f"clip.wav: chunk 0 (0.00-29.70s) timed answer {server.raw('verbose_json', 0.2)!r} "
+        "at temperature 0.2 has mean log-probability -1.14 < -1.0 and the json "
+        "answer carries no other speech: not speech, kept no text"
+    ]
+
+
+# Elephant Dream's first chunk on the cluster's server: an improbable timed
+# answer over Proog's opening lines, which the json answer carries.
+ELEPHANT_TIMED = " I'm sorry."
+ELEPHANT_SPEECH = (
+    " At the left we can see... we can see... at the right we can see the hat"
+    " snarlers. Everything is safe, perfectly safe. Emo? Emo?"
+)
+
+
+def _improbable_then(json_text: str):
+    requests: list[tuple[str, float]] = []
+
+    def server(chunk, language, timestamps, temperature=0.0):
+        requests.append((response_format(timestamps), temperature))
+        if timestamps:
+            return ChunkTranscript(
+                text=ELEPHANT_TIMED,
+                language="en",
+                segments=_segments((0.0, 2.0, ELEPHANT_TIMED)),
+                avg_logprob=-1.63,
+            )
+        return ChunkTranscript(text=json_text, language=None, segments=[])
+
+    return server, requests
+
+
+def test_speech_in_the_json_answer_outweighs_an_improbable_timed_one(caplog):
+    server, requests = _improbable_then(ELEPHANT_SPEECH)
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(_noise(29.4), server)
+
+    assert requests == [("verbose_json", 0.0), ("json", 0.0)]
+    assert transcript["segments"] == _segments(
+        (0.0, 29.4, " ".join(ELEPHANT_SPEECH.split()))
+    )
+    assert [record.getMessage() for record in caplog.records] == [
+        'clip.wav: chunk 0 (0.00-29.40s) timed answer " I\'m sorry." at '
+        "temperature 0.0 has mean log-probability -1.63 < -1.0 but the json "
+        "answer carries other speech (0.00): transcribed from json answers alone"
+    ]
+
+
+def test_a_json_answer_repeating_an_improbable_timed_one_is_not_speech():
+    server, requests = _improbable_then(ELEPHANT_TIMED)
+
+    transcript = _transcribe(_noise(29.4), server)
+
+    assert requests == [("verbose_json", 0.0), ("json", 0.0)]
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
+
+
+def test_a_timed_answer_above_0_2_is_not_judged():
+    audio = _noise(10.0)
+    server = _Server(
+        timed={
+            0: [
+                [],
+                [],
+                [(0.5, 10.0, " speech the sampling made improbable")],
+            ]
+        },
+        text={0: [" speech the sampling made improbable"] * 3},
+    )
+
+    def low_at_0_4(chunk, language, timestamps, temperature=0.0):
+        answer = server(chunk, language, timestamps, temperature)
+        if timestamps and temperature == 0.4:
+            return ChunkTranscript(
+                text=answer.text,
+                language=answer.language,
+                segments=answer.segments,
+                avg_logprob=-1.38,
+            )
+        return answer
+
+    transcript = _transcribe(audio, low_at_0_4)
+
+    assert transcript["full_text"] == "speech the sampling made improbable"
+    assert server.requests[-1] == (0, "en", "verbose_json", 0.4)
+
+
+def test_a_chunk_judged_not_speech_names_its_answer_language_for_the_next(caplog):
+    """As the server does for a whole file, the first chunk's answer names
+    the language every later chunk is asked in, also when that chunk is
+    judged not speech."""
+    audio = _noise(45.0)
+
+    def server(chunk, language, timestamps, temperature=0.0):
+        requests.append((chunk.index, language, response_format(timestamps)))
+        if chunk.index == 0:
+            return ChunkTranscript(
+                text=" Thank you.",
+                language="en",
+                segments=_segments((0.0, 2.0, " Thank you.")),
+                avg_logprob=-1.4,
+            )
+        return ChunkTranscript(
+            text=" Bonjour à tous.",
+            language="fr",
+            segments=_segments((0.5, len(chunk.samples) / RATE, " Bonjour à tous.")),
+            avg_logprob=-0.2,
+        )
+
+    requests: list[tuple[int, str | None, str]] = []
+    transcript = _transcribe(audio, server, language=None)
+
+    assert requests == [
+        (0, None, "verbose_json"),
+        (0, "en", "json"),
+        (1, "en", "verbose_json"),
+    ]
+    assert {key: transcript[key] for key in ("full_text", "language")} == {
+        "full_text": "Bonjour à tous.",
+        "language": "en",
+    }
+
+
+def test_an_answer_without_log_probabilities_is_never_judged_not_speech():
+    audio = _noise(10.0)
+    server = _Server(timed={0: [[(0.0, 10.0, " Thank you.")]]}, text={0: []})
+
+    transcript = _transcribe(audio, server)
+
+    assert server.requests == [(0, "en", "verbose_json", 0.0)]
+    assert transcript["full_text"] == "Thank you."
+
+
+def test_the_mean_log_probability_is_weighted_by_segment_duration():
+    body = {
+        "text": " a b c",
+        "segments": [
+            {"start": 0.0, "end": 1.0, "text": " a", "avg_logprob": -0.5},
+            {"start": 1.0, "end": 4.0, "text": " b", "avg_logprob": -1.0},
+            {"start": 4.0, "end": 4.0, "text": " c", "avg_logprob": -2.0},
+            {"start": 4.0, "end": 5.0, "text": " d", "avg_logprob": None},
+        ],
+    }
+
+    answer = lenient_chunk_answer(body, AudioChunk(0, 0, _noise(5.0)))
+
+    assert answer.avg_logprob == pytest.approx(
+        (1.0 * -0.5 + 3.0 * -1.0 + 0.02 * -2.0) / 4.02, abs=1e-12
+    )
+    assert segments_avg_logprob([{"start": 0.0, "end": 1.0, "text": " a"}]) is None
+    assert segments_avg_logprob(None) is None
+    assert [set(segment) for segment in answer.segments] == [
+        {"start", "end", "text"}
+    ] * 4
+
+
+def _three_chunks_with_loop_on(looping: set[int]) -> tuple[np.ndarray, _Server]:
+    audio = _noise(75.0)
+    chunks = split_for_whisper(audio)
+    assert len(chunks) == 3
+    timed = {chunk.index: [[(0.0, 4.0, f" chunk {chunk.index}")]] for chunk in chunks}
+    text = {
+        chunk.index: list(LOOPS)
+        if chunk.index in looping
+        else [f" chunk {chunk.index}"]
+        for chunk in chunks
+    }
+    return audio, _Server(timed=timed, text=text)
+
+
+def test_a_looping_chunk_is_dropped_and_the_others_kept(caplog):
+    audio, server = _three_chunks_with_loop_on({1})
+    chunks = split_for_whisper(audio)
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = transcribe_in_chunks(
+            audio,
+            server,
+            language="en",
+            source="clip.wav",
+            logger=LOGGER,
+            drop_garbled=True,
+        )
+
+    ratios = [compression_ratio(loop) for loop in LOOPS]
+    assert transcript == {
+        "full_text": "chunk 0 chunk 2",
+        "language": "en",
+        "duration": 75.0,
+        "segments": [
+            {"start": 0.0, "end": 4.0, "text": "chunk 0"},
+            {
+                "start": chunks[2].start_s,
+                "end": chunks[2].start_s + 4.0,
+                "text": "chunk 2",
+            },
+        ],
+        "dropped_chunks": [
+            {
+                "chunk_index": 1,
+                "start_s": chunks[1].start_s,
+                "end_s": chunks[1].end_s,
+                "compression_ratios": ratios,
+            }
+        ],
+    }
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "dropped from the transcript" in record.getMessage()
+    ] == [
+        f"clip.wav: chunk 1 ({chunks[1].start_s:.2f}-{chunks[1].end_s:.2f}s) came "
+        "back unusable on all 6 attempts: 6 repetition loops (compression ratio "
+        f"{', '.join(f'{ratio:.2f}' for ratio in ratios)}, above 2.4) and 0 "
+        "empty: dropped from the transcript"
+    ]
+    assert [index for index, _, _, _ in server.requests].count(2) == 2
+
+
+def test_a_transcript_with_no_looping_chunk_drops_none():
+    audio, server = _three_chunks_with_loop_on(set())
+
+    transcript = transcribe_in_chunks(
+        audio,
+        server,
+        language="en",
+        source="clip.wav",
+        logger=LOGGER,
+        drop_garbled=True,
+    )
+
+    assert (transcript["full_text"], transcript["dropped_chunks"]) == (
+        "chunk 0 chunk 1 chunk 2",
+        [],
+    )
+
+
+def test_every_chunk_looping_fails_the_transcription_even_when_dropping():
+    audio, server = _three_chunks_with_loop_on({0, 1, 2})
+    chunks = split_for_whisper(audio)
+
+    with pytest.raises(GarbledTranscriptError) as caught:
+        transcribe_in_chunks(
+            audio,
+            server,
+            language="en",
+            source="clip.wav",
+            logger=LOGGER,
+            drop_garbled=True,
+        )
+
+    assert (caught.value.chunk_index, caught.value.start_s, caught.value.end_s) == (
+        2,
+        chunks[2].start_s,
+        75.0,
+    )
+
+
+def test_a_looping_chunk_fails_the_transcription_unless_dropping():
+    audio, server = _three_chunks_with_loop_on({1})
+
+    with pytest.raises(GarbledTranscriptError) as caught:
+        _transcribe(audio, server)
+
+    assert caught.value.chunk_index == 1
+    assert [index for index, _, _, _ in server.requests] == [0, 0, 1] + [1] * 6
+
+
+class _WindowServer:
+    """Answers the whole chunk with ``chunk_answer`` and each phrase window,
+    told apart by where its audio starts in the chunk, with
+    ``windows[start_s]`` (text, mean log-probability); records every request
+    as (format, temperature, window start or None for the chunk)."""
+
+    def __init__(self, chunk_answer, windows, json_text=""):
+        self.chunk_answer = chunk_answer
+        self.windows = windows
+        self.json_text = json_text
+        self.requests: list[tuple[str, float, float | None]] = []
+
+    def __call__(self, chunk, language, timestamps, temperature=0.0):
+        whole = chunk.start_sample == 0 and len(chunk.samples) == self.length
+        offset = None if whole else round(chunk.start_sample / RATE, 2)
+        self.requests.append((response_format(timestamps), temperature, offset))
+        if whole:
+            if timestamps:
+                return self.chunk_answer
+            return ChunkTranscript(text=self.json_text, language=None, segments=[])
+        text, logprob = self.windows[offset]
+        return ChunkTranscript(
+            text=text,
+            language="en",
+            segments=_segments((0.0, len(chunk.samples) / RATE, text)),
+            avg_logprob=logprob,
+        )
+
+
+def _spanning(text: str, seconds: float, logprob: float) -> ChunkTranscript:
+    return ChunkTranscript(
+        text=text,
+        language="en",
+        segments=_segments((0.0, seconds, text)),
+        avg_logprob=logprob,
+    )
+
+
+def _transcribed_with_windows(server, seconds, caplog):
+    server.length = round(seconds * RATE)
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(_noise(seconds), server)
+    return transcript, [
+        record.getMessage()
+        for record in caplog.records
+        if "not speech" in record.getMessage()
+        or "json answers alone" in record.getMessage()
+    ]
+
+
+def test_phrase_windows_cover_the_chunk_every_hop():
+    whole = AudioChunk(3, 16000, _noise(29.4))
+    short = AudioChunk(0, 0, _noise(5.7))
+
+    assert [
+        (window.index, window.start_s, round(window.end_s, 2))
+        for window in phrase_windows(whole)
+    ] == [
+        (3, 1.0 + start, round(1.0 + start + PHRASE_WINDOW_S, 2))
+        for start in (0.0, 2.5, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5)
+    ] + [(3, 20.4, 30.4)]
+    assert [(w.start_s, round(w.end_s, 2)) for w in phrase_windows(short)] == [
+        (0.0, 3.2),
+        (2.5, 5.7),
+    ]
+
+
+def test_music_captions_are_no_speech_words():
+    assert [speech_words(text) for text in ("Музыка", " Music", "Müzik", "Go!")] == [
+        [],
+        [],
+        [],
+        ["go"],
+    ]
+
+
+# Music answered as "Thank you." in one segment spanning the chunk, at a
+# probable -0.42; windows say it only 10.0 s and 19.1 s in, further apart than
+# half a window (Elephant Dream's chunk 20 on the cluster's server).
+THANK_YOU_WINDOWS = {
+    0.0: (" Music", -1.19),
+    2.5: (" Music", -0.51),
+    5.0: (" .", -1.07),
+    7.5: (" Music", -1.07),
+    10.0: (" Thank you.", -0.56),
+    12.5: (" Music", -0.98),
+    15.0: (" .", -0.47),
+    17.5: (" .", -1.03),
+    19.1: (" Thank you.", -0.55),
+}
+
+
+def test_a_spanning_phrase_no_two_nearby_windows_say_is_not_speech(caplog):
+    server = _WindowServer(_spanning(" Thank you.", 29.1, -0.42), THANK_YOU_WINDOWS)
+
+    transcript, decisions = _transcribed_with_windows(server, 29.1, caplog)
+
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
+    assert server.requests == [
+        ("verbose_json", 0.0, None),
+        ("json", 0.0, None),
+    ] + [("verbose_json", 0.0, start) for start in THANK_YOU_WINDOWS]
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.10s) timed answer ' Thank you.' at temperature "
+        "0.0 spans the chunk in one segment and no two nearby windows say it: "
+        "not speech, kept no text"
+    ]
+
+
+def test_a_spanning_phrase_two_nearby_windows_say_is_kept(caplog):
+    """A line under a score ("Follow me!", Elephant Dream's chunk 3): the
+    first windows say it at -0.47 and -0.40, and no more are asked."""
+    windows = {0.0: (" Follow me!", -0.47), 2.5: (" Follow me!", -0.4)}
+    server = _WindowServer(
+        _spanning(" Follow me!", 29.4, -0.82), windows, json_text=" Follow me!"
+    )
+
+    transcript, decisions = _transcribed_with_windows(server, 29.4, caplog)
+
+    assert transcript["segments"] == _segments((0.0, 29.4, "Follow me!"))
+    assert server.requests == [
+        ("verbose_json", 0.0, None),
+        ("json", 0.0, None),
+        ("verbose_json", 0.0, 0.0),
+        ("verbose_json", 0.0, 2.5),
+    ]
+    assert decisions == []
+
+
+def test_windows_saying_the_phrase_improbably_do_not_make_it_speech(caplog):
+    windows = {start: (" Thank you.", -1.2) for start in THANK_YOU_WINDOWS}
+    server = _WindowServer(_spanning(" Thank you.", 29.1, -0.42), windows)
+
+    transcript, _ = _transcribed_with_windows(server, 29.1, caplog)
+
+    assert (transcript["full_text"], len(server.requests)) == ("", 11)
+
+
+def test_a_short_json_phrase_refuting_an_improbable_timed_one_needs_windows(caplog):
+    """Big Buck Bunny's chunk 0: timed "*Dramatic Music*" at -1.69, json
+    "Oh", which no window says."""
+    windows = {start: (" *music*", -1.29) for start in THANK_YOU_WINDOWS}
+    windows[19.1] = (" *gunshot*", -0.52)
+    server = _WindowServer(
+        _spanning(" *Dramatic Music*", 29.1, -1.69), windows, json_text=" Oh"
+    )
+
+    transcript, decisions = _transcribed_with_windows(server, 29.1, caplog)
+
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
+    assert server.requests == [
+        ("verbose_json", 0.0, None),
+        ("json", 0.0, None),
+    ] + [("verbose_json", 0.0, start) for start in THANK_YOU_WINDOWS]
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.10s) timed answer ' *Dramatic Music*' at "
+        "temperature 0.0 has mean log-probability -1.69 < -1.0 and the json "
+        "answer carries no other speech: not speech, kept no text"
+    ]
+
+
+def test_a_short_json_phrase_two_nearby_windows_say_refutes(caplog):
+    """Elephant Dream's chunk 4: timed "*Sexy music*" at -1.75; the json
+    answer "Listen." five times is what windows 12.5 s and 17.5 s in say."""
+    windows = {
+        0.0: (" Oh", -1.32),
+        2.5: (" .", -1.01),
+        5.0: (" Oh, my God.", -1.29),
+        7.5: (" .", -1.27),
+        10.0: (" - -", -1.46),
+        12.5: (" Hurry now!  Listen!  Oh!", -0.51),
+        15.0: (" Let's go.  Let's go.", -0.23),
+        17.5: (" Listen.  Listen.  Listen.", -0.26),
+    }
+    listen = " Listen. Listen. Listen. Listen. Listen."
+    server = _WindowServer(
+        _spanning(" *Sexy music*", 29.4, -1.75), windows, json_text=listen
+    )
+
+    transcript, decisions = _transcribed_with_windows(server, 29.4, caplog)
+
+    assert transcript["segments"] == _segments((0.0, 29.4, " ".join(listen.split())))
+    assert server.requests[-1] == ("verbose_json", 0.0, 17.5)
+    assert len(server.requests) == 10
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.40s) timed answer ' *Sexy music*' at "
+        "temperature 0.0 has mean log-probability -1.75 < -1.0 but the json "
+        "answer carries other speech (0.00): transcribed from json answers alone"
+    ]
+
+
+CUT_SHORT = Path(__file__).parent / "fixtures" / "vllm_whisper_cut_short_json.json"
+
+
+@pytest.mark.parametrize("opening_words", [1, 18])
+def test_a_json_answer_cut_short_of_a_timed_loop_counts_as_that_loop(
+    opening_words, caplog
+):
+    """v_-vnSFKJNB94 chunk 1 on the cluster's server: in one run the json
+    answer at 0.0 was " The", in another the first 18 words, of the 104-word
+    timed loop asked with it; in the rest it looped in json too and the chunk
+    raised."""
+    recorded = json.loads(CUT_SHORT.read_text())
+    timed = {float(t): text for t, text in recorded["timed"].items()}
+    untimed = {float(t): text for t, text in recorded["json"].items()}
+    untimed[0.0] = " " + " ".join(timed[0.0].split()[:opening_words])
+    requests: list[tuple[str, float]] = []
+
+    def server(chunk, language, timestamps, temperature=0.0):
+        requests.append((response_format(timestamps), temperature))
+        if not timestamps:
+            return ChunkTranscript(untimed[temperature], None, [])
+        text = timed[temperature]
+        return ChunkTranscript(
+            text, "en", _segments((0.0, 10.0, text), (10.0, 29.0, text))
+        )
+
+    with (
+        caplog.at_level(logging.WARNING, logger=LOGGER.name),
+        pytest.raises(GarbledTranscriptError) as caught,
+    ):
+        _transcribe(_noise(29.0), server)
+
+    assert compression_ratio(untimed[0.0]) < GARBLED_COMPRESSION_RATIO
+    assert caught.value.compression_ratios[0] == compression_ratio(timed[0.0])
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "cut short" in record.getMessage()
+    ][0] == (
+        f"clip.wav: chunk 0 (0.00-29.00s) json answer {untimed[0.0]!r} on "
+        "attempt 1 of 6 at temperature 0.0 is a timed repetition loop cut short"
+    )
+    assert requests[:2] == [("verbose_json", 0.0), ("json", 0.0)]
+
+
+def test_a_spanning_phrase_asked_above_0_2_is_checked_against_windows(caplog):
+    """Big Buck Bunny's chunk 18: the timed answers at 0.0 and 0.2 are
+    empty, the one at 0.4 is "Thank you." over the whole chunk, and the json
+    answer is "¶¶"."""
+    windows = {start: (" ¶¶", -0.3) for start in THANK_YOU_WINDOWS}
+    answers = iter(
+        [
+            ChunkTranscript("", "en", [], None),
+            ChunkTranscript("", "en", [], None),
+            _spanning(" Thank you.", 29.1, -0.61),
+        ]
+    )
+    server = _WindowServer(None, windows, json_text=" ¶¶")
+
+    def timed_in_turn(chunk, language, timestamps, temperature=0.0):
+        if chunk.start_sample == 0 and len(chunk.samples) == server.length:
+            server.requests.append((response_format(timestamps), temperature, None))
+            if timestamps:
+                return next(answers)
+            return ChunkTranscript(" ¶¶", None, [])
+        return server(chunk, language, timestamps, temperature)
+
+    timed_in_turn.length = server.length = round(29.1 * RATE)
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(_noise(29.1), timed_in_turn)
+
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
+    assert server.requests[:4] == [
+        ("verbose_json", 0.0, None),
+        ("json", 0.0, None),
+        ("verbose_json", 0.2, None),
+        ("verbose_json", 0.4, None),
+    ]
+    assert server.requests[4:] == [
+        ("verbose_json", 0.0, start) for start in THANK_YOU_WINDOWS
+    ]
+
+
+def test_a_spanning_timed_answer_is_not_checked_when_the_json_one_says_more(caplog):
+    """A game stream (v_-uJnucdW6DY chunk 6): the json answer at 0.0 is the
+    commentary; the timed answer at 0.0 looped and the one at 0.2 is
+    "*Dramatic music*" over the whole chunk. No window is asked."""
+    commentary = (
+        " Alright. Ah! Bring your ankle! What's the point of the last hit?"
+        " There you go! Oh, good kiss!"
+    )
+    answers = iter(
+        [
+            ChunkTranscript(
+                " *Squeak* Alright." * 40,
+                "en",
+                _segments((0.0, 2.0, " *Squeak*"), (2.0, 29.5, " Alright.")),
+                -0.27,
+            ),
+            _spanning(" *Dramatic music*", 29.5, -1.94),
+        ]
+    )
+    requests: list[tuple[str, float, int]] = []
+
+    def server(chunk, language, timestamps, temperature=0.0):
+        requests.append((response_format(timestamps), temperature, len(chunk.samples)))
+        if timestamps:
+            return next(answers)
+        return ChunkTranscript(commentary, None, [])
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(_noise(29.5), server)
+
+    whole = round(29.5 * RATE)
+    assert requests == [
+        ("verbose_json", 0.0, whole),
+        ("json", 0.0, whole),
+        ("verbose_json", 0.2, whole),
+    ]
+    assert transcript["full_text"] == " ".join(commentary.split())

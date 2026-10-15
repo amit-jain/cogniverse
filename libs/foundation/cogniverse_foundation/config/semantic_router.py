@@ -24,7 +24,7 @@ direct-to-backend path is identical.
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Dict, Mapping, Optional
 
 from cogniverse_foundation.config.llm_factory import (
     create_budgeted_dspy_lm,
@@ -32,6 +32,7 @@ from cogniverse_foundation.config.llm_factory import (
     dspy_lm_kwargs,
 )
 from cogniverse_foundation.config.unified_config import (
+    LLMConfig,
     LLMEndpointConfig,
     RouterTier,
     SemanticRouterConfig,
@@ -208,12 +209,46 @@ def record_served_model(response: object) -> None:
         span.set_attribute(LLM_SERVED_MODEL_ATTRIBUTE, str(model))
 
 
+# The inference service the router serves the pro tier's free-form calls
+# from. Without it deployed, the student serves them.
+TEACHER_SERVICE = "vllm_llm_teacher"
+
+
+def pro_tier_endpoint(
+    llm_config: LLMConfig,
+    inference_service_urls: Mapping[str, str],
+    student: LLMEndpointConfig,
+) -> Optional[LLMEndpointConfig]:
+    """The endpoint the router serves the pro tier's free-form calls from.
+
+    The teacher when ``TEACHER_SERVICE`` is deployed and the teacher endpoint
+    is configured, ``student`` when it is not deployed, ``None`` when it is
+    deployed but no teacher endpoint is configured.
+    """
+    if TEACHER_SERVICE not in inference_service_urls:
+        return student
+    return llm_config.teacher
+
+
+def _serving_endpoint(endpoint: LLMEndpointConfig):
+    from cogniverse_foundation.config.routed_lm import ServingEndpoint
+
+    return ServingEndpoint(
+        api_base=endpoint.api_base,
+        model=endpoint.model,
+        context_window=endpoint.context_window,
+        num_retries=endpoint.num_retries,
+        request_timeout=endpoint.request_timeout,
+    )
+
+
 def create_routed_lm(
     endpoint: LLMEndpointConfig,
     config: SemanticRouterConfig,
     tenant_id: str,
     tier: RouterTier,
     call_site: str,
+    pro_endpoint: Optional[LLMEndpointConfig] = None,
 ) -> "dspy.LM":
     """Build the LM for ``tenant_id`` on ``tier``, routed through the router
     when ``config.enabled``.
@@ -226,9 +261,15 @@ def create_routed_lm(
     ``RoutedLMCallFailed`` subclass naming the tenant, the tier, the routed
     model and the upstream status, so a credential refusal is distinguishable
     from a quota, an outage and a request the router would not accept.
-    Successful completions record their served model on the current span. An
-    LM on the classification entry also carries ``endpoint`` as the endpoint
-    serving it, which bounds free-text prompts (``RoutedLM.prompt_allowance``).
+    Successful completions record their served model on the current span.
+
+    The LM also carries the endpoints the router may serve its calls from,
+    which bound its prompts (``RoutedLM.prompt_allowance``). ``endpoint`` is
+    the student: it serves the classification and vision entries on every
+    tier and the free-form entries on free and base. On pro the free-form
+    entries are served by ``pro_endpoint``, or by the student when that
+    fails; with no ``pro_endpoint`` those endpoints are not known. None are
+    known when ``endpoint`` is the router itself.
     """
     routed = apply_semantic_routing(
         endpoint=endpoint,
@@ -240,22 +281,21 @@ def create_routed_lm(
     if not config.enabled:
         return create_dspy_lm(routed, tenant_id=tenant_id)
 
-    from cogniverse_foundation.config.routed_lm import RoutedLM, ServingEndpoint
+    from cogniverse_foundation.config.routed_lm import RoutedLM
 
-    # The classification entry serves every tier from the endpoint the call
-    # site is configured with; the other entries pick an upstream per request.
-    served_by = (
-        ServingEndpoint(
-            api_base=endpoint.api_base,
-            model=endpoint.model,
-            context_window=endpoint.context_window,
-            num_retries=endpoint.num_retries,
-        )
-        if routed.model == config.classification_model
-        and endpoint.api_base
-        and endpoint.api_base != config.semantic_router_url
+    student = (
+        _serving_endpoint(endpoint)
+        if endpoint.api_base and endpoint.api_base != config.semantic_router_url
         else None
     )
+    if student is None:
+        served_by = ()
+    elif tier != "pro" or routed.model == config.classification_model:
+        served_by = (student,)
+    elif pro_endpoint is None:
+        served_by = ()
+    else:
+        served_by = tuple(dict.fromkeys((_serving_endpoint(pro_endpoint), student)))
     return RoutedLM(
         routed.model,
         tenant_id=tenant_id,
@@ -263,6 +303,7 @@ def create_routed_lm(
         tier=tier,
         vision_model=config.vision_model,
         served_by=served_by,
+        student_endpoint=student,
         student_model=(
             config.classification_model
             if routed.model in (config.routed_model, config.short_reasoning_model)
@@ -349,11 +390,17 @@ def routed_lm_context_for(
     router = resolve_semantic_router_config(cfg)
     if not router.enabled:
         return _direct()
-    ep = endpoint if endpoint is not None else cfg.get_llm_config().resolve(agent_name)
+    llm_config = cfg.get_llm_config()
+    ep = endpoint if endpoint is not None else llm_config.resolve(agent_name)
     tier = resolve_tenant_tier(cfg, tenant_id)
     return dspy.context(
         lm=create_routed_lm(
-            ep, router, tenant_id, tier, call_site=call_site or agent_name
+            ep,
+            router,
+            tenant_id,
+            tier,
+            call_site=call_site or agent_name,
+            pro_endpoint=pro_tier_endpoint(llm_config, cfg.inference_service_urls, ep),
         )
     )
 

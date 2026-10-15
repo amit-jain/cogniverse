@@ -58,5 +58,34 @@ class TestSummariseKeys:
         assert out["keyframes"] == 3
         assert out["documents_fed"] == 7
 
+    def test_carries_the_chunks_dropped_from_the_transcript(self):
+        dropped = [
+            {
+                "chunk_index": 1,
+                "start_s": 29.3,
+                "end_s": 58.3,
+                "compression_ratios": [3.58, 36.47],
+            }
+        ]
+        env = self._envelope(
+            results={
+                "keyframes": [1],
+                "transcript": {"full_text": "a", "dropped_chunks": dropped},
+            }
+        )
+        assert _summarise(env)["transcript_dropped_chunks"] == dropped
+
+    def test_a_transcript_recording_no_drops_carries_none(self):
+        with_none = _summarise(
+            self._envelope(
+                results={"transcript": {"full_text": "a", "dropped_chunks": []}}
+            )
+        )
+        without_record = _summarise(
+            self._envelope(results={"transcript": {"full_text": "a"}})
+        )
+        assert with_none["transcript_dropped_chunks"] == []
+        assert "transcript_dropped_chunks" not in without_record
+
     def test_non_dict_input_returns_raw_type(self):
         assert _summarise("not a dict") == {"raw_type": "str"}

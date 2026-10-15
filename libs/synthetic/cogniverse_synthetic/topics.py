@@ -25,6 +25,10 @@ _WORD_JOINERS = frozenset("-‐‑’'/_")
 _GROUP_OPENERS = {"(": ")", "[": "]", "{": "}", "“": "”"}
 _GROUP_CLOSERS = {close: opener for opener, close in _GROUP_OPENERS.items()}
 _TOGGLE_DELIMITERS = frozenset('"')
+# Markdown a VLM writes into a description: bold/underline markers and list
+# bullets. They are layout, not words a query could carry.
+_MARKDOWN_EMPHASIS_RE = re.compile(r"\*\*|__")
+_MARKDOWN_BULLET_RE = re.compile(r"(?:^|(?<=\s))[*•]\s+")
 
 
 def _advance_groups(open_groups: list[str], char: str) -> bool:
@@ -72,12 +76,15 @@ def topic_source_text(
     *,
     field_order: Sequence[str] = CANONICAL_TOPIC_FIELDS,
 ) -> str | None:
-    """The first field of ``item`` carrying descriptive text."""
+    """The first field of ``item`` carrying descriptive text, its markdown
+    emphasis markers and list bullets removed."""
     for field_name in field_order:
         value = item.get(field_name)
         if not isinstance(value, str):
             continue
-        text = normalize_text(value)
+        text = normalize_text(
+            _MARKDOWN_BULLET_RE.sub("", _MARKDOWN_EMPHASIS_RE.sub("", value))
+        )
         if not text or is_identifier_topic(text) or is_non_speech_annotation(text):
             continue
         return text

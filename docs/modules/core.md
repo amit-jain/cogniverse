@@ -201,6 +201,21 @@ call it makes: the call gets the time that is left, no attempt starts once the
 caller stops waiting (cancelled, or the deadline passed), and past the deadline
 it raises `LMCallDeadlineExceeded` naming the bound LM's endpoint.
 
+An input passed to `call_dspy` as `PromptLines(lines, head=(), tail=())`
+(`cogniverse_core.agents.base`) is sent as the text `fit_lines` keeps for the
+LM the call is sent to: the request is rendered by the bound adapter from the
+signature and demonstrations of the module's one predictor, under the agent's
+adapter LM and prompt overlay, and counted against the bound LM's
+`prompt_allowance_for` that request (`docs/modules/foundation.md`). `lines`
+come most important first and are kept while they fit, the next one cut to
+fit; `head` and `tail` are always kept, and shedding a line is logged at
+WARNING. Rendering and counting run off the event loop. One `PromptLines`
+input is fitted per call; a module that calls no predictor sends no request
+and gets every line; a module calling more than one predictor raises
+`ValueError`, an LM that knows no allowance raises
+`ContextWindowUnavailableError`, and a head and tail that overflow alone raise
+`PromptBudgetExceededError` — no request is sent in either case.
+
 `call_dspy(..., output_field=..., stream_view=...)` emits token events with the
 new text in `message` and `data={"accumulated": ..., "output_field": ...}`.
 `accumulated` is always a prefix of the stripped value the module returns for
@@ -2245,11 +2260,24 @@ temperature)` sends one request with `response_format(timestamps)` and
   unusable without segments. An unusable answer is asked again at the next of
   `FALLBACK_TEMPERATURES` (0.0, 0.2, 0.4, 0.6, 0.8, 1.0; `TRANSCRIBE_ATTEMPTS`
   is 6). Speech that itself repeats compresses like a loop but comes back in
-  the same words however it is sampled: when every `json` answer looped and
-  one at `LOOP_BREAKING_TEMPERATURE` (0.8) or above agrees with the
-  temperature-0 answer (`word_agreement` at least
-  `REPEATED_SPEECH_AGREEMENT`, 0.5), `repeated_speech` keeps the
-  temperature-0 answer. Otherwise, when neither a `json` answer nor a timed
+  the same words however it is sampled, which a decode loop does not. Once the
+  `json` answer at 0.0 has looped, no later `json` answer is kept before one
+  at `LOOP_BREAKING_TEMPERATURE` (0.8) or above is compared with it: the first
+  of those that agrees with it (`word_agreement` at least
+  `REPEATED_SPEECH_AGREEMENT`, 0.5) keeps the temperature-0 answer as
+  repeated speech (`repeated_speech`) and no further `json` answer is asked.
+  When neither agrees, once every temperature is asked, the lowest-temperature
+  answer that an answer at another loop-breaking temperature agrees with is
+  kept (one asked at 0.8 or above only when it did not loop); else the
+  lowest-temperature answer `MAJORITY_SUPPORT` (2) others agree with, half of
+  the six; else the lowest-temperature usable one when it holds no speech
+  words outside sound annotations (`speech_words`: `*Ding*`, `[Music]`,
+  `(laughs)`, `♪`). Otherwise the chunk has no faithful `json` answer. While
+  the `json` answer at 0.0 looped, a timed answer running to the end does not
+  stop the `json` answers, and a timed answer that does not agree with the
+  transcript is not used for timing, as is one kept at 0.8 or above. A timed
+  answer kept at 0.8 or above that carries speech is not used as the
+  transcript of a chunk with no faithful `json` answer. Otherwise, when neither a `json` answer nor a timed
   answer running to the end is usable, the chunk raises
   `GarbledTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
   `compression_ratios`, `attempts`) if any looped, else `EmptyTranscriptError`
@@ -2257,6 +2285,43 @@ temperature)` sends one request with `response_format(timestamps)` and
   `attempts`). When no `verbose_json` answer is usable, the text spans the
   chunk. A silent chunk may come back empty. A request that fails is not
   repeated.
+- A timed answer is doubted when it is improbable or does not locate what it
+  says. Improbable: the chunk's first `verbose_json` answer carrying
+  per-segment `avg_logprob`, asked at or below `NON_SPEECH_JUDGED_TEMPERATURE`
+  (0.2: the answer at 0.0, or the one at 0.2 when that came back empty),
+  averages, weighted by segment duration (`segments_avg_logprob`, kept as
+  `ChunkTranscript.avg_logprob`), below `NON_SPEECH_AVG_LOGPROB` (-1.0).
+  Unlocated (`unlocated_phrase`): a usable timed answer that is one segment
+  spanning the chunk (to within `UNLOCATED_END_S`, 0.1 s, of its end) with at
+  most `UNLOCATED_PHRASE_WORDS` (12) speech words.
+- A doubted answer is resolved against the chunk's `json` answer at the same
+  temperature, or the one already kept. When that carries more speech words
+  and does not agree with it, it is speech the timed decode missed (Elephant
+  Dream's opening lines, timed as "I'm sorry." at -1.63): the chunk is
+  transcribed from its `json` answers alone, as one segment spanning it, a
+  `json` answer of at most 12 speech words only when `phrase_heard` confirms
+  it. Otherwise an unlocated phrase `phrase_heard` confirms is the timed
+  answer ("Follow me!" under Elephant Dream's score); any other doubted chunk
+  is not speech: it gets an empty transcript and is asked nothing more.
+- `phrase_heard(phrase, chunk, transcribe_chunk, language)` asks the chunk's
+  `phrase_windows` (`PHRASE_WINDOW_S`, 10 s, every `PHRASE_WINDOW_HOP_S`,
+  2.5 s, the last ending with the chunk) with timestamps at 0.0, until two
+  windows starting at most half a window apart each say the phrase
+  (`word_agreement` at least 0.5, or every one of its speech words) at a mean
+  log-probability of at least -1.0. A line of up to 7.5 s lies whole in two
+  such windows; the phrases the cluster's server gives music ("Thank you.",
+  "I'm sorry.", subtitle credits) recurred in no two.
+- `speech_words` leaves out sound annotations (`*Ding*`, `[Music]`,
+  `(laughs)`, `♪`) and the bare words Whisper captions music with
+  (`MUSIC_CAPTIONS`: "Music", "Музыка", "Müzik", ...).
+- A `json` answer that is the opening words of the looping timed answer asked
+  with it, fewer than all of them, is that loop cut short and counts as a
+  loop.
+- `transcribe_in_chunks(..., drop_garbled=True)` (the ingest path) leaves a
+  chunk raising `GarbledTranscriptError` out of the transcript, logs it at
+  WARNING and lists it under `dropped_chunks` (`chunk_index`, `start_s`,
+  `end_s`, `compression_ratios`); the error is raised only when every chunk
+  raises it. Without it, the error propagates.
 - With no language named, the first chunk's timed answer names it and every
   later request is sent in it, as the server does for a whole file. Chunk texts
   join with a space, or with nothing for `ja` and `zh`.

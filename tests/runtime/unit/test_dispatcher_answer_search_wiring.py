@@ -2669,7 +2669,7 @@ class TestTenantTierResolutionRunsOffTheEventLoop:
         """Replace the LM build with a blocking one that records its thread."""
         sentinel = MagicMock(name="tenant_routed_lm")
 
-        def _create(endpoint, router, tenant_id, tier, call_site):
+        def _create(endpoint, router, tenant_id, tier, call_site, pro_endpoint=None):
             sink.append((threading.get_ident(), call_site, tenant_id))
             time.sleep(block_s)
             return sentinel
@@ -2791,7 +2791,7 @@ class TestTenantTierResolutionRunsOffTheEventLoop:
         }
         arrived = threading.Barrier(2, timeout=10)
 
-        def _create(endpoint, router, tenant_id, tier, call_site):
+        def _create(endpoint, router, tenant_id, tier, call_site, pro_endpoint=None):
             arrived.wait()
             return per_tenant[tenant_id]
 

@@ -166,10 +166,77 @@ def unusable_asr(request):
         thread.join(5)
 
 
-def make_video(path: Path, *, audio: bool):
-    args = ["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=5:d=1"]
+@pytest.fixture
+def second_chunk_looping_asr():
+    """Answers every chunk "hello there", timed short of its end, except that
+    the json answers for the chunk after the first 30 s loop at every
+    temperature."""
+    asked: list[tuple[float, str, float]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"data":[{"id":"openai/whisper-tiny"}]}')
+
+        def do_POST(self):
+            sent = self.rfile.read(int(self.headers["Content-Length"]))
+            temperature = float(_TEMPERATURE.search(sent).group(1))
+            timed = b'name="response_format"\r\n\r\nverbose_json\r\n' in sent
+            audio = sent[sent.index(b"RIFF") : sent.rindex(b"\r\n--")]
+            seconds = len(pcm16_wav_samples(audio)) / 16000
+            first = seconds > 20
+            asked.append(
+                (round(seconds, 2), "verbose_json" if timed else "json", temperature)
+            )
+            if timed:
+                answer = {
+                    "text": " hello there",
+                    "language": "en",
+                    "duration": str(seconds),
+                    "segments": [{"start": 0.0, "end": 1.0, "text": " hello there"}],
+                }
+            else:
+                answer = {"text": " hello there" if first else LOOPS[temperature]}
+            body = json.dumps(answer).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", asked
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
+def make_video(path: Path, *, audio: bool, seconds: int = 1):
+    args = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=blue:s=64x64:r=5:d={seconds}",
+    ]
     if audio:
-        args += ["-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac"]
+        args += [
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=440:duration={seconds}",
+            "-c:a",
+            "aac",
+        ]
     subprocess.run(
         args + ["-c:v", "libx264", "-threads", "1", str(path)],
         check=True,
@@ -493,3 +560,44 @@ async def test_a_cancel_during_a_videos_retries_stops_before_the_next_video(
             "recoverable": True,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_looping_chunk_is_left_out_and_the_job_reports_it(
+    job_redis, second_chunk_looping_asr, tmp_path
+):
+    endpoint, asked = second_chunk_looping_asr
+    video = tmp_path / "spoken.mp4"
+    make_video(video, audio=True, seconds=45)
+    pipeline = transcription_pipeline(tmp_path, endpoint)
+    chunks = split_for_whisper(
+        pcm16_wav_samples(AudioProcessor._extract_audio_wav(video))
+    )
+    dropped = [
+        {
+            "chunk_index": 1,
+            "start_s": chunks[1].start_s,
+            "end_s": chunks[1].end_s,
+            "compression_ratios": [compression_ratio(loop) for loop in LOOPS.values()],
+        }
+    ]
+
+    result = await pipeline.process_video_async_with_strategies(video)
+    submitted, events = await run_job(job_redis, pipeline, video)
+
+    assert len(chunks) == 2
+    assert result["status"] == "completed"
+    transcript = result["results"]["transcript"]
+    assert (
+        transcript["full_text"],
+        transcript["segments"],
+        transcript["dropped_chunks"],
+    ) == ("hello there", [{"start": 0.0, "end": 1.0, "text": "hello there"}], dropped)
+    assert [event["state"] for event in events] == ["queued", "running", "complete"]
+    assert events[-1]["result"]["transcript_dropped_chunks"] == dropped
+    assert [(fmt, t) for seconds, fmt, t in asked if seconds < 20] == 2 * (
+        [("verbose_json", 0.0)] + [("json", t) for t in FALLBACK_TEMPERATURES]
+    )
+    assert await idempotency.get_done_ingest_id(job_redis, submitted.sha) == (
+        submitted.ingest_id
+    )

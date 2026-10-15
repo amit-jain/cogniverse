@@ -15,8 +15,10 @@ from cogniverse_agents.summarizer_agent import (
     ThinkingPhase,
     VLMInterface,
 )
+from cogniverse_core.agents.base import PromptLines
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from tests.utils.llm_endpoint_stub import served_dspy_lm
 
 # Endpoint the agent routes per request when _initialize_vlm_client is mocked.
 _GATEWAY_TEST_ENDPOINT = LLMEndpointConfig(
@@ -217,6 +219,7 @@ class TestSummarizerAgent:
             return next(_start, 100.25)
 
         with (
+            served_dspy_lm() as endpoint,
             patch("cogniverse_agents.summarizer_agent.dspy.context"),
             patch(
                 "cogniverse_agents.summarizer_agent.time.monotonic",
@@ -224,6 +227,8 @@ class TestSummarizerAgent:
             ),
         ):
             result = await agent._summarize(request)
+        # The brief content was counted against the endpoint's window once.
+        assert len(endpoint.posted("/tokenize")) == 1
 
         assert result.summary is not None
         assert len(result.summary) > 0
@@ -495,10 +500,12 @@ class TestSummarizerAgentCoreFunctionality:
             )
         )
         assert captured["query"] == "AI technology overview"
-        assert captured["content"] == (
-            "- AI Technology Demo: video\n"
-            "- Machine Learning Tutorial: video\n"
-            "- AI Research Paper: text"
+        assert captured["content"] == PromptLines(
+            [
+                "- AI Technology Demo: video",
+                "- Machine Learning Tutorial: video",
+                "- AI Research Paper: text",
+            ]
         )
 
     @pytest.mark.ci_fast
@@ -566,12 +573,16 @@ class TestSummarizerAgentCoreFunctionality:
             )
         )
         assert captured["query"] == "AI technology overview"
-        assert captured["content"] == (
-            "- AI Technology Demo (video, relevance 0.90): Comprehensive AI demo\n"
-            "- Machine Learning Tutorial (video, relevance 0.80): ML tutorial content\n"
-            "- AI Research Paper (text, relevance 0.70): Academic research on AI\n"
-            "Key themes: AI, technology, machine learning\n"
-            "Visual insights: Technical demo"
+        assert captured["content"] == PromptLines(
+            [
+                "- AI Technology Demo (video, relevance 0.90): Comprehensive AI demo",
+                "- Machine Learning Tutorial (video, relevance 0.80): ML tutorial content",
+                "- AI Research Paper (text, relevance 0.70): Academic research on AI",
+            ],
+            tail=[
+                "Key themes: AI, technology, machine learning",
+                "Visual insights: Technical demo",
+            ],
         )
 
     @pytest.mark.ci_fast
@@ -909,6 +920,7 @@ class TestEmitProgressStreaming:
 
         events = []
         with (
+            served_dspy_lm(),
             patch("cogniverse_agents.summarizer_agent.dspy.context"),
             patch("dspy.streamify", streamify),
         ):

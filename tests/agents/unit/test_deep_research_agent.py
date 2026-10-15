@@ -196,7 +196,9 @@ async def test_research_runs_under_request_tenant_routed_lm(monkeypatch):
 
     captured: dict = {}
 
-    def fake_create_routed_lm(ep, router, tenant_id, tier, call_site):
+    def fake_create_routed_lm(
+        ep, router, tenant_id, tier, call_site, pro_endpoint=None
+    ):
         captured["endpoint"] = ep
         captured["tenant_id"] = tenant_id
         captured["tier"] = tier

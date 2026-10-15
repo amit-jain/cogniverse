@@ -16,19 +16,24 @@ import pytest
 
 from cogniverse_foundation.config.token_budget import (
     SINGLE_TURN_TEMPLATE_TOKENS,
+    TOKENIZE_TIMEOUT_SECONDS,
     ContextWindowUnavailableError,
+    FittedLines,
     FittedText,
     PromptAllowance,
     PromptBudgetExceededError,
     ResolvedContextWindow,
     TokenBudget,
     TokenCountUnavailableError,
+    combined_allowance,
     cut_notice,
     extract_context_window,
     fetch_context_window,
+    fit_lines,
     fit_messages,
     fit_text,
     fitting_demonstrations,
+    line_cut_notice,
     litellm_message_counter,
     resolve_context_window,
     served_message_counter,
@@ -779,9 +784,15 @@ def _serve_tokenize(
             "failures": list(failures or []),
         },
     )
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = _ConcurrentServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, f"http://127.0.0.1:{server.server_address[1]}/v1", received
+
+
+class _ConcurrentServer(ThreadingHTTPServer):
+    # socketserver's listen backlog of 5 resets connections when the
+    # concurrency tests connect eight clients at once on a loaded host.
+    request_queue_size = 64
 
 
 @pytest.mark.unit
@@ -1126,7 +1137,14 @@ class TestSharedServedMessageCounter:
             thread.start()
         for thread in pool:
             thread.join()
-        assert built == [(api_base, STUDENT_MODEL, {"retries": 2})]
+        assert built == [
+            (
+                api_base,
+                STUDENT_MODEL,
+                {"retries": 2, "timeout_seconds": TOKENIZE_TIMEOUT_SECONDS},
+            )
+        ]
+        assert TOKENIZE_TIMEOUT_SECONDS == 30.0
         assert len(counters) == threads
         assert {id(counter) for counter in counters} == {id(counters[0])}
 
@@ -1139,3 +1157,273 @@ class TestSharedServedMessageCounter:
         other = shared_served_message_counter("http://127.0.0.1:10/v1", STUDENT_MODEL)
         assert again is first
         assert other is not first
+
+
+def _word_counter(per_word: int = 1, calls: list | None = None):
+    """Four tokens per message plus ``per_word`` per whitespace-separated word."""
+
+    def count(messages):
+        if calls is not None:
+            calls.append(messages)
+        return sum(
+            4 + per_word * len(str(message["content"]).split()) for message in messages
+        )
+
+    return count
+
+
+def _words_allowance(tokens: int, *, per_word: int = 1, calls=None, margin=0):
+    return PromptAllowance(
+        budget=TokenBudget(
+            model=STUDENT_MODEL,
+            context_window=tokens + 200 + margin,
+            reserved_output=200,
+        ),
+        count_tokens=_word_counter(per_word, calls),
+        margin=margin,
+    )
+
+
+def _summary_request(text: str) -> list[dict]:
+    # 4 + 3 words for the system message, 4 + words of the text for the user.
+    return [
+        {"role": "system", "content": "Summarize the results."},
+        {"role": "user", "content": text},
+    ]
+
+
+def _hit_line(index: int, words: int = 30, tag: str = "h") -> str:
+    """``words`` five-character words: ``line[:6 * w]`` holds exactly ``w``."""
+
+    return " ".join(f"{tag}{index}w{word:02d}" for word in range(words))
+
+
+HEAD = ["Total Results: 4"]
+TAIL = ["Key themes: video"]
+# 7 (system) + 4 (user) + 3 (head) + 3 (tail) before any hit line.
+FIXED_TOKENS = 17
+LINE_NOTICE_WORDS = 15
+
+
+@pytest.mark.unit
+class TestFitLinesToTheAllowance:
+    """A prompt field of lines keeps the most important ones that fit."""
+
+    LINES = [_hit_line(index) for index in range(4)]
+
+    def test_the_line_notice_names_what_was_kept(self):
+        assert line_cut_notice(48, 179) == (
+            " [cut to fit the model's context window: the first 48 of 179 "
+            "characters are shown]"
+        )
+        assert len(line_cut_notice(48, 179).split()) == LINE_NOTICE_WORDS
+        assert len(self.LINES[0]) == 179
+
+    def test_every_line_that_fits_is_sent_after_one_count(self):
+        calls: list = []
+        fitted = fit_lines(
+            self.LINES,
+            allowance=_words_allowance(FIXED_TOKENS + 120, calls=calls),
+            render=_summary_request,
+            head=HEAD,
+            tail=TAIL,
+        )
+
+        text = "\n".join([*HEAD, *self.LINES, *TAIL])
+        assert fitted == FittedLines(
+            text=text,
+            kept_lines=4,
+            cut_chars=None,
+            total_lines=4,
+            input_tokens=FIXED_TOKENS + 120,
+        )
+        assert calls == [_summary_request(text)]
+
+    def test_an_overflow_keeps_the_leading_lines_and_cuts_the_next(self):
+        # 100 tokens: two whole lines (77), then eight words of the third
+        # with the fifteen-word notice reach exactly 100.
+        fitted = fit_lines(
+            self.LINES,
+            allowance=_words_allowance(100),
+            render=_summary_request,
+            head=HEAD,
+            tail=TAIL,
+        )
+
+        assert fitted == FittedLines(
+            text="\n".join(
+                [
+                    *HEAD,
+                    self.LINES[0],
+                    self.LINES[1],
+                    self.LINES[2][:48] + line_cut_notice(48, 179),
+                    *TAIL,
+                ]
+            ),
+            kept_lines=2,
+            cut_chars=48,
+            total_lines=4,
+            input_tokens=100,
+        )
+        assert self.LINES[2][:48] == (
+            "h2w00 h2w01 h2w02 h2w03 h2w04 h2w05 h2w06 h2w07 "
+        )
+
+    def test_a_line_too_long_to_fit_whole_is_cut_even_when_it_is_the_first(self):
+        fitted = fit_lines(
+            self.LINES,
+            allowance=_words_allowance(FIXED_TOKENS + LINE_NOTICE_WORDS + 5),
+            render=_summary_request,
+            head=HEAD,
+            tail=TAIL,
+        )
+
+        assert fitted == FittedLines(
+            text="\n".join(
+                [*HEAD, self.LINES[0][:30] + line_cut_notice(30, 179), *TAIL]
+            ),
+            kept_lines=0,
+            cut_chars=30,
+            total_lines=4,
+            input_tokens=FIXED_TOKENS + LINE_NOTICE_WORDS + 5,
+        )
+
+    def test_a_next_line_with_no_room_for_its_notice_is_left_out(self):
+        fitted = fit_lines(
+            self.LINES,
+            allowance=_words_allowance(FIXED_TOKENS + 60 + LINE_NOTICE_WORDS - 1),
+            render=_summary_request,
+            head=HEAD,
+            tail=TAIL,
+        )
+
+        assert fitted == FittedLines(
+            text="\n".join([*HEAD, *self.LINES[:2], *TAIL]),
+            kept_lines=2,
+            cut_chars=None,
+            total_lines=4,
+            input_tokens=FIXED_TOKENS + 60,
+        )
+
+    def test_a_head_and_tail_that_overflow_alone_name_the_budget(self):
+        allowance = _words_allowance(FIXED_TOKENS - 1)
+
+        with pytest.raises(PromptBudgetExceededError) as raised:
+            fit_lines(
+                self.LINES,
+                allowance=allowance,
+                render=_summary_request,
+                head=HEAD,
+                tail=TAIL,
+            )
+        assert (raised.value.input_tokens, raised.value.context_window) == (
+            FIXED_TOKENS,
+            FIXED_TOKENS - 1 + 200,
+        )
+
+    def test_a_counter_that_cannot_count_stops_the_fit(self):
+        def unavailable(messages):
+            raise TokenCountUnavailableError("tokenize is down")
+
+        allowance = PromptAllowance(
+            budget=TokenBudget(
+                model=STUDENT_MODEL, context_window=300, reserved_output=200
+            ),
+            count_tokens=unavailable,
+        )
+        with pytest.raises(TokenCountUnavailableError, match="tokenize is down"):
+            fit_lines(self.LINES, allowance=allowance, render=_summary_request)
+
+    def test_concurrent_fits_each_keep_their_own_lines(self):
+        threads = 8
+        barrier = threading.Barrier(threads)
+        corpora = {
+            index: [_hit_line(line, tag="abcdefgh"[index]) for line in range(4)]
+            for index in range(threads)
+        }
+        results: dict[int, FittedLines] = {}
+        allowance = _words_allowance(100)
+
+        def worker(index: int) -> None:
+            barrier.wait()
+            results[index] = fit_lines(
+                corpora[index],
+                allowance=allowance,
+                render=_summary_request,
+                head=HEAD,
+                tail=TAIL,
+            )
+
+        pool = [
+            threading.Thread(target=worker, args=(index,)) for index in range(threads)
+        ]
+        for thread in pool:
+            thread.start()
+        for thread in pool:
+            thread.join()
+
+        assert {index: fitted.text for index, fitted in results.items()} == {
+            index: "\n".join(
+                [
+                    *HEAD,
+                    *lines[:2],
+                    lines[2][:48] + line_cut_notice(48, 179),
+                    *TAIL,
+                ]
+            )
+            for index, lines in corpora.items()
+        }
+
+
+@pytest.mark.unit
+class TestCombinedAllowance:
+    """A request any of several endpoints may serve fits every one of them."""
+
+    MESSAGES_20 = [{"role": "user", "content": "word " * 20}]
+    MESSAGES_30 = [{"role": "user", "content": "word " * 30}]
+
+    def test_a_request_within_every_allowance_is_within_the_combined_one(self):
+        wide = _words_allowance(100)
+        narrow = _words_allowance(50, per_word=2)
+        combined = combined_allowance([wide, narrow])
+
+        assert combined.budget is narrow.budget
+        assert combined.tokens == 50
+        # wide: 24 of 100, narrow: 44 of 50 -> 6 under the narrow one.
+        assert combined.count_tokens(self.MESSAGES_20) == 44
+
+    def test_an_overrun_of_either_allowance_is_an_overrun_of_the_combined_one(self):
+        # The wider allowance counts with the costlier tokenizer.
+        wide = _words_allowance(70, per_word=2)
+        narrow = _words_allowance(50)
+        combined = combined_allowance([wide, narrow])
+
+        assert combined.tokens == 50
+        # wide: 64 of 70 (6 under), narrow: 34 of 50 (16 under).
+        assert combined.count_tokens(self.MESSAGES_30) == 44
+        # 40 words: wide 84 of 70 (14 over), narrow 44 of 50.
+        assert combined.count_tokens([{"role": "user", "content": "w " * 40}]) == 64
+
+    def test_one_allowance_is_its_own_combination(self):
+        only = _words_allowance(100)
+        assert combined_allowance([only]) is only
+
+    def test_no_allowance_is_refused(self):
+        with pytest.raises(ValueError, match="at least one allowance"):
+            combined_allowance([])
+
+    def test_an_endpoint_that_cannot_count_stops_the_combined_count(self):
+        def unavailable(messages):
+            raise TokenCountUnavailableError("the teacher cannot count")
+
+        teacher = PromptAllowance(
+            budget=TokenBudget(
+                model="openai/Qwen/Qwen3-14B-AWQ",
+                context_window=4096,
+                reserved_output=1000,
+            ),
+            count_tokens=unavailable,
+        )
+        combined = combined_allowance([_words_allowance(7000), teacher])
+        with pytest.raises(TokenCountUnavailableError, match="cannot count"):
+            combined.count_tokens(self.MESSAGES_20)

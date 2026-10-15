@@ -166,6 +166,7 @@ _TERMINAL_UPLOAD_KEYS = frozenset(
         "wait_timed_out",
         "graph_nodes",
         "graph_edges",
+        "transcript_dropped_chunks",
     }
 )
 

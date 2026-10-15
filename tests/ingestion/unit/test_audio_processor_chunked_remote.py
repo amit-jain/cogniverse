@@ -246,6 +246,7 @@ def test_an_empty_answer_for_a_chunk_is_asked_again_and_the_transcript_is_whole(
             {"start": 0.0, "end": 28.5, "text": "spoken-0"},
             {"start": 29.5, "end": 44.0, "text": "spoken-29.5"},
         ],
+        "dropped_chunks": [],
     }
     written = json.loads(
         (tmp_path / "transcripts" / "spoken_transcript.json").read_text()
@@ -275,12 +276,48 @@ def test_a_chunk_empty_on_every_attempt_fails_the_transcription_naming_it(tmp_pa
     assert not (tmp_path / "transcripts" / "spoken_transcript.json").exists()
 
 
-def test_a_chunk_whose_text_loops_on_every_attempt_fails_the_transcription(
+def test_a_chunk_whose_text_loops_on_every_attempt_is_left_out_of_the_transcript(
     tmp_path,
 ):
     clip = _clip(tmp_path, "spoken")
-    ratios = ", ".join(f"{compression_ratio(loop):.2f}" for loop in LOOPS.values())
+    ratios = [compression_ratio(loop) for loop in LOOPS.values()]
     with _Whisper(untimed_loop=[("spoken", 29.5)]) as whisper:
+        transcript = _processor(whisper.url).transcribe_audio(clip, tmp_path)
+
+    assert {
+        key: transcript[key] for key in transcript if key != "transcription_time"
+    } == {
+        "video_id": "spoken",
+        "video_path": str(clip),
+        "model": MODEL,
+        "language": "en",
+        "duration": 45.0,
+        "full_text": "spoken-0",
+        "segments": [{"start": 0.0, "end": 28.5, "text": "spoken-0"}],
+        "dropped_chunks": [
+            {
+                "chunk_index": 1,
+                "start_s": 29.5,
+                "end_s": 45.0,
+                "compression_ratios": ratios,
+            }
+        ],
+    }
+    assert whisper.formats == [
+        ("spoken", 0.0, V, 0.0),
+        ("spoken", 0.0, J, 0.0),
+        ("spoken", 29.5, V, 0.0),
+    ] + [("spoken", 29.5, J, t) for t in FALLBACK_TEMPERATURES]
+    written = json.loads(
+        (tmp_path / "transcripts" / "spoken_transcript.json").read_text()
+    )
+    assert written["dropped_chunks"] == transcript["dropped_chunks"]
+
+
+def test_every_chunk_looping_on_every_attempt_fails_the_transcription(tmp_path):
+    clip = _clip(tmp_path, "spoken")
+    ratios = ", ".join(f"{compression_ratio(loop):.2f}" for loop in LOOPS.values())
+    with _Whisper(untimed_loop=[("spoken", 0.0), ("spoken", 29.5)]) as whisper:
         transcript = _processor(whisper.url).transcribe_audio(clip, tmp_path)
 
     assert transcript == {
@@ -294,10 +331,10 @@ def test_a_chunk_whose_text_loops_on_every_attempt_fails_the_transcription(
         "segments": [],
     }
     assert whisper.formats == [
-        ("spoken", 0.0, V, 0.0),
-        ("spoken", 0.0, J, 0.0),
-        ("spoken", 29.5, V, 0.0),
-    ] + [("spoken", 29.5, J, t) for t in FALLBACK_TEMPERATURES]
+        ("spoken", start, fmt, t)
+        for start in (0.0, 29.5)
+        for fmt, t in [(V, 0.0)] + [(J, t) for t in FALLBACK_TEMPERATURES]
+    ]
     assert not (tmp_path / "transcripts" / "spoken_transcript.json").exists()
 
 
@@ -368,6 +405,49 @@ def test_concurrent_jobs_each_retry_their_own_chunk_and_keep_their_own_text(
         ]
         assert len(retried) == 3
         assert retried[0] == retried[1] == retried[2]
+
+
+def test_concurrent_jobs_each_record_only_their_own_dropped_chunk(tmp_path):
+    names = [f"job{index}" for index in range(8)]
+    looping = set(names[::2])
+    clips = {
+        name: _clip(tmp_path, name, frequency=300.0 + 40.0 * index)
+        for index, name in enumerate(names)
+    }
+    ready = threading.Barrier(len(names))
+
+    with _Whisper(untimed_loop=[(name, 29.5) for name in looping]) as whisper:
+        processor = _processor(whisper.url)
+
+        def run(name: str) -> dict:
+            ready.wait(timeout=10)
+            return processor.transcribe_audio(clips[name], tmp_path / name)
+
+        with ThreadPoolExecutor(max_workers=len(names)) as pool:
+            transcripts = dict(zip(names, pool.map(run, names)))
+
+    ratios = [compression_ratio(loop) for loop in LOOPS.values()]
+    assert {
+        name: (transcripts[name]["full_text"], transcripts[name]["dropped_chunks"])
+        for name in names
+    } == {
+        name: (
+            (
+                f"{name}-0",
+                [
+                    {
+                        "chunk_index": 1,
+                        "start_s": 29.5,
+                        "end_s": 45.0,
+                        "compression_ratios": ratios,
+                    }
+                ],
+            )
+            if name in looping
+            else (f"{name}-0 {name}-29.5", [])
+        )
+        for name in names
+    }
 
 
 def test_a_chunk_that_never_decodes_with_timestamps_keeps_its_untimed_text(

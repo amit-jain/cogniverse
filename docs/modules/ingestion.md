@@ -1518,13 +1518,23 @@ the `verbose_json` segments (`whisper_transcription.align_text` in
 every later request. Segment times count from the start of the file. An answer
 that is a repetition loop, or empty for a chunk whose loudest 25 ms frame
 reaches -60 dBFS, is sent again at the next sampling temperature, up to six
-times; a chunk whose `json` answer repeats at every temperature in the same
-words keeps its temperature-0 answer as repeated speech; any other chunk whose
-`json` answer never comes back usable fails the
-transcription with `GarbledTranscriptError` or `EmptyTranscriptError` naming
-the chunk and its time range; a silent chunk may come back empty. A failed
-transcription returns the `error` dict, which fails the pipeline's
-transcription stage.
+times; once a chunk's `json` answer at temperature 0 has looped, no later
+answer is kept before the answers at 0.8 and above are compared with it: one
+that agrees keeps the temperature-0 answer as repeated speech, otherwise the
+lowest-temperature answer one of them corroborates, else the one half of the
+six answers agree on, else a usable answer that holds only sound annotations;
+a chunk with none of these, and any other chunk whose `json` answer never
+comes back usable, raises `GarbledTranscriptError` or `EmptyTranscriptError`
+naming the chunk and its time range; a silent chunk may come back empty, as
+does a chunk whose timed answer is improbable (temperature 0 or 0.2, mean
+token log-probability below -1.0) or one segment spanning the chunk that no two
+nearby 10 s windows repeat, while its `json` answer carries no other speech. A chunk raising `GarbledTranscriptError` is left
+out of the transcript, which lists it under `dropped_chunks` (`chunk_index`,
+`start_s`, `end_s`, `compression_ratios`); the ingest's terminal result and
+the upload response carry that list as `transcript_dropped_chunks`. The
+transcription fails only when every chunk raises `GarbledTranscriptError`, or
+when one raises `EmptyTranscriptError`. A failed transcription returns the
+`error` dict, which fails the pipeline's transcription stage.
 
 ```python
 processor = AudioProcessor(logger, model="whisper-large-v3", language="auto")

@@ -55,6 +55,7 @@ import pytest
 import yaml
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
+from cogniverse_foundation.config.routed_lm import ROUTED_PROMPT_MARGIN_TOKENS
 from cogniverse_foundation.config.semantic_router import routed_model_for
 from cogniverse_foundation.config.unified_config import (
     DEFAULT_ROUTER_TIER,
@@ -1443,3 +1444,126 @@ def test_a_repeat_routing_only_one_call_is_neither_branch():
         f"counter deltas: {_live_deltas(base_default=1)!r} != "
         f"{_live_deltas(classification_base=1, base_default=1)!r}",
     ]
+
+
+# Ten grounding hits a tenant's search answered "summarize what machine
+# learning is" with, flattened by the dispatcher; whole, their summary prompt
+# overflows both chat models' windows.
+OVERFLOWING_HITS = (
+    Path(__file__).resolve().parents[1]
+    / "agents"
+    / "integration"
+    / "fixtures"
+    / "answer_grounding_hits.json"
+)
+_FIT_LINE = re.compile(
+    r"SummarizerAgent content keeps (?P<kept>\d+) of (?P<total>\d+) lines whole "
+    r"and (?P<cut>\d+) characters of the next to fit the context window of "
+    r"(?P<model>\S+): input_tokens=(?P<tokens>\d+)$"
+)
+_RUNTIME_DEPLOY = "deploy/cogniverse-runtime"
+
+
+def _runtime_fit_lines(start: datetime) -> list[re.Match]:
+    since = (start - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stdout = _kubectl("logs", _RUNTIME_DEPLOY, f"--since-time={since}", timeout=180)
+    return [m for m in map(_FIT_LINE.search, stdout.splitlines()) if m]
+
+
+def test_a_pro_summary_of_hits_overflowing_the_teacher_is_fitted_to_its_window(
+    phoenix_client_session,
+):
+    """A pro tenant's text summary enters on the auto alias, which the router
+    serves from pro-reasoning: the teacher, behind its own Envoy cluster. The
+    threaded hits overflow the teacher's window, so the summarizer keeps the
+    leading ones that fit it, and the request the teacher answers - its prompt
+    tokens as the router logs them from the completion - fits the window with
+    the completion the summarizer reserves."""
+    llm_config = json.loads(_deployed_configmap("cogniverse-config", "config.json"))[
+        "llm_config"
+    ]
+    teacher, primary = llm_config["teacher"], llm_config["primary"]
+    window, reserved = teacher["context_window"], primary["max_tokens"]
+    allowance = window - reserved - ROUTED_PROMPT_MARGIN_TOKENS
+    routing = _deployed_routing()
+    policy = _router_policy()
+    hits = json.loads(OVERFLOWING_HITS.read_text())
+    assert (window, reserved, allowance, len(hits)) == (4096, 1000, 3064, 10)
+
+    tenant_id = unique_id("prosummary")
+    register_tenant_and_wait(tenant_id)
+    canonical = canonical_tenant_id(tenant_id)
+    assert _set_tier(tenant_id, "pro") == {"tenant_id": canonical, "tier": "pro"}
+
+    start = datetime.now(timezone.utc)
+    with httpx.Client(timeout=600.0) as client:
+        response = client.post(
+            f"{RUNTIME}/agents/{AGENT}/process",
+            json={
+                "agent_name": AGENT,
+                "query": "summarize what machine learning is",
+                "context": {"tenant_id": tenant_id, "search_results": hits},
+            },
+        )
+    end = datetime.now(timezone.utc)
+    assert response.status_code == 200, response.text[:600]
+
+    traffic = _routed_traffic(
+        _json_log_entries(_ROUTER_DEPLOY, start, end, _router_stamp)
+    )
+    mine = [r for r, user in traffic.user_by_request.items() if user == canonical]
+    assert [traffic.entrypoint_by_request[r] for r in mine] == ["auto"]
+    (request_id,) = mine
+    decision, selected = traffic.call_by_request[request_id]
+    assert (selected, policy.model_by_decision[decision]) == (
+        "pro-reasoning",
+        "pro-reasoning",
+    )
+    usage = [
+        entry
+        for entry in _json_log_entries(_ROUTER_DEPLOY, start, end, _router_stamp)
+        if entry.get("event") == "llm_usage" and entry.get("request_id") == request_id
+    ]
+    (served_usage,) = usage
+    prompt_tokens = int(served_usage["prompt_tokens"])
+    assert served_usage["model"] == "pro-reasoning"
+
+    envoy = _envoy_calls_for([request_id], start, end)
+    assert (envoy[request_id].cluster, envoy[request_id].status) == (
+        routing.cluster_for("pro-reasoning"),
+        200,
+    )
+    served, _ = _served_models(
+        phoenix_client_session,
+        TelemetryConfig().get_project_name(canonical),
+        start,
+        end,
+        {routing.served_model_by_catalog["pro-reasoning"]},
+    )
+    assert served == {teacher["model"].split("/", 1)[1]}
+
+    [fit] = [m for m in _runtime_fit_lines(start) if m["model"] == teacher["model"]]
+    kept, cut, counted = int(fit["kept"]), int(fit["cut"]), int(fit["tokens"])
+    assert (int(fit["total"]), fit["model"]) == (10, teacher["model"])
+    assert kept < 10
+    assert counted <= allowance
+    # The teacher reports the prompt it was sent, with the router's reasoning
+    # switch the count leaves to the margin.
+    assert 0 <= prompt_tokens - counted <= ROUTED_PROMPT_MARGIN_TOKENS
+    assert prompt_tokens + reserved <= window
+    print(
+        "\nPRO SUMMARY FIT "
+        + json.dumps(
+            {
+                "request_id": request_id,
+                "decision": decision,
+                "cluster": envoy[request_id].cluster,
+                "kept_whole": kept,
+                "cut_chars": cut,
+                "counted_tokens": counted,
+                "router_prompt_tokens": prompt_tokens,
+                "window": window,
+                "reserved": reserved,
+            }
+        )
+    )

@@ -21,6 +21,7 @@ import dspy
 import pytest
 
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.routed_lm import ServingEndpoint
 from cogniverse_foundation.config.semantic_router import (
     apply_semantic_routing,
     create_routed_lm,
@@ -444,6 +445,10 @@ class TestRoutedLMContextFor:
         def get_llm_config(self):
             return self._llm_config
 
+        @property
+        def inference_service_urls(self):
+            return dict(self._system_config.inference_service_urls)
+
     def test_no_endpoint_disabled_is_nullcontext(self, monkeypatch):
         # No endpoint supplied (orchestrator case) + disabled => ambient LM.
         cfg = MagicMock()
@@ -502,6 +507,58 @@ class TestRoutedLMContextFor:
         assert routed_lm.call_attempts == 2
         assert routed_lm.num_retries == 0
 
+    @pytest.mark.parametrize(
+        ("deployed", "served"),
+        [
+            ({"vllm_llm_teacher": "http://teacher"}, ("teacher", "student")),
+            ({}, ("student",)),
+        ],
+    )
+    def test_the_pro_tier_is_budgeted_by_what_serves_it(
+        self, monkeypatch, deployed, served
+    ):
+        teacher_base = "http://vllm-teacher:8102/v1"
+        primary = LLMEndpointConfig(
+            model="openai/google/gemma-4-e4b-it", api_base=DIRECT, num_retries=1
+        )
+        teacher = LLMEndpointConfig(
+            model="openai/Qwen/Qwen3-14B-AWQ",
+            api_base=teacher_base,
+            context_window=4096,
+            request_timeout=210.0,
+        )
+        cfg = self._Accessor(
+            SystemConfig(
+                semantic_router=_enabled_config(), inference_service_urls=deployed
+            ),
+            LLMConfig(primary=primary, teacher=teacher),
+        )
+        self._patch_get_config(monkeypatch, cfg)
+
+        with routed_lm_context_for(
+            object(), "acme:prod", "summarizer_agent", endpoint=primary
+        ):
+            lm = dspy.settings.lm
+
+        endpoints = {
+            "student": ServingEndpoint(
+                api_base=DIRECT,
+                model="openai/google/gemma-4-e4b-it",
+                context_window=None,
+                num_retries=1,
+                request_timeout=120.0,
+            ),
+            "teacher": ServingEndpoint(
+                api_base=teacher_base,
+                model="openai/Qwen/Qwen3-14B-AWQ",
+                context_window=4096,
+                num_retries=1,
+                request_timeout=210.0,
+            ),
+        }
+        assert (lm.tier, lm.model) == ("pro", "openai/auto")
+        assert lm.served_by == tuple(endpoints[name] for name in served)
+
     def test_config_error_propagates(self, monkeypatch):
         # No silent fallback: a broken config store surfaces, even with an
         # endpoint in hand — it does NOT quietly build a direct LM.
@@ -530,7 +587,17 @@ class TestRoutedLMContextFor:
             lm = dspy.settings.lm
         assert lm.model == "openai/auto"  # router's auto alias, not the raw id
         assert lm.kwargs["api_base"] == SR_URL  # routed
-        cfg.get_llm_config.assert_not_called()  # endpoint used, no re-resolve
+        # The endpoint is used, never re-resolved: it is what serves the call.
+        cfg.get_llm_config.return_value.resolve.assert_not_called()
+        assert lm.served_by == (
+            ServingEndpoint(
+                api_base=DIRECT,
+                model="openai/tuned",
+                context_window=None,
+                num_retries=1,
+                request_timeout=120.0,
+            ),
+        )
 
     def test_disabled_with_endpoint_builds_from_that_endpoint(self, monkeypatch):
         cfg = MagicMock()

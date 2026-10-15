@@ -11,9 +11,17 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+
+
+class _ConcurrentServer(ThreadingHTTPServer):
+    # socketserver's listen backlog of 5 resets connections when concurrency
+    # tests connect several clients at once.
+    request_queue_size = 64
 
 
 @dataclass
@@ -94,10 +102,34 @@ def serve_llm_endpoint(
         def log_message(self, *args):
             return
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = _ConcurrentServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return LLMEndpointStub(
         server=server,
         api_base=f"http://127.0.0.1:{server.server_address[1]}/v1",
         received=received,
     )
+
+
+@contextmanager
+def served_dspy_lm(context_window: int = 8192) -> Iterator[LLMEndpointStub]:
+    """Bind a direct LM on a stub endpoint publishing ``context_window``.
+
+    For a test that drives an agent's ``call_dspy`` with the module's
+    ``forward`` replaced: the call still fits its inputs to the window the
+    bound LM's endpoint publishes and counts on its ``/tokenize``.
+    """
+    import dspy
+
+    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+    stub = serve_llm_endpoint(context_window=context_window)
+    lm = create_dspy_lm(
+        LLMEndpointConfig(model="openai/test-model", api_base=stub.api_base)
+    )
+    try:
+        with dspy.context(lm=lm):
+            yield stub
+    finally:
+        stub.close()

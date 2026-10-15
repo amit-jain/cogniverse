@@ -431,6 +431,54 @@ async def test_entity_rich_pages_past_blank_rows_to_fill_requested_sample() -> N
     ]
 
 
+async def test_entity_rich_spreads_the_newest_documents_across_sources() -> None:
+    """The newest ten documents are frames of one video ingested last; the
+    sample takes the newest frame of each of three videos."""
+
+    class _PagedBackend(_RecordingBackend):
+        def query_metadata_documents(self, schema, query=None, yql=None, **kwargs):
+            self.calls.append({"schema": schema, "yql": yql, "kwargs": kwargs})
+            offset = kwargs.get("offset", 0)
+            return self.docs[offset : offset + kwargs["hits"]]
+
+    def frame(video: str, index: int) -> dict:
+        return {
+            "audio_id": video,
+            "audio_transcript": f"{video} narration {index}",
+        }
+
+    backend = _PagedBackend(
+        [frame("newest", index) for index in range(10)]
+        + [frame("older", index) for index in range(6)]
+        + [frame("oldest", index) for index in range(6)]
+    )
+
+    samples = await _querier(backend)._query_profile(
+        {
+            "profile_name": "audio_content",
+            "schema_name": "audio_content",
+            "type": "audio",
+            "pipeline_config": {
+                "generate_descriptions": False,
+                "transcribe_audio": True,
+            },
+        },
+        sample_size=3,
+        strategy="entity_rich",
+        tenant_id="acme:media",
+    )
+
+    assert [sample["transcript"] for sample in samples] == [
+        "newest narration 0",
+        "older narration 0",
+        "oldest narration 0",
+    ]
+    assert [call["kwargs"] for call in backend.calls] == [
+        {"hits": 10, "tenant_id": "acme:media"},
+        {"hits": 10, "tenant_id": "acme:media", "offset": 10},
+    ]
+
+
 async def test_entity_rich_rejects_a_repeated_backend_page() -> None:
     backend = _RecordingBackend(
         [{"audio_id": f"blank-{index}", "audio_transcript": ""} for index in range(10)]

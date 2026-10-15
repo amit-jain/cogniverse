@@ -1,0 +1,2495 @@
+{
+ "server": {
+  "model": "openai/whisper-large-v3-turbo",
+  "recorded": "2026-10-15",
+  "service": "cogniverse-vllm-asr on k3d-cogniverse-e2e"
+ },
+ "ladders": [
+  {
+   "clip": "tracked_video_audio_x36.wav",
+   "chunk": 4,
+   "chunk_len_s": 29.2,
+   "loudest_frame_dbfs": -15.2,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style or at least try Don't tell me I got another first try I'm about to light a fire and bear a grill style or at least try Don't tell me I got another first try I'm about to light a fire and bear a grill style or at least try"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " I got it on the first try... I'm about to wanna fire Bear Grylls style... Or at least try. Don't tell me I got it on the first try. I'm about to wanna fire Bear Grylls style... Or at least try... Don't tell me I got it on the first try! I'm about to wanna fire Bear Grylls style... Or at least try..."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Sorry I gotta hurt stuff but they'll have firerawdęvateergirlstyle Lee's job filth out five BR gor zostaal it least time about five BR arrivप style it least job A pop pop file I got other birthast up good about the light of fire<|24.08|><|24.08|> Bearनies style it elite job"
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.0,
+        "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+        "avg_logprob": -0.6620985751419708
+       },
+       {
+        "start": 7.0,
+        "end": 17.0,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+        "avg_logprob": -0.18498033995086688
+       },
+       {
+        "start": 17.0,
+        "end": 29.2,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+        "avg_logprob": -0.06148208426443049
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.0,
+        "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+        "avg_logprob": -0.6620985751419708
+       },
+       {
+        "start": 7.0,
+        "end": 17.0,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+        "avg_logprob": -0.18498033995086688
+       },
+       {
+        "start": 17.0,
+        "end": 29.2,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+        "avg_logprob": -0.06142341779712062
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.  Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 6.8,
+        "text": " I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+        "avg_logprob": -0.6890444663456745
+       },
+       {
+        "start": 9.28,
+        "end": 16.88,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+        "avg_logprob": -0.13897741741252942
+       },
+       {
+        "start": 19.6,
+        "end": 29.2,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try.",
+        "avg_logprob": -0.032806808680048094
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try.  Ha ha ha don't tell me I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. Ha ha ha don't tell me I got another first try. I'm about to light a fire and bear grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.92,
+        "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try.",
+        "avg_logprob": -0.792044406506018
+       },
+       {
+        "start": 7.92,
+        "end": 29.2,
+        "text": " Ha ha ha don't tell me I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. Ha ha ha don't tell me I got another first try. I'm about to light a fire and bear grill style. Hit or at least try.",
+        "avg_logprob": -0.244710532134377
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " I got it on the first try...  I'm about to fire Bear Grylls-style...  or at least try...  *laughs* Don't tell ya I got it on the first try...  I'm about to fire Bear Grylls-style... or at least try...  -ohhh...  don't tell ya I got it on the first try...  I'm about to fire Bear Grylls-style... or at least try...",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 3.3000000000000003,
+        "text": " I got it on the first try...",
+        "avg_logprob": -1.2019015053287148
+       },
+       {
+        "start": 3.3000000000000003,
+        "end": 6.2,
+        "text": " I'm about to fire Bear Grylls-style...",
+        "avg_logprob": -0.8141605970117131
+       },
+       {
+        "start": 6.2,
+        "end": 9.38,
+        "text": " or at least try...",
+        "avg_logprob": -0.9494957985090358
+       },
+       {
+        "start": 9.38,
+        "end": 13.280000000000001,
+        "text": " *laughs* Don't tell ya I got it on the first try...",
+        "avg_logprob": -0.7700469633290434
+       },
+       {
+        "start": 13.280000000000001,
+        "end": 16.42,
+        "text": " I'm about to fire Bear Grylls-style... or at least try...",
+        "avg_logprob": -0.4643354596605365
+       },
+       {
+        "start": 16.42,
+        "end": 19.26,
+        "text": " -ohhh...",
+        "avg_logprob": -2.9757625261942544
+       },
+       {
+        "start": 19.26,
+        "end": 23.26,
+        "text": " don't tell ya I got it on the first try...",
+        "avg_logprob": -0.3575127032028312
+       },
+       {
+        "start": 23.26,
+        "end": 29.2,
+        "text": " I'm about to fire Bear Grylls-style... or at least try...",
+        "avg_logprob": -0.09342920025243841
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " I Got Anotherroc проф Williams.  in cuantovate alkohatsu.  Bearessionalsia ג'l.  at leastاع the역प Westerners. in cuantovate conocогда Balanceterrorik.  at least  at least cocoh Mandनies.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " I Got Anotherroc проф Williams.",
+        "avg_logprob": -6.277645177311367
+       },
+       {
+        "start": 3.3000000000000003,
+        "end": 6.0,
+        "text": " in cuantovate alkohatsu.",
+        "avg_logprob": -7.072365230984158
+       },
+       {
+        "start": 14.32,
+        "end": 16.32,
+        "text": " Bearessionalsia ג'l.",
+        "avg_logprob": -4.3904146432876585
+       },
+       {
+        "start": 10.92,
+        "end": 26.86,
+        "text": " at leastاع the역प Westerners. in cuantovate conocогда Balanceterrorik.",
+        "avg_logprob": -5.990407416508312
+       },
+       {
+        "start": 26.5,
+        "end": 28.080000000000002,
+        "text": " at least",
+        "avg_logprob": -2.869008166482672
+       },
+       {
+        "start": 28.080000000000002,
+        "end": 29.2,
+        "text": " at least cocoh Mandनies.",
+        "avg_logprob": -4.887779095023871
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "tracked_video_audio_x36.wav",
+   "chunk": 11,
+   "chunk_len_s": 29.2,
+   "loudest_frame_dbfs": -15.2,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit, or at least try. I'm about to light a fire and bear grill style. Hit, or at least try. I'm about to light a fire and bear grill style. Hit, or at least try. I'm about to light a fire and bear grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I.."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I!���� douyyyvate activatedanstAnir��ervession МУЗЫКАермермермерм scarclpm Harvey Ha�理!!. inạạạạạạạạàiài papelnессессессессессессессессzustzust nostravvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv DAVID � Her anime кğimizikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaikkaиту Ha Buddhist�이�이�이�이�이�이�이�이�이 d d d d d d d d d d d d d d d d d d d d d d d d d d d d�이�이�이�이�이�이�이�이�이�이�이�이�이�이�이�이�이�이yyyy!!!!!个ranranranran d d d d d d d d d dạo itemsaffaff"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For the first try! Ha ha don't tell me I got another first try! I'm about to light a fire and be a grill style. Hit! Or at least try. Ha ha don't tell me I got another first try! I'm about to light a fire and be a grill style. Hit! Or at least try. Hahaha don't tell me I got another first try! I'm about to light a fire and be a grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " For 구 alone cause that's a long time in peace. Based on the biginda berville footprint of income. It makes it so very simple. * arrivण Western nest. in the end* If I didn't see it, because it's gonna make it like this."
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.2,
+        "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+        "avg_logprob": -0.18972790131332432
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.2,
+        "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+        "avg_logprob": -0.18967261558740348
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " try. Don't tell me I got another first try. I'm about to fire Bear Grylls style. Or at least try.  Don't tell me I got another first try. I'm about to fire Bear Grylls style. Or at least try.  Don't tell me I got another first try. I'm about to fire Bear Grylls style.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 10.32,
+        "text": " try. Don't tell me I got another first try. I'm about to fire Bear Grylls style. Or at least try.",
+        "avg_logprob": -0.6070102783851326
+       },
+       {
+        "start": 12.96,
+        "end": 20.32,
+        "text": " Don't tell me I got another first try. I'm about to fire Bear Grylls style. Or at least try.",
+        "avg_logprob": -0.06357545963068592
+       },
+       {
+        "start": 22.96,
+        "end": 29.2,
+        "text": " Don't tell me I got another first try. I'm about to fire Bear Grylls style.",
+        "avg_logprob": -0.02165140388134877
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 6.0,
+        "text": " try haha don't tell me i got another first try haha",
+        "avg_logprob": -0.8900419792958668
+       },
+       {
+        "start": 6.0,
+        "end": 16.0,
+        "text": " I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha",
+        "avg_logprob": -0.3427882857504301
+       },
+       {
+        "start": 16.0,
+        "end": 25.580000000000002,
+        "text": " I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha",
+        "avg_logprob": -0.27251988944675154
+       },
+       {
+        "start": 25.580000000000002,
+        "end": 29.2,
+        "text": " I'm about to light a fire and bear grills style",
+        "avg_logprob": -0.05526949092745781
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For this trough  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style  Or at least trough.  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style  Or at least trough  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " For this trough",
+        "avg_logprob": -2.9580549796422324
+       },
+       {
+        "start": 2.94,
+        "end": 4.94,
+        "text": " Don't tell me, I got another first trough",
+        "avg_logprob": -0.44287766308452076
+       },
+       {
+        "start": 7.0200000000000005,
+        "end": 9.02,
+        "text": " I'm about to light a fire and bear grill style",
+        "avg_logprob": -0.38468253512222034
+       },
+       {
+        "start": 9.66,
+        "end": 11.66,
+        "text": " Or at least trough.",
+        "avg_logprob": -0.7582494889447844
+       },
+       {
+        "start": 13.5,
+        "end": 15.74,
+        "text": " Don't tell me, I got another first trough",
+        "avg_logprob": -0.43280749173181204
+       },
+       {
+        "start": 16.84,
+        "end": 18.84,
+        "text": " I'm about to light a fire and bear grill style",
+        "avg_logprob": -0.11064183975283343
+       },
+       {
+        "start": 19.44,
+        "end": 21.44,
+        "text": " Or at least trough",
+        "avg_logprob": -0.15174903492152225
+       },
+       {
+        "start": 23.12,
+        "end": 25.12,
+        "text": " Don't tell me, I got another first trough",
+        "avg_logprob": -0.0975290739812548
+       },
+       {
+        "start": 27.2,
+        "end": 29.2,
+        "text": " I'm about to light a fire and bear grill style",
+        "avg_logprob": -0.012513154043027988
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " For this trroc  Don't tell me, I got another first trroc  I'm about to light a fire Nor' at least tr dost  Don't tell me, I got another first tr DIE  I'm about to light a fire Nor' at least trener  I'm about to light a fire Nor' at least tr dl post  I'm about to light a fire Nor' at least tr rad compost  I'm about to light a fire Nor' at least tr DAVID",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " For this trroc",
+        "avg_logprob": -5.123672882715861
+       },
+       {
+        "start": 2.94,
+        "end": 4.94,
+        "text": " Don't tell me, I got another first trroc",
+        "avg_logprob": -0.4390678053291944
+       },
+       {
+        "start": 7.0200000000000005,
+        "end": 9.02,
+        "text": " I'm about to light a fire Nor' at least tr dost",
+        "avg_logprob": -2.2995840010543662
+       },
+       {
+        "start": 12.9,
+        "end": 14.9,
+        "text": " Don't tell me, I got another first tr DIE",
+        "avg_logprob": -1.0848113250685856
+       },
+       {
+        "start": 15.860000000000001,
+        "end": 17.900000000000002,
+        "text": " I'm about to light a fire Nor' at least trener",
+        "avg_logprob": -1.26691295686954
+       },
+       {
+        "start": 22.240000000000002,
+        "end": 24.64,
+        "text": " I'm about to light a fire Nor' at least tr dl post",
+        "avg_logprob": -1.368706762605143
+       },
+       {
+        "start": 25.28,
+        "end": 27.28,
+        "text": " I'm about to light a fire Nor' at least tr rad compost",
+        "avg_logprob": -1.3937713242412428
+       },
+       {
+        "start": 27.28,
+        "end": 29.2,
+        "text": " I'm about to light a fire Nor' at least tr DAVID",
+        "avg_logprob": -0.9741164778165209
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "tracked_video_audio_x36.wav",
+   "chunk": 11,
+   "chunk_len_s": 29.2,
+   "loudest_frame_dbfs": -15.2,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " I Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe Schwe"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I got another first try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style. Hit or at least try. I'm about to light a fire and bear grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For the first try! Ha ha don't tell me I got another first try! I'm about to light a fire and be a grill style. Hit! Or at least try. Ha ha don't tell me I got another first try! I'm about to light a fire and be a grill style. Hit! Or at least try. Hahaha don't tell me I got another first try! I'm about to light a fire and be a grill style."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " For 구 alone cause that's a long time in peace. Based on the biginda berville footprint of income. It makes it so very simple. * arrivण Western nest. in the end* If I didn't see it, because it's gonna make it like this."
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.2,
+        "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+        "avg_logprob": -0.18972790131332432
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.2,
+        "text": " try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grill style.",
+        "avg_logprob": -0.18967261558740348
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.2",
+      "segments": []
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha  I'm about to light a fire and bear grills style",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 6.0,
+        "text": " try haha don't tell me i got another first try haha",
+        "avg_logprob": -0.8900419792958668
+       },
+       {
+        "start": 6.0,
+        "end": 16.0,
+        "text": " I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha",
+        "avg_logprob": -0.3427882857504301
+       },
+       {
+        "start": 16.0,
+        "end": 25.580000000000002,
+        "text": " I'm about to light a fire and bear grills style hit or at least try haha don't tell me i got another first try haha",
+        "avg_logprob": -0.27251988944675154
+       },
+       {
+        "start": 25.580000000000002,
+        "end": 29.2,
+        "text": " I'm about to light a fire and bear grills style",
+        "avg_logprob": -0.05526949092745781
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For this trough  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style  Or at least trough.  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style  Or at least trough  Don't tell me, I got another first trough  I'm about to light a fire and bear grill style",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " For this trough",
+        "avg_logprob": -2.9580549796422324
+       },
+       {
+        "start": 2.94,
+        "end": 4.94,
+        "text": " Don't tell me, I got another first trough",
+        "avg_logprob": -0.44287766308452076
+       },
+       {
+        "start": 7.0200000000000005,
+        "end": 9.02,
+        "text": " I'm about to light a fire and bear grill style",
+        "avg_logprob": -0.38468253512222034
+       },
+       {
+        "start": 9.66,
+        "end": 11.66,
+        "text": " Or at least trough.",
+        "avg_logprob": -0.7582494889447844
+       },
+       {
+        "start": 13.5,
+        "end": 15.74,
+        "text": " Don't tell me, I got another first trough",
+        "avg_logprob": -0.43280749173181204
+       },
+       {
+        "start": 16.84,
+        "end": 18.84,
+        "text": " I'm about to light a fire and bear grill style",
+        "avg_logprob": -0.11064183975283343
+       },
+       {
+        "start": 19.44,
+        "end": 21.44,
+        "text": " Or at least trough",
+        "avg_logprob": -0.15174903492152225
+       },
+       {
+        "start": 23.12,
+        "end": 25.12,
+        "text": " Don't tell me, I got another first trough",
+        "avg_logprob": -0.0975290739812548
+       },
+       {
+        "start": 27.2,
+        "end": 29.2,
+        "text": " I'm about to light a fire and bear grill style",
+        "avg_logprob": -0.012513154043027988
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " For this trroc  Don't tell me, I got another first trroc  I'm about to light a fire Nor' at least tr dost  Don't tell me, I got another first tr DIE  I'm about to light a fire Nor' at least trener  I'm about to light a fire Nor' at least tr dl post  I'm about to light a fire Nor' at least tr rad compost",
+      "language": "en",
+      "duration": "29.2",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " For this trroc",
+        "avg_logprob": -5.123672882715861
+       },
+       {
+        "start": 2.94,
+        "end": 4.94,
+        "text": " Don't tell me, I got another first trroc",
+        "avg_logprob": -0.4390678053291944
+       },
+       {
+        "start": 7.0200000000000005,
+        "end": 9.02,
+        "text": " I'm about to light a fire Nor' at least tr dost",
+        "avg_logprob": -2.2995840010543662
+       },
+       {
+        "start": 12.9,
+        "end": 14.9,
+        "text": " Don't tell me, I got another first tr DIE",
+        "avg_logprob": -1.0848113250685856
+       },
+       {
+        "start": 15.860000000000001,
+        "end": 17.900000000000002,
+        "text": " I'm about to light a fire Nor' at least trener",
+        "avg_logprob": -1.26691295686954
+       },
+       {
+        "start": 22.240000000000002,
+        "end": 24.64,
+        "text": " I'm about to light a fire Nor' at least tr dl post",
+        "avg_logprob": -1.368706762605143
+       },
+       {
+        "start": 25.28,
+        "end": 29.2,
+        "text": " I'm about to light a fire Nor' at least tr rad compost",
+        "avg_logprob": -1.3593900259074871
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "tracked_video_audio_x36.wav",
+   "chunk": 10,
+   "chunk_len_s": 29.6,
+   "loudest_frame_dbfs": -15.2,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit, or at least"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear a grill style. Hit or at least"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " Don't tell me I got it on the first try. I'm about to light a fire and bear a grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear a grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear a grill style. Or at least"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " haha don't tell me i got another first try haha i'm about to light a fire and bear grill style hit or at least try haha don't tell me i got another first try haha i'm about to light a fire and bear grill style hit or at least try haha don't tell me i got another first try haha i'm about to light a fire and bear grill style hit or at least try"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " haha don't tell me i got another first try! i'm about to light a fire Bear Grylls style hit or at least try haha don't tell me I got another first try! i'm about to light a fire Bear Grylls style hit or at least try haha don't tell me I got another first try haha i'm about to light a fire Bear Grylls style hit or at least try"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Hah! Don't tell me. I got it on the first try. I'm bervrous on fire Bear Grylls style or at least try * arrivण Western nest. in the end* bo-terror I got it on the first try. I'm about to lieन Father Bear Grylls style or at least try. Hah! Don't tell me. I got it on the first try. I'm about to lieствен fire Bear Grylls style or at least try."
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.6",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.6,
+        "text": " Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Hit or at least try.",
+        "avg_logprob": -0.16621656884889607
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try.",
+      "language": "en",
+      "duration": "29.6",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.6,
+        "text": " Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try. Don't tell me I got it on the first try. I'm about to light a fire and bear grill style. Or at least try.",
+        "avg_logprob": -0.1704924497238751
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.6",
+      "segments": []
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " haha don't tell me i got another first try  haha I'm about to light a fire and bear grill style. Or at least try. haha don't tell me i got another first try haha  I'm about to light a fire and bear grill style. Hit or at least try. haha don't tell me i got another first try haha  I'm about to light a fire and bear grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.6",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.5600000000000005,
+        "text": " haha don't tell me i got another first try",
+        "avg_logprob": -0.8614224478757629
+       },
+       {
+        "start": 4.5600000000000005,
+        "end": 15.44,
+        "text": " haha I'm about to light a fire and bear grill style. Or at least try. haha don't tell me i got another first try haha",
+        "avg_logprob": -0.6913357402475911
+       },
+       {
+        "start": 15.44,
+        "end": 25.580000000000002,
+        "text": " I'm about to light a fire and bear grill style. Hit or at least try. haha don't tell me i got another first try haha",
+        "avg_logprob": -0.31978340385737075
+       },
+       {
+        "start": 25.580000000000002,
+        "end": 29.6,
+        "text": " I'm about to light a fire and bear grill style. Hit or at least try.",
+        "avg_logprob": -0.0710130340012256
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " haha don't tell me i got another first try  haha I'm about the light of fire and bear grill style. Or at least try. haha don't tell me i got another first try haha  I'm about the light of fire and bear grill style. Hit or at least try. haha don't tell me i got another first try haha  I'm about the light of fire and bear grill style. Hit or at least try.",
+      "language": "en",
+      "duration": "29.6",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.5600000000000005,
+        "text": " haha don't tell me i got another first try",
+        "avg_logprob": -0.8617621993180364
+       },
+       {
+        "start": 4.5600000000000005,
+        "end": 15.44,
+        "text": " haha I'm about the light of fire and bear grill style. Or at least try. haha don't tell me i got another first try haha",
+        "avg_logprob": -0.7794809689812903
+       },
+       {
+        "start": 15.44,
+        "end": 25.580000000000002,
+        "text": " I'm about the light of fire and bear grill style. Hit or at least try. haha don't tell me i got another first try haha",
+        "avg_logprob": -0.32610416802344844
+       },
+       {
+        "start": 25.580000000000002,
+        "end": 29.6,
+        "text": " I'm about the light of fire and bear grill style. Hit or at least try.",
+        "avg_logprob": -0.07949497683439403
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " haha don't tell me i got another first  try haha  I'm bervrous on fire גrire enjoy  or at least try haha don't tell me i got another first  try hahaterror I'm about to low  at one fire  barनies or at least try haha  don't tell me i got another first try hahaаю  I'm about to low at one fire bear grille13  Get high expertive vendo  Ifl serious experience mo Torah DAVID  I above to low at one street foolável  I got another first try haha�이크 atau resol Buddhist  throw 단 Yinley bilingual clothing smokinglim  most Jayle picturescontinor life  I don't tell me I got another first try hahapolit Still �이 I'm about to have a fire in bear gree его style  hit or at least try ho fotos ever thought era ^^ divided by Alexei  I'm about to have a fire far in bear grills style",
+      "language": "en",
+      "duration": "29.6",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.3,
+        "text": " haha don't tell me i got another first",
+        "avg_logprob": -1.1759378853338687
+       },
+       {
+        "start": 4.3,
+        "end": 6.36,
+        "text": " try haha",
+        "avg_logprob": -1.9974881820380688
+       },
+       {
+        "start": 6.36,
+        "end": 9.24,
+        "text": " I'm bervrous on fire גrire enjoy",
+        "avg_logprob": -5.670916967714827
+       },
+       {
+        "start": 9.24,
+        "end": 14.24,
+        "text": " or at least try haha don't tell me i got another first",
+        "avg_logprob": -0.5141248346927265
+       },
+       {
+        "start": 14.24,
+        "end": 18.18,
+        "text": " try hahaterror I'm about to low",
+        "avg_logprob": -3.906929586082697
+       },
+       {
+        "start": 18.18,
+        "end": 24.080000000000002,
+        "text": " at one fire",
+        "avg_logprob": -4.4993560194969175
+       },
+       {
+        "start": 24.080000000000002,
+        "end": 16.42,
+        "text": " barनies or at least try haha",
+        "avg_logprob": -3.6662629332393406
+       },
+       {
+        "start": 16.42,
+        "end": 19.38,
+        "text": " don't tell me i got another first try hahaаю",
+        "avg_logprob": -1.5126078622594763
+       },
+       {
+        "start": 19.38,
+        "end": 21.1,
+        "text": " I'm about to low at one fire bear grille13",
+        "avg_logprob": -2.137551763918824
+       },
+       {
+        "start": 21.1,
+        "end": 23.32,
+        "text": " Get high expertive vendo",
+        "avg_logprob": -7.754023960658482
+       },
+       {
+        "start": 23.32,
+        "end": 24.22,
+        "text": " Ifl serious experience mo Torah DAVID",
+        "avg_logprob": -7.953568153911167
+       },
+       {
+        "start": 24.22,
+        "end": 25.48,
+        "text": " I above to low at one street foolável",
+        "avg_logprob": -4.397263778204268
+       },
+       {
+        "start": 25.48,
+        "end": 26.7,
+        "text": " I got another first try haha�이크 atau resol Buddhist",
+        "avg_logprob": -4.217739701271057
+       },
+       {
+        "start": 26.7,
+        "end": 27.76,
+        "text": " throw 단 Yinley bilingual clothing smokinglim",
+        "avg_logprob": -9.434839177131654
+       },
+       {
+        "start": 27.76,
+        "end": 27.740000000000002,
+        "text": " most Jayle picturescontinor life",
+        "avg_logprob": -6.806879198551178
+       },
+       {
+        "start": 27.740000000000002,
+        "end": 25.740000000000002,
+        "text": " I don't tell me I got another first try hahapolit Still",
+        "avg_logprob": -2.687799310311675
+       },
+       {
+        "start": 25.740000000000002,
+        "end": 22.64,
+        "text": "�이 I'm about to have a fire in bear gree его style",
+        "avg_logprob": -3.613706627395004
+       },
+       {
+        "start": 22.64,
+        "end": 25.7,
+        "text": " hit or at least try ho fotos ever thought era ^^ divided by Alexei",
+        "avg_logprob": -4.845068220596979
+       },
+       {
+        "start": 25.7,
+        "end": 29.6,
+        "text": " I'm about to have a fire far in bear grills style",
+        "avg_logprob": -1.6336415308217207
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "v_-IMXSEIabMM.mp4",
+   "chunk": 3,
+   "chunk_len_s": 29.5,
+   "loudest_frame_dbfs": -13.4,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hyp,. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR. DR"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia. DR. DR. DR. DR. SOUDOS, DR. DR. DR. DR. SOUDOS: Dress in layers. And as you start getting heated up, you take a top layer off to cool off a little bit. If you're going to be out there for a long time, you start to break a sweat, then you calm down. The sweat wets your clothes, the clothes stay wet. Now they get cold, and that's how you become hypothermic."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia. DR. DR. DR. DR. CHRISTOPHER SAUTO: Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit. If you're going to be out there for a long time, you start to break a sweat, then you calm down. The sweat wets your clothes, the clothes stay wet. Now they get cold. And that's how you become hypothermic."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia. DR. DR. DR. Souto: Dress in layers. And as you start getting heated up, you take a top layer off to cool off a little bit. If you're going to be out there for a long time, you start to break a sweat, then you calm down. The sweat wets your clothes. The clothes stay wet. Now they get cold. And that's how you become hypothermic."
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.  Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.  Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit.  If you're going to be out there for a long time, you start to break a sweat, then you calm down.  The sweat wets your clothes, the clothes stay wet, now they get cold and that's how you become hypothermic.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.0,
+        "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.",
+        "avg_logprob": -0.2512515597878393
+       },
+       {
+        "start": 7.0,
+        "end": 13.0,
+        "text": " Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.",
+        "avg_logprob": -0.12386742765691293
+       },
+       {
+        "start": 13.0,
+        "end": 19.0,
+        "text": " Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit.",
+        "avg_logprob": -0.15561176948748262
+       },
+       {
+        "start": 19.0,
+        "end": 23.0,
+        "text": " If you're going to be out there for a long time, you start to break a sweat, then you calm down.",
+        "avg_logprob": -0.08900525807230561
+       },
+       {
+        "start": 23.0,
+        "end": 29.5,
+        "text": " The sweat wets your clothes, the clothes stay wet, now they get cold and that's how you become hypothermic.",
+        "avg_logprob": -0.06593734370627706
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.  Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.  Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.0,
+        "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.",
+        "avg_logprob": -0.2512511446106585
+       },
+       {
+        "start": 7.0,
+        "end": 13.0,
+        "text": " Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.",
+        "avg_logprob": -0.12377891260826879
+       },
+       {
+        "start": 13.0,
+        "end": 19.0,
+        "text": " Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit.",
+        "avg_logprob": -0.15465347611045996
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel,  usually after slipping. Dr. Souto says the other thing to remember is to dress properly  to prevent hypothermia. Dr. Souto: Dress in layers. And as you start getting heated up,  you take a top layer off to cool off a little bit. If you're going to be out there for a  long time, you start to break a sweat, then you calm down. The sweat wets your clothes,  the clothes stay wet, now they get cold and that's how you become hypothermic.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 5.76,
+        "text": " or you lift it improperly. And lots of people end up in the ER after being hit by a shovel,",
+        "avg_logprob": -0.2517198158276733
+       },
+       {
+        "start": 5.76,
+        "end": 11.0,
+        "text": " usually after slipping. Dr. Souto says the other thing to remember is to dress properly",
+        "avg_logprob": -0.13831121233912805
+       },
+       {
+        "start": 11.0,
+        "end": 16.16,
+        "text": " to prevent hypothermia. Dr. Souto: Dress in layers. And as you start getting heated up,",
+        "avg_logprob": -0.3445270226587093
+       },
+       {
+        "start": 16.16,
+        "end": 19.88,
+        "text": " you take a top layer off to cool off a little bit. If you're going to be out there for a",
+        "avg_logprob": -0.1361167851369828
+       },
+       {
+        "start": 19.88,
+        "end": 24.98,
+        "text": " long time, you start to break a sweat, then you calm down. The sweat wets your clothes,",
+        "avg_logprob": -0.16262851181818405
+       },
+       {
+        "start": 24.98,
+        "end": 29.5,
+        "text": " the clothes stay wet, now they get cold and that's how you become hypothermic.",
+        "avg_logprob": -0.07506802669238477
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.  Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.  DR. DR. DR. SOUTO, MD, DR. DR. DR. DR. SOUTOS: Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit.  If you're going to be out there for a long time, you start to break a sweat, then you calm down, the sweat wets your clothes, the clothes stay wet, now they get cold and that's how you become hypothermic.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.0,
+        "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.",
+        "avg_logprob": -0.32176212858238223
+       },
+       {
+        "start": 7.0,
+        "end": 12.72,
+        "text": " Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.",
+        "avg_logprob": -0.24560296109310634
+       },
+       {
+        "start": 12.72,
+        "end": 18.72,
+        "text": " DR. DR. DR. SOUTO, MD, DR. DR. DR. DR. SOUTOS: Dress in layers. And as you start getting heated up, you take the top layer off to cool off a little bit.",
+        "avg_logprob": -0.45626097053496373
+       },
+       {
+        "start": 18.72,
+        "end": 29.5,
+        "text": " If you're going to be out there for a long time, you start to break a sweat, then you calm down, the sweat wets your clothes, the clothes stay wet, now they get cold and that's how you become hypothermic.",
+        "avg_logprob": -0.10553340374202169
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.  Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.  DR. DR. SOUDOS: Dress in layers, and as you start getting heated up you take the top layer off to cool off a little bit.  If you're going to be out there for a long time, you start to break a sweat, then you calm down.  The sweat wets your clothes, the clothes stay wet, now they get cold, and that's how you become hypothermic.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 7.36,
+        "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually after slipping.",
+        "avg_logprob": -0.3781232529675305
+       },
+       {
+        "start": 7.36,
+        "end": 12.72,
+        "text": " Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.",
+        "avg_logprob": -0.23181601390040116
+       },
+       {
+        "start": 12.72,
+        "end": 18.5,
+        "text": " DR. DR. SOUDOS: Dress in layers, and as you start getting heated up you take the top layer off to cool off a little bit.",
+        "avg_logprob": -0.46363217634562814
+       },
+       {
+        "start": 18.5,
+        "end": 23.04,
+        "text": " If you're going to be out there for a long time, you start to break a sweat, then you calm down.",
+        "avg_logprob": -0.22886072701981497
+       },
+       {
+        "start": 23.04,
+        "end": 29.5,
+        "text": " The sweat wets your clothes, the clothes stay wet, now they get cold, and that's how you become hypothermic.",
+        "avg_logprob": -0.05849220275935107
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually  after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.  DR. DR. CHRISTOPHER SAUTO : Dress in layers. And as you start getting heatup you take a top  layer off to cool off a little bit. If you're going to be out there for a long time and you  start to break a sweat then you calm down. The sweat wets your clothes, the clothes stay  wet, now they get cold and that's how you become hypothermic.",
+      "language": "en",
+      "duration": "29.5",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 6.24,
+        "text": " or you lifted improperly. And lots of people end up in the ER after being hit by a shovel, usually",
+        "avg_logprob": -0.49163566140341575
+       },
+       {
+        "start": 6.24,
+        "end": 12.72,
+        "text": " after slipping. Dr. Souto says the other thing to remember is to dress properly to prevent hypothermia.",
+        "avg_logprob": -0.22753233756520785
+       },
+       {
+        "start": 13.18,
+        "end": 16.78,
+        "text": " DR. DR. CHRISTOPHER SAUTO : Dress in layers. And as you start getting heatup you take a top",
+        "avg_logprob": -1.1108019919540253
+       },
+       {
+        "start": 16.78,
+        "end": 20.62,
+        "text": " layer off to cool off a little bit. If you're going to be out there for a long time and you",
+        "avg_logprob": -0.2756780111603439
+       },
+       {
+        "start": 20.62,
+        "end": 25.8,
+        "text": " start to break a sweat then you calm down. The sweat wets your clothes, the clothes stay",
+        "avg_logprob": -0.2789735058057969
+       },
+       {
+        "start": 25.8,
+        "end": 29.5,
+        "text": " wet, now they get cold and that's how you become hypothermic.",
+        "avg_logprob": -0.07550025556702167
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "tracked_video_audio_x36.wav",
+   "chunk": 7,
+   "chunk_len_s": 29.7,
+   "loudest_frame_dbfs": -15.2,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit, or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " oh don't tell me i got another first try! i'm about to light the fire and bear grill style hit or at least try ahaha don't tell me i got another first try! i'm about to light the fire and bear grill style hit or at least try ahaha don't tell me i got another first try! i'm about to light a fire and bear grill style hit or at least try"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Hah! Don't tell me. I got in on the first try. I'm bervrous on fire Bear Grylls style or at least try * arrivण Western nest. in the end* bo-terror I got another first try about the light of fire Bear Grylls style or at least try nostra boss hope - I got another time a few but I don't what you want to carry I got another first try I'm about the light of fire Bear Grylls style or at least try mo- DAVID Weav rods above Kylie 할"
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try.",
+        "avg_logprob": -0.18856077510542682
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try.",
+        "avg_logprob": -0.18856307783501106
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try. Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try. Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try. Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try. Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try.",
+        "avg_logprob": -0.2845468502420645
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.7",
+      "segments": []
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " Hah! Don't tell me I got another first try.  I'm 'bout to light a fire Bear Grylls style or at least try.  Hah! Don't tell me I got another first try.  I'm about to light a fire Bear Grylls style or at least try.  Hah! Don't tell me I got another first try.  I'm about to light a fire Bear Grylls style or at least try.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 3.54,
+        "text": " Hah! Don't tell me I got another first try.",
+        "avg_logprob": -1.2603932671315436
+       },
+       {
+        "start": 3.54,
+        "end": 11.0,
+        "text": " I'm 'bout to light a fire Bear Grylls style or at least try.",
+        "avg_logprob": -0.8686701063998044
+       },
+       {
+        "start": 11.0,
+        "end": 15.860000000000001,
+        "text": " Hah! Don't tell me I got another first try.",
+        "avg_logprob": -0.5467261698712329
+       },
+       {
+        "start": 15.860000000000001,
+        "end": 19.44,
+        "text": " I'm about to light a fire Bear Grylls style or at least try.",
+        "avg_logprob": -0.4151772018996876
+       },
+       {
+        "start": 19.44,
+        "end": 24.560000000000002,
+        "text": " Hah! Don't tell me I got another first try.",
+        "avg_logprob": -0.3493686432796364
+       },
+       {
+        "start": 24.560000000000002,
+        "end": 29.7,
+        "text": " I'm about to light a fire Bear Grylls style or at least try.",
+        "avg_logprob": -0.021520463978767543
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Hah! Don't tell me. I got in on the first try.  I'm 'bout to light a fire and Bear Grylls style.  Or at least try.  HAH! Don't tell me. I got in on the first try.  I'm about to light a fire and Bear Grylls style.  Or at least try.  Oh! Don't tell me. I got in on the first try. vendo's the bowflaps experience.  I'm about to light a fire and Bear Grylls style.  Or at least try.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.16,
+        "text": " Hah! Don't tell me. I got in on the first try.",
+        "avg_logprob": -1.5537195777082269
+       },
+       {
+        "start": 4.5200000000000005,
+        "end": 7.5200000000000005,
+        "text": " I'm 'bout to light a fire and Bear Grylls style.",
+        "avg_logprob": -0.5700423399205593
+       },
+       {
+        "start": 7.5200000000000005,
+        "end": 9.56,
+        "text": " Or at least try.",
+        "avg_logprob": -0.8484678643622569
+       },
+       {
+        "start": 10.28,
+        "end": 14.6,
+        "text": " HAH! Don't tell me. I got in on the first try.",
+        "avg_logprob": -0.7036089511497671
+       },
+       {
+        "start": 14.9,
+        "end": 18.32,
+        "text": " I'm about to light a fire and Bear Grylls style.",
+        "avg_logprob": -0.5002396360896455
+       },
+       {
+        "start": 18.32,
+        "end": 19.740000000000002,
+        "text": " Or at least try.",
+        "avg_logprob": -0.5806957347584623
+       },
+       {
+        "start": 21.14,
+        "end": 24.3,
+        "text": " Oh! Don't tell me. I got in on the first try. vendo's the bowflaps experience.",
+        "avg_logprob": -2.7078511567774695
+       },
+       {
+        "start": 24.72,
+        "end": 27.94,
+        "text": " I'm about to light a fire and Bear Grylls style.",
+        "avg_logprob": -0.29529918580465164
+       },
+       {
+        "start": 27.94,
+        "end": 29.7,
+        "text": " Or at least try.",
+        "avg_logprob": -0.017378820472263863
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "v_-vnSFKJNB94.mp4",
+   "chunk": 1,
+   "chunk_len_s": 29.0,
+   "loudest_frame_dbfs": -29.4,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " The first time I was in the middle of the street, I was in the middle of the street. I was in the middle of the street, and I was in the middle of the street. I was in the middle of the street, and I was in the middle of the street."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I'm going to go to the restaurant."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I'm going to go to the restaurant, in the restaurant, and I'm going to go to the restaurant."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " For example, I went to a restaurant restaurant in the area of restaurants. I also went to a restaurant restaurant restaurant. It was a restaurant restaurant restaurant. The restaurant restaurant was a restaurant restaurant in the area. The restaurant restaurant restaurant was a restaurant restaurant restaurant. It was a restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For me, I went to a drawing board in the car. I had a lease on my family. A taxi to a man named na na na na na na na na na na."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Staff 구 alliances in профapa. This is inrawdęvate structure. Code for the creators of the install and ג' enjoy the Nor' ребята."
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " The first time I was in the middle of the street, I was in the middle of the street.  I was in the middle of the street, but I was in the middle of the street.  I was in the middle of the street, but I was in the middle of the street.  I was in the middle of the street, but I was in the middle of the street.  I was in the middle of the street, but I was in the middle of the street.  I was in the middle of the street, but I was in the middle of the street.",
+      "language": "en",
+      "duration": "29.0",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 5.0,
+        "text": " The first time I was in the middle of the street, I was in the middle of the street.",
+        "avg_logprob": -1.5152078147815622
+       },
+       {
+        "start": 5.0,
+        "end": 10.0,
+        "text": " I was in the middle of the street, but I was in the middle of the street.",
+        "avg_logprob": -0.7264672457462266
+       },
+       {
+        "start": 10.0,
+        "end": 15.0,
+        "text": " I was in the middle of the street, but I was in the middle of the street.",
+        "avg_logprob": -0.5199669445199626
+       },
+       {
+        "start": 15.0,
+        "end": 20.0,
+        "text": " I was in the middle of the street, but I was in the middle of the street.",
+        "avg_logprob": -0.4635935111326121
+       },
+       {
+        "start": 20.0,
+        "end": 25.0,
+        "text": " I was in the middle of the street, but I was in the middle of the street.",
+        "avg_logprob": -0.4241748851324831
+       },
+       {
+        "start": 25.0,
+        "end": 29.0,
+        "text": " I was in the middle of the street, but I was in the middle of the street.",
+        "avg_logprob": -0.3296446863207079
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.",
+      "language": "en",
+      "duration": "29.0",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -1.8734308443963528
+       },
+       {
+        "start": 4.0,
+        "end": 8.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -0.7394814167849042
+       },
+       {
+        "start": 8.0,
+        "end": 12.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -0.4706129441037774
+       },
+       {
+        "start": 12.0,
+        "end": 16.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -0.33111153314398095
+       },
+       {
+        "start": 16.0,
+        "end": 20.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -0.31544779270718043
+       },
+       {
+        "start": 20.0,
+        "end": 24.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -0.26638685014437546
+       },
+       {
+        "start": 24.0,
+        "end": 29.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -0.2680435544726523
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I'm going to go to the restaurant, in the restaurant, and I'm going to go to the restaurant.  I'm going to go to the restaurant and the restaurant, and I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant. I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.",
+      "language": "en",
+      "duration": "29.0",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 5.0,
+        "text": " I'm going to go to the restaurant, in the restaurant, and I'm going to go to the restaurant.",
+        "avg_logprob": -1.567893655896187
+       },
+       {
+        "start": 5.0,
+        "end": 10.0,
+        "text": " I'm going to go to the restaurant and the restaurant, and I'm going to go to the restaurant.",
+        "avg_logprob": -0.7278323625214398
+       },
+       {
+        "start": 10.0,
+        "end": 14.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -0.5684526235457849
+       },
+       {
+        "start": 14.0,
+        "end": 17.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -0.501472113781016
+       },
+       {
+        "start": 17.0,
+        "end": 21.0,
+        "text": " I'm going to go to the restaurant. I'm going to go to the restaurant.",
+        "avg_logprob": -0.43061017107684163
+       },
+       {
+        "start": 21.0,
+        "end": 24.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -0.3631568104028702
+       },
+       {
+        "start": 24.0,
+        "end": 29.0,
+        "text": " I'm going to go to the restaurant.",
+        "avg_logprob": -0.26867760984565725
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " For example, I went to a restaurant, in the car, and I went to the restaurant.  I was a man of a guest.  I was a guest of the restaurant, and I was really interested in a restaurant.  I was a guest of the restaurant, and I was a guest of the restaurant.  I was a guest of the restaurant. I was a guest of the restaurant.  I was a guest of the restaurant, and I was the guest of the restaurant.  I was a guest of the restaurant. I went to the restaurant.  I asked his my guest. I asked him. He had a guest. I was a guest.  The restaurant's here. I was a guest of the restaurant.  I'm a guest of the restaurant. I'm a guest of the restaurant. I was a guest?  You're a guest of the restaurant. I'm a guest.",
+      "language": "en",
+      "duration": "29.0",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.0,
+        "text": " For example, I went to a restaurant, in the car, and I went to the restaurant.",
+        "avg_logprob": -2.2943019778891043
+       },
+       {
+        "start": 4.0,
+        "end": 8.0,
+        "text": " I was a man of a guest.",
+        "avg_logprob": -2.6675384759902956
+       },
+       {
+        "start": 8.0,
+        "end": 12.0,
+        "text": " I was a guest of the restaurant, and I was really interested in a restaurant.",
+        "avg_logprob": -1.649587388101377
+       },
+       {
+        "start": 12.0,
+        "end": 15.0,
+        "text": " I was a guest of the restaurant, and I was a guest of the restaurant.",
+        "avg_logprob": -0.8267105990334561
+       },
+       {
+        "start": 15.0,
+        "end": 19.0,
+        "text": " I was a guest of the restaurant. I was a guest of the restaurant.",
+        "avg_logprob": -0.6710780159466796
+       },
+       {
+        "start": 19.0,
+        "end": 23.0,
+        "text": " I was a guest of the restaurant, and I was the guest of the restaurant.",
+        "avg_logprob": -0.6233595805732828
+       },
+       {
+        "start": 23.0,
+        "end": 27.0,
+        "text": " I was a guest of the restaurant. I went to the restaurant.",
+        "avg_logprob": -0.8342833661008626
+       },
+       {
+        "start": 27.0,
+        "end": 28.0,
+        "text": " I asked his my guest. I asked him. He had a guest. I was a guest.",
+        "avg_logprob": -2.119917290454561
+       },
+       {
+        "start": 28.0,
+        "end": 29.0,
+        "text": " The restaurant's here. I was a guest of the restaurant.",
+        "avg_logprob": -1.063162088394165
+       },
+       {
+        "start": 29.0,
+        "end": 29.0,
+        "text": " I'm a guest of the restaurant. I'm a guest of the restaurant. I was a guest?",
+        "avg_logprob": -0.6866574229105659
+       },
+       {
+        "start": 29.0,
+        "end": 29.98,
+        "text": " You're a guest of the restaurant. I'm a guest.",
+        "avg_logprob": -0.739732504884402
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For me, I went to a drawing board in the car.  I went to the toilet and put it under a blanket.  Right? Because I bought the toilet.  A glass of wine is my best.  A glass of wine is a cockey.  I found the house of the toilet.  I was a bit loud and a bit loud.",
+      "language": "en",
+      "duration": "29.0",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.0,
+        "text": " For me, I went to a drawing board in the car.",
+        "avg_logprob": -2.958745749791463
+       },
+       {
+        "start": 4.0,
+        "end": 8.0,
+        "text": " I went to the toilet and put it under a blanket.",
+        "avg_logprob": -2.466549497629915
+       },
+       {
+        "start": 9.0,
+        "end": 13.0,
+        "text": " Right? Because I bought the toilet.",
+        "avg_logprob": -2.359921282529831
+       },
+       {
+        "start": 14.0,
+        "end": 17.0,
+        "text": " A glass of wine is my best.",
+        "avg_logprob": -2.745007598400116
+       },
+       {
+        "start": 18.0,
+        "end": 21.0,
+        "text": " A glass of wine is a cockey.",
+        "avg_logprob": -2.1505941423502835
+       },
+       {
+        "start": 23.0,
+        "end": 27.0,
+        "text": " I found the house of the toilet.",
+        "avg_logprob": -1.8583479702472687
+       },
+       {
+        "start": 27.0,
+        "end": 29.0,
+        "text": " I was a bit loud and a bit loud.",
+        "avg_logprob": -2.0748096673438945
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.0",
+      "segments": []
+     }
+    }
+   ]
+  },
+  {
+   "clip": "big_buck_bunny_clip.mp4",
+   "chunk": 11,
+   "chunk_len_s": 29.7,
+   "loudest_frame_dbfs": -2.8,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " *BANG!* *BANG!* *BANG!* *BANG!*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " *BANG!* *BANG!* *BANG!* *BANG!*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " *BANG!* *BANG!*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Sorry!"
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.7",
+      "segments": []
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " *            .",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " *",
+        "avg_logprob": -1.2705487410227458
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "",
+        "avg_logprob": 0.0
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ".",
+        "avg_logprob": -0.8652392625808716
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " *BANG*",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " *BANG*",
+        "avg_logprob": -1.915161356329918
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " *BANG!*",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " *BANG!*",
+        "avg_logprob": -2.0680370132128396
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " *toil gun проф*",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.86,
+        "text": " *toil gun проф*",
+        "avg_logprob": -4.561495967209339
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Sorry!",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.0,
+        "text": " Sorry!",
+        "avg_logprob": -3.4589332342147827
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "big_buck_bunny_clip.mp4",
+   "chunk": 7,
+   "chunk_len_s": 29.7,
+   "loudest_frame_dbfs": -10.0,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Squeak* *Sque*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " *Ding*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " *Demonic music*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " *Ballon sound* *Ballon sound* *Ballon sound*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " Sorry!"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Sorry! What else would you be drawing?"
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " I'm going to go.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " I'm going to go.",
+        "avg_logprob": -1.2125845374539495
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I'm going to go.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " I'm going to go.",
+        "avg_logprob": -1.2125845374539495
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I'm going to go.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " I'm going to go.",
+        "avg_logprob": -1.2125845374539495
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I don't know.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " I don't know.",
+        "avg_logprob": -0.746443109719881
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " I don't know.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " I don't know.",
+        "avg_logprob": -0.7464403923867005
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " For more information about payment Williams is:  Once required, please request for the mealservessionals. BRENZED FOR na na na na na",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.400000000000002,
+        "text": " For more information about payment Williams is:",
+        "avg_logprob": -5.111079396307469
+       },
+       {
+        "start": 29.48,
+        "end": 29.7,
+        "text": " Once required, please request for the mealservessionals. BRENZED FOR na na na na na",
+        "avg_logprob": -4.759842841575543
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "v_-vnSFKJNB94.mp4",
+   "chunk": 2,
+   "chunk_len_s": 29.3,
+   "loudest_frame_dbfs": -26.9,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " *Loud noise*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I'm going to go."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I'm going to go back."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I'm going to go back."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " Sorry!"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Staff 구하세요"
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.3",
+      "segments": []
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I'm going to go back to the next one.",
+      "language": "en",
+      "duration": "29.3",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.3,
+        "text": " I'm going to go back to the next one.",
+        "avg_logprob": -1.5357223737698336
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I'm going to go back to the next one.",
+      "language": "en",
+      "duration": "29.3",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.3,
+        "text": " I'm going to go back to the next one.",
+        "avg_logprob": -1.5357223737698336
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " I'm going to go back.",
+      "language": "en",
+      "duration": "29.3",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.3,
+        "text": " I'm going to go back.",
+        "avg_logprob": -1.4128910021649466
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " Staff 구청  We are drawing a drawing set  We are drawing the drawing set  Through motion to enjoy the sound  We have the outputण Western of the sound  How to restore the sound of the sound of the sound of the sound  We are drawing the sound of the sound of the sound of the sound of a sound",
+      "language": "en",
+      "duration": "29.3",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 3.46,
+        "text": " Staff 구청",
+        "avg_logprob": -6.375530672073364
+       },
+       {
+        "start": 3.46,
+        "end": 7.4,
+        "text": " We are drawing a drawing set",
+        "avg_logprob": -3.8457991629838943
+       },
+       {
+        "start": 7.4,
+        "end": 10.94,
+        "text": " We are drawing the drawing set",
+        "avg_logprob": -1.9047780632972717
+       },
+       {
+        "start": 10.94,
+        "end": 15.1,
+        "text": " Through motion to enjoy the sound",
+        "avg_logprob": -5.020563557744026
+       },
+       {
+        "start": 15.1,
+        "end": 20.18,
+        "text": " We have the outputण Western of the sound",
+        "avg_logprob": -4.48365053286155
+       },
+       {
+        "start": 20.18,
+        "end": 24.080000000000002,
+        "text": " How to restore the sound of the sound of the sound of the sound",
+        "avg_logprob": -1.8494801064953208
+       },
+       {
+        "start": 24.080000000000002,
+        "end": 29.3,
+        "text": " We are drawing the sound of the sound of the sound of the sound of a sound",
+        "avg_logprob": -0.6348391641911707
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Staff 구하세요. проф Williams.",
+      "language": "en",
+      "duration": "29.3",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.3,
+        "text": " Staff 구하세요. проф Williams.",
+        "avg_logprob": -7.045618620183733
+       }
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

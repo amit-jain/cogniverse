@@ -161,7 +161,10 @@ def create_dspy_lm(
     from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
 
     return BodyBoundedLM(
-        config.model, cache_tenant_id=tenant_id, **dspy_lm_kwargs(config)
+        config.model,
+        cache_tenant_id=tenant_id,
+        declared_context_window=config.context_window,
+        **dspy_lm_kwargs(config),
     )
 
 
