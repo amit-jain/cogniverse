@@ -630,7 +630,42 @@ def test_a_loop_formed_at_both_loop_breaking_temperatures_leaves_the_majority(
         "at a loop-breaking temperature corroborates another: kept the answer at "
         "temperature 0.0, which 3 of the other answers agree with"
     ]
-    assert whisper_transcription.MAJORITY_SUPPORT == 3
+    assert whisper_transcription.MAJORITY_SUPPORT == 2
+
+
+def test_three_answers_agreeing_keep_the_chunk_when_the_other_three_broke(caplog):
+    """As the cluster's server answered one chunk live: repeated speech at 0.0,
+    0.2 and 0.4; from 0.6 up, a stutter, a loop formed under sampling and an
+    answer sharing none of their words. Half the answers agree, so the
+    temperature-0 one is kept rather than failing the chunk."""
+    audio = _noise(29.4)
+    stutter = " I'm about about to light a lot to light to light to light."
+    answers = [
+        *REPEATED_SPEECH[:3],
+        stutter,
+        FORMED_LOOP,
+        " about that's about they in by about the far",
+    ]
+    server = _Server(timed={0: [[]] * 6}, text={0: list(answers)})
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(audio, server)
+
+    assert transcript["full_text"] == REPEATED_SPEECH[0].strip()
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "agree with" in record.getMessage()
+    ] == [
+        "clip.wav: chunk 0 (0.00-29.40s) looped at temperature 0.0 and no answer "
+        "at a loop-breaking temperature corroborates another: kept the answer at "
+        "temperature 0.0, which 2 of the other answers agree with"
+    ]
+    assert [round(word_agreement(answers[0], other), 2) for other in answers[3:]] == [
+        0.2,
+        0.05,
+        0.05,
+    ]
 
 
 def test_answers_with_no_majority_and_no_corroboration_raise_as_garbled():

@@ -637,8 +637,11 @@ def _settled(
 
 
 # Answers, besides the one kept, that must agree with it for a chunk whose
-# loop-breaking answers corroborate nothing: with it, four of the six.
-MAJORITY_SUPPORT = TRANSCRIBE_ATTEMPTS // 2
+# loop-breaking answers corroborate nothing: with it, half of the six. On the
+# cluster's server repeated speech held at 0.0-0.4 while the answers from 0.6
+# up broke; a decode loop reproduced at low temperatures was corroborated
+# elsewhere in every recorded chunk.
+MAJORITY_SUPPORT = TRANSCRIBE_ATTEMPTS // 2 - 1
 
 _ANNOTATION = re.compile(r"\*[^*]*\*|\[[^\]]*\]|\([^)]*\)|[♪♫]")
 
@@ -659,7 +662,7 @@ def _majority_answer(
     usable_at: List[float],
 ) -> Optional[Tuple[float, ChunkTranscript, int]]:
     """The lowest-temperature answer at least ``MAJORITY_SUPPORT`` others agree
-    with, with its temperature and how many do, among the answer at 0.0 and
+    with (half the answers with it), with its temperature and how many do, among the answer at 0.0 and
     the later ones; an answer at ``LOOP_BREAKING_TEMPERATURE`` or above takes
     part only when it did not loop."""
     answers = {

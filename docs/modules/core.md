@@ -2269,7 +2269,7 @@ temperature)` sends one request with `response_format(timestamps)` and
   When neither agrees, once every temperature is asked, the lowest-temperature
   answer that an answer at another loop-breaking temperature agrees with is
   kept (one asked at 0.8 or above only when it did not loop); else the
-  lowest-temperature answer `MAJORITY_SUPPORT` (3) others agree with, four of
+  lowest-temperature answer `MAJORITY_SUPPORT` (2) others agree with, half of
   the six; else the lowest-temperature usable one when it holds no speech
   words outside sound annotations (`speech_words`: `*Ding*`, `[Music]`,
   `(laughs)`, `♪`). Otherwise the chunk has no faithful `json` answer. While
