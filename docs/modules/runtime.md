@@ -1116,7 +1116,7 @@ in its `SummarizerAgent.process`, `DetailedReportAgent.process` or
 `DeepResearchAgent.process` span in the tenant's project; the summarizer's
 dispatched `summarize` runs inside `AgentBase.process_span`.
 
-Each hit reaches the answer agent with `title` (the schema's title field; a code chunk's `file_path:chunk_name`), `content_type` (from its `video_id`, `audio_id`, `code_id`, `image_id` or `document_id`) and `description` / `text_content`: every text field it carries — `segment_description`, `audio_transcript`, `full_text`, `image_description`, `source_code` — joined by newlines in that order. The summary and the detailed report hand each hit to the LM as `- title (content_type, relevance|score: N.NN): content`.
+Each hit reaches the answer agent with `title` (the schema's title field; a code chunk's `file_path:chunk_name`, a wiki page's `title`), `content_type` (from its `video_id`, `audio_id`, `code_id`, `image_id`, `document_id` or, for a wiki page, `page_type`) and `description` / `text_content`: every text field it carries — `segment_description`, `audio_transcript`, `full_text`, `image_description`, `source_code`, a wiki page's `content` — joined by newlines in that order. The summary and the detailed report hand each hit to the LM as `- title (content_type, relevance|score: N.NN): content`, as many of them as fit the context window of the model the call is sent to (`PromptLines`, `docs/modules/core.md`).
 
 Every answer envelope carries a `grounding` block — `state`, `modalities`,
 `profiles`, `degraded_profiles`, `degraded_query_rewrite`,

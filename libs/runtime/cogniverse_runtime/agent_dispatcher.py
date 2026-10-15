@@ -485,23 +485,26 @@ def typed_input_from_context(input_cls, *, query, tenant_id, context, **override
 
 
 # A hit's source identity field names its content type; the first key a
-# schema's metadata carries wins.
+# schema's metadata carries wins. A wiki page is the only schema with a
+# page_type.
 _HIT_CONTENT_TYPES = (
     ("video_id", "video"),
     ("audio_id", "audio"),
     ("code_id", "code"),
     ("image_id", "image"),
     ("document_id", "document"),
+    ("page_type", "wiki"),
 )
 _HIT_TITLE_KEYS = ("video_title", "document_title", "audio_title", "image_title")
 # Every text field a shipped schema returns, in the order an answer reads them:
-# a video frame's description before its transcript.
+# a video frame's description before its transcript; a wiki page's content.
 _HIT_CONTENT_KEYS = (
     "segment_description",
     "audio_transcript",
     "full_text",
     "image_description",
     "source_code",
+    "content",
 )
 
 
@@ -524,11 +527,12 @@ def _flatten_search_hit(hit: Dict[str, Any]) -> Dict[str, Any]:
     but the report/summary content builders read ``title``, ``content_type``
     and ``description`` / ``text_content`` at the top level and would
     otherwise render every source as "Unknown" with no content. The title is
-    the schema's own title field (a code chunk's ``file_path:chunk_name``),
-    the content type comes from the source identity field, and the content is
-    every text field the hit carries — a video frame's description and its
-    transcript, a document window's text, an audio transcript, a code chunk's
-    source — joined by newlines. Keeps the nested ``metadata`` untouched
+    the schema's own title field (a code chunk's ``file_path:chunk_name``, a
+    wiki page's ``title``), the content type comes from the source identity
+    field, and the content is every text field the hit carries — a video
+    frame's description and its transcript, a document window's text, an
+    audio transcript, a code chunk's source, a wiki page's content — joined
+    by newlines. Keeps the nested ``metadata`` untouched
     (keyframe resolution reads it) and never lets a top-level field be
     shadowed by metadata.
     """
