@@ -1951,3 +1951,115 @@ def test_the_mean_log_probability_is_weighted_by_segment_duration():
     assert [set(segment) for segment in answer.segments] == [
         {"start", "end", "text"}
     ] * 4
+
+
+def _three_chunks_with_loop_on(looping: set[int]) -> tuple[np.ndarray, _Server]:
+    audio = _noise(75.0)
+    chunks = split_for_whisper(audio)
+    assert len(chunks) == 3
+    timed = {chunk.index: [[(0.0, 4.0, f" chunk {chunk.index}")]] for chunk in chunks}
+    text = {
+        chunk.index: list(LOOPS)
+        if chunk.index in looping
+        else [f" chunk {chunk.index}"]
+        for chunk in chunks
+    }
+    return audio, _Server(timed=timed, text=text)
+
+
+def test_a_looping_chunk_is_dropped_and_the_others_kept(caplog):
+    audio, server = _three_chunks_with_loop_on({1})
+    chunks = split_for_whisper(audio)
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = transcribe_in_chunks(
+            audio,
+            server,
+            language="en",
+            source="clip.wav",
+            logger=LOGGER,
+            drop_garbled=True,
+        )
+
+    ratios = [compression_ratio(loop) for loop in LOOPS]
+    assert transcript == {
+        "full_text": "chunk 0 chunk 2",
+        "language": "en",
+        "duration": 75.0,
+        "segments": [
+            {"start": 0.0, "end": 4.0, "text": "chunk 0"},
+            {
+                "start": chunks[2].start_s,
+                "end": chunks[2].start_s + 4.0,
+                "text": "chunk 2",
+            },
+        ],
+        "dropped_chunks": [
+            {
+                "chunk_index": 1,
+                "start_s": chunks[1].start_s,
+                "end_s": chunks[1].end_s,
+                "compression_ratios": ratios,
+            }
+        ],
+    }
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "dropped from the transcript" in record.getMessage()
+    ] == [
+        f"clip.wav: chunk 1 ({chunks[1].start_s:.2f}-{chunks[1].end_s:.2f}s) came "
+        "back unusable on all 6 attempts: 6 repetition loops (compression ratio "
+        f"{', '.join(f'{ratio:.2f}' for ratio in ratios)}, above 2.4) and 0 "
+        "empty: dropped from the transcript"
+    ]
+    assert [index for index, _, _, _ in server.requests].count(2) == 2
+
+
+def test_a_transcript_with_no_looping_chunk_drops_none():
+    audio, server = _three_chunks_with_loop_on(set())
+
+    transcript = transcribe_in_chunks(
+        audio,
+        server,
+        language="en",
+        source="clip.wav",
+        logger=LOGGER,
+        drop_garbled=True,
+    )
+
+    assert (transcript["full_text"], transcript["dropped_chunks"]) == (
+        "chunk 0 chunk 1 chunk 2",
+        [],
+    )
+
+
+def test_every_chunk_looping_fails_the_transcription_even_when_dropping():
+    audio, server = _three_chunks_with_loop_on({0, 1, 2})
+    chunks = split_for_whisper(audio)
+
+    with pytest.raises(GarbledTranscriptError) as caught:
+        transcribe_in_chunks(
+            audio,
+            server,
+            language="en",
+            source="clip.wav",
+            logger=LOGGER,
+            drop_garbled=True,
+        )
+
+    assert (caught.value.chunk_index, caught.value.start_s, caught.value.end_s) == (
+        2,
+        chunks[2].start_s,
+        75.0,
+    )
+
+
+def test_a_looping_chunk_fails_the_transcription_unless_dropping():
+    audio, server = _three_chunks_with_loop_on({1})
+
+    with pytest.raises(GarbledTranscriptError) as caught:
+        _transcribe(audio, server)
+
+    assert caught.value.chunk_index == 1
+    assert [index for index, _, _, _ in server.requests] == [0, 0, 1] + [1] * 6

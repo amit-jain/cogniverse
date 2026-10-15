@@ -299,9 +299,11 @@ class AudioProcessor(BaseProcessor):
         or unsupported audio file") and requires 16 kHz mono PCM. We
         extract the audio stream via pyav and resample on the fly, then
         send each chunk of at most 30 s with timestamps and, unless the timed
-        segments reach its end, without. A chunk
-        whose untimed text keeps coming back empty or as a repetition loop
-        raises ``EmptyTranscriptError`` or ``GarbledTranscriptError``.
+        segments reach its end, without. A chunk whose untimed text keeps
+        coming back empty raises ``EmptyTranscriptError``. One that keeps
+        coming back as a repetition loop is left out of the transcript and
+        listed under ``dropped_chunks``; only when every chunk is,
+        ``GarbledTranscriptError`` is raised.
         """
 
         import requests
@@ -350,6 +352,7 @@ class AudioProcessor(BaseProcessor):
             language=None if self.language in (None, "", "auto") else self.language,
             source=str(video_path),
             logger=self.logger,
+            drop_garbled=True,
         )
         return {
             "video_id": video_id,

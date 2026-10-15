@@ -154,7 +154,9 @@ def test_audio_processor_remote_against_cluster_sidecar(asr_sidecar_url, tmp_pat
         "full_text",
         "segments",
         "transcription_time",
+        "dropped_chunks",
     }, transcript
+    assert transcript["dropped_chunks"] == [], transcript
     assert transcript["video_id"] == "silence"
     assert transcript["video_path"] == str(audio_path)
     assert isinstance(transcript["full_text"], str)

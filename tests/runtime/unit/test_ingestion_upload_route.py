@@ -298,10 +298,43 @@ def test_wait_and_force_query_params_drive_synchronous_success(upload_client):
         "wait_timed_out": False,
         "graph_nodes": 2,
         "graph_edges": 1,
+        "transcript_dropped_chunks": [],
     }
     # The query params were honored, not the defaults.
     assert captured["wait"] is True
     assert captured["force"] is True
+
+
+def test_wait_surfaces_the_chunks_dropped_from_the_transcript(upload_client):
+    client, _, state = upload_client
+    dropped = [
+        {
+            "chunk_index": 1,
+            "start_s": 29.3,
+            "end_s": 58.3,
+            "compression_ratios": [3.58, 36.47],
+        }
+    ]
+    state["result"] = EnqueueResult(
+        ingest_id="ing-4",
+        sha="sha-drop",
+        state="complete",
+        existing=False,
+        final_event={
+            "result": {
+                "video_id": "vid-4",
+                "chunks": 2,
+                "documents_fed": 2,
+                "transcript_dropped_chunks": dropped,
+            }
+        },
+    )
+
+    resp = _post(client, query="?wait=true")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["transcript_dropped_chunks"] == dropped
+    assert resp.json()["status"] == "success"
 
 
 def test_wait_surfaces_the_terminal_error_of_a_failed_run(upload_client):
@@ -339,6 +372,7 @@ def test_wait_surfaces_the_terminal_error_of_a_failed_run(upload_client):
         "wait_timed_out": False,
         "graph_nodes": 0,
         "graph_edges": 0,
+        "transcript_dropped_chunks": [],
         "error": "graph extraction failed for ingest ing-3",
         "error_type": "GraphStageIncomplete",
     }

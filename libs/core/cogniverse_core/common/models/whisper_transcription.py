@@ -27,7 +27,9 @@ may come back empty.
 
 A chunk whose ``verbose_json`` answer at 0.0 carries per-segment
 ``avg_logprob`` averaging below ``NON_SPEECH_AVG_LOGPROB`` is not speech, and
-gets an empty transcript.
+gets an empty transcript. ``transcribe_in_chunks(drop_garbled=True)`` leaves
+out a chunk that raises ``GarbledTranscriptError`` and records it under
+``dropped_chunks``, raising only when every chunk does.
 """
 
 from __future__ import annotations
@@ -506,6 +508,7 @@ def transcribe_in_chunks(
     language: Optional[str],
     source: str,
     logger: logging.Logger,
+    drop_garbled: bool = False,
 ) -> Dict[str, Any]:
     """Transcribe ``samples`` chunk by chunk and merge the answers.
 
@@ -518,14 +521,37 @@ def transcribe_in_chunks(
     that language is sent with every later chunk.
 
     Returns ``full_text``, ``language``, ``duration`` (seconds) and
-    ``segments`` with ``start``/``end`` relative to the whole audio.
+    ``segments`` with ``start``/``end`` relative to the whole audio. With
+    ``drop_garbled``, a chunk raising ``GarbledTranscriptError`` contributes
+    no text and is listed under ``dropped_chunks`` (``chunk_index``,
+    ``start_s``, ``end_s``, ``compression_ratios``); the error is raised only
+    when every chunk raises it.
     """
     chunks = split_for_whisper(samples)
     texts: List[str] = []
     segments: List[Dict[str, Any]] = []
+    dropped: List[Dict[str, Any]] = []
     detected: Optional[str] = language
     for chunk in chunks:
-        answer = _transcribe_checked(chunk, transcribe_chunk, detected, source, logger)
+        try:
+            answer = _transcribe_checked(
+                chunk, transcribe_chunk, detected, source, logger
+            )
+        except GarbledTranscriptError as garbled:
+            if not drop_garbled:
+                raise
+            dropped.append(
+                {
+                    "chunk_index": garbled.chunk_index,
+                    "start_s": garbled.start_s,
+                    "end_s": garbled.end_s,
+                    "compression_ratios": list(garbled.compression_ratios),
+                }
+            )
+            if len(dropped) == len(chunks):
+                raise
+            logger.warning("%s: dropped from the transcript", garbled)
+            continue
         if detected is None:
             detected = answer.language
         if answer.text:
@@ -539,12 +565,15 @@ def transcribe_in_chunks(
             for segment in answer.segments
         )
     separator = "" if (detected or "").lower() in NO_SPACE_LANGUAGES else " "
-    return {
+    transcript: Dict[str, Any] = {
         "full_text": separator.join(texts),
         "language": detected or "unknown",
         "duration": len(samples) / WHISPER_SAMPLE_RATE,
         "segments": segments,
     }
+    if drop_garbled:
+        transcript["dropped_chunks"] = dropped
+    return transcript
 
 
 def word_agreement(first: str, second: str) -> float:

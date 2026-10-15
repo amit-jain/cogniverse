@@ -594,7 +594,7 @@ def test_a_chunk_never_timed_keeps_its_untimed_text_as_one_segment(
     ]
 
 
-def test_an_untimed_answer_looping_on_every_attempt_fails_the_transcription(
+def test_an_untimed_answer_looping_on_every_attempt_is_left_out_of_the_transcript(
     vllm_asr_url, speech_chunks, tmp_path
 ):
     chunk = speech_chunks[1]
@@ -613,24 +613,32 @@ def test_an_untimed_answer_looping_on_every_attempt_fails_the_transcription(
     ) as server:
         transcript = _processor(server.url).transcribe_audio(SPEECH_CLIP, tmp_path)
 
-    ratios = ", ".join(f"{compression_ratio(loop):.2f}" for loop in LOOPS.values())
-    assert transcript == {
-        "video_id": SPEECH_CLIP.stem,
-        "error": (
-            f"{SPEECH_CLIP}: chunk 1 ({chunk.start_s:.2f}-{chunk.end_s:.2f}s) came "
-            f"back unusable on all {TRANSCRIBE_ATTEMPTS} attempts: "
-            f"{TRANSCRIBE_ATTEMPTS} repetition loops (compression ratio {ratios}, "
-            "above 2.4) and 0 empty"
-        ),
-        "full_text": "",
-        "segments": [],
+    dropped = [
+        {
+            "chunk_index": 1,
+            "start_s": chunk.start_s,
+            "end_s": chunk.end_s,
+            "compression_ratios": [compression_ratio(loop) for loop in LOOPS.values()],
+        }
+    ]
+    owners = {
+        next(
+            candidate.index
+            for candidate in speech_chunks
+            if candidate.start_s <= segment["start"] < candidate.end_s
+        )
+        for segment in transcript["segments"]
     }
+    assert "error" not in transcript
+    assert transcript["dropped_chunks"] == dropped
+    assert owners == {c.index for c in speech_chunks} - {1}
     assert server.of_chunk(1) == [
         (fmt, t) for t in FALLBACK_TEMPERATURES for fmt in (V, J)
     ]
-    assert not (
-        tmp_path / "transcripts" / f"{SPEECH_CLIP.stem}_transcript.json"
-    ).exists()
+    written = json.loads(
+        (tmp_path / "transcripts" / f"{SPEECH_CLIP.stem}_transcript.json").read_text()
+    )
+    assert written["dropped_chunks"] == dropped
 
 
 def test_a_server_answering_empty_for_speech_fails_the_transcription(

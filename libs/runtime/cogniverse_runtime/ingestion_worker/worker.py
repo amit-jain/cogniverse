@@ -1050,6 +1050,9 @@ def _summarise(pipeline_result: dict) -> dict:
                 if isinstance(v, dict)
             )
         out["chunks"] = chunks
+        transcript = results.get("transcript")
+        if isinstance(transcript, dict) and "dropped_chunks" in transcript:
+            out["transcript_dropped_chunks"] = transcript["dropped_chunks"]
     # Carry the worker's per-segment KG counts to the terminal event so the
     # wait=true route surfaces the real graph size instead of re-extracting.
     for k in ("graph_nodes", "graph_edges"):

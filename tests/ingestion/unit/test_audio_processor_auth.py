@@ -122,4 +122,5 @@ def test_both_remote_calls_carry_the_bearer(monkeypatch):
         "duration": 1.5,
         "full_text": "hello world",
         "segments": [{"start": 0.0, "end": 1.5, "text": "hello world"}],
+        "dropped_chunks": [],
     }

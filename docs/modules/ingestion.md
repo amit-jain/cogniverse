@@ -1525,10 +1525,15 @@ lowest-temperature answer one of them corroborates, else the one half of the
 six answers agree on, else a usable answer that holds only sound annotations;
 a chunk with none of these, and any other chunk whose `json` answer never
 comes back usable, raises `GarbledTranscriptError` or `EmptyTranscriptError`
-naming the chunk and its time range, which fails the transcription; a silent
-chunk may come back empty, as does a chunk whose timed answer at temperature 0
-is not speech (mean token log-probability below -1.0). A failed transcription
-returns the `error` dict, which fails the pipeline's transcription stage.
+naming the chunk and its time range; a silent chunk may come back empty, as
+does a chunk whose timed answer at temperature 0 is not speech (mean token
+log-probability below -1.0). A chunk raising `GarbledTranscriptError` is left
+out of the transcript, which lists it under `dropped_chunks` (`chunk_index`,
+`start_s`, `end_s`, `compression_ratios`); the ingest's terminal result and
+the upload response carry that list as `transcript_dropped_chunks`. The
+transcription fails only when every chunk raises `GarbledTranscriptError`, or
+when one raises `EmptyTranscriptError`. A failed transcription returns the
+`error` dict, which fails the pipeline's transcription stage.
 
 ```python
 processor = AudioProcessor(logger, model="whisper-large-v3", language="auto")

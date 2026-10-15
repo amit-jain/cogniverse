@@ -2293,6 +2293,11 @@ temperature)` sends one request with `response_format(timestamps)` and
   on the cluster's server, speech scores at least -0.53, and music the server
   answers with a phrase ("I'm going to go.") or a sound annotation at most
   -1.05. A "Thank you." the server gives music at -0.79 to -0.91 is kept.
+- `transcribe_in_chunks(..., drop_garbled=True)` (the ingest path) leaves a
+  chunk raising `GarbledTranscriptError` out of the transcript, logs it at
+  WARNING and lists it under `dropped_chunks` (`chunk_index`, `start_s`,
+  `end_s`, `compression_ratios`); the error is raised only when every chunk
+  raises it. Without it, the error propagates.
 - With no language named, the first chunk's timed answer names it and every
   later request is sent in it, as the server does for a whole file. Chunk texts
   join with a space, or with nothing for `ja` and `zh`.

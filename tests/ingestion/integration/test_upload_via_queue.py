@@ -1612,7 +1612,9 @@ class TestUploadRealStack:
             "wait_timed_out",
             "graph_nodes",
             "graph_edges",
+            "transcript_dropped_chunks",
         }
+        assert body["transcript_dropped_chunks"] == []
         assert body["state"] == "complete"
         assert body["wait_timed_out"] is False
         assert body["existing"] is False
@@ -1790,6 +1792,7 @@ class TestUploadRealStack:
             # The echo surfaces the first run's terminal record verbatim.
             "graph_nodes": body["graph_nodes"],
             "graph_edges": body["graph_edges"],
+            "transcript_dropped_chunks": body["transcript_dropped_chunks"],
         }
         indexed_titles_2 = _vespa_video_titles(
             real_stack["vespa_http_port"], PROFILE, TENANT_ID
