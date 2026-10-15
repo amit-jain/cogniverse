@@ -2268,11 +2268,16 @@ temperature)` sends one request with `response_format(timestamps)` and
   repeated speech (`repeated_speech`) and no further `json` answer is asked.
   When neither agrees, once every temperature is asked, the lowest-temperature
   answer that an answer at another loop-breaking temperature agrees with is
-  kept (one asked at 0.8 or above only when it did not loop), else the
-  lowest-temperature usable one. While the `json` answer at 0.0 looped, a
-  timed answer running to the end does not stop the `json` answers; a timed
-  answer kept at 0.8 or above that does not agree with the transcript is not
-  used for timing. Otherwise, when neither a `json` answer nor a timed
+  kept (one asked at 0.8 or above only when it did not loop); else the
+  lowest-temperature answer `MAJORITY_SUPPORT` (3) others agree with, four of
+  the six; else the lowest-temperature usable one when it holds no speech
+  words outside sound annotations (`speech_words`: `*Ding*`, `[Music]`,
+  `(laughs)`, `♪`). Otherwise the chunk has no faithful `json` answer. While
+  the `json` answer at 0.0 looped, a timed answer running to the end does not
+  stop the `json` answers, and a timed answer that does not agree with the
+  transcript is not used for timing, as is one kept at 0.8 or above. A timed
+  answer kept at 0.8 or above that carries speech is not used as the
+  transcript of a chunk with no faithful `json` answer. Otherwise, when neither a `json` answer nor a timed
   answer running to the end is usable, the chunk raises
   `GarbledTranscriptError` (`source`, `chunk_index`, `start_s`, `end_s`,
   `compression_ratios`, `attempts`) if any looped, else `EmptyTranscriptError`

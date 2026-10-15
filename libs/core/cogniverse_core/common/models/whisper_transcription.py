@@ -566,8 +566,11 @@ def _settled(
     lowest-temperature candidate that an answer at another loop-breaking
     temperature corroborates (``word_agreement`` at least
     ``REPEATED_SPEECH_AGREEMENT``) is kept — one asked at a loop-breaking
-    temperature only when usable, as a loop there formed under sampling —
-    else the lowest-temperature usable one; with neither, ``None``.
+    temperature only when usable, as a loop there formed under sampling.
+    Failing that, the answer a majority of the answers agree with
+    (``_majority_answer``), else the lowest-temperature usable one when it
+    holds no speech words, only sound annotations (``speech_words``). With
+    none of these, ``None``: the chunk has no faithful answer.
     """
     breaking = {
         temperature: answer
@@ -613,7 +616,70 @@ def _settled(
                 temperature,
             )
             return answer
-    return candidates[min(usable_at)] if usable_at else None
+    consensus = _majority_answer(first, candidates, usable_at)
+    if consensus is not None:
+        temperature, answer, support = consensus
+        logger.warning(
+            "%s: chunk %d (%.2f-%.2fs) looped at temperature 0.0 and no answer at "
+            "a loop-breaking temperature corroborates another: kept the answer at "
+            "temperature %.1f, which %d of the other answers agree with",
+            source,
+            chunk.index,
+            chunk.start_s,
+            chunk.end_s,
+            temperature,
+            support,
+        )
+        return answer
+    if usable_at and not speech_words(candidates[min(usable_at)].text):
+        return candidates[min(usable_at)]
+    return None
+
+
+# Answers, besides the one kept, that must agree with it for a chunk whose
+# loop-breaking answers corroborate nothing: with it, four of the six.
+MAJORITY_SUPPORT = TRANSCRIBE_ATTEMPTS // 2
+
+_ANNOTATION = re.compile(r"\*[^*]*\*|\[[^\]]*\]|\([^)]*\)|[♪♫]")
+
+
+def speech_words(text: str) -> List[str]:
+    """The words of an answer outside sound annotations (``*Ding*``,
+    ``[Music]``, ``(laughs)``, ``♪``)."""
+    return [
+        word
+        for word in map(_comparable, _units(_ANNOTATION.sub(" ", text), False))
+        if word
+    ]
+
+
+def _majority_answer(
+    first: ChunkTranscript,
+    candidates: Dict[float, ChunkTranscript],
+    usable_at: List[float],
+) -> Optional[Tuple[float, ChunkTranscript, int]]:
+    """The lowest-temperature answer at least ``MAJORITY_SUPPORT`` others agree
+    with, with its temperature and how many do, among the answer at 0.0 and
+    the later ones; an answer at ``LOOP_BREAKING_TEMPERATURE`` or above takes
+    part only when it did not loop."""
+    answers = {
+        FALLBACK_TEMPERATURES[0]: first,
+        **{
+            temperature: answer
+            for temperature, answer in candidates.items()
+            if temperature < LOOP_BREAKING_TEMPERATURE or temperature in usable_at
+        },
+    }
+    for temperature, answer in sorted(answers.items()):
+        support = sum(
+            1
+            for other_temperature, other in answers.items()
+            if other_temperature != temperature
+            and word_agreement(answer.text, other.text) >= REPEATED_SPEECH_AGREEMENT
+        )
+        if support >= MAJORITY_SUPPORT:
+            return temperature, answer, support
+    return None
 
 
 def _transcribe_checked(
@@ -704,7 +770,10 @@ def _transcribe_checked(
     if (
         untimed is not None
         and timed is not None
-        and timed_temperature >= LOOP_BREAKING_TEMPERATURE
+        and (
+            timed_temperature >= LOOP_BREAKING_TEMPERATURE
+            or FALLBACK_TEMPERATURES[0] in looped
+        )
         and word_agreement(timed.text, untimed.text) < REPEATED_SPEECH_AGREEMENT
     ):
         logger.warning(
@@ -718,6 +787,22 @@ def _transcribe_checked(
             word_agreement(timed.text, untimed.text),
         )
         timed = None
+    if (
+        untimed is None
+        and timed is not None
+        and timed_temperature >= LOOP_BREAKING_TEMPERATURE
+        and speech_words(timed.text)
+    ):
+        logger.warning(
+            "%s: chunk %d (%.2f-%.2fs) has no faithful json answer and its timed "
+            "answer at temperature %.1f has nothing to agree with: not used",
+            source,
+            chunk.index,
+            chunk.start_s,
+            chunk.end_s,
+            timed_temperature,
+        )
+        timed, complete = None, False
     if untimed is None and not complete:
         if loops:
             raise GarbledTranscriptError(

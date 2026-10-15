@@ -1521,8 +1521,10 @@ reaches -60 dBFS, is sent again at the next sampling temperature, up to six
 times; once a chunk's `json` answer at temperature 0 has looped, no later
 answer is kept before the answers at 0.8 and above are compared with it: one
 that agrees keeps the temperature-0 answer as repeated speech, otherwise the
-lowest-temperature answer one of them corroborates, else the first usable one;
-any other chunk whose `json` answer never comes back usable fails the
+lowest-temperature answer one of them corroborates, else the one four of the
+six answers agree on, else a usable answer that holds only sound annotations;
+a chunk with none of these, and any other chunk whose `json` answer never
+comes back usable, fails the
 transcription with `GarbledTranscriptError` or `EmptyTranscriptError` naming
 the chunk and its time range; a silent chunk may come back empty. A failed
 transcription returns the `error` dict, which fails the pipeline's

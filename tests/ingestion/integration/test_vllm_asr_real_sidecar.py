@@ -550,6 +550,7 @@ def test_a_chunk_never_timed_keeps_its_untimed_text_as_one_segment(
         and (
             "kept as repeated speech" in record.getMessage()
             or "no answer repeats it" in record.getMessage()
+            or "other answers agree with" in record.getMessage()
         )
     ]
     if compression_ratio(texts[0.0]) <= 2.4:

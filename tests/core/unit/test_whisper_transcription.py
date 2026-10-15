@@ -42,6 +42,7 @@ from cogniverse_core.common.models.whisper_transcription import (
     repeated_speech,
     response_format,
     sampling_fields,
+    speech_words,
     split_for_whisper,
     transcribe_in_chunks,
     wav_bytes,
@@ -601,20 +602,82 @@ def test_speech_repeating_at_every_temperature_keeps_its_temperature_0_answer(
     ]
 
 
-def test_a_loop_that_forms_under_sampling_does_not_pass_for_repeated_speech():
-    """The answers repeat at every temperature, but the ones at 0.8 and 1.0
-    are loops of their own: nothing corroborates the temperature-0 answer."""
+def test_a_loop_formed_at_both_loop_breaking_temperatures_leaves_the_majority(
+    caplog,
+):
+    """The answers at 0.8 and 1.0 are loops of their own and corroborate
+    nothing; the four answers below them repeat the same speech, so the
+    temperature-0 one, which three others agree with, is kept."""
     audio = _noise(29.4)
     answers = [*REPEATED_SPEECH[:4], FORMED_LOOP, FORMED_LOOP]
+    server = _Server(timed={0: [[]] * 6}, text={0: list(answers)})
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER.name):
+        transcript = _transcribe(audio, server)
+
+    assert transcript["full_text"] == REPEATED_SPEECH[0].strip()
+    assert server.requests == [
+        (0, "en", fmt, t)
+        for t in FALLBACK_TEMPERATURES
+        for fmt in ("verbose_json", "json")
+    ]
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "agree with" in record.getMessage()
+    ] == [
+        "clip.wav: chunk 0 (0.00-29.40s) looped at temperature 0.0 and no answer "
+        "at a loop-breaking temperature corroborates another: kept the answer at "
+        "temperature 0.0, which 3 of the other answers agree with"
+    ]
+    assert whisper_transcription.MAJORITY_SUPPORT == 3
+
+
+def test_answers_with_no_majority_and_no_corroboration_raise_as_garbled():
+    """Six answers that say six different things: no faithful one exists."""
+    audio = _noise(29.4)
+    answers = [
+        LOOP,
+        " The ferry leaves at nine.",
+        " Bring the red folder tomorrow.",
+        LOOPS[1],
+        " Nobody answered the phone.",
+        " Paint dries slowly in winter.",
+    ]
     server = _Server(timed={0: [[]] * 6}, text={0: list(answers)})
 
     with pytest.raises(GarbledTranscriptError) as caught:
         _transcribe(audio, server)
 
-    assert caught.value.compression_ratios == tuple(
-        compression_ratio(answer) for answer in answers
+    assert caught.value.compression_ratios == (
+        compression_ratio(LOOP),
+        compression_ratio(LOOPS[1]),
     )
-    assert caught.value.attempts == 6
+    assert str(caught.value).endswith(
+        f"2 repetition loops (compression ratio {compression_ratio(LOOP):.2f}, "
+        f"{compression_ratio(LOOPS[1]):.2f}, above 2.4) and 4 empty"
+    )
+
+
+def test_a_sound_annotation_is_kept_when_no_answer_is_speech():
+    """A loop of sound annotations at 0.0 and annotations after it: no answer
+    carries speech, so the lowest-temperature usable one is the transcript."""
+    audio = _noise(29.4)
+    answers = [
+        " *Squeak*" * 40,
+        " *Ding*",
+        " *Demonic music*",
+        " [Music]",
+        " *Balloon sound*",
+        " (laughs)",
+    ]
+    server = _Server(timed={0: [[]] * 6}, text={0: list(answers)})
+
+    transcript = _transcribe(audio, server)
+
+    assert transcript["full_text"] == "*Ding*"
+    assert [speech_words(answer) for answer in answers] == [[]] * 6
+    assert speech_words(" *Ding* Sorry! [Music] what (laughs) ♪") == ["sorry", "what"]
 
 
 def test_one_high_temperature_answer_agreeing_is_enough():
@@ -1526,6 +1589,9 @@ def test_the_recorded_ladders_keep_their_shape():
         ("tracked_video_audio_x36.wav", 11),
         ("tracked_video_audio_x36.wav", 10),
         ("v_-IMXSEIabMM.mp4", 3),
+        ("tracked_video_audio_x36.wav", 7),
+        ("v_-vnSFKJNB94.mp4", 1),
+        ("big_buck_bunny_clip.mp4", 11),
     ]
     for ladder in ladders:
         assert sorted(
@@ -1650,3 +1716,67 @@ def test_a_timed_answer_at_0_0_that_runs_to_the_end_needs_no_json(caplog):
     assert server.requests == [("verbose_json", 0.0)]
     assert transcript["full_text"] == server.text("verbose_json", 0.0)
     assert decisions == []
+
+
+def test_both_loop_breaking_answers_broken_keep_the_majority(caplog):
+    """Repeated speech up to 0.6; at 0.8 a loop formed under sampling and at
+    1.0 an answer sharing a fifth of its words. The temperature-0 answer, which
+    the three answers below 0.8 agree with, is kept."""
+    ladder = _ladders()[5]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == _asked_through(1.0)
+    assert transcript["full_text"] == server.text("json", 0.0)
+    assert decisions[0] == (
+        "clip.wav: chunk 0 (0.00-29.70s) looped at temperature 0.0 and no answer "
+        "at a loop-breaking temperature corroborates another: kept the answer at "
+        "temperature 0.0, which 3 of the other answers agree with"
+    )
+    assert (
+        round(word_agreement(server.text("json", 1.0), server.text("json", 0.0)), 2)
+        == 0.23
+    )
+
+
+def test_a_chunk_with_no_faithful_answer_raises_rather_than_keeping_one(caplog):
+    """Every json answer disagrees with every other; the timed answer at 0.8
+    has nothing to agree with. The chunk raises instead of keeping one."""
+    ladder = _ladders()[6]
+    server = _LadderServer(ladder)
+
+    with (
+        caplog.at_level(logging.WARNING, logger=LOGGER.name),
+        pytest.raises(GarbledTranscriptError) as caught,
+    ):
+        _transcribe(_noise(ladder["chunk_len_s"]), server)
+
+    assert str(caught.value) == (
+        "clip.wav: chunk 0 (0.00-29.00s) came back unusable on all 6 attempts: "
+        "2 repetition loops (compression ratio 3.58, 36.47, above 2.4) and 4 empty"
+    )
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "nothing to agree with" in record.getMessage()
+    ] == [
+        "clip.wav: chunk 0 (0.00-29.00s) has no faithful json answer and its timed "
+        "answer at temperature 0.8 has nothing to agree with: not used"
+    ]
+
+
+def test_a_timed_answer_disagreeing_after_a_loop_times_nothing(caplog):
+    """Music: the json answers are sound annotations; the timed answer at 0.2
+    is speech the json answers do not contain, so it supplies no words."""
+    ladder = _ladders()[7]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert transcript["segments"] == _segments(
+        (0.0, ladder["chunk_len_s"], server.text("json", 0.4))
+    )
+    assert decisions == [
+        "clip.wav: chunk 0 (0.00-29.70s) looped at temperature 0.0 and no answer "
+        "repeats it: kept the answer at temperature 0.4, which an answer at a "
+        "loop-breaking temperature agrees with",
+        "clip.wav: chunk 0 (0.00-29.70s) timed answer at temperature 0.2 does not "
+        "agree with the transcript (0.00): not used for timing",
+    ]

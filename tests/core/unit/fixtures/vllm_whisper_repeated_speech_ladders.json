@@ -1237,6 +1237,716 @@
      }
     }
    ]
+  },
+  {
+   "clip": "tracked_video_audio_x36.wav",
+   "chunk": 7,
+   "chunk_len_s": 29.7,
+   "loudest_frame_dbfs": -15.2,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit, or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Hit or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try. Don't tell me I got another first try. I'm about to light a fire and Bear Grylls style. Hit, or at least try."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " oh don't tell me i got another first try! i'm about to light the fire and bear grill style hit or at least try ahaha don't tell me i got another first try! i'm about to light the fire and bear grill style hit or at least try ahaha don't tell me i got another first try! i'm about to light a fire and bear grill style hit or at least try"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Hah! Don't tell me. I got in on the first try. I'm bervrous on fire Bear Grylls style or at least try * arrivण Western nest. in the end* bo-terror I got another first try about the light of fire Bear Grylls style or at least try nostra boss hope - I got another time a few but I don't what you want to carry I got another first try I'm about the light of fire Bear Grylls style or at least try mo- DAVID Weav rods above Kylie 할"
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try. Don't tell me I got another first try. I'm about to light a fire and bear grills style. Or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try. Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try. Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 29.7,
+        "text": " Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try. Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try. Oh don't tell me I got another first try! I'm about to light a fire and bear grill style. Or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.7",
+      "segments": []
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " Hah! Don't tell me I got another first try.  I'm 'bout to light a fire Bear Grylls style or at least try.  Hah! Don't tell me I got another first try.  I'm about to light a fire Bear Grylls style or at least try.  Hah! Don't tell me I got another first try.  I'm about to light a fire Bear Grylls style or at least try.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 3.54,
+        "text": " Hah! Don't tell me I got another first try."
+       },
+       {
+        "start": 3.54,
+        "end": 11.0,
+        "text": " I'm 'bout to light a fire Bear Grylls style or at least try."
+       },
+       {
+        "start": 11.0,
+        "end": 15.860000000000001,
+        "text": " Hah! Don't tell me I got another first try."
+       },
+       {
+        "start": 15.860000000000001,
+        "end": 19.44,
+        "text": " I'm about to light a fire Bear Grylls style or at least try."
+       },
+       {
+        "start": 19.44,
+        "end": 24.560000000000002,
+        "text": " Hah! Don't tell me I got another first try."
+       },
+       {
+        "start": 24.560000000000002,
+        "end": 29.7,
+        "text": " I'm about to light a fire Bear Grylls style or at least try."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Hah! Don't tell me. I got in on the first try.  I'm 'bout to light a fire and Bear Grylls style.  Or at least try.  HAH! Don't tell me. I got in on the first try.  I'm about to light a fire and Bear Grylls style.  Or at least try.  Oh! Don't tell me. I got in on the first try. vendo's the bowflaps experience.  I'm about to light a fire and Bear Grylls style.  Or at least try.",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.16,
+        "text": " Hah! Don't tell me. I got in on the first try."
+       },
+       {
+        "start": 4.5200000000000005,
+        "end": 7.5200000000000005,
+        "text": " I'm 'bout to light a fire and Bear Grylls style."
+       },
+       {
+        "start": 7.5200000000000005,
+        "end": 9.56,
+        "text": " Or at least try."
+       },
+       {
+        "start": 10.28,
+        "end": 14.6,
+        "text": " HAH! Don't tell me. I got in on the first try."
+       },
+       {
+        "start": 14.9,
+        "end": 18.32,
+        "text": " I'm about to light a fire and Bear Grylls style."
+       },
+       {
+        "start": 18.32,
+        "end": 19.740000000000002,
+        "text": " Or at least try."
+       },
+       {
+        "start": 21.14,
+        "end": 24.3,
+        "text": " Oh! Don't tell me. I got in on the first try. vendo's the bowflaps experience."
+       },
+       {
+        "start": 24.72,
+        "end": 27.94,
+        "text": " I'm about to light a fire and Bear Grylls style."
+       },
+       {
+        "start": 27.94,
+        "end": 29.7,
+        "text": " Or at least try."
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "clip": "v_-vnSFKJNB94.mp4",
+   "chunk": 1,
+   "chunk_len_s": 29.0,
+   "loudest_frame_dbfs": -29.4,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " The first time I was in the middle of the street, I was in the middle of the street. I was in the middle of the street, and I was in the middle of the street. I was in the middle of the street, and I was in the middle of the street."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I'm going to go to the restaurant."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I'm going to go to the restaurant, in the restaurant, and I'm going to go to the restaurant."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " For example, I went to a restaurant restaurant in the area of restaurants. I also went to a restaurant restaurant restaurant. It was a restaurant restaurant restaurant. The restaurant restaurant was a restaurant restaurant in the area. The restaurant restaurant restaurant was a restaurant restaurant restaurant. It was a restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant restaurant"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For me, I went to a drawing board in the car. I had a lease on my family. A taxi to a man named na na na na na na na na na na."
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Staff 구 alliances in профapa. This is inrawdęvate structure. Code for the creators of the install and ג' enjoy the Nor' ребята."
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": " The first time I was in the middle of the street, I was in the middle of the street.  I was in the middle of the street, but I was in the middle of the street.  I was in the middle of the street, but I was in the middle of the street.  I was in the middle of the street, but I was in the middle of the street.  I was in the middle of the street, but I was in the middle of the street.  I was in the middle of the street, but I was in the middle of the street.",
+      "language": "en",
+      "duration": "29.0",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 5.0,
+        "text": " The first time I was in the middle of the street, I was in the middle of the street."
+       },
+       {
+        "start": 5.0,
+        "end": 10.0,
+        "text": " I was in the middle of the street, but I was in the middle of the street."
+       },
+       {
+        "start": 10.0,
+        "end": 15.0,
+        "text": " I was in the middle of the street, but I was in the middle of the street."
+       },
+       {
+        "start": 15.0,
+        "end": 20.0,
+        "text": " I was in the middle of the street, but I was in the middle of the street."
+       },
+       {
+        "start": 20.0,
+        "end": 25.0,
+        "text": " I was in the middle of the street, but I was in the middle of the street."
+       },
+       {
+        "start": 25.0,
+        "end": 29.0,
+        "text": " I was in the middle of the street, but I was in the middle of the street."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.",
+      "language": "en",
+      "duration": "29.0",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.0,
+        "text": " I'm going to go to the restaurant."
+       },
+       {
+        "start": 4.0,
+        "end": 8.0,
+        "text": " I'm going to go to the restaurant."
+       },
+       {
+        "start": 8.0,
+        "end": 12.0,
+        "text": " I'm going to go to the restaurant."
+       },
+       {
+        "start": 12.0,
+        "end": 16.0,
+        "text": " I'm going to go to the restaurant."
+       },
+       {
+        "start": 16.0,
+        "end": 20.0,
+        "text": " I'm going to go to the restaurant."
+       },
+       {
+        "start": 20.0,
+        "end": 24.0,
+        "text": " I'm going to go to the restaurant."
+       },
+       {
+        "start": 24.0,
+        "end": 29.0,
+        "text": " I'm going to go to the restaurant."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " I'm going to go to the restaurant, in the restaurant, and I'm going to go to the restaurant.  I'm going to go to the restaurant and the restaurant, and I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant. I'm going to go to the restaurant.  I'm going to go to the restaurant.  I'm going to go to the restaurant.",
+      "language": "en",
+      "duration": "29.0",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 5.0,
+        "text": " I'm going to go to the restaurant, in the restaurant, and I'm going to go to the restaurant."
+       },
+       {
+        "start": 5.0,
+        "end": 10.0,
+        "text": " I'm going to go to the restaurant and the restaurant, and I'm going to go to the restaurant."
+       },
+       {
+        "start": 10.0,
+        "end": 14.0,
+        "text": " I'm going to go to the restaurant."
+       },
+       {
+        "start": 14.0,
+        "end": 17.0,
+        "text": " I'm going to go to the restaurant."
+       },
+       {
+        "start": 17.0,
+        "end": 21.0,
+        "text": " I'm going to go to the restaurant. I'm going to go to the restaurant."
+       },
+       {
+        "start": 21.0,
+        "end": 24.0,
+        "text": " I'm going to go to the restaurant."
+       },
+       {
+        "start": 24.0,
+        "end": 29.0,
+        "text": " I'm going to go to the restaurant."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " For example, I went to a restaurant, in the car, and I went to the restaurant.  I was a man of a guest.  I was a guest of the restaurant, and I was really interested in a restaurant.  I was a guest of the restaurant, and I was a guest of the restaurant.  I was a guest of the restaurant. I was a guest of the restaurant.  I was a guest of the restaurant, and I was the guest of the restaurant.  I was a guest of the restaurant. I went to the restaurant.  I asked his my guest. I asked him. He had a guest. I was a guest.  The restaurant's here. I was a guest of the restaurant.  I'm a guest of the restaurant. I'm a guest of the restaurant. I was a guest?  You're a guest of the restaurant. I'm a guest.",
+      "language": "en",
+      "duration": "29.0",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.0,
+        "text": " For example, I went to a restaurant, in the car, and I went to the restaurant."
+       },
+       {
+        "start": 4.0,
+        "end": 8.0,
+        "text": " I was a man of a guest."
+       },
+       {
+        "start": 8.0,
+        "end": 12.0,
+        "text": " I was a guest of the restaurant, and I was really interested in a restaurant."
+       },
+       {
+        "start": 12.0,
+        "end": 15.0,
+        "text": " I was a guest of the restaurant, and I was a guest of the restaurant."
+       },
+       {
+        "start": 15.0,
+        "end": 19.0,
+        "text": " I was a guest of the restaurant. I was a guest of the restaurant."
+       },
+       {
+        "start": 19.0,
+        "end": 23.0,
+        "text": " I was a guest of the restaurant, and I was the guest of the restaurant."
+       },
+       {
+        "start": 23.0,
+        "end": 27.0,
+        "text": " I was a guest of the restaurant. I went to the restaurant."
+       },
+       {
+        "start": 27.0,
+        "end": 28.0,
+        "text": " I asked his my guest. I asked him. He had a guest. I was a guest."
+       },
+       {
+        "start": 28.0,
+        "end": 29.0,
+        "text": " The restaurant's here. I was a guest of the restaurant."
+       },
+       {
+        "start": 29.0,
+        "end": 29.0,
+        "text": " I'm a guest of the restaurant. I'm a guest of the restaurant. I was a guest?"
+       },
+       {
+        "start": 29.0,
+        "end": 29.98,
+        "text": " You're a guest of the restaurant. I'm a guest."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " For me, I went to a drawing board in the car.  I went to the toilet and put it under a blanket.  Right? Because I bought the toilet.  A glass of wine is my best.  A glass of wine is a cockey.  I found the house of the toilet.  I was a bit loud and a bit loud.",
+      "language": "en",
+      "duration": "29.0",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.0,
+        "text": " For me, I went to a drawing board in the car."
+       },
+       {
+        "start": 4.0,
+        "end": 8.0,
+        "text": " I went to the toilet and put it under a blanket."
+       },
+       {
+        "start": 9.0,
+        "end": 13.0,
+        "text": " Right? Because I bought the toilet."
+       },
+       {
+        "start": 14.0,
+        "end": 17.0,
+        "text": " A glass of wine is my best."
+       },
+       {
+        "start": 18.0,
+        "end": 21.0,
+        "text": " A glass of wine is a cockey."
+       },
+       {
+        "start": 23.0,
+        "end": 27.0,
+        "text": " I found the house of the toilet."
+       },
+       {
+        "start": 27.0,
+        "end": 29.0,
+        "text": " I was a bit loud and a bit loud."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.0",
+      "segments": []
+     }
+    }
+   ]
+  },
+  {
+   "clip": "big_buck_bunny_clip.mp4",
+   "chunk": 11,
+   "chunk_len_s": 29.7,
+   "loudest_frame_dbfs": -2.8,
+   "answers": [
+    {
+     "response_format": "json",
+     "temperature": 0.0,
+     "body": {
+      "text": " *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.2,
+     "body": {
+      "text": " *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG* *BANG*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.4,
+     "body": {
+      "text": " *BANG!* *BANG!* *BANG!* *BANG!*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.6,
+     "body": {
+      "text": " *BANG!* *BANG!* *BANG!* *BANG!*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 0.8,
+     "body": {
+      "text": " *BANG!* *BANG!*"
+     }
+    },
+    {
+     "response_format": "json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Sorry!"
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.0,
+     "body": {
+      "text": "",
+      "language": "en",
+      "duration": "29.7",
+      "segments": []
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.2,
+     "body": {
+      "text": " *            .",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " *"
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": ""
+       },
+       {
+        "start": 2.0,
+        "end": 2.0,
+        "text": "."
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.4,
+     "body": {
+      "text": " *BANG*",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " *BANG*"
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.6,
+     "body": {
+      "text": " *BANG!*",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 2.0,
+        "text": " *BANG!*"
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 0.8,
+     "body": {
+      "text": " *toil gun проф*",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.86,
+        "text": " *toil gun проф*"
+       }
+      ]
+     }
+    },
+    {
+     "response_format": "verbose_json",
+     "temperature": 1.0,
+     "body": {
+      "text": " Sorry!",
+      "language": "en",
+      "duration": "29.7",
+      "segments": [
+       {
+        "start": 0.0,
+        "end": 4.0,
+        "text": " Sorry!"
+       }
+      ]
+     }
+    }
+   ]
   }
  ]
 }
