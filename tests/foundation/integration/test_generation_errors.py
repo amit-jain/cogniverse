@@ -70,7 +70,12 @@ PROSE = "Sure! The observatory runs two telescopes and observations begin at sun
 
 
 class Provider:
-    """OpenAI-compatible completion server driven by a marker in the prompt."""
+    """OpenAI-compatible completion server driven by a marker in the prompt.
+
+    Like vLLM it publishes its window on ``/v1/models`` and counts on
+    ``/tokenize`` (four tokens per message plus one per word); those are not
+    completion requests and are not recorded.
+    """
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -84,8 +89,24 @@ class Provider:
             def log_message(self, *args):
                 pass
 
+            def do_GET(self):  # noqa: N802 - stdlib handler name
+                self.respond(
+                    200, {"data": [{"id": "stub-model", "max_model_len": 32768}]}
+                )
+
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path == "/tokenize":
+                    self.respond(
+                        200,
+                        {
+                            "count": sum(
+                                4 + len(str(message["content"]).split())
+                                for message in body["messages"]
+                            )
+                        },
+                    )
+                    return
                 prompt = json.dumps(body["messages"])
                 case = next(
                     name

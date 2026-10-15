@@ -64,7 +64,12 @@ GROUNDED_SUMMARY = "The launch review records evidence code ORBIT-42."
 
 
 class _ReportProvider:
-    """OpenAI-compatible server with controlled HTTP and socket outcomes."""
+    """OpenAI-compatible server with controlled HTTP and socket outcomes.
+
+    Like vLLM it publishes its window on ``/v1/models`` and counts on
+    ``/tokenize`` (four tokens per message plus one per word); those are not
+    completion requests and are not recorded.
+    """
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -77,8 +82,24 @@ class _ReportProvider:
             def log_message(self, *_args):
                 return
 
+            def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
+                self._send(
+                    200, {"data": [{"id": "stub-model", "max_model_len": 32768}]}
+                )
+
             def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path == "/tokenize":
+                    self._send(
+                        200,
+                        {
+                            "count": sum(
+                                4 + len(str(message["content"]).split())
+                                for message in body["messages"]
+                            )
+                        },
+                    )
+                    return
                 mode = str(body["model"])
                 with provider.lock:
                     provider.calls.append(mode)
