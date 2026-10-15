@@ -201,6 +201,20 @@ call it makes: the call gets the time that is left, no attempt starts once the
 caller stops waiting (cancelled, or the deadline passed), and past the deadline
 it raises `LMCallDeadlineExceeded` naming the bound LM's endpoint.
 
+An input passed to `call_dspy` as `PromptLines(lines, head=(), tail=())`
+(`cogniverse_core.agents.base`) is sent as the text `fit_lines` keeps for the
+LM the call is sent to: the request is rendered by the bound adapter from the
+signature and demonstrations of the module's one predictor, under the agent's
+adapter LM and prompt overlay, and counted against the bound LM's
+`prompt_allowance_for` that request (`docs/modules/foundation.md`). `lines`
+come most important first and are kept while they fit, the next one cut to
+fit; `head` and `tail` are always kept, and shedding a line is logged at
+WARNING. Rendering and counting run off the event loop. One `PromptLines`
+input is fitted per call; a module calling more than one predictor raises
+`ValueError`, an LM that knows no allowance raises
+`ContextWindowUnavailableError`, and a head and tail that overflow alone raise
+`PromptBudgetExceededError` — no request is sent in either case.
+
 `call_dspy(..., output_field=..., stream_view=...)` emits token events with the
 new text in `message` and `data={"accumulated": ..., "output_field": ...}`.
 `accumulated` is always a prefix of the stripped value the module returns for

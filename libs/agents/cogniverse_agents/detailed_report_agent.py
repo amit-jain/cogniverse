@@ -25,7 +25,7 @@ from cogniverse_agents.multimodal import (
     fit_answer_images,
 )
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
-from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput, PromptLines
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
@@ -799,12 +799,14 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
         The report signature produces both; returning the recommendations here
         lets the report use the LM's actionable list instead of the canned
-        template (with a fallback to the template when the LM produced none)."""
+        template (with a fallback to the template when the LM produced none).
+        The first ten results are kept, in order, while they fit the model's
+        context window (``PromptLines``)."""
         total_results = thinking_phase.content_analysis.get(
             "total_results", len(request.search_results)
         )
 
-        content_parts = [f"Total Results: {total_results}"]
+        content_parts = []
         for result in request.search_results[:10]:
             title = result.get("title", result.get("video_id", "Unknown"))
             content_type = result.get("content_type", "video")
@@ -814,8 +816,6 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
             if description:
                 line += f": {description}"
             content_parts.append(line)
-
-        content_text = "\n".join(content_parts)
 
         self.validate_attachments(request)
         keyframe_images = []
@@ -858,7 +858,9 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         dspy_result = await self.call_dspy(
             self.report_module,
             output_field="executive_summary",
-            content=content_text,
+            content=PromptLines(
+                content_parts, head=[f"Total Results: {total_results}"]
+            ),
             query=request.query,
             report_type=request.report_type,
             keyframes=keyframe_images,

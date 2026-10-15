@@ -24,7 +24,7 @@ from cogniverse_agents.multimodal import (
     fit_answer_images,
 )
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
-from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput, PromptLines
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
@@ -416,10 +416,6 @@ class DeepResearchAgent(
 
         return sufficient, gaps, confidence
 
-    # Sized to fit the synthesis prompt inside an 8k-token model context
-    # alongside the DSPy ChainOfThought template and chat envelope.
-    _SYNTHESIS_EVIDENCE_CHAR_BUDGET = 6000
-
     def validate_attachments(self, request: DeepResearchInput) -> None:
         self._validate_attachments(request.attachments)
 
@@ -436,35 +432,15 @@ class DeepResearchAgent(
         attachments: Optional[List[str]] = None,
         attachment_failures: Optional[List[str]] = None,
     ) -> str:
-        """Synthesize evidence into a research report. Per-question
-        sections are truncated proportionally so every sub-question gets
-        coverage instead of late questions being dropped.
+        """Synthesize evidence into a research report.
+
+        Each hit is one evidence line naming its sub-question
+        (``_evidence_lines``). Lines go in rank order across sub-questions —
+        every question's first hit, then every question's second — so every
+        sub-question is covered before any gets a second hit, and are kept
+        while they fit the model's context window (``PromptLines``).
         """
-
-        def _stringify(results: Any, char_budget: int) -> str:
-            text = (
-                "No results"
-                if results in (None, "", [], {})
-                else (results if isinstance(results, str) else repr(results))
-            )
-            if len(text) > char_budget:
-                text = text[:char_budget] + "…"
-            return text
-
-        if evidence:
-            per_question_budget = max(
-                512,
-                self._SYNTHESIS_EVIDENCE_CHAR_BUDGET // len(evidence),
-            )
-        else:
-            per_question_budget = self._SYNTHESIS_EVIDENCE_CHAR_BUDGET
-
-        evidence_text = "\n\n".join(
-            f"## {e['question']}\n{_stringify(e.get('results'), per_question_budget)}"
-            for e in evidence
-        )
-        if len(evidence_text) > self._SYNTHESIS_EVIDENCE_CHAR_BUDGET:
-            evidence_text = evidence_text[: self._SYNTHESIS_EVIDENCE_CHAR_BUDGET] + "…"
+        evidence_lines = self._evidence_lines(evidence)
 
         self._validate_attachments(attachments or [])
         keyframe_images = []
@@ -499,10 +475,47 @@ class DeepResearchAgent(
             self._synthesizer,
             output_field="summary",
             query=query,
-            evidence=evidence_text,
+            evidence=PromptLines(evidence_lines),
             keyframes=keyframe_images,
         )
         return str(result.summary)
+
+    @staticmethod
+    def _evidence_lines(evidence: List[Dict[str, Any]]) -> List[str]:
+        """One line per hit, ``[<question>] <title> (<type>, relevance <score>):
+        <text>``, in rank order across sub-questions. A sub-question whose
+        results are not a list of hits gets one line with them as text, and
+        one with none ``[<question>] No results``."""
+
+        def rendered(result: Any) -> str:
+            if not isinstance(result, dict):
+                return str(result)
+            title = result.get("title", result.get("video_id", "Unknown"))
+            content_type = result.get("content_type", "video")
+            score = float(result.get("score", result.get("relevance")) or 0.0)
+            text = next(
+                (result[key] for key in _CITATION_TEXT_KEYS if result.get(key)), ""
+            )
+            line = f"{title} ({content_type}, relevance {score:.2f})"
+            return f"{line}: {text}" if text else line
+
+        ranked: List[tuple[str, List[str]]] = []
+        for item in evidence:
+            results = item.get("results")
+            if results in (None, "", [], {}):
+                lines = ["No results"]
+            elif isinstance(results, list):
+                lines = [rendered(result) for result in results]
+            else:
+                lines = [rendered(results)]
+            ranked.append((item["question"], lines))
+        depth = max((len(lines) for _, lines in ranked), default=0)
+        return [
+            f"[{question}] {lines[rank]}"
+            for rank in range(depth)
+            for question, lines in ranked
+            if rank < len(lines)
+        ]
 
     @staticmethod
     def _result_count(results: Any) -> int:

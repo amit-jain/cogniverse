@@ -18,6 +18,7 @@ from cogniverse_agents.detailed_report_agent import (
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.dspy import LenientJSONAdapter, LMOutputIncomplete
+from tests.utils.llm_endpoint_stub import served_dspy_lm
 
 
 def _incomplete_generation() -> LMOutputIncomplete:
@@ -738,12 +739,14 @@ class TestDetailedReportAgentCoreFunctionality:
         mock_dspy_result.executive_summary = "Comprehensive analysis of 3 results for test query, covering key topics in HD quality with educational content"
         mock_dspy_result.recommendations = "expand coverage\nadd benchmarks"
 
-        with patch.object(
-            agent.report_module, "forward", return_value=mock_dspy_result
+        with (
+            served_dspy_lm() as endpoint,
+            patch.object(agent.report_module, "forward", return_value=mock_dspy_result),
         ):
             summary, recommendations = await agent._generate_executive_summary(
                 sample_report_request, thinking_phase
             )
+        assert len(endpoint.posted("/tokenize")) == 1
 
         assert isinstance(summary, str)
         assert len(summary) > 30  # Should be substantive

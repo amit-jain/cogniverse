@@ -2583,6 +2583,18 @@ Attachment failures appear in summary/research degradation metadata and in the
 report's `report_degraded_reason`. Summary key points and report recommendations
 remain paired with their generated text.
 
+The three put their hits in one prompt field as `PromptLines`
+(`docs/modules/core.md`), so the field holds the hits that fit the context
+window of the model the call is sent to — on a routed LM every endpoint the
+router may serve it from (`docs/modules/foundation.md`). The summary's
+`content` takes its results most relevant first, then the key themes and
+visual insights; the report's `content` takes `Total Results: N`, then its
+first ten results in order; the deep-research `evidence` takes one line per
+hit, `[<sub-question>] <title> (<content_type>, relevance N.NN): <text>`, in
+rank order across sub-questions — every sub-question's first hit, then every
+second — with a sub-question that found nothing as `[<sub-question>] No
+results`.
+
 ### 11. AudioAnalysisAgent
 
 **Location:** `libs/agents/cogniverse_agents/audio_analysis_agent.py`

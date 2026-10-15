@@ -8,7 +8,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import dspy
 import uvicorn
@@ -23,7 +23,12 @@ from cogniverse_agents.multimodal import (
     fit_answer_images,
 )
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
-from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.base import (
+    AgentDeps,
+    AgentInput,
+    AgentOutput,
+    PromptLines,
+)
 from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.vlm_interface import VLMInterface
@@ -709,20 +714,26 @@ and structure summary based on identified themes and content categories.
 
     async def _run_summarization(
         self,
-        content: str,
+        lines: List[str],
         query: str,
         summary_type: str,
         keyframes: List[dspy.Image],
+        *,
+        tail: Sequence[str] = (),
     ) -> tuple[str, List[str]]:
         """Run DSPy summarization, returning the summary and the LM's parsed
-        key points. Streams tokens via emit_progress when active."""
+        key points. Streams tokens via emit_progress when active.
+
+        The ``content`` the LM reads is ``lines`` (most relevant first) then
+        ``tail``, as far as the lines fit the context window of the model the
+        call is sent to (``PromptLines``)."""
         result = await self.call_dspy(
             self.summarization_module,
             output_field="summary",
             stream_view=lambda text: self._stream_within_max_length(
                 text, self.max_summary_length
             ),
-            content=content,
+            content=PromptLines(lines, tail=tail),
             query=query,
             summary_type=summary_type,
             keyframes=keyframes,
@@ -790,14 +801,14 @@ and structure summary based on identified themes and content categories.
 
         if not top_results and (request.query.strip() or keyframe_images):
             return await self._run_summarization(
-                request.query,
+                [request.query],
                 request.query,
                 request.summary_type,
                 keyframes=keyframe_images,
             )
         if request.summary_type == "bullet_points" and request.attachments:
             return await self._run_summarization(
-                "\n".join(str(result) for result in top_results),
+                [str(result) for result in top_results],
                 request.query,
                 request.summary_type,
                 keyframes=keyframe_images,
@@ -834,11 +845,9 @@ and structure summary based on identified themes and content categories.
             content_type = result.get("content_type", "video")
             content_parts.append(f"- {title}: {content_type}")
 
-        content_text = "\n".join(content_parts)
-
         try:
             return await self._run_summarization(
-                content_text, request.query, "brief", keyframes=keyframe_images
+                content_parts, request.query, "brief", keyframes=keyframe_images
             )
         except Exception as e:
             logger.error(f"DSPy brief summarization failed: {e}")
@@ -879,6 +888,8 @@ and structure summary based on identified themes and content categories.
         Builds a content block from the top results (title/type/relevance plus
         any description), the analysed themes, and visual insights, then hands
         it to the DSPy summarization module with ``summary_type='comprehensive'``.
+        Results are kept from the most relevant while they fit the model's
+        context window; the themes and visual insights always are.
         """
         if not results:
             return f"No relevant results found for '{request.query}'.", []
@@ -894,14 +905,18 @@ and structure summary based on identified themes and content categories.
                 line += f": {description}"
             content_parts.append(line)
 
+        tail = []
         if thinking_phase.key_themes:
-            content_parts.append(f"Key themes: {', '.join(thinking_phase.key_themes)}")
+            tail.append(f"Key themes: {', '.join(thinking_phase.key_themes)}")
         if visual_insights:
-            content_parts.append(f"Visual insights: {'; '.join(visual_insights)}")
+            tail.append(f"Visual insights: {'; '.join(visual_insights)}")
 
-        content_text = "\n".join(content_parts)
         return await self._run_summarization(
-            content_text, request.query, "comprehensive", keyframes=keyframe_images
+            content_parts,
+            request.query,
+            "comprehensive",
+            keyframes=keyframe_images,
+            tail=tail,
         )
 
     def _extract_key_points(

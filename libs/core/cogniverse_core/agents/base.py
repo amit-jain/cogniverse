@@ -42,6 +42,7 @@ import threading
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -52,8 +53,10 @@ from typing import (
     Dict,
     Generic,
     Iterator,
+    List,
     Literal,
     Optional,
+    Sequence,
     Type,
     TypeVar,
     Union,
@@ -184,6 +187,98 @@ _PROGRESS_QUEUE: contextvars.ContextVar[Optional[asyncio.Queue]] = (
 _STREAM_OWNER: contextvars.ContextVar[Optional["AgentBase"]] = contextvars.ContextVar(
     "_agent_stream_owner", default=None
 )
+
+
+@dataclass(frozen=True)
+class PromptLines:
+    """A ``call_dspy`` input built of lines, sent as the leading lines that fit.
+
+    ``lines`` come most important first; ``head`` and ``tail`` are always
+    kept. ``call_dspy`` replaces the value with the text ``fit_lines`` keeps
+    for the LM the call is sent to.
+    """
+
+    lines: Sequence[str]
+    head: Sequence[str] = ()
+    tail: Sequence[str] = ()
+
+
+def _fitted_prompt_lines(
+    agent: Any, call_module: Any, inputs: Dict[str, Any]
+) -> Dict[str, Any]:
+    """``inputs`` with its ``PromptLines`` value, if any, replaced by the text
+    that fits the bound LM's allowance for the request ``call_module`` sends.
+
+    The request is rendered by the bound adapter from the signature and
+    demonstrations of the module's one predictor.
+
+    Raises:
+        ContextWindowUnavailableError: the bound LM knows no allowance.
+        PromptBudgetExceededError: the head and tail alone overflow.
+        TokenCountUnavailableError: a serving endpoint cannot count.
+    """
+    import dspy
+
+    from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
+    from cogniverse_foundation.config.token_budget import (
+        ContextWindowUnavailableError,
+        fit_lines,
+    )
+
+    fields = [name for name, value in inputs.items() if isinstance(value, PromptLines)]
+    if not fields:
+        return inputs
+    if len(fields) > 1:
+        raise ValueError(f"only one input is fitted per call, got {fields}")
+    [field] = fields
+    prompt: PromptLines = inputs[field]
+    predictors = call_module.predictors()
+    if len(predictors) != 1:
+        raise ValueError(
+            f"{type(call_module).__name__} calls {len(predictors)} predictors; "
+            f"an input is fitted for a module that calls one"
+        )
+    [predictor] = predictors
+    lm = dspy.settings.lm
+    adapter = dspy.settings.adapter or dspy.ChatAdapter()
+
+    def render(text: str) -> List[Dict[str, Any]]:
+        call_inputs = {**inputs, field: text}
+        signature = adapter._call_preprocess(lm, {}, predictor.signature, call_inputs)
+        return adapter.format(signature, predictor.demos, call_inputs)
+
+    whole = "\n".join([*prompt.head, *prompt.lines, *prompt.tail])
+    allowance = (
+        lm.prompt_allowance_for(render(whole))
+        if isinstance(lm, BodyBoundedLM)
+        else None
+    )
+    if allowance is None:
+        raise ContextWindowUnavailableError(
+            f"{getattr(lm, 'model', lm)!r} does not know the context window of "
+            f"the endpoints serving it, so the {type(agent).__name__} {field} "
+            f"input cannot be fitted"
+        )
+    fitted = fit_lines(
+        list(prompt.lines),
+        allowance=allowance,
+        render=render,
+        head=prompt.head,
+        tail=prompt.tail,
+    )
+    if fitted.kept_lines < fitted.total_lines:
+        logger.warning(
+            "%s %s keeps %d of %d lines whole and %d characters of the next to "
+            "fit the context window of %s: input_tokens=%d",
+            type(agent).__name__,
+            field,
+            fitted.kept_lines,
+            fitted.total_lines,
+            fitted.cut_chars or 0,
+            allowance.budget.model,
+            fitted.input_tokens,
+        )
+    return {**inputs, field: fitted.text}
 
 
 class _ProgressQueue(asyncio.Queue):
@@ -886,6 +981,10 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
         When streaming, wraps with dspy.streamify() to emit token-by-token
         progress events for the specified output_field.
 
+        A ``PromptLines`` input is sent as the leading lines that fit what
+        the bound LM's endpoints accept for this request
+        (``_fitted_prompt_lines``), rendered and counted off the event loop.
+
         If a per-request artefact overlay is in scope (set on the agent via
         ``MemoryAwareMixin.set_dispatched_artefact``), its prompts are
         applied to the module's predictors for the duration of THIS call
@@ -921,6 +1020,10 @@ class AgentBase(ConfigManagerAware, ABC, Generic[InputT, OutputT, DepsT]):
             bound_lm_call_deadline(deadline),
             _abandoned_on_early_exit(deadline),
         ):
+            if any(isinstance(value, PromptLines) for value in kwargs.values()):
+                kwargs = await asyncio.to_thread(
+                    _fitted_prompt_lines, self, call_module, kwargs
+                )
             if _PROGRESS_QUEUE.get() is not None and _STREAM_OWNER.get() is self:
                 import dspy
 

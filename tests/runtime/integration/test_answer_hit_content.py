@@ -242,7 +242,13 @@ _CONTENT_INPUT = re.compile(r"\[\[ ## content ## \]\]\n(.*?)\n\n\[\[ ## ", re.DO
 
 class _AnswerProvider:
     """OpenAI-compatible provider that fills whatever outputs it is asked for
-    and records every request's messages."""
+    and records every request's messages.
+
+    Like vLLM it publishes its window on ``/v1/models`` and counts a request
+    on ``/tokenize``: four tokens per message plus one per whitespace-separated
+    word."""
+
+    WINDOW = 8192
 
     def __init__(self) -> None:
         self.requests: list[list[dict]] = []
@@ -253,8 +259,29 @@ class _AnswerProvider:
             def log_message(self, *args):
                 pass
 
+            def _json(self, payload: dict) -> None:
+                encoded = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def do_GET(self):
+                self._json(
+                    {
+                        "object": "list",
+                        "data": [
+                            {"id": "answer-content", "max_model_len": provider.WINDOW}
+                        ],
+                    }
+                )
+
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if self.path == "/tokenize":
+                    self._json({"count": _word_count(body["messages"])})
+                    return
                 with provider.lock:
                     provider.requests.append(body["messages"])
                 system = next(
@@ -328,6 +355,10 @@ class _AnswerProvider:
             for message in messages
             if message["role"] == "user"
         ]
+
+
+def _word_count(messages: list[dict]) -> int:
+    return sum(4 + len(str(message["content"]).split()) for message in messages)
 
 
 def _filled(kind: str) -> object:
