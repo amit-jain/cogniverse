@@ -435,17 +435,20 @@ async def generate_examples(documents: list[dict], entity_extractor, routing_dec
     )
 ```
 
-Each routing example is grounded in one sampled item. Generation keeps drawing
-candidates in their returned order until it either fills the requested count or
-hits a 5x candidate budget. That surplus buys room for a few duplicate
-queries without letting the 3-call routing path spin forever. A
-document item therefore cannot receive entities from a video item or a video
-route, and the same invariant holds for every supported modality. Reusing a
-source is permitted only when it produces a new query: a query drawn again is
-dropped as a duplicate even when the entity agent or the gateway labels it
-differently this time, so the service never receives one query twice. A full
-target-sized streak of duplicate queries ends the run early, and a repeated
-query never gets fabricated into a new example.
+Each routing example is grounded in one sampled item, and each distinct sampled
+topic yields at most one example per generation. Generation draws the topics
+without an example, in their returned order, until it fills the requested count
+or hits a 5x candidate budget: a topic that produced a kept example is not drawn
+again, while a topic whose draw was rejected is drawn again within the budget,
+so the 3-call routing path cannot spin forever. A document item therefore
+cannot receive entities from a video item or a video route, and the same
+invariant holds for every supported modality. A query drawn again is dropped as
+a duplicate even when the entity agent or the gateway labels it differently
+this time, so the service never receives one query twice. A full target-sized
+streak of duplicate queries ends the run early, and a repeated query never gets
+fabricated into a new example. When every topic has its example before the
+requested count is met, each missing example is recorded as a `duplicate_label`
+drop naming a topic it would have reused.
 Routing truncates the extracted topic to 20 words before entity labeling and
 query generation. Sampled items without a topic are skipped with a warning
 before candidates are drawn; generation raises `sampled routing content

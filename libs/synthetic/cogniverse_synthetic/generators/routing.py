@@ -246,10 +246,14 @@ class RoutingGenerator(BaseGenerator):
         """
         Generate RoutingExperience data
 
-        The outer candidate budget allows five draws per requested example.
-        Routing spends three production calls per draw, so the 5x surplus is a
-        latency/completeness tradeoff: enough room to replace a few duplicate
-        queries, but still bounded when the source only yields one.
+        Each distinct sampled topic yields at most one example: once a topic
+        produced a kept example it is not drawn again, while a topic whose
+        draw was rejected is drawn again within the candidate budget. The
+        budget allows five draws per requested example; routing spends three
+        production calls per draw, so the 5x surplus bounds retries of
+        rejected draws. When every topic has its example before
+        ``target_count`` is met, each missing example is recorded as a
+        ``duplicate_label`` drop.
 
         Args:
             sampled_content: Content sampled from Vespa
@@ -285,6 +289,11 @@ class RoutingGenerator(BaseGenerator):
             sources.append(topic)
         if not sources:
             raise ValueError("sampled routing content requires a non-empty topic")
+        # One example per topic: a topic that produced a kept example is not
+        # drawn again, so items sharing a topic, or a query worded differently
+        # on a second draw, never yield two examples of one topic.
+        topics = list(dict.fromkeys(sources))
+        labelled_topics: set[str] = set()
         examples = []
         duplicate_filter = DuplicateLabelFilter()
         last_validation_error: Exception | None = None
@@ -292,7 +301,10 @@ class RoutingGenerator(BaseGenerator):
         attempt_budget = self._routing_candidate_budget(target_count)
 
         while len(examples) < target_count and attempts < attempt_budget:
-            topic = sources[attempts % len(sources)]
+            pending = [topic for topic in topics if topic not in labelled_topics]
+            if not pending:
+                break
+            topic = pending[attempts % len(pending)]
             attempts += 1
 
             try:
@@ -398,6 +410,22 @@ class RoutingGenerator(BaseGenerator):
                 metadata=metadata,
             )
             examples.append(example)
+            labelled_topics.add(topic)
+
+        if len(labelled_topics) == len(topics) and len(examples) < target_count:
+            exhausted = ContentRejection(
+                "duplicate_label",
+                f"every one of the {len(topics)} sampled topics already has an "
+                "example; a topic yields one example per generation",
+            )
+            last_validation_error = exhausted
+            if isinstance(generation_tracker, GenerationTracker):
+                for missing in range(target_count - len(examples)):
+                    generation_tracker.record_drop(
+                        topics[missing % len(topics)],
+                        exhausted,
+                        category="duplicate_label",
+                    )
 
         self.require_exact_target_count(
             examples,

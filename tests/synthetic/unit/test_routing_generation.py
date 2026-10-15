@@ -719,182 +719,131 @@ async def test_generation_keeps_source_query_entities_and_agent_aligned() -> Non
     ]
 
 
-async def test_generation_drops_repeated_canonical_routing_label() -> None:
-    class _RepeatedQueryGenerator:
-        max_retries = 3
+# Two topics whose grounded queries can coincide: GUIDE_QUERY carries every
+# content word of both, so the second topic can come back with the first
+# topic's query. The cooking item has no entity, and gives the saliency a
+# contrasting record.
+INSTALL, VIDEOS = "TensorFlow install guide", "TensorFlow guide videos"
+COOKING = "cooking recipes and kitchen tips"
+GUIDE_TOPICS = [{"topic": INSTALL}, {"topic": VIDEOS}, {"topic": COOKING}]
+GUIDE_QUERY = "find TensorFlow install guide videos"
+COOKING_DROP = (
+    COOKING,
+    "ungrounded_source",
+    "EntityExtractionGenerator generated 0 unique grounded examples but "
+    "target_count=1; source_context=1 unique source texts, 1 without entities",
+)
+GUIDE_DUPLICATE_REASON = (
+    f"RoutingGenerator generated duplicate query {GUIDE_QUERY!r} "
+    "(entities=(('TensorFlow', 'TECHNOLOGY'),), chosen_agent='video_search_agent')"
+)
 
-        def __call__(self, **kwargs):
-            return SimpleNamespace(
-                query="find TensorFlow machine learning framework tutorial",
-                reasoning="The deterministic generator repeated one label.",
-                _retry_count=0,
-                _max_retries=3,
-            )
 
+class _QuerySequence:
+    """Answers each draw with the next query, recording the topics drawn."""
+
+    max_retries = 3
+
+    def __init__(self, queries: list[str]) -> None:
+        self.queries = iter(queries)
+        self.topics: list[str] = []
+
+    def __call__(self, **kwargs):
+        self.topics.append(kwargs["topics"])
+        return SimpleNamespace(
+            query=next(self.queries),
+            reasoning=f"Draw {len(self.topics)}.",
+            _retry_count=0,
+            _max_retries=3,
+        )
+
+
+def _guide_generator(queries: list[str], routing_decider=_route_query):
     generator = RoutingGenerator(
         entity_extractor=_extract_entities,
-        routing_decider=_route_query,
+        routing_decider=routing_decider,
         optimizer_config=_routing_generator().optimizer_config,
     )
-    generator.query_generator = _RepeatedQueryGenerator()
-    tracker = GenerationTracker(
-        optimizer="routing",
-        target_count=2,
-        floor_count=1,
-    )
+    generator.query_generator = _QuerySequence(queries)
+    return generator
 
-    # TensorFlow only in record 0 - saliency preserves it as distinctive.
-    # Record 1 has no extractable entity, so entity extraction fails for it.
-    # Query generator always returns the same grounded query.
-    # Iteration: attempt 0 → record 0 → KEPT; attempt 1 → record 1 → fails;
-    # attempt 2+ → record 0 → DUPLICATE. Net: 1 example with duplicates dropped.
+
+async def test_a_topic_with_a_kept_example_is_not_drawn_again() -> None:
+    """The TensorFlow topic yields its example on the first draw and is never
+    drawn again; every later draw goes to the topic still without one, which
+    has no entity and is rejected until the candidate budget is spent."""
+    generator = _guide_generator([GUIDE_QUERY])
+    tracker = GenerationTracker(optimizer="routing", target_count=2, floor_count=1)
+
     examples = await generator.generate(
-        sampled_content=[
-            {"description": "TensorFlow machine learning framework tutorial"},
-            {"description": "cooking recipes and kitchen tips video"},  # No entity
-        ],
+        sampled_content=[{"topic": INSTALL}, {"topic": COOKING}],
         target_count=2,
         tenant_id="acme:routing",
         generation_tracker=tracker,
         generation_floor_count=1,
     )
 
-    assert [example.query for example in examples] == [
-        "find TensorFlow machine learning framework tutorial"
+    assert [(example.query, example.chosen_agent) for example in examples] == [
+        (GUIDE_QUERY, "video_search_agent")
     ]
-    assert [example.chosen_agent for example in examples] == ["video_search_agent"]
-    assert tracker.returned_count == 1
-    assert tracker.surplus_exhausted is True
-    # Find the duplicate-related dropped example (not the no-entity ones)
-    duplicate_drops = [
-        d for d in tracker.dropped_examples if d.category == "duplicate_label"
+    assert generator.query_generator.topics == [INSTALL]
+    assert [example.enhanced_query for example in examples] == [
+        "find TensorFlow(TECHNOLOGY) install guide videos"
     ]
-    assert [d.category for d in duplicate_drops] == ["duplicate_label"] * len(
-        duplicate_drops
-    )
-    assert duplicate_drops[0].candidate == (
-        "find TensorFlow machine learning framework tutorial"
-    )
-    assert duplicate_drops[0].reason == (
-        "RoutingGenerator generated duplicate query "
-        "'find TensorFlow machine learning framework tutorial' "
-        "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
-        "chosen_agent='video_search_agent')"
-    )
+    assert tracker.to_metadata()["shortfall_count"] == 1
+    assert generator._routing_candidate_budget(2) == 10
+    assert [(drop.candidate, drop.category) for drop in tracker.dropped_examples] == [
+        (COOKING, "ungrounded_source")
+    ] * 9
+    assert (tracker.returned_count, tracker.surplus_exhausted) == (1, True)
 
 
 @pytest.mark.asyncio
 async def test_generation_fills_quota_after_one_duplicate() -> None:
-    """Duplicate queries are dropped and replaced from the surplus."""
-
-    class _SequenceQueryGenerator:
-        max_retries = 3
-
-        def __init__(self) -> None:
-            self.calls = 0
-            self.outputs = iter(
-                [
-                    "find TensorFlow machine learning framework tutorial",
-                    "find TensorFlow machine learning framework tutorial",
-                    "find TensorFlow machine learning framework tutorial benchmarks",
-                    "find TensorFlow machine learning framework tutorial deployment guide",
-                    "find TensorFlow machine learning framework tutorial pipelines",
-                    "find TensorFlow machine learning framework tutorial summary",
-                ]
-            )
-
-        def __call__(self, **kwargs):
-            self.calls += 1
-            return SimpleNamespace(
-                query=next(self.outputs),
-                reasoning=f"Sequence attempt {self.calls}.",
-                _retry_count=0,
-                _max_retries=3,
-            )
-
-    query_generator = _SequenceQueryGenerator()
-    generator = RoutingGenerator(
-        entity_extractor=_extract_entities,
-        routing_decider=_route_query,
-        optimizer_config=_routing_generator().optimizer_config,
+    """A draw whose query duplicates a kept one is dropped, and its topic,
+    still without an example, is drawn again."""
+    generator = _guide_generator(
+        [GUIDE_QUERY, GUIDE_QUERY, "find TensorFlow guide videos online"]
     )
-    generator.query_generator = query_generator
-    tracker = GenerationTracker(
-        optimizer="routing",
-        target_count=5,
-        floor_count=1,
-    )
+    tracker = GenerationTracker(optimizer="routing", target_count=2, floor_count=1)
 
-    # TensorFlow only in record 0 so saliency preserves it (high IDF).
-    # Record 1 has no extractable entity, so entity extraction fails for it
-    # and the generator cycles back to record 0. The sequence query generator
-    # returns the same grounded query twice → duplicate query → dropped.
     examples = await generator.generate(
-        sampled_content=[
-            {"description": "TensorFlow machine learning framework tutorial"},
-            {"description": "cooking recipes and kitchen tips video"},
-        ],
-        target_count=5,
+        sampled_content=GUIDE_TOPICS,
+        target_count=2,
         tenant_id="acme:routing",
         generation_tracker=tracker,
         generation_floor_count=1,
     )
 
-    assert [example.query for example in examples] == [
-        "find TensorFlow machine learning framework tutorial",
-        "find TensorFlow machine learning framework tutorial benchmarks",
-        "find TensorFlow machine learning framework tutorial deployment guide",
-        "find TensorFlow machine learning framework tutorial pipelines",
-        "find TensorFlow machine learning framework tutorial summary",
+    assert [(example.query, example.enhanced_query) for example in examples] == [
+        (GUIDE_QUERY, "find TensorFlow(TECHNOLOGY) install guide videos"),
+        (
+            "find TensorFlow guide videos online",
+            "find TensorFlow(TECHNOLOGY) guide videos online",
+        ),
     ]
-    assert [example.enhanced_query for example in examples] == [
-        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial",
-        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial benchmarks",
-        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial deployment guide",
-        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial pipelines",
-        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial summary",
+    assert [example.chosen_agent for example in examples] == ["video_search_agent"] * 2
+    assert [example.routing_confidence for example in examples] == [0.73] * 2
+    assert tracker.to_metadata()["dropped_count"] == 3
+    assert generator.query_generator.topics == [
+        INSTALL,
+        VIDEOS,
+        VIDEOS,
     ]
-    assert [example.chosen_agent for example in examples] == ["video_search_agent"] * 5
-    assert [example.routing_confidence for example in examples] == [0.73] * 5
-    assert query_generator.calls == 6
-    assert tracker.returned_count == 5
-    assert tracker.surplus_exhausted is False
-    duplicate_drops = [
-        d for d in tracker.dropped_examples if d.category == "duplicate_label"
+    assert [
+        (drop.candidate, drop.category, drop.reason)
+        for drop in tracker.dropped_examples
+    ] == [
+        COOKING_DROP,
+        (GUIDE_QUERY, "duplicate_label", GUIDE_DUPLICATE_REASON),
+        COOKING_DROP,
     ]
-    assert [d.category for d in duplicate_drops] == ["duplicate_label"] * len(
-        duplicate_drops
-    )
-    assert [drop.candidate for drop in duplicate_drops] == [
-        "find TensorFlow machine learning framework tutorial"
-    ]
-    assert duplicate_drops[0].reason == (
-        "RoutingGenerator generated duplicate query "
-        "'find TensorFlow machine learning framework tutorial' "
-        "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
-        "chosen_agent='video_search_agent')"
-    )
+    assert (tracker.returned_count, tracker.surplus_exhausted) == (2, False)
 
 
 @pytest.mark.asyncio
 async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
     """After target_count consecutive duplicate queries, the draw stops."""
-
-    class _SequenceQueryGenerator:
-        max_retries = 3
-
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def __call__(self, **kwargs):
-            self.calls += 1
-            return SimpleNamespace(
-                query="find TensorFlow machine learning framework tutorial",
-                reasoning=f"Sequence attempt {self.calls}.",
-                _retry_count=0,
-                _max_retries=3,
-            )
-
     routing_calls = []
 
     async def _counted_route(query: str, tenant_id: str):
@@ -902,60 +851,73 @@ async def test_generation_stops_after_duplicate_streak_is_exhausted() -> None:
         routing_calls.append(query)
         return await _route_query(query, tenant_id)
 
-    query_generator = _SequenceQueryGenerator()
-    generator = RoutingGenerator(
-        entity_extractor=_extract_entities,
-        routing_decider=_counted_route,
-        optimizer_config=_routing_generator().optimizer_config,
-    )
-    generator.query_generator = query_generator
-    tracker = GenerationTracker(
-        optimizer="routing",
-        target_count=5,
-        floor_count=1,
+    generator = _guide_generator([GUIDE_QUERY] * 3, routing_decider=_counted_route)
+    tracker = GenerationTracker(optimizer="routing", target_count=2, floor_count=1)
+
+    examples = await generator.generate(
+        sampled_content=GUIDE_TOPICS,
+        target_count=2,
+        tenant_id="acme:routing",
+        generation_tracker=tracker,
+        generation_floor_count=1,
     )
 
-    # TensorFlow only in record 0 so saliency preserves it (high IDF).
-    # Record 1 has no extractable entity, so entity extraction fails for it.
-    # The sequence query generator always returns the same grounded query → every
-    # successful attempt after the first is a duplicate. After target_count
-    # consecutive duplicates, the generator stops.
+    assert [example.query for example in examples] == [GUIDE_QUERY]
+    assert [example.enhanced_query for example in examples] == [
+        "find TensorFlow(TECHNOLOGY) install guide videos"
+    ]
+    assert generator.query_generator.topics == [
+        INSTALL,
+        VIDEOS,
+        VIDEOS,
+    ]
+    assert routing_calls == [GUIDE_QUERY] * 3
+    assert tracker.to_metadata()["shortfall_count"] == 1
+    assert [
+        (drop.candidate, drop.category, drop.reason)
+        for drop in tracker.dropped_examples
+    ] == [
+        COOKING_DROP,
+        (GUIDE_QUERY, "duplicate_label", GUIDE_DUPLICATE_REASON),
+        COOKING_DROP,
+        (GUIDE_QUERY, "duplicate_label", GUIDE_DUPLICATE_REASON),
+    ]
+    assert (tracker.returned_count, tracker.surplus_exhausted) == (1, True)
+
+
+async def test_items_sharing_a_topic_yield_one_example_and_record_the_rest() -> None:
+    """Two sampled items with one topic: a second draw of it would reword the
+    query and be labelled again, so it yields one example, and once every
+    topic has its example the missing one is a recorded drop."""
+    generator = _guide_generator([GUIDE_QUERY, "find PyTorch tutorial lessons"])
+    tracker = GenerationTracker(optimizer="routing", target_count=3, floor_count=1)
+
     examples = await generator.generate(
-        sampled_content=[
-            {"description": "TensorFlow machine learning framework tutorial"},
-            {"description": "cooking recipes and kitchen tips video"},
-        ],
-        target_count=5,
+        sampled_content=[{"topic": INSTALL}] * 2 + [{"topic": "PyTorch tutorial"}],
+        target_count=3,
         tenant_id="acme:routing",
         generation_tracker=tracker,
         generation_floor_count=1,
     )
 
     assert [example.query for example in examples] == [
-        "find TensorFlow machine learning framework tutorial"
+        GUIDE_QUERY,
+        "find PyTorch tutorial lessons",
     ]
-    assert [example.enhanced_query for example in examples] == [
-        "find TensorFlow(TECHNOLOGY) machine learning framework tutorial"
+    assert generator.query_generator.topics == [INSTALL, "PyTorch tutorial"]
+    assert [
+        (drop.candidate, drop.category, drop.reason)
+        for drop in tracker.dropped_examples
+    ] == [
+        (
+            INSTALL,
+            "duplicate_label",
+            "every one of the 2 sampled topics already has an example; a topic "
+            "yields one example per generation",
+        )
     ]
-    assert query_generator.calls == 6
-    assert routing_calls == ["find TensorFlow machine learning framework tutorial"] * 6
-    assert tracker.returned_count == 1
+    assert tracker.to_metadata()["shortfall_count"] == 1
     assert tracker.surplus_exhausted is True
-    duplicate_drops = [
-        d for d in tracker.dropped_examples if d.category == "duplicate_label"
-    ]
-    assert [d.category for d in duplicate_drops] == ["duplicate_label"] * len(
-        duplicate_drops
-    )
-    assert [drop.candidate for drop in duplicate_drops] == [
-        "find TensorFlow machine learning framework tutorial"
-    ] * 5
-    assert duplicate_drops[-1].reason == (
-        "RoutingGenerator generated duplicate query "
-        "'find TensorFlow machine learning framework tutorial' "
-        "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
-        "chosen_agent='video_search_agent')"
-    )
 
 
 def test_duplicate_label_filter_golden() -> None:
@@ -1078,47 +1040,21 @@ def test_duplicate_label_filter_drops_a_query_labelled_differently() -> None:
 
 async def test_a_query_the_gateway_routes_differently_twice_is_kept_once() -> None:
     """The gateway may route one query to different agents on two draws; the
-    second draw is a duplicate query, dropped and replaced from the surplus,
-    so the service never receives the same query twice."""
-
-    class _SequenceQueryGenerator:
-        max_retries = 3
-
-        def __init__(self) -> None:
-            self.outputs = iter(
-                [
-                    "find TensorFlow machine learning framework tutorial",
-                    "find TensorFlow machine learning framework tutorial",
-                    "find TensorFlow machine learning framework tutorial benchmarks",
-                ]
-            )
-
-        def __call__(self, **kwargs):
-            return SimpleNamespace(
-                query=next(self.outputs),
-                reasoning="Sequence attempt.",
-                _retry_count=0,
-                _max_retries=3,
-            )
-
+    second draw is a duplicate query, dropped, and its topic drawn again, so
+    the service never receives the same query twice."""
     agents = iter(["video_search_agent", "document_agent", "video_search_agent"])
 
     async def _wavering_route(query: str, tenant_id: str):
         return {"query": query, "routed_to": next(agents), "confidence": 0.73}
 
-    generator = RoutingGenerator(
-        entity_extractor=_extract_entities,
+    generator = _guide_generator(
+        [GUIDE_QUERY, GUIDE_QUERY, "find TensorFlow guide videos online"],
         routing_decider=_wavering_route,
-        optimizer_config=_routing_generator().optimizer_config,
     )
-    generator.query_generator = _SequenceQueryGenerator()
     tracker = GenerationTracker(optimizer="routing", target_count=2, floor_count=1)
 
     examples = await generator.generate(
-        sampled_content=[
-            {"description": "TensorFlow machine learning framework tutorial"},
-            {"description": "cooking recipes and kitchen tips video"},  # No entity
-        ],
+        sampled_content=GUIDE_TOPICS,
         target_count=2,
         tenant_id="acme:routing",
         generation_tracker=tracker,
@@ -1126,25 +1062,24 @@ async def test_a_query_the_gateway_routes_differently_twice_is_kept_once() -> No
     )
 
     assert [(example.query, example.chosen_agent) for example in examples] == [
-        ("find TensorFlow machine learning framework tutorial", "video_search_agent"),
-        (
-            "find TensorFlow machine learning framework tutorial benchmarks",
-            "video_search_agent",
-        ),
+        (GUIDE_QUERY, "video_search_agent"),
+        ("find TensorFlow guide videos online", "video_search_agent"),
     ]
+    assert generator.query_generator.topics == [INSTALL, VIDEOS, VIDEOS]
+    assert tracker.returned_count == 2
     assert [
         (drop.category, drop.candidate, drop.reason)
         for drop in tracker.dropped_examples
-        if drop.category == "duplicate_label"
     ] == [
+        (COOKING_DROP[1], COOKING, COOKING_DROP[2]),
         (
             "duplicate_label",
-            "find TensorFlow machine learning framework tutorial",
-            "RoutingGenerator generated duplicate query "
-            "'find TensorFlow machine learning framework tutorial' "
+            GUIDE_QUERY,
+            f"RoutingGenerator generated duplicate query {GUIDE_QUERY!r} "
             "(entities=(('TensorFlow', 'TECHNOLOGY'),), "
             "chosen_agent='document_agent')",
-        )
+        ),
+        (COOKING_DROP[1], COOKING, COOKING_DROP[2]),
     ]
 
 
