@@ -14,7 +14,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import socket
 import subprocess
+import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -22,6 +25,7 @@ import pytest
 
 from tests.utils.k8s_api_server import (
     NAMESPACE,
+    _await_ready,
     _kubectl,
     start_k8s_api_server,
     stop_k8s_api_server,
@@ -184,3 +188,81 @@ def test_failed_second_instance_leaves_a_live_one_untouched(live_server, tmp_pat
     )
     ready = _kubectl(Path(live_server["kubeconfig"]), "get", "--raw", "/readyz")
     assert (ready.returncode, ready.stdout) == (0, "ok")
+
+
+class _FirstConnectionHangs:
+    """TCP proxy to the live server that holds its first connection silent.
+
+    That is a probe caught while k3s restarts its API tunnel: the connection
+    is accepted and never answered. Every later connection is forwarded.
+    """
+
+    def __init__(self, upstream_port: int):
+        self.listener = socket.create_server(("127.0.0.1", 0))
+        self.port = self.listener.getsockname()[1]
+        self.upstream_port = upstream_port
+        self.held: list[socket.socket] = []
+        self.forwarded = 0
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self):
+        while True:
+            try:
+                client, _ = self.listener.accept()
+            except OSError:
+                return
+            if not self.held:
+                self.held.append(client)
+                continue
+            self.forwarded += 1
+            upstream = socket.create_connection(("127.0.0.1", self.upstream_port))
+            for src, dst in ((client, upstream), (upstream, client)):
+                threading.Thread(
+                    target=self._pipe, args=(src, dst), daemon=True
+                ).start()
+
+    @staticmethod
+    def _pipe(src, dst):
+        try:
+            while data := src.recv(65536):
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            for sock in (src, dst):
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def close(self):
+        self.listener.close()
+        for sock in self.held:
+            sock.close()
+
+
+def test_a_hung_readiness_probe_is_retried_until_the_deadline(live_server, tmp_path):
+    """One probe that never answers must not end provisioning.
+
+    The first connection hangs past the probe's 10 s timeout; readiness must
+    still be reached on the next probe, well inside the deadline.
+    """
+    proxy = _FirstConnectionHangs(int(live_server["port"]))
+    kubeconfig = tmp_path / "through-proxy.yaml"
+    kubeconfig.write_text(
+        Path(live_server["kubeconfig"])
+        .read_text()
+        .replace(
+            f"https://127.0.0.1:{live_server['port']}",
+            f"https://127.0.0.1:{proxy.port}",
+        )
+    )
+    try:
+        started = time.monotonic()
+        _await_ready(kubeconfig, live_server["container"], started + 60)
+        elapsed = time.monotonic() - started
+    finally:
+        proxy.close()
+
+    assert (len(proxy.held), proxy.forwarded) == (1, 1)
+    assert 10 <= elapsed < 20

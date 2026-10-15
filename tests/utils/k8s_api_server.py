@@ -110,7 +110,13 @@ def _await_kubeconfig(container: str, deadline: float) -> str:
 def _await_ready(kubeconfig: Path, container: str, deadline: float) -> None:
     last = ""
     while time.monotonic() < deadline:
-        probe = _kubectl(kubeconfig, "get", "--raw", "/readyz", timeout=10)
+        try:
+            probe = _kubectl(kubeconfig, "get", "--raw", "/readyz", timeout=10)
+        except subprocess.TimeoutExpired:
+            # k3s restarts its API tunnel while booting; a probe caught in
+            # that window hangs, and the next one answers.
+            last = "probe timed out after 10s"
+            continue
         if probe.returncode == 0:
             return
         last = (probe.stderr or probe.stdout or "").strip()
