@@ -24,6 +24,10 @@ timed answer running to its end raises ``GarbledTranscriptError`` (some answer
 looped) or ``EmptyTranscriptError``; one whose ``verbose_json`` answer is
 never usable keeps its text as one segment spanning the chunk. A silent chunk
 may come back empty.
+
+A chunk whose ``verbose_json`` answer at 0.0 carries per-segment
+``avg_logprob`` averaging below ``NON_SPEECH_AVG_LOGPROB`` is not speech, and
+gets an empty transcript.
 """
 
 from __future__ import annotations
@@ -73,6 +77,12 @@ LOOP_BREAKING_TEMPERATURE = 0.8
 # thing. Measured on a ten-second clip played back to back: 0.60 at the tenth
 # percentile of 41 such answers; a loop that formed at 0.8 instead scored 0.05.
 REPEATED_SPEECH_AGREEMENT = 0.5
+# Mean token log-probability of the timed answer at temperature 0.0, weighted
+# by segment duration, below which a chunk holds no speech (Whisper's
+# logprob_threshold). Measured on the cluster's server: speech chunks at least
+# -0.53; music the server answers with text at most -1.05, but for two
+# "Thank you." answers at -0.79 and -0.91.
+NON_SPEECH_AVG_LOGPROB = -1.0
 # Whisper's timestamp step, in seconds.
 TIMESTAMP_STEP_S = 0.02
 # Languages vLLM joins without a space between chunk texts.
@@ -163,11 +173,36 @@ class AudioChunk:
 @dataclass(frozen=True)
 class ChunkTranscript:
     """One chunk's answer: its text, language (``None`` when the answer names
-    none) and chunk-relative segments."""
+    none), chunk-relative segments and the ``segments_avg_logprob`` of the
+    segments it came with (``None`` when they carry none)."""
 
     text: str
     language: Optional[str]
     segments: List[Dict[str, Any]]
+    avg_logprob: Optional[float] = None
+
+
+def segments_avg_logprob(segments: Any) -> Optional[float]:
+    """The mean of the segments' ``avg_logprob``, weighted by their duration
+    (at least one timestamp step); ``None`` when no segment carries one."""
+    weighted = [
+        (
+            max(
+                float(segment.get("end", 0.0)) - float(segment.get("start", 0.0)),
+                TIMESTAMP_STEP_S,
+            ),
+            float(segment["avg_logprob"]),
+        )
+        for segment in segments or []
+        if isinstance(segment, dict)
+        and isinstance(segment.get("avg_logprob"), (int, float))
+        and not isinstance(segment.get("avg_logprob"), bool)
+    ]
+    if not weighted:
+        return None
+    return sum(weight * value for weight, value in weighted) / sum(
+        weight for weight, _ in weighted
+    )
 
 
 def response_format(timestamps: bool) -> str:
@@ -352,7 +387,10 @@ def lenient_chunk_answer(body: Any, chunk: AudioChunk) -> ChunkTranscript:
             }
         ]
     return ChunkTranscript(
-        text=text, language=body.get("language") or None, segments=segments
+        text=text,
+        language=body.get("language") or None,
+        segments=segments,
+        avg_logprob=segments_avg_logprob(body.get("segments")),
     )
 
 
@@ -749,6 +787,24 @@ def _transcribe_checked(
     for attempt, temperature in enumerate(FALLBACK_TEMPERATURES, start=1):
         if timed is None:
             answer = transcribe_chunk(chunk, named, True, temperature)
+            if (
+                temperature == FALLBACK_TEMPERATURES[0]
+                and answer.avg_logprob is not None
+                and answer.avg_logprob < NON_SPEECH_AVG_LOGPROB
+            ):
+                logger.warning(
+                    "%s: chunk %d (%.2f-%.2fs) timed answer %r at temperature "
+                    "0.0 has mean log-probability %.2f < %s: not speech, "
+                    "kept no text",
+                    source,
+                    chunk.index,
+                    chunk.start_s,
+                    chunk.end_s,
+                    answer.text,
+                    answer.avg_logprob,
+                    NON_SPEECH_AVG_LOGPROB,
+                )
+                return ChunkTranscript(text="", language=None, segments=[])
             named = answer.language or named
             if usable(answer, True, attempt):
                 timed, timed_temperature = answer, temperature

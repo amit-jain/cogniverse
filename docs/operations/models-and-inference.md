@@ -329,7 +329,8 @@ from. The endpoint is
 `/v1/audio/transcriptions` (OpenAI-compatible multipart upload). The remote
 clients send each 30 s chunk as `verbose_json` (timings) and, unless the timed
 segments run to the end of the chunk, as `json` (text), plus one request per
-answer that comes back empty or as a repetition loop.
+answer that comes back empty or as a repetition loop. A chunk whose timed
+answer at temperature 0 is not speech is asked nothing more.
 
 ### CLAP acoustic embeddings (`clap_embed` sidecar)
 

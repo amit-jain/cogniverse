@@ -27,6 +27,7 @@ from cogniverse_agents.audio_analysis_agent import (
     AudioAnalysisDeps,
     AudioResult,
     TranscriptionResult,
+    _parse_remote_transcription,
 )
 from cogniverse_core.common.models.whisper_transcription import (
     TRANSCRIBE_ATTEMPTS,
@@ -800,6 +801,41 @@ class TestAudioAnalysisAgent:
         assert result.segments[0]["text"] == "hello"
 
     @pytest.mark.asyncio
+    async def test_an_improbable_timed_answer_is_transcribed_as_no_speech(
+        self, tmp_path, monkeypatch
+    ):
+        """Music the server answers with a phrase it gives little probability:
+        the chunk transcribes empty and is not asked again."""
+        clip = tmp_path / "audio.wav"
+        _write_tone(clip, seconds=1.5)
+        response = {
+            "text": " I'm going to go.",
+            "language": "en",
+            "duration": "1.5",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.5,
+                    "text": " I'm going to go.",
+                    "avg_logprob": -1.2125845374539495,
+                }
+            ],
+        }
+        agent = _agent_for_remote_transcription("http://unused", "Bearer t")
+        monkeypatch.setattr(agent, "_get_audio_path", lambda _: str(clip))
+
+        with _transcription_server(response) as (base_url, captured_requests):
+            agent._whisper_endpoint = base_url
+            result = await agent.transcribe_audio(f"file://{clip}")
+
+        assert len(captured_requests) == 1
+        assert (
+            b'name="response_format"\r\n\r\nverbose_json\r\n'
+            in (captured_requests[0]["body"])
+        )
+        assert (result.text, result.segments, result.language) == ("", [], "unknown")
+
+    @pytest.mark.asyncio
     async def test_transcription_outage_propagates_without_leaking_key(
         self, tmp_path, monkeypatch
     ):
@@ -1143,15 +1179,17 @@ class TestAudioAnalysisAgent:
             ):
                 result = await agent.transcribe_audio(f"file://{clip}")
 
-        assert (result.text, result.segments) == (
-            "Thank you.",
-            [{"start": 0.0, "end": 18.769625, "text": "Thank you."}],
-        )
+        # The chunk is music: "Thank you." scores a mean log-probability of
+        # -1.05, so the chunk keeps no text.
+        assert (result.text, result.segments) == ("", [])
         assert [
             record.getMessage()
             for record in caplog.records
             if record.name == "cogniverse_core.common.models.whisper_transcription"
         ] == ["segment time 29.98s is past the chunk's 18.77s; clamped"]
+        assert _parse_remote_transcription(recorded, "http://asr")["segments"] == [
+            {"start": 0.0, "end": 18.769625, "text": "Thank you."}
+        ]
 
     @pytest.mark.asyncio
     async def test_remote_transcription_rejects_non_json_success_response(

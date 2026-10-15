@@ -2696,7 +2696,8 @@ answer is asked again at the next sampling temperature, a looping answer at
 temperature 0 is compared with the answers at the loop-breaking temperatures
 before any later answer is kept (one agreeing keeps it as repeated speech), and
 a chunk whose untimed text otherwise never comes back usable raises `EmptyTranscriptError` or
-`GarbledTranscriptError`. The merged answer is mapped to a
+`GarbledTranscriptError`; a chunk whose timed answer at temperature 0 averages
+a token log-probability below -1.0 is not speech and comes back empty. The merged answer is mapped to a
 `TranscriptionResult(text, segments, language, confidence)`.
 The pinned vLLM response represents `duration` as a non-negative decimal
 string; the agent validates that exact wire type and converts it to seconds

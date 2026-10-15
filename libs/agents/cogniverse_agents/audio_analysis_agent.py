@@ -32,6 +32,7 @@ from cogniverse_core.common.models.whisper_transcription import (
     decode_audio,
     response_format,
     sampling_fields,
+    segments_avg_logprob,
     transcribe_in_chunks,
 )
 from cogniverse_core.registries.backend_registry import (
@@ -651,6 +652,7 @@ class AudioAnalysisAgent(
                 text=body["text"],
                 language=parsed["language"],
                 segments=parsed["segments"],
+                avg_logprob=segments_avg_logprob(body["segments"]),
             )
 
         return transcribe_in_chunks(

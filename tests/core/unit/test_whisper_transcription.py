@@ -25,6 +25,7 @@ from cogniverse_core.common.models.model_loaders import RemoteWhisperLoader
 from cogniverse_core.common.models.whisper_transcription import (
     FALLBACK_TEMPERATURES,
     GARBLED_COMPRESSION_RATIO,
+    NON_SPEECH_AVG_LOGPROB,
     SAMPLING_SEED,
     TRANSCRIBE_ATTEMPTS,
     AudioChunk,
@@ -42,6 +43,7 @@ from cogniverse_core.common.models.whisper_transcription import (
     repeated_speech,
     response_format,
     sampling_fields,
+    segments_avg_logprob,
     speech_words,
     split_for_whisper,
     transcribe_in_chunks,
@@ -1496,7 +1498,6 @@ def test_no_segment_reaches_into_the_next_chunk():
         "live/IMXSEIabMM/0/verbose_json",
         "live/IMXSEIabMM/1/verbose_json",
         "live/IMXSEIabMM/3/verbose_json",
-        "live/vnSFKJNB94/3/verbose_json/past_duration",
     ],
 )
 def test_a_timed_answer_running_to_the_chunk_end_is_kept_without_json(name):
@@ -1517,6 +1518,25 @@ def test_a_timed_answer_running_to_the_chunk_end_is_kept_without_json(name):
         }
         for segment in answer["body"]["segments"]
     ]
+
+
+def test_a_timed_answer_past_the_chunk_end_is_clamped_and_music_kept_empty():
+    """Music the server times past the chunk's end as "Thank you.": the
+    segment is clamped to the chunk, and the answer (mean log-probability
+    -1.05) is not speech, so the chunk keeps no text."""
+    name = "live/vnSFKJNB94/3/verbose_json/past_duration"
+    replay = _Replay([name], [])
+    answer = _recording()["answers"][name]
+    duration = answer["chunk_len_s"]
+    chunk = AudioChunk(0, 0, _noise(duration))
+
+    parsed = lenient_chunk_answer(answer["body"], chunk)
+    transcript = _replay(name, replay)
+
+    assert parsed.segments == [{"start": 0.0, "end": duration, "text": "Thank you."}]
+    assert round(parsed.avg_logprob, 2) == -1.05
+    assert replay.requests == [("verbose_json", 0.0)]
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
 
 
 def test_running_to_the_chunk_end_allows_less_than_one_timestamp_step():
@@ -1627,7 +1647,15 @@ def test_the_recorded_ladders_keep_their_shape():
         ("tracked_video_audio_x36.wav", 7),
         ("v_-vnSFKJNB94.mp4", 1),
         ("big_buck_bunny_clip.mp4", 11),
+        ("big_buck_bunny_clip.mp4", 7),
     ]
+    assert {
+        type(segment["avg_logprob"])
+        for ladder in ladders
+        for answer in ladder["answers"]
+        if answer["response_format"] == "verbose_json"
+        for segment in answer["body"]["segments"]
+    } == {float}
     for ladder in ladders:
         assert sorted(
             (answer["response_format"], answer["temperature"])
@@ -1815,3 +1843,111 @@ def test_a_timed_answer_disagreeing_after_a_loop_times_nothing(caplog):
         "clip.wav: chunk 0 (0.00-29.70s) timed answer at temperature 0.2 does not "
         "agree with the transcript (0.00): not used for timing",
     ]
+
+
+def test_the_recorded_timed_answers_at_0_0_fall_either_side_of_the_threshold():
+    """Speech, including the chunks whose answers loop, scores well above
+    the threshold; the music the server answers with a phrase below it."""
+    means = [
+        lenient_chunk_answer(
+            next(
+                answer["body"]
+                for answer in ladder["answers"]
+                if (answer["response_format"], answer["temperature"])
+                == ("verbose_json", 0.0)
+            ),
+            AudioChunk(0, 0, _noise(ladder["chunk_len_s"])),
+        ).avg_logprob
+        for ladder in _ladders()
+    ]
+
+    assert [None if mean is None else round(mean, 2) for mean in means] == [
+        -0.25,
+        -0.19,
+        -0.19,
+        -0.17,
+        -0.14,
+        -0.19,
+        -0.67,
+        None,
+        -1.21,
+    ]
+    assert NON_SPEECH_AVG_LOGPROB == -1.0
+
+
+def test_a_chunk_whose_timed_answer_is_improbable_is_transcribed_empty(caplog):
+    """Music: the timed answer at 0.0 is a phrase (mean log-probability
+    -1.21) and the json answers are a loop of sound annotations. The chunk is
+    not speech; it is not asked again and keeps no text."""
+    ladder = _ladders()[8]
+    server, transcript, decisions = _ladder_transcribed(ladder, caplog)
+
+    assert server.requests == [("verbose_json", 0.0)]
+    assert (transcript["full_text"], transcript["segments"]) == ("", [])
+    assert decisions == [
+        'clip.wav: chunk 0 (0.00-29.70s) timed answer " I\'m going to go." at '
+        "temperature 0.0 has mean log-probability -1.21 < -1.0: not speech, "
+        "kept no text"
+    ]
+
+
+def test_a_chunk_judged_not_speech_names_no_language_for_the_next(caplog):
+    audio = _noise(45.0)
+
+    def server(chunk, language, timestamps, temperature=0.0):
+        requests.append((chunk.index, language, response_format(timestamps)))
+        if chunk.index == 0:
+            return ChunkTranscript(
+                text=" Thank you.",
+                language="en",
+                segments=_segments((0.0, 2.0, " Thank you.")),
+                avg_logprob=-1.4,
+            )
+        return ChunkTranscript(
+            text=" Bonjour à tous.",
+            language="fr",
+            segments=_segments((0.0, len(chunk.samples) / RATE, " Bonjour à tous.")),
+            avg_logprob=-0.2,
+        )
+
+    requests: list[tuple[int, str | None, str]] = []
+    transcript = _transcribe(audio, server, language=None)
+
+    assert requests == [(0, None, "verbose_json"), (1, None, "verbose_json")]
+    assert {key: transcript[key] for key in ("full_text", "language")} == {
+        "full_text": "Bonjour à tous.",
+        "language": "fr",
+    }
+
+
+def test_an_answer_without_log_probabilities_is_never_judged_not_speech():
+    audio = _noise(10.0)
+    server = _Server(timed={0: [[(0.0, 10.0, " Thank you.")]]}, text={0: []})
+
+    transcript = _transcribe(audio, server)
+
+    assert server.requests == [(0, "en", "verbose_json", 0.0)]
+    assert transcript["full_text"] == "Thank you."
+
+
+def test_the_mean_log_probability_is_weighted_by_segment_duration():
+    body = {
+        "text": " a b c",
+        "segments": [
+            {"start": 0.0, "end": 1.0, "text": " a", "avg_logprob": -0.5},
+            {"start": 1.0, "end": 4.0, "text": " b", "avg_logprob": -1.0},
+            {"start": 4.0, "end": 4.0, "text": " c", "avg_logprob": -2.0},
+            {"start": 4.0, "end": 5.0, "text": " d", "avg_logprob": None},
+        ],
+    }
+
+    answer = lenient_chunk_answer(body, AudioChunk(0, 0, _noise(5.0)))
+
+    assert answer.avg_logprob == pytest.approx(
+        (1.0 * -0.5 + 3.0 * -1.0 + 0.02 * -2.0) / 4.02, abs=1e-12
+    )
+    assert segments_avg_logprob([{"start": 0.0, "end": 1.0, "text": " a"}]) is None
+    assert segments_avg_logprob(None) is None
+    assert [set(segment) for segment in answer.segments] == [
+        {"start", "end", "text"}
+    ] * 4

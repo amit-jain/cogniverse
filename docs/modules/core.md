@@ -2285,6 +2285,14 @@ temperature)` sends one request with `response_format(timestamps)` and
   `attempts`). When no `verbose_json` answer is usable, the text spans the
   chunk. A silent chunk may come back empty. A request that fails is not
   repeated.
+- A chunk whose `verbose_json` answer at 0.0 carries per-segment
+  `avg_logprob` averaging, weighted by segment duration
+  (`segments_avg_logprob`, kept as `ChunkTranscript.avg_logprob`), below
+  `NON_SPEECH_AVG_LOGPROB` (-1.0) is not speech: it gets an empty transcript
+  and is not asked again, and names no language for later chunks. Measured
+  on the cluster's server, speech scores at least -0.53, and music the server
+  answers with a phrase ("I'm going to go.") or a sound annotation at most
+  -1.05. A "Thank you." the server gives music at -0.79 to -0.91 is kept.
 - With no language named, the first chunk's timed answer names it and every
   later request is sent in it, as the server does for a whole file. Chunk texts
   join with a space, or with nothing for `ja` and `zh`.
