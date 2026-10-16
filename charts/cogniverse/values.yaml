@@ -831,7 +831,7 @@ llm:
   vllm:
     image:
       repository: vllm/vllm-openai-cpu
-      tag: v0.23.0
+      tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
       pullPolicy: IfNotPresent
     # Per-device image override; chart picks ``imagesByDevice[device]`` if
     # present, else falls back to ``image`` above. Set in values.cuda.yaml /
@@ -962,7 +962,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: v0.23.0
+      tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     # vLLM 0.20+ retired the ``--task token_embed`` flag in favour of
@@ -1163,7 +1163,7 @@ inference:
       nodePort: 29006
     image:
       repository: vllm/vllm-openai-cpu
-      tag: v0.23.0-arm64
+      tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     # vllm_embed renders ``--dtype {{ .dtype }}``; float32 keeps the
@@ -1262,7 +1262,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: v0.23.0
+      tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     # ``--max-model-len`` is dropped from Gemma 4 native (262144) to
@@ -1323,7 +1323,7 @@ inference:
     # loading (~22 GiB peak). The Gemma 4 model wraps the multimodal
     # PaliGemma2 architecture which keeps the vision tower resident
     # alongside the text decoder, adding ~8 GiB. KV cache (4 GiB),
-    # activations during eager warmup (~12 GiB at max-model-len 8192
+    # activations of the first full-length request (~12 GiB at max-model-len 8192
     # × num_layers × hidden_dim × bf16 with no compile fusion), plus
     # ~4 GiB framework overhead = ~50 GiB peak working set. Earlier
     # 32 GiB and 48 GiB ceilings OOMKilled mid-warmup; 64 GiB lands
@@ -1378,7 +1378,7 @@ inference:
     gpuCount: 1
     nodeSelector: {}
     tolerations: []
-    # deploy/vllm_audio: the device's vLLM v0.23.0 image with the audio
+    # deploy/vllm_audio: the device's pinned vLLM image with the audio
     # packages installed at build time.
     image:
       repository: cogniverse/vllm-audio-cpu
@@ -1470,7 +1470,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: v0.23.0
+      tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     extraArgs:

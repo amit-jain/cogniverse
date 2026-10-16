@@ -3,7 +3,7 @@
 _vllmRocmImage: &vllmRocmImage
   rocm:
     repository: vllm/vllm-openai-rocm
-    tag: v0.23.0
+    tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
     pullPolicy: IfNotPresent
 
 # This host shares one memory pool between CPU and GPU, and the enabled

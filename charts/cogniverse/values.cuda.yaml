@@ -36,7 +36,7 @@ inference:
     imagesByDevice:
       cuda:
         repository: vllm/vllm-openai
-        tag: v0.23.0
+        tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
         pullPolicy: IfNotPresent
     nodeSelector: {}
     tolerations: []

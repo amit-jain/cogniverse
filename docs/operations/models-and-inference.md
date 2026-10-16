@@ -27,6 +27,18 @@ path). The chart renders one Deployment + Service per enabled service.
 
 ---
 
+## vLLM build
+
+Every vLLM service runs the same vLLM build: the official `vllm/vllm-openai`,
+`vllm/vllm-openai-cpu` and `vllm/vllm-openai-rocm` images tagged
+`nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (vLLM
+`0.32.0rc1.dev190+g3f1bcfd82`, transformers 5.19.0; the CPU and CUDA tags are
+multi-arch), and `deploy/vllm_audio` builds on the same tags. `VLLM_IMAGE_TAG`
+in `libs/foundation/cogniverse_foundation/inference_specs.py` is the tag the
+Modal apps use; the chart values files and the audio Dockerfile pin the same
+literal, and `tests/charts/test_inference_chart.py` fails when any of them
+diverge.
+
 ## LLM serving
 
 ### Student (vLLM chat / generation LLM)
@@ -35,8 +47,8 @@ path). The chart renders one Deployment + Service per enabled service.
 |---|---|
 | Chart key | `inference.vllm_llm_student` |
 | Model | `google/gemma-4-e4b-it`, pinned revision `ee0ef602…` passed to `vllm serve --revision` |
-| Image (CPU / CUDA) | `vllm/vllm-openai-cpu:v0.23.0` / `vllm/vllm-openai:v0.23.0` (official) |
-| Image (ROCm) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
+| Image (CPU / CUDA) | `vllm/vllm-openai-cpu:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` / `vllm/vllm-openai:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official) |
+| Image (ROCm) | `vllm/vllm-openai-rocm:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official) |
 | NodePort | 29010 |
 | Default state | **`enabled: false`** in base `values.yaml` — turned on by the ROCm overlay (`values.rocm.yaml` sets `enabled: true`, `llm.engine: vllm`, `llm.builtin.enabled: false`) |
 | ROCm GPU memory | `--gpu-memory-utilization 0.30` (≈19 GiB on 62 GiB unified memory) |
@@ -59,8 +71,8 @@ is determined by `api_base`, not the prefix.
 |---|---|
 | Chart key | `inference.vllm_llm_teacher` |
 | Model | `cyankiwi/Qwen3.6-27B-AWQ-INT4` (AWQ-INT4, ~14 GiB) |
-| Image (CPU) | `vllm/vllm-openai-cpu:v0.23.0` (official) |
-| Image (ROCm) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
+| Image (CPU) | `vllm/vllm-openai-cpu:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official) |
+| Image (ROCm) | `vllm/vllm-openai-rocm:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official) |
 | NodePort | 29011 |
 | Default state | **`enabled: false`, `replicaCount: 0`** — scale-to-zero |
 | `--max-model-len` | 262144 |
@@ -219,10 +231,10 @@ chart key.
 |---|---|
 | Chart key | `inference.vllm_colpali` |
 | Model | `TomoroAI/tomoro-colqwen3-embed-4b`, pinned revision `bf790bd8…` passed to `vllm serve --revision` |
-| Image (base `values.yaml`, no device overlay) | `vllm/vllm-openai-cpu:v0.23.0` (official), `engine: vllm_token_embed`, `enabled: false` |
+| Image (base `values.yaml`, no device overlay) | `vllm/vllm-openai-cpu:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official), `engine: vllm_token_embed`, `enabled: false` |
 | Image (k3d local dev, `values.k3s.yaml`) | No override: inherits the disabled official CPU vLLM definition from `values.yaml` |
-| Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:v0.23.0` (official), `engine: vllm_token_embed` |
-| Image (CUDA) | `vllm/vllm-openai:v0.23.0` (official), `engine: vllm_token_embed`, `replicaCount: 3` |
+| Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official), `engine: vllm_token_embed` |
+| Image (CUDA) | `vllm/vllm-openai:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official), `engine: vllm_token_embed`, `replicaCount: 3` |
 | NodePort | 29001 |
 | Default state | Disabled in base and k3d-only composition; the ROCm and CUDA overlays enable it |
 | Batching (ROCm) | `--max-num-seqs 16`: up to sixteen concurrent queries share one forward pass. `--max-num-batched-tokens 1536` and `--max-model-len 1536` keep the vision encoder at one 1024-patch image per step |
@@ -317,7 +329,7 @@ reshape), matching DenseOn's dense-retrieval semantics.
 |---|---|
 | Chart key | `inference.vllm_asr` |
 | Model | `openai/whisper-large-v3-turbo` on ROCm/CUDA, pinned revision `41f01f3f…` passed to `vllm serve --revision`; `openai/whisper-tiny` unpinned in the CPU overlay |
-| Image | `cogniverse/vllm-audio-{cpu,cuda,rocm}` (CUSTOM, `deploy/vllm_audio/Dockerfile`: the device's `vllm/vllm-openai*:v0.23.0` image plus `soundfile` and `librosa`) |
+| Image | `cogniverse/vllm-audio-{cpu,cuda,rocm}` (CUSTOM, `deploy/vllm_audio/Dockerfile`: the device's `vllm/vllm-openai*:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` image plus `soundfile` and `librosa`) |
 | Engine | `vllm_transcription` |
 | NodePort | 29005 |
 | Default state | enabled |

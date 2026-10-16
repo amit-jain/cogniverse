@@ -243,8 +243,7 @@ class TestSearchIntegration:
     # carries. This class spins up a real vLLM-CPU container with
     # ``TomoroAI/tomoro-colqwen3-embed-4b`` via the ``seeded_documents`` fixture;
     # the model is ~3 GB and GHA's standard runner (7 GB total RAM)
-    # caps vLLM at ``VLLM_CPU_MEMORY_UTILIZATION=0.05`` ≈ 350 MB,
-    # which can't fit the weights — the container OOMs / resets the
+    # can't fit the weights — the container OOMs / resets the
     # connection mid-load. Local dev (and any host with ≥16 GB free)
     # runs the test fine.
 

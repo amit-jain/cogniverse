@@ -7,6 +7,11 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Mapping
 
+# Image tag every vLLM service runs: the official vllm-openai, vllm-openai-cpu
+# and vllm-openai-rocm images built from this vLLM commit. The CPU and CUDA tags
+# are multi-arch (amd64 and arm64).
+VLLM_IMAGE_TAG = "nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2"
+
 
 class EndpointAuth(StrEnum):
     """Authentication scheme required by an inference endpoint."""
