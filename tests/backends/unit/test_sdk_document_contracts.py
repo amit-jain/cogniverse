@@ -1278,6 +1278,7 @@ class TestDeclaredSchemaMappings:
 
         assert checked == [
             "audio_content_schema.json",
+            "audio_embeddinggemma2_schema.json",
             "code_lateon_mv_schema.json",
             "document_text_schema.json",
             "document_visual_schema.json",
