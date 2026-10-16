@@ -961,3 +961,114 @@ def test_numeric_first_phase_attribute_is_not_an_embedding_field(tmp_path):
         True,
         None,
     )
+
+
+def _float_schema(name: str) -> dict:
+    return {
+        "name": name,
+        "document": {"fields": [{"name": "embedding", "type": "tensor<float>(v[8])"}]},
+        "rank_profiles": [
+            {
+                "name": "float_float",
+                "inputs": [{"name": "query(qt)", "type": "tensor<float>(v[8])"}],
+                "first_phase": "closeness(field, embedding)",
+            }
+        ],
+    }
+
+
+@pytest.mark.unit
+def test_the_strategies_file_is_rebuilt_when_a_schema_is_newer(tmp_path):
+    import os
+
+    from cogniverse_vespa.ranking_strategy_extractor import (
+        ensure_ranking_strategies_file,
+    )
+
+    (tmp_path / "alpha_schema.json").write_text(json.dumps(_float_schema("alpha")))
+    path = ensure_ranking_strategies_file(tmp_path)
+    assert sorted(json.loads(path.read_text())) == ["alpha"]
+
+    beta = tmp_path / "beta_schema.json"
+    beta.write_text(json.dumps(_float_schema("beta")))
+    stamp = path.stat().st_mtime + 5
+    os.utime(beta, (stamp, stamp))
+
+    assert ensure_ranking_strategies_file(tmp_path) == path
+    assert sorted(json.loads(path.read_text())) == ["alpha", "beta"]
+
+
+@pytest.mark.unit
+def test_a_current_strategies_file_is_left_as_written(tmp_path):
+    from cogniverse_vespa.ranking_strategy_extractor import (
+        ensure_ranking_strategies_file,
+    )
+
+    (tmp_path / "alpha_schema.json").write_text(json.dumps(_float_schema("alpha")))
+    path = ensure_ranking_strategies_file(tmp_path)
+    written = path.stat().st_mtime_ns
+
+    ensure_ranking_strategies_file(tmp_path)
+
+    assert path.stat().st_mtime_ns == written
+
+
+@pytest.mark.unit
+def test_concurrent_rebuilds_never_expose_a_partial_file(tmp_path):
+    import os
+    import threading
+
+    from cogniverse_vespa.ranking_strategy_extractor import (
+        ensure_ranking_strategies_file,
+    )
+
+    for i in range(40):
+        (tmp_path / f"s{i:02d}_schema.json").write_text(
+            json.dumps(_float_schema(f"s{i:02d}"))
+        )
+    path = ensure_ranking_strategies_file(tmp_path)
+    barrier = threading.Barrier(8)
+    seen: list = []
+
+    def rebuild_and_read() -> None:
+        barrier.wait()
+        for _ in range(5):
+            later = path.stat().st_mtime + 5
+            os.utime(tmp_path / "s00_schema.json", (later, later))
+            ensure_ranking_strategies_file(tmp_path)
+            seen.append(sorted(json.loads(path.read_text())))
+
+    threads = [threading.Thread(target=rebuild_and_read) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert seen == [[f"s{i:02d}" for i in range(40)]] * 40
+    assert sorted(p.name for p in tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.unit
+def test_a_failed_rename_keeps_the_previous_file(tmp_path, monkeypatch):
+    import os
+
+    from cogniverse_vespa import ranking_strategy_extractor as extractor
+
+    (tmp_path / "alpha_schema.json").write_text(json.dumps(_float_schema("alpha")))
+    path = extractor.ensure_ranking_strategies_file(tmp_path)
+    previous = path.read_text()
+    beta = tmp_path / "beta_schema.json"
+    beta.write_text(json.dumps(_float_schema("beta")))
+    later = path.stat().st_mtime + 5
+    os.utime(beta, (later, later))
+
+    def refuse(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(extractor.os, "replace", refuse)
+    with pytest.raises(OSError) as caught:
+        extractor.ensure_ranking_strategies_file(tmp_path)
+
+    assert caught.value.errno == 28
+    assert path.read_text() == previous
+    assert sorted(p.name for p in tmp_path.glob("*.tmp")) == []

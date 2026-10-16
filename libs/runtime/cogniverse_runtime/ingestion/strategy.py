@@ -77,19 +77,15 @@ class StrategyConfig:
         with open(self.config_file) as f:
             self.config = json.load(f)
 
-        # Ranking strategies
-        ranking_strategies_path = (
-            self.config_dir / "schemas" / "ranking_strategies.json"
+        from cogniverse_vespa.ranking_strategy_extractor import (
+            ensure_ranking_strategies_file,
         )
-        if ranking_strategies_path.exists():
-            with open(ranking_strategies_path) as f:
-                self.ranking_strategies = json.load(f)
-        else:
-            raise FileNotFoundError(
-                f"ranking_strategies.json not found at {ranking_strategies_path}. "
-                f"This file is currently required. To generate it, run: "
-                f"uv run python -m cogniverse_vespa.ranking_strategy_extractor {self.config_dir / 'schemas'}"
-            )
+
+        ranking_strategies_path = ensure_ranking_strategies_file(
+            self.config_dir / "schemas"
+        )
+        with open(ranking_strategies_path) as f:
+            self.ranking_strategies = json.load(f)
 
     def get_strategy(self, profile_name: str) -> Strategy:
         """
