@@ -2,8 +2,8 @@
 
 Resolves the cluster's service and pins what the production client relies on:
 
-- the server samples video at 1 fps, 142 tokens per frame (140 soft tokens
-  plus the frame's begin/end tokens), so a 6 s chunk costs exactly 852;
+- the server samples video at 1 fps: a 6 s chunk costs exactly twice a 3 s
+  one;
 - every content part the client sends is accepted and lands in one space with
   the query text: a chunk of a snow-shoveling news clip is nearer to a query
   about snow shoveling than to an unrelated one, for each modality;
@@ -81,19 +81,25 @@ def test_the_service_serves_the_pinned_model(omni_url):
     assert [model["id"] for model in response.json()["data"]] == [MODEL]
 
 
-def test_a_six_second_chunk_costs_six_frames_at_one_fps(omni_url):
+def test_video_is_sampled_at_one_frame_per_second(omni_url):
     prompt = [{"type": "text", "text": OMNI_DOCUMENT_PROMPT}]
-    video = {
-        "type": "video_url",
-        "video_url": {
-            "url": "data:video/mp4;base64," + _extract_segment_b64(SNOW_CLIP, 0.0, 6.0)
-        },
-    }
 
-    assert (
-        _prompt_tokens(omni_url, [*prompt, video]) - _prompt_tokens(omni_url, prompt)
-        == 6 * 142
-    )
+    def video_tokens(seconds: float) -> int:
+        video = {
+            "type": "video_url",
+            "video_url": {
+                "url": "data:video/mp4;base64,"
+                + _extract_segment_b64(SNOW_CLIP, 0.0, seconds)
+            },
+        }
+        return _prompt_tokens(omni_url, [*prompt, video]) - _prompt_tokens(
+            omni_url, prompt
+        )
+
+    # A fixed frame count would cost the same for both spans; one frame per
+    # second makes the 6 s chunk exactly twice the 3 s one. Each frame of
+    # this 320x240 clip is 120 soft tokens plus its begin and end tokens.
+    assert (video_tokens(3.0), video_tokens(6.0)) == (3 * 122, 6 * 122)
 
 
 @pytest.mark.parametrize(

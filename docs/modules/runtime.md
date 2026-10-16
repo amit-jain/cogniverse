@@ -150,7 +150,8 @@ LateOn (ColBERT) text embeddings are served by the PyLate sidecar
 `cogniverse_cli/modal_inference/servers/pylate.py`) because LateOn needs
 PyLate's exact query expansion, which stock vLLM's `/pooling` cannot
 reproduce (no attention-mask input). DenseOn dense embeddings stay on
-stock vLLM (`vllm_embed` engine). See
+stock vLLM (`vllm_embed` engine); EmbeddingGemma 2 (`vllm_omni_embed`) runs the
+same engine from the vLLM audio image. See
 `docs/operations/models-and-inference.md` for the serving details.
 
 The face-embed sidecar runs as its own container: `FaceEmbedConfig` is plain

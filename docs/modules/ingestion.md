@@ -886,8 +886,8 @@ strategies:
 The factory looks up `inference_services[<strategy_type>]` and, if the
 strategy's `__init__` explicitly declares an `inference_service`
 parameter, passes it as `inference_service=<name>`. Audio profiles also
-use `inference_services.acoustic_embedding` to resolve the CLAP sidecar
-URL into `clap_endpoint_url`. Strategies whose constructor does NOT
+use `inference_services.acoustic_embedding` to resolve the acoustic
+service's URL into `acoustic_endpoint_url`. Strategies whose constructor does NOT
 declare the parameter are **not** injected — this is an opt-in
 contract, and `**kwargs` deliberately does not count as opting in (a
 `**kwargs` constructor absorbs the kwarg and silently drops it, so the

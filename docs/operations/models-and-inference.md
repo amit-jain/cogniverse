@@ -267,6 +267,27 @@ only through this sidecar (`inference_service_urls["video_embed"]`).
 `cogniverse up` builds and imports the image from the repository root like
 the other custom sidecars (see the image table below).
 
+### EmbeddingGemma 2 (text, video and audio in one space, `vllm_omni_embed`)
+
+| Field | Value |
+|---|---|
+| Chart key | `inference.vllm_omni_embed` |
+| Model | `google/embeddinggemma-2` (740M, 768-dim, pinned revision `914f7f89…` passed to `vllm serve --revision`) |
+| Image | `cogniverse/vllm-audio-{cpu,cuda,rocm}`, the image `vllm_asr` runs: vLLM serves `input_audio` parts only with the audio packages installed |
+| Engine | `vllm_embed`, plus `--runner pooling --max-model-len 8192 --limit-mm-per-prompt '{"image":1,"video":1,"audio":1}' --media-io-kwargs '{"video":{"fps":1}}'` |
+| Endpoint | `POST /v1/embeddings` with one chat message whose content is text, `video_url` and `input_audio` parts, and `add_special_tokens: true` |
+| NodePort | 29003 |
+| ROCm GPU memory | `--gpu-memory-utilization 0.08`; TunableOp replays tuned shapes without tuning new ones |
+| Default state | disabled in `values.yaml`; enabled by `values.rocm.yaml` and `values.cuda.yaml`. Served only by the cluster: `InferenceServiceSpec.modal_deployable` is false and the Modal lifecycle refuses it |
+
+Video is sampled at one frame per second. Queries carry the prompt
+`task: search result | query: `, documents `title: none | text: `.
+Without `add_special_tokens` vLLM's chat path drops BOS and EOS and the
+vectors drift from the model's own encoding. Used by the
+`video_embeddinggemma2_sv_chunk_6s` profile (each 6 s chunk's frames and audio
+in one input) and the `audio_embeddinggemma2` profile (one vector per audio
+window of at most 10 s).
+
 ---
 
 ## Text embeddings
@@ -361,10 +382,16 @@ most nine requests per phrase checked).
 | NodePort | 29008 |
 | Default state | disabled |
 
+A clip longer than CLAP's 10 s input is embedded as consecutive windows of at
+most 10 s, and `/embed/audio` returns the normalized mean of the normalized
+window vectors, so one clip always maps to one vector.
+
 When the sidecar is deployed, `AudioEmbeddingGenerator` routes acoustic
 embeddings to it via `inference_service_urls["clap_embed"]` (ingestion
-side injected by the embedding-generator factory; query side via
-`AudioAnalysisDeps.clap_endpoint` filled by the dispatcher). Without it,
+side injected by the embedding-generator factory as the profile's
+`acoustic_endpoint_url`; query side via `AudioAnalysisDeps.acoustic_endpoint`,
+which the dispatcher fills from the tenant's audio profile's
+`inference_services.acoustic_embedding`). Without it,
 CLAP loads in-process — which requires torch and therefore only works in
 dev environments, never in the deployed runtime image; in that case the
 acoustic vector is skipped (best-effort) and audio chunks carry only
@@ -492,6 +519,7 @@ keyframes`.
 | `vllm_colpali` (base and CPU/k3d dev composition; disabled) | `vllm/vllm-openai-cpu` | No |
 | `vllm_colpali` (ROCm 7.12+ / CUDA) | `vllm/vllm-openai-rocm` / `vllm/vllm-openai` | No |
 | `vllm_asr` | `cogniverse/vllm-audio-{cpu,cuda,rocm}` | **Yes** (`deploy/vllm_audio/Dockerfile`, one build per device) |
+| `vllm_omni_embed` | `cogniverse/vllm-audio-{cpu,cuda,rocm}` (shared with `vllm_asr`, built once) | **Yes** (`deploy/vllm_audio/Dockerfile`) |
 | `colbert_pylate` | `cogniverse/pylate` | **Yes** (`deploy/pylate/Dockerfile`) |
 | `code_colbert_pylate` | `cogniverse/pylate` (shared image, built once) | **Yes** (`deploy/pylate/Dockerfile`) |
 | `denseon` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
@@ -585,6 +613,11 @@ unless a description `vlm_endpoint` on the in-cluster `vllm_llm_student`
 Service has that service enabled. `values.cuda.yaml` deploys no student, so a
 CUDA composition sets `runtime.primaryLLM.apiBase` or composes
 `values.modal-llm.yaml`.
+
+`config.defaultProfiles.audio` (`audio_clap_semantic` in the base values)
+names the profile `backend.default_profiles.audio` selects when an audio search
+names none; with two shipped audio profiles a type-only search has no other
+way to pick one.
 
 ---
 

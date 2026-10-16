@@ -966,6 +966,7 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 | `ColPaliQueryEncoder(...)` / `ColQwenQueryEncoder(...)` | — | Thin factory functions over `ColPaliFamilyQueryEncoder` with `model_loader="colpali"`/`"colqwen"` |
 | `XClipQueryEncoder` | X-CLIP | Single-vector 768-d; remote via the `video_embed` sidecar; encodes video and text into one space |
 | `ClapTextQueryEncoder` | CLAP | Single-vector 512-d; remote via the `clap_embed` sidecar's `/embed/text`; text in the space of the stored acoustic embeddings |
+| `EmbeddingGemma2QueryEncoder` | EmbeddingGemma 2 | Single-vector 768-d; remote via `vllm_omni_embed` with the `task: search result | query: ` prompt; built for `model_loader: embeddinggemma2` profiles and as the service text encoder for fields `vllm_omni_embed` embeds |
 
 `QueryEncoderFactory.create_for_profile(profile, profile_config, config)` is
 the one place a profile becomes a query encoder; `create_encoder` looks the
@@ -989,7 +990,9 @@ rather than silently falling back to a local load, so a misconfigured sidecar
 fails loud.
 The profile's query encoder is the ColBERT one; the acoustic input takes
 `QueryEncoderFactory.create_service_encoder(profile, "clap_embed", config)`,
-the cached text encoder of the service (`SERVICE_TEXT_ENCODERS`). A service
+the cached text encoder of the service (`SERVICE_TEXT_ENCODERS`, which maps
+`clap_embed` and `vllm_omni_embed`). `audio_embeddinggemma2` binds both
+`embedding` and `acoustic_embedding` to `vllm_omni_embed`. A service
 with no text encoder, or with no configured URL, raises
 `EncoderNotConfiguredError`.
 Search agents (document/image) resolve their encoders through this factory,
@@ -2196,6 +2199,7 @@ is_remote_only_model("TomoroAI/tomoro-colqwen3-embed-4b")  # True
 | `colpali` | `ColPaliModelLoader` | `RemoteColPaliLoader` |
 | `colqwen` | `ColQwenModelLoader` | `RemoteColPaliLoader` |
 | `xclip` | — (remote only) | `RemoteXClipLoader` |
+| `embeddinggemma2` | — (remote only) | `RemoteEmbeddingGemma2Loader` |
 | `colbert` | `ColBERTModelLoader` | `RemoteColBERTLoader` |
 | `whisper` | — | `RemoteWhisperLoader` |
 
@@ -2403,6 +2407,22 @@ result = client.process_images(
 - Infinity (ColPali and similar models)
 - Modal (custom deployed models)
 - Custom REST APIs
+
+`RemoteInferenceClient.embed_messages(content, timeout=...)` posts one chat
+message to `vllm_omni_embed`'s `/v1/embeddings` (with `add_special_tokens`)
+and returns the L2-normalized 768-d vector. A 4xx raises `ValueError` at once;
+an unreachable, hung or failing server is retried behind the endpoint breaker
+and then raises `InferenceServiceUnavailableError` naming the service.
+
+### RemoteEmbeddingGemma2Loader (model_loaders.py)
+
+Selected by `model_loader: embeddinggemma2`. The profile's `modalities`
+(`video`, `audio`, or both) decide what `process_video_segment` sends for a
+chunk: the document prompt, then the chunk cut to mp4 and/or its audio as
+16 kHz mono WAV. `embed_audio_window(path, start, end)` embeds one audio span,
+`embed_audio_clip(path)` a whole clip as the normalized mean of its
+`audio_windows` (consecutive spans of at most 10 s), and `embed_text(query)` a
+query with the retrieval prompt.
 
 ### RemoteGlinerClient (model_loaders.py)
 

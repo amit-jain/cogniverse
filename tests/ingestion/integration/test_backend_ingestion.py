@@ -4,6 +4,8 @@ Integration tests for video ingestion with different backends and models.
 Tests actual document ingestion with various video processing profiles.
 """
 
+import json
+import os
 import time
 from pathlib import Path
 
@@ -309,6 +311,103 @@ class TestVespaBackendIngestion:
 
         assert result is not None
         assert "embeddings" in result.get("results", {})
+
+    @pytest.mark.slow
+    @pytest.mark.requires_inference("vllm_omni_embed", "vllm_asr")
+    @pytest.mark.asyncio
+    async def test_omni_video_profile_feeds_one_document_per_chunk(
+        self, vespa_backend, vespa_test_videos
+    ):
+        """Each chunk the segmenter cuts lands as its own document carrying
+        the vector EmbeddingGemma 2 serves for that chunk."""
+        import logging
+
+        import numpy as np
+        import requests
+
+        from cogniverse_core.common.models.model_loaders import ModelLoaderFactory
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_runtime.ingestion.pipeline import (
+            PipelineConfig,
+            VideoIngestionPipeline,
+        )
+        from cogniverse_runtime.ingestion.processors.single_vector_processor import (
+            SingleVectorVideoProcessor,
+        )
+
+        profile_name = "video_embeddinggemma2_sv_chunk_6s"
+        video = vespa_test_videos[0]
+        config_manager = create_default_config_manager()
+        config = PipelineConfig.from_config(
+            tenant_id="test:unit", config_manager=config_manager
+        )
+        config.video_dir = video.parent
+        config.search_backend = "vespa"
+        pipeline = VideoIngestionPipeline(
+            tenant_id="test_tenant",
+            config=config,
+            config_manager=config_manager,
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            schema_name=profile_name,
+        )
+
+        result = await pipeline.process_video_async(video)
+
+        assert "error" not in result, result
+        profile = json.loads(Path("configs/config.json").read_text())["backend"][
+            "profiles"
+        ][profile_name]
+        segmenter = SingleVectorVideoProcessor(
+            logging.getLogger("test"),
+            **profile["strategies"]["segmentation"]["params"],
+        )
+        boundaries = segmenter._calculate_segment_boundaries(
+            segmenter._get_video_info(video)["duration"]
+        )
+        hits = requests.post(
+            f"http://localhost:{vespa_backend.http_port}/search/",
+            json={
+                "yql": "select * from sources * where true",
+                "hits": 100,
+                "presentation.format.tensors": "short-value",
+            },
+            timeout=30,
+        ).json()["root"]["children"]
+        stored = sorted(
+            (
+                hit["fields"]["segment_id"],
+                round(hit["fields"]["start_time"], 3),
+                round(hit["fields"]["end_time"], 3),
+                hit["fields"]["video_id"],
+            )
+            for hit in hits
+            if hit["fields"]["sddocname"].startswith(profile_name)
+        )
+        assert stored == [
+            (i, round(start, 3), round(end, 3), video.stem)
+            for i, (start, end) in enumerate(boundaries)
+        ]
+
+        omni = ModelLoaderFactory.create_loader(
+            "google/embeddinggemma-2",
+            {
+                "model_loader": "embeddinggemma2",
+                "remote_inference_url": json.loads(
+                    os.environ["INFERENCE_SERVICE_URLS"]
+                )["vllm_omni_embed"],
+                "modalities": ["video", "audio"],
+            },
+        ).load_model()[0]
+        first = next(
+            hit["fields"]
+            for hit in hits
+            if hit["fields"]["sddocname"].startswith(profile_name)
+            and hit["fields"]["segment_id"] == 0
+        )
+        served = omni.process_video_segment(video, *boundaries[0])["embeddings_np"]
+        stored_vector = np.asarray(first["embedding"], dtype=np.float32)
+        cosine = float(served @ stored_vector / np.linalg.norm(stored_vector))
+        assert cosine >= 0.99, cosine
 
     @pytest.mark.local_only
     @pytest.mark.requires_inference("video_embed")

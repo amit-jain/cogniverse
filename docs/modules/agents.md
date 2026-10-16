@@ -2722,9 +2722,16 @@ the resolved headers as one immutable mapping for every multipart request. An
 authentication error, timeout, or serving failure is raised to the caller
 without exposing the credential or producing an empty transcript.
 
-Remote acoustic-query encoding uses `AudioAnalysisDeps.clap_endpoint`. Modal
-URLs obtain their bearer credential from `COGNIVERSE_INFERENCE_API_KEY` and
-reject `clap_headers`; non-Modal endpoints may accept one canonical
+The dispatcher searches the tenant's audio profile: the request's profile, the
+only audio-type profile, or `backend.default_profiles.audio`
+(`select_type_profile`). `AudioAnalysisDeps` carries that `audio_profile`, its
+`audio_schema`, the `acoustic_service` that embeds its `acoustic_embedding`
+field (`clap_embed` or `vllm_omni_embed`) and that service's
+`acoustic_endpoint`. Acoustic mode and acoustic reference-clip similarity embed
+the query or clip with that service and search `<audio_schema>_<tenant>`; the
+other modes name `audio_profile` on the backend search. Modal URLs obtain their
+bearer credential from `COGNIVERSE_INFERENCE_API_KEY` and reject
+`acoustic_headers`; non-Modal endpoints may accept one canonical
 `Authorization: Bearer ...` mapping. `AudioEmbeddingGenerator` resolves the
 credential before constructing its pooled HTTP client.
 Per-keyframe face extraction obtains Modal credentials from
