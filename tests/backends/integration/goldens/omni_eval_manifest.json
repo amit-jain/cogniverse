@@ -1,0 +1,8814 @@
+{
+ "services": {
+  "video_embed": {
+   "model": "microsoft/xclip-large-patch14",
+   "revision": "a9dd1429a16cf305df2aaea232d5e8dceba1c675"
+  },
+  "vllm_omni_embed": {
+   "model": "google/embeddinggemma-2",
+   "revision": "914f7f89142e33e77833254d9c9b90c3cef7303b"
+  },
+  "clap_embed": {
+   "model": "laion/clap-htsat-unfused",
+   "revision": "8fa0f1c6d0433df6e97c127f64b2a1d6c0dcda8a"
+  }
+ },
+ "video_durations": {
+  "big_buck_bunny_clip.mp4": 596.4583333333334,
+  "elephant_dream_clip.mp4": 653.7916666666666,
+  "for_bigger_blazes.mp4": 15.014999999999999,
+  "v_-6dz6tBH77I.mp4": 8.008000000000001,
+  "v_-D1gdv_gQyw.mp4": 17.984633333333335,
+  "v_-HpCLXdtcas.mkv": 23.333333333333332,
+  "v_-IMXSEIabMM.mp4": 126.3262,
+  "v_-MbZ-W0AbN0.mp4": 77.06700000000001,
+  "v_-cAcA8dO7kA.mp4": 11.546,
+  "v_-nl4G-00PtA.mp4": 6.133333333333334,
+  "v_-pkfcMUIEMo.mp4": 104.43333333333334,
+  "v_-uJnucdW6DY.mp4": 219.92,
+  "v_-vnSFKJNB94.mp4": 106.31453333333333
+ },
+ "video_windows": [
+  [
+   "big_buck_bunny_clip.mp4",
+   0.0,
+   6.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   5.0,
+   11.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   10.0,
+   16.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   15.0,
+   21.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   20.0,
+   26.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   25.0,
+   31.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   30.0,
+   36.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   35.0,
+   41.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   40.0,
+   46.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   45.0,
+   51.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   50.0,
+   56.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   55.0,
+   61.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   60.0,
+   66.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   65.0,
+   71.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   70.0,
+   76.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   75.0,
+   81.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   80.0,
+   86.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   85.0,
+   91.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   90.0,
+   96.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   95.0,
+   101.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   100.0,
+   106.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   105.0,
+   111.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   110.0,
+   116.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   115.0,
+   121.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   120.0,
+   126.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   125.0,
+   131.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   130.0,
+   136.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   135.0,
+   141.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   140.0,
+   146.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   145.0,
+   151.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   150.0,
+   156.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   155.0,
+   161.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   160.0,
+   166.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   165.0,
+   171.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   170.0,
+   176.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   175.0,
+   181.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   180.0,
+   186.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   185.0,
+   191.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   190.0,
+   196.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   195.0,
+   201.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   200.0,
+   206.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   205.0,
+   211.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   210.0,
+   216.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   215.0,
+   221.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   220.0,
+   226.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   225.0,
+   231.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   230.0,
+   236.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   235.0,
+   241.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   240.0,
+   246.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   245.0,
+   251.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   250.0,
+   256.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   255.0,
+   261.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   260.0,
+   266.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   265.0,
+   271.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   270.0,
+   276.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   275.0,
+   281.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   280.0,
+   286.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   285.0,
+   291.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   290.0,
+   296.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   295.0,
+   301.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   300.0,
+   306.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   305.0,
+   311.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   310.0,
+   316.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   315.0,
+   321.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   320.0,
+   326.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   325.0,
+   331.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   330.0,
+   336.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   335.0,
+   341.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   340.0,
+   346.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   345.0,
+   351.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   350.0,
+   356.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   355.0,
+   361.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   360.0,
+   366.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   365.0,
+   371.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   370.0,
+   376.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   375.0,
+   381.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   380.0,
+   386.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   385.0,
+   391.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   390.0,
+   396.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   395.0,
+   401.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   400.0,
+   406.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   405.0,
+   411.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   410.0,
+   416.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   415.0,
+   421.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   420.0,
+   426.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   425.0,
+   431.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   430.0,
+   436.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   435.0,
+   441.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   440.0,
+   446.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   445.0,
+   451.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   450.0,
+   456.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   455.0,
+   461.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   460.0,
+   466.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   465.0,
+   471.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   470.0,
+   476.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   475.0,
+   481.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   480.0,
+   486.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   485.0,
+   491.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   490.0,
+   496.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   495.0,
+   501.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   500.0,
+   506.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   505.0,
+   511.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   510.0,
+   516.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   515.0,
+   521.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   520.0,
+   526.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   525.0,
+   531.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   530.0,
+   536.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   535.0,
+   541.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   540.0,
+   546.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   545.0,
+   551.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   550.0,
+   556.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   555.0,
+   561.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   560.0,
+   566.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   565.0,
+   571.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   570.0,
+   576.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   575.0,
+   581.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   580.0,
+   586.0
+  ],
+  [
+   "big_buck_bunny_clip.mp4",
+   585.0,
+   596.458
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   0.0,
+   6.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   5.0,
+   11.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   10.0,
+   16.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   15.0,
+   21.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   20.0,
+   26.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   25.0,
+   31.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   30.0,
+   36.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   35.0,
+   41.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   40.0,
+   46.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   45.0,
+   51.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   50.0,
+   56.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   55.0,
+   61.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   60.0,
+   66.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   65.0,
+   71.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   70.0,
+   76.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   75.0,
+   81.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   80.0,
+   86.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   85.0,
+   91.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   90.0,
+   96.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   95.0,
+   101.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   100.0,
+   106.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   105.0,
+   111.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   110.0,
+   116.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   115.0,
+   121.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   120.0,
+   126.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   125.0,
+   131.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   130.0,
+   136.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   135.0,
+   141.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   140.0,
+   146.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   145.0,
+   151.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   150.0,
+   156.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   155.0,
+   161.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   160.0,
+   166.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   165.0,
+   171.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   170.0,
+   176.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   175.0,
+   181.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   180.0,
+   186.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   185.0,
+   191.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   190.0,
+   196.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   195.0,
+   201.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   200.0,
+   206.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   205.0,
+   211.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   210.0,
+   216.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   215.0,
+   221.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   220.0,
+   226.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   225.0,
+   231.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   230.0,
+   236.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   235.0,
+   241.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   240.0,
+   246.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   245.0,
+   251.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   250.0,
+   256.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   255.0,
+   261.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   260.0,
+   266.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   265.0,
+   271.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   270.0,
+   276.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   275.0,
+   281.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   280.0,
+   286.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   285.0,
+   291.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   290.0,
+   296.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   295.0,
+   301.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   300.0,
+   306.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   305.0,
+   311.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   310.0,
+   316.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   315.0,
+   321.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   320.0,
+   326.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   325.0,
+   331.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   330.0,
+   336.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   335.0,
+   341.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   340.0,
+   346.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   345.0,
+   351.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   350.0,
+   356.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   355.0,
+   361.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   360.0,
+   366.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   365.0,
+   371.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   370.0,
+   376.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   375.0,
+   381.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   380.0,
+   386.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   385.0,
+   391.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   390.0,
+   396.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   395.0,
+   401.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   400.0,
+   406.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   405.0,
+   411.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   410.0,
+   416.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   415.0,
+   421.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   420.0,
+   426.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   425.0,
+   431.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   430.0,
+   436.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   435.0,
+   441.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   440.0,
+   446.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   445.0,
+   451.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   450.0,
+   456.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   455.0,
+   461.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   460.0,
+   466.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   465.0,
+   471.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   470.0,
+   476.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   475.0,
+   481.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   480.0,
+   486.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   485.0,
+   491.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   490.0,
+   496.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   495.0,
+   501.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   500.0,
+   506.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   505.0,
+   511.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   510.0,
+   516.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   515.0,
+   521.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   520.0,
+   526.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   525.0,
+   531.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   530.0,
+   536.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   535.0,
+   541.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   540.0,
+   546.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   545.0,
+   551.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   550.0,
+   556.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   555.0,
+   561.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   560.0,
+   566.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   565.0,
+   571.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   570.0,
+   576.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   575.0,
+   581.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   580.0,
+   586.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   585.0,
+   591.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   590.0,
+   596.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   595.0,
+   601.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   600.0,
+   606.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   605.0,
+   611.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   610.0,
+   616.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   615.0,
+   621.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   620.0,
+   626.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   625.0,
+   631.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   630.0,
+   636.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   635.0,
+   641.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   640.0,
+   646.0
+  ],
+  [
+   "elephant_dream_clip.mp4",
+   645.0,
+   653.792
+  ],
+  [
+   "for_bigger_blazes.mp4",
+   0.0,
+   6.0
+  ],
+  [
+   "for_bigger_blazes.mp4",
+   5.0,
+   15.015
+  ],
+  [
+   "v_-6dz6tBH77I.mp4",
+   0.0,
+   8.008
+  ],
+  [
+   "v_-D1gdv_gQyw.mp4",
+   0.0,
+   6.0
+  ],
+  [
+   "v_-D1gdv_gQyw.mp4",
+   5.0,
+   17.985
+  ],
+  [
+   "v_-HpCLXdtcas.mkv",
+   0.0,
+   6.0
+  ],
+  [
+   "v_-HpCLXdtcas.mkv",
+   5.0,
+   11.0
+  ],
+  [
+   "v_-HpCLXdtcas.mkv",
+   10.0,
+   16.0
+  ],
+  [
+   "v_-HpCLXdtcas.mkv",
+   15.0,
+   23.333
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   0.0,
+   6.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   5.0,
+   11.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   10.0,
+   16.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   15.0,
+   21.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   20.0,
+   26.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   25.0,
+   31.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   30.0,
+   36.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   35.0,
+   41.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   40.0,
+   46.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   45.0,
+   51.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   50.0,
+   56.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   55.0,
+   61.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   60.0,
+   66.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   65.0,
+   71.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   70.0,
+   76.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   75.0,
+   81.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   80.0,
+   86.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   85.0,
+   91.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   90.0,
+   96.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   95.0,
+   101.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   100.0,
+   106.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   105.0,
+   111.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   110.0,
+   116.0
+  ],
+  [
+   "v_-IMXSEIabMM.mp4",
+   115.0,
+   126.326
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   0.0,
+   6.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   5.0,
+   11.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   10.0,
+   16.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   15.0,
+   21.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   20.0,
+   26.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   25.0,
+   31.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   30.0,
+   36.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   35.0,
+   41.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   40.0,
+   46.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   45.0,
+   51.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   50.0,
+   56.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   55.0,
+   61.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   60.0,
+   66.0
+  ],
+  [
+   "v_-MbZ-W0AbN0.mp4",
+   65.0,
+   77.067
+  ],
+  [
+   "v_-cAcA8dO7kA.mp4",
+   0.0,
+   11.546
+  ],
+  [
+   "v_-nl4G-00PtA.mp4",
+   0.0,
+   6.133
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   0.0,
+   6.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   5.0,
+   11.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   10.0,
+   16.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   15.0,
+   21.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   20.0,
+   26.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   25.0,
+   31.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   30.0,
+   36.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   35.0,
+   41.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   40.0,
+   46.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   45.0,
+   51.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   50.0,
+   56.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   55.0,
+   61.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   60.0,
+   66.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   65.0,
+   71.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   70.0,
+   76.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   75.0,
+   81.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   80.0,
+   86.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   85.0,
+   91.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   90.0,
+   96.0
+  ],
+  [
+   "v_-pkfcMUIEMo.mp4",
+   95.0,
+   104.433
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   0.0,
+   6.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   5.0,
+   11.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   10.0,
+   16.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   15.0,
+   21.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   20.0,
+   26.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   25.0,
+   31.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   30.0,
+   36.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   35.0,
+   41.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   40.0,
+   46.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   45.0,
+   51.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   50.0,
+   56.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   55.0,
+   61.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   60.0,
+   66.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   65.0,
+   71.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   70.0,
+   76.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   75.0,
+   81.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   80.0,
+   86.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   85.0,
+   91.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   90.0,
+   96.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   95.0,
+   101.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   100.0,
+   106.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   105.0,
+   111.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   110.0,
+   116.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   115.0,
+   121.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   120.0,
+   126.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   125.0,
+   131.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   130.0,
+   136.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   135.0,
+   141.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   140.0,
+   146.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   145.0,
+   151.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   150.0,
+   156.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   155.0,
+   161.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   160.0,
+   166.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   165.0,
+   171.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   170.0,
+   176.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   175.0,
+   181.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   180.0,
+   186.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   185.0,
+   191.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   190.0,
+   196.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   195.0,
+   201.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   200.0,
+   206.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   205.0,
+   211.0
+  ],
+  [
+   "v_-uJnucdW6DY.mp4",
+   210.0,
+   219.92
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   0.0,
+   6.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   5.0,
+   11.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   10.0,
+   16.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   15.0,
+   21.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   20.0,
+   26.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   25.0,
+   31.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   30.0,
+   36.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   35.0,
+   41.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   40.0,
+   46.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   45.0,
+   51.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   50.0,
+   56.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   55.0,
+   61.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   60.0,
+   66.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   65.0,
+   71.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   70.0,
+   76.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   75.0,
+   81.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   80.0,
+   86.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   85.0,
+   91.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   90.0,
+   96.0
+  ],
+  [
+   "v_-vnSFKJNB94.mp4",
+   95.0,
+   106.315
+  ]
+ ],
+ "clotho_durations": {
+  "01 A pug struggles to breathe 1_14_2008.wav": 28.754,
+  "01 barreau bunker original.wav": 19.019,
+  "01 hospital elevator with computer voice.wav": 25.991,
+  "01862 heavy machine working.wav": 25.442,
+  "02-Bakken_Rollercoaster.wav": 24.094,
+  "0208 Fountain_Parque_del_Peru.wav": 20.507,
+  "0211_170236 walk downstairs.wav": 16.606,
+  "02668 stripwood noises.wav": 17.076,
+  "043015 Splashing water in bathtub.wav": 25.52,
+  "05769 carpenter&#39;s workshop ambience.wav": 16.28,
+  "06 - 333 con tren hotel saliendo de la estacion de Zamora hacia Galicia.wav": 23.389,
+  "07 ambient bell.wav": 19.679,
+  "07 storm - orage.wav": 17.653,
+  "070821_flsp_bog01.wav": 15.606,
+  "08-Garage Opening-consolidated.wav": 24.706,
+  "080809_05_FontanaKoblerov.wav": 24.723,
+  "080902_05_cicada_night_road.wav": 29.867,
+  "09-07-13_1900_Bells of Torre dos Clerigos (short).wav": 28.77,
+  "09-07-14_2338_Foz, fisherman next to the river.wav": 29.222,
+  "105bpm.wav": 18.28,
+  "110422_village_dusk.wav": 29.811,
+  "1122thrum.wav": 16.883,
+  "130915 - Exterior-Hard Rain - Door - Thunder - Metal Lawn Furniture.wav": 29.435,
+  "13gotasb.wav": 16.602,
+  "14.12.2011.001.wav": 22.163,
+  "15_Rain_Ocean_HeavierLighter_44_16.wav": 28.799,
+  "160717 HSN fishing boat passing by.wav": 27.402,
+  "161006_0075 creaking floor -nr.wav": 26.851,
+  "17-Year Cicada Mating Call.wav": 25.587,
+  "1990 repetition brass-band 01.wav": 28.331,
+  "2 08 Br Lib 2 amb kids.wav": 26.251,
+  "20 bottles nt 2_10.wav": 22.475,
+  "20060426.marsh.crikets.day.stereo.02.wav": 20.583,
+  "20061121.pine.forest.wav": 15.541,
+  "20061205.washing.machine.wash.wav": 20.231,
+  "20061215.early.morning.wav": 28.545,
+  "20070128.turbine.wav": 16.613,
+  "20070224.siren.wav": 16.275,
+  "20070318.forest.00.wav": 28.867,
+  "20070325.windy.forest.stereo.02.wav": 19.791,
+  "20070402.crowd.wav": 15.304,
+  "20070720.rbd.chicharras.02.wav": 26.09,
+  "20070819.fjord.beach.00.wav": 28.225,
+  "20070824.supper.wav": 19.163,
+  "20070918.galloping.horse.wav": 17.206,
+  "20080226.serins.rbd.02.wav": 25.044,
+  "20080320.farm.ambiance.2.wav": 28.736,
+  "20080416.buzz.stereo.wav": 22.779,
+  "20080504.horse.drawn.00.wav": 25.519,
+  "20080505_1309unlock_doors.wav": 23.882,
+  "20081102kijjaz-MediumRecordCracklesSynthesis-01.wav": 28.607,
+  "20090105.slicing.wav": 24.651,
+  "20090407.cricket.real.close.wav": 29.988,
+  "20090412.bell.strikes.12.wav": 24.676,
+  "20090712.engine.00.wav": 28.668,
+  "20090712.engine.01.wav": 24.688,
+  "20090827.pony.wav": 29.632,
+  "20091212.motorcycle.wav": 28.9,
+  "20091217.17.fountain.wav": 29.628,
+  "20091217.18.chains.wav": 15.498,
+  "20091225.rain.01.wav": 18.344,
+  "20100320.fountain.wav": 24.068,
+  "20100410.almunecar.surf.wav": 22.474,
+  "20100422.castril.playground.wav": 19.049,
+  "20100422.waterfall.birds.wav": 26.291,
+  "20100801.wharf.silence.night.wav": 26.792,
+  "20100804.idling.van.wav": 18.738,
+  "20101026Cows.wav": 16.436,
+  "20101205.02.night.dog.n.car.wav": 26.625,
+  "20110121_stream.MS.wav": 25.504,
+  "20110206_bright.winter.morning.wav": 22.74,
+  "20110423_heavy.rain.wav": 18.887,
+  "201106092013VauxsSwiftsSteigerwaldLakeNWR.wav": 24.514,
+  "20110804_river.distant.19.wav": 15.612,
+  "20121014_boat_tour_01.wav": 17.802,
+  "2013-03-28 rain in the rainforest.wav": 28.508,
+  "20130327_valparaiso.traffic.02.wav": 25.768,
+  "20130406_tourists.06.wav": 17.113,
+  "2013622thunder.wav": 24.752,
+  "20140223 - Bangkok city sounds.wav": 28.346,
+  "20140809_cruzul.river.wav": 24.667,
+  "20150330_02.soft.wind.day.MS.wav": 17.855,
+  "20160124_Pencil-on-Paper.wav": 15.604,
+  "20160506_sharpening.02.wav": 28.059,
+  "20160820_saluzzo.arcade.04.wav": 18.173,
+  "27 hn_birdspecking.wav": 24.398,
+  "451__mikejedw__bong2_variant#2.wav": 19.714,
+  "A Growing Thunderstorm.wav": 20.292,
+  "A creek in a forest.wav": 26.744,
+  "AMBIENCE- night time crickets insects wild sound (SFX).wav": 29.65,
+  "AMB_earlymorning_palmovka.wav": 19.1,
+  "AbdnC_KingStPelican_120225.wav": 24.3,
+  "Acid_lake-Dallol.wav": 18.229,
+  "Afternoon Suburb Calm.wav": 26.509,
+  "Ahr river.wav": 19.666,
+  "Air raid siren_rising.wav": 19.732,
+  "AlleyWater.wav": 15.157,
+  "Ambiance, Carnival.wav": 25.407,
+  "Ambience - Generator.wav": 27.159,
+  "Ambience - St Kilda Beach - waves lapping rocks, people nearby, seagulls.wav": 29.945,
+  "Ambience Urban park fountain early evening.wav": 19.318,
+  "Ambience birds.wav": 20.759,
+  "Ambience in Sugadh (ESI institute) in Gujrat.wav": 19.761,
+  "AmbientAtmosphere.wav": 20.98,
+  "Ambulance Siren.wav": 17.438,
+  "Appartment_Ambient_AC_TV_Fans.wav": 25.798,
+  "April_2004_garden_birds01.wav": 19.174,
+  "Arch Leaf.wav": 21.449,
+  "Armoury Site.wav": 22.045,
+  "Atlantic Ocean Waves.wav": 23.104,
+  "Atmo Busbahnhof (besser).wav": 28.624,
+  "Atmo Wartehalle2.wav": 28.544,
+  "Atmosphere on road in London.wav": 29.033,
+  "Avion.wav": 15.075,
+  "BR Standard Class 4 2-6-4T Steam Engine Departing - Irwell Vale Halt ~SE1 XY stereo pair.wav": 25.25,
+  "BUS RIDE R.wav": 25.407,
+  "Backhoe.wav": 28.913,
+  "Backyard Birds-001.wav": 26.948,
+  "Backyard nature.wav": 20.515,
+  "Baking dish picked up put down.wav": 28.502,
+  "Balloon Game at Arlington Heights Carnival.wav": 27.701,
+  "BangingOilTank.wav": 27.918,
+  "Bangkok City Distant.wav": 24.545,
+  "Barn_Door_Wind_001.wav": 24.762,
+  "Basic_Battle.wav": 27.342,
+  "Bath 01.wav": 18.831,
+  "BathFill.wav": 18.903,
+  "Bathtub_with_Foam.wav": 18.302,
+  "Bear Last Audio.wav": 17.171,
+  "Bees Collingwood.wav": 25.648,
+  "Binding my thesis.wav": 23.916,
+  "BirdCallBackyard2016Long.wav": 25.925,
+  "Birds of Klein Profijt.wav": 23.6,
+  "Birds-sleeves-amb.wav": 22.291,
+  "Birds_and_Water_Filling_Rain_Barrel.wav": 18.726,
+  "BlackCappedChickadee.wav": 27.019,
+  "Blackbird 252.wav": 22.027,
+  "Blackbird tweet with waterfall background.wav": 21.976,
+  "Blade Big.wav": 20.643,
+  "Blade sharpening.wav": 19.075,
+  "Blind Man Whistling.wav": 29.469,
+  "Blowing on Microphone.wav": 22.408,
+  "Bobcat moving pallets etc Part 2 080320.wav": 29.301,
+  "Boiling a cup of water.wav": 25.45,
+  "BottleDrinking02.wav": 26.308,
+  "Bounce-MagnetAndNail.wav": 17.903,
+  "Broom_Bear_Street_Sweeper_Roadwork.wav": 28.504,
+  "Brushing teeth.wav": 24.329,
+  "Brushing_Teeth_Bathroom_Fx.wav": 25.02,
+  "Bubbles water.wav": 16.377,
+  "Budds Landing Maryland Night 1.wav": 18.634,
+  "Building Construction in Amsterdam Oost.wav": 27.903,
+  "Bukit_Dinding_rainforest_jungle_01.wav": 17.155,
+  "BulletJuneEdited192012.wav": 29.211,
+  "Burco Conveyer Toaster running.wav": 18.354,
+  "Bus(Drive_Reverse)_1-2.wav": 24.401,
+  "Bush bird noises.wav": 23.05,
+  "Busy Coffee Shop Counter Field Recording.wav": 20.892,
+  "Butter knife being Tapped.wav": 15.836,
+  "C Minor Chords Musical Soundscape.wav": 27.504,
+  "CAR_WASH.wav": 28.306,
+  "CFX-20130331-UK-DorsetSeaCliff02.wav": 28.685,
+  "CONTACT MIC BOILING WATER 01.wav": 15.296,
+  "Cafeteria Ambience.wav": 27.037,
+  "Calm down-town morning 02 150722_0706.wav": 21.47,
+  "Canada Geese Squawk on a Pond with a Fountain.wav": 21.983,
+  "Car Driving Interior.wav": 18.708,
+  "Car Driving.wav": 29.4,
+  "Car Engine Idling.wav": 20.334,
+  "Car vs. Freight Train.wav": 29.201,
+  "CarEntireInternal01.wav": 15.931,
+  "CarFerrySeaDogsPeople.wav": 26.246,
+  "Car_Suspension_Creak.wav": 21.966,
+  "Cars crossing in Rain.wav": 25.706,
+  "Cash Machine, Indoors, Full Transaction.wav": 24.417,
+  "Changing Room.wav": 24.448,
+  "Chicharra1.wav": 16.889,
+  "Chopping Celery.wav": 17.334,
+  "Chopping pieces of mushrooms vigorously.wav": 26.041,
+  "Chrysalism.wav": 26.349,
+  "City Bus.wav": 27.111,
+  "City forest.wav": 25.929,
+  "Cityscape 05 090617.wav": 16.782,
+  "Cityscape Compounded 01.wav": 18.157,
+  "Clatter.wav": 15.755,
+  "Clinking Glasses.wav": 20.691,
+  "ClinkingGlass.wav": 20.932,
+  "Clock.Windup.Bell.Antique.wav": 15.023,
+  "Close Cracking Thunder.wav": 17.145,
+  "CoffeeGrinder_111212.wav": 15.511,
+  "CoffeeShopChatter.wav": 18.356,
+  "Coins Moving in Jar.wav": 20.964,
+  "Collingwood bees, bumble bees.wav": 26.837,
+  "Construction 2.wav": 29.558,
+  "Cooking rice.wav": 23.805,
+  "Cornell Big Cheer.wav": 29.675,
+  "CourtyardHome.wav": 21.541,
+  "Cracking and frying egg.wav": 18.974,
+  "Creacking Oak 6bft  SHORT 130418_00.wav": 27.489,
+  "CreakingNoise.wav": 29.544
+ },
+ "audio_windows": [
+  [
+   "01 A pug struggles to breathe 1_14_2008.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "01 A pug struggles to breathe 1_14_2008.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "01 A pug struggles to breathe 1_14_2008.wav",
+   20.0,
+   28.754
+  ],
+  [
+   "01 barreau bunker original.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "01 barreau bunker original.wav",
+   10.0,
+   19.019
+  ],
+  [
+   "01 hospital elevator with computer voice.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "01 hospital elevator with computer voice.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "01 hospital elevator with computer voice.wav",
+   20.0,
+   25.991
+  ],
+  [
+   "01862 heavy machine working.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "01862 heavy machine working.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "01862 heavy machine working.wav",
+   20.0,
+   25.442
+  ],
+  [
+   "02-Bakken_Rollercoaster.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "02-Bakken_Rollercoaster.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "02-Bakken_Rollercoaster.wav",
+   20.0,
+   24.094
+  ],
+  [
+   "0208 Fountain_Parque_del_Peru.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "0208 Fountain_Parque_del_Peru.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "0208 Fountain_Parque_del_Peru.wav",
+   20.0,
+   20.507
+  ],
+  [
+   "0211_170236 walk downstairs.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "0211_170236 walk downstairs.wav",
+   10.0,
+   16.606
+  ],
+  [
+   "02668 stripwood noises.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "02668 stripwood noises.wav",
+   10.0,
+   17.076
+  ],
+  [
+   "043015 Splashing water in bathtub.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "043015 Splashing water in bathtub.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "043015 Splashing water in bathtub.wav",
+   20.0,
+   25.52
+  ],
+  [
+   "05769 carpenter&#39;s workshop ambience.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "05769 carpenter&#39;s workshop ambience.wav",
+   10.0,
+   16.28
+  ],
+  [
+   "06 - 333 con tren hotel saliendo de la estacion de Zamora hacia Galicia.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "06 - 333 con tren hotel saliendo de la estacion de Zamora hacia Galicia.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "06 - 333 con tren hotel saliendo de la estacion de Zamora hacia Galicia.wav",
+   20.0,
+   23.389
+  ],
+  [
+   "07 ambient bell.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "07 ambient bell.wav",
+   10.0,
+   19.679
+  ],
+  [
+   "07 storm - orage.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "07 storm - orage.wav",
+   10.0,
+   17.653
+  ],
+  [
+   "070821_flsp_bog01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "070821_flsp_bog01.wav",
+   10.0,
+   15.606
+  ],
+  [
+   "08-Garage Opening-consolidated.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "08-Garage Opening-consolidated.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "08-Garage Opening-consolidated.wav",
+   20.0,
+   24.706
+  ],
+  [
+   "080809_05_FontanaKoblerov.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "080809_05_FontanaKoblerov.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "080809_05_FontanaKoblerov.wav",
+   20.0,
+   24.723
+  ],
+  [
+   "080902_05_cicada_night_road.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "080902_05_cicada_night_road.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "080902_05_cicada_night_road.wav",
+   20.0,
+   29.867
+  ],
+  [
+   "09-07-13_1900_Bells of Torre dos Clerigos (short).wav",
+   0.0,
+   10.0
+  ],
+  [
+   "09-07-13_1900_Bells of Torre dos Clerigos (short).wav",
+   10.0,
+   20.0
+  ],
+  [
+   "09-07-13_1900_Bells of Torre dos Clerigos (short).wav",
+   20.0,
+   28.77
+  ],
+  [
+   "09-07-14_2338_Foz, fisherman next to the river.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "09-07-14_2338_Foz, fisherman next to the river.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "09-07-14_2338_Foz, fisherman next to the river.wav",
+   20.0,
+   29.222
+  ],
+  [
+   "105bpm.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "105bpm.wav",
+   10.0,
+   18.28
+  ],
+  [
+   "110422_village_dusk.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "110422_village_dusk.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "110422_village_dusk.wav",
+   20.0,
+   29.811
+  ],
+  [
+   "1122thrum.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "1122thrum.wav",
+   10.0,
+   16.883
+  ],
+  [
+   "130915 - Exterior-Hard Rain - Door - Thunder - Metal Lawn Furniture.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "130915 - Exterior-Hard Rain - Door - Thunder - Metal Lawn Furniture.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "130915 - Exterior-Hard Rain - Door - Thunder - Metal Lawn Furniture.wav",
+   20.0,
+   29.435
+  ],
+  [
+   "13gotasb.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "13gotasb.wav",
+   10.0,
+   16.602
+  ],
+  [
+   "14.12.2011.001.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "14.12.2011.001.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "14.12.2011.001.wav",
+   20.0,
+   22.163
+  ],
+  [
+   "15_Rain_Ocean_HeavierLighter_44_16.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "15_Rain_Ocean_HeavierLighter_44_16.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "15_Rain_Ocean_HeavierLighter_44_16.wav",
+   20.0,
+   28.799
+  ],
+  [
+   "160717 HSN fishing boat passing by.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "160717 HSN fishing boat passing by.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "160717 HSN fishing boat passing by.wav",
+   20.0,
+   27.402
+  ],
+  [
+   "161006_0075 creaking floor -nr.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "161006_0075 creaking floor -nr.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "161006_0075 creaking floor -nr.wav",
+   20.0,
+   26.851
+  ],
+  [
+   "17-Year Cicada Mating Call.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "17-Year Cicada Mating Call.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "17-Year Cicada Mating Call.wav",
+   20.0,
+   25.587
+  ],
+  [
+   "1990 repetition brass-band 01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "1990 repetition brass-band 01.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "1990 repetition brass-band 01.wav",
+   20.0,
+   28.331
+  ],
+  [
+   "2 08 Br Lib 2 amb kids.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "2 08 Br Lib 2 amb kids.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "2 08 Br Lib 2 amb kids.wav",
+   20.0,
+   26.251
+  ],
+  [
+   "20 bottles nt 2_10.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20 bottles nt 2_10.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20 bottles nt 2_10.wav",
+   20.0,
+   22.475
+  ],
+  [
+   "20060426.marsh.crikets.day.stereo.02.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20060426.marsh.crikets.day.stereo.02.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20060426.marsh.crikets.day.stereo.02.wav",
+   20.0,
+   20.583
+  ],
+  [
+   "20061121.pine.forest.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20061121.pine.forest.wav",
+   10.0,
+   15.541
+  ],
+  [
+   "20061205.washing.machine.wash.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20061205.washing.machine.wash.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20061205.washing.machine.wash.wav",
+   20.0,
+   20.231
+  ],
+  [
+   "20061215.early.morning.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20061215.early.morning.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20061215.early.morning.wav",
+   20.0,
+   28.545
+  ],
+  [
+   "20070128.turbine.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20070128.turbine.wav",
+   10.0,
+   16.613
+  ],
+  [
+   "20070224.siren.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20070224.siren.wav",
+   10.0,
+   16.275
+  ],
+  [
+   "20070318.forest.00.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20070318.forest.00.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20070318.forest.00.wav",
+   20.0,
+   28.867
+  ],
+  [
+   "20070325.windy.forest.stereo.02.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20070325.windy.forest.stereo.02.wav",
+   10.0,
+   19.791
+  ],
+  [
+   "20070402.crowd.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20070402.crowd.wav",
+   10.0,
+   15.304
+  ],
+  [
+   "20070720.rbd.chicharras.02.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20070720.rbd.chicharras.02.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20070720.rbd.chicharras.02.wav",
+   20.0,
+   26.09
+  ],
+  [
+   "20070819.fjord.beach.00.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20070819.fjord.beach.00.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20070819.fjord.beach.00.wav",
+   20.0,
+   28.225
+  ],
+  [
+   "20070824.supper.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20070824.supper.wav",
+   10.0,
+   19.163
+  ],
+  [
+   "20070918.galloping.horse.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20070918.galloping.horse.wav",
+   10.0,
+   17.206
+  ],
+  [
+   "20080226.serins.rbd.02.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20080226.serins.rbd.02.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20080226.serins.rbd.02.wav",
+   20.0,
+   25.044
+  ],
+  [
+   "20080320.farm.ambiance.2.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20080320.farm.ambiance.2.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20080320.farm.ambiance.2.wav",
+   20.0,
+   28.736
+  ],
+  [
+   "20080416.buzz.stereo.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20080416.buzz.stereo.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20080416.buzz.stereo.wav",
+   20.0,
+   22.779
+  ],
+  [
+   "20080504.horse.drawn.00.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20080504.horse.drawn.00.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20080504.horse.drawn.00.wav",
+   20.0,
+   25.519
+  ],
+  [
+   "20080505_1309unlock_doors.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20080505_1309unlock_doors.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20080505_1309unlock_doors.wav",
+   20.0,
+   23.882
+  ],
+  [
+   "20081102kijjaz-MediumRecordCracklesSynthesis-01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20081102kijjaz-MediumRecordCracklesSynthesis-01.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20081102kijjaz-MediumRecordCracklesSynthesis-01.wav",
+   20.0,
+   28.607
+  ],
+  [
+   "20090105.slicing.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20090105.slicing.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20090105.slicing.wav",
+   20.0,
+   24.651
+  ],
+  [
+   "20090407.cricket.real.close.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20090407.cricket.real.close.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20090407.cricket.real.close.wav",
+   20.0,
+   29.988
+  ],
+  [
+   "20090412.bell.strikes.12.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20090412.bell.strikes.12.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20090412.bell.strikes.12.wav",
+   20.0,
+   24.676
+  ],
+  [
+   "20090712.engine.00.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20090712.engine.00.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20090712.engine.00.wav",
+   20.0,
+   28.668
+  ],
+  [
+   "20090712.engine.01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20090712.engine.01.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20090712.engine.01.wav",
+   20.0,
+   24.688
+  ],
+  [
+   "20090827.pony.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20090827.pony.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20090827.pony.wav",
+   20.0,
+   29.632
+  ],
+  [
+   "20091212.motorcycle.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20091212.motorcycle.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20091212.motorcycle.wav",
+   20.0,
+   28.9
+  ],
+  [
+   "20091217.17.fountain.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20091217.17.fountain.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20091217.17.fountain.wav",
+   20.0,
+   29.628
+  ],
+  [
+   "20091217.18.chains.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20091217.18.chains.wav",
+   10.0,
+   15.498
+  ],
+  [
+   "20091225.rain.01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20091225.rain.01.wav",
+   10.0,
+   18.344
+  ],
+  [
+   "20100320.fountain.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20100320.fountain.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20100320.fountain.wav",
+   20.0,
+   24.068
+  ],
+  [
+   "20100410.almunecar.surf.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20100410.almunecar.surf.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20100410.almunecar.surf.wav",
+   20.0,
+   22.474
+  ],
+  [
+   "20100422.castril.playground.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20100422.castril.playground.wav",
+   10.0,
+   19.049
+  ],
+  [
+   "20100422.waterfall.birds.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20100422.waterfall.birds.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20100422.waterfall.birds.wav",
+   20.0,
+   26.291
+  ],
+  [
+   "20100801.wharf.silence.night.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20100801.wharf.silence.night.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20100801.wharf.silence.night.wav",
+   20.0,
+   26.792
+  ],
+  [
+   "20100804.idling.van.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20100804.idling.van.wav",
+   10.0,
+   18.738
+  ],
+  [
+   "20101026Cows.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20101026Cows.wav",
+   10.0,
+   16.436
+  ],
+  [
+   "20101205.02.night.dog.n.car.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20101205.02.night.dog.n.car.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20101205.02.night.dog.n.car.wav",
+   20.0,
+   26.625
+  ],
+  [
+   "20110121_stream.MS.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20110121_stream.MS.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20110121_stream.MS.wav",
+   20.0,
+   25.504
+  ],
+  [
+   "20110206_bright.winter.morning.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20110206_bright.winter.morning.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20110206_bright.winter.morning.wav",
+   20.0,
+   22.74
+  ],
+  [
+   "20110423_heavy.rain.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20110423_heavy.rain.wav",
+   10.0,
+   18.887
+  ],
+  [
+   "201106092013VauxsSwiftsSteigerwaldLakeNWR.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "201106092013VauxsSwiftsSteigerwaldLakeNWR.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "201106092013VauxsSwiftsSteigerwaldLakeNWR.wav",
+   20.0,
+   24.514
+  ],
+  [
+   "20110804_river.distant.19.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20110804_river.distant.19.wav",
+   10.0,
+   15.612
+  ],
+  [
+   "20121014_boat_tour_01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20121014_boat_tour_01.wav",
+   10.0,
+   17.802
+  ],
+  [
+   "2013-03-28 rain in the rainforest.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "2013-03-28 rain in the rainforest.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "2013-03-28 rain in the rainforest.wav",
+   20.0,
+   28.508
+  ],
+  [
+   "20130327_valparaiso.traffic.02.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20130327_valparaiso.traffic.02.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20130327_valparaiso.traffic.02.wav",
+   20.0,
+   25.768
+  ],
+  [
+   "20130406_tourists.06.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20130406_tourists.06.wav",
+   10.0,
+   17.113
+  ],
+  [
+   "2013622thunder.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "2013622thunder.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "2013622thunder.wav",
+   20.0,
+   24.752
+  ],
+  [
+   "20140223 - Bangkok city sounds.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20140223 - Bangkok city sounds.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20140223 - Bangkok city sounds.wav",
+   20.0,
+   28.346
+  ],
+  [
+   "20140809_cruzul.river.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20140809_cruzul.river.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20140809_cruzul.river.wav",
+   20.0,
+   24.667
+  ],
+  [
+   "20150330_02.soft.wind.day.MS.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20150330_02.soft.wind.day.MS.wav",
+   10.0,
+   17.855
+  ],
+  [
+   "20160124_Pencil-on-Paper.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20160124_Pencil-on-Paper.wav",
+   10.0,
+   15.604
+  ],
+  [
+   "20160506_sharpening.02.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20160506_sharpening.02.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "20160506_sharpening.02.wav",
+   20.0,
+   28.059
+  ],
+  [
+   "20160820_saluzzo.arcade.04.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "20160820_saluzzo.arcade.04.wav",
+   10.0,
+   18.173
+  ],
+  [
+   "27 hn_birdspecking.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "27 hn_birdspecking.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "27 hn_birdspecking.wav",
+   20.0,
+   24.398
+  ],
+  [
+   "451__mikejedw__bong2_variant#2.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "451__mikejedw__bong2_variant#2.wav",
+   10.0,
+   19.714
+  ],
+  [
+   "A Growing Thunderstorm.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "A Growing Thunderstorm.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "A Growing Thunderstorm.wav",
+   20.0,
+   20.292
+  ],
+  [
+   "A creek in a forest.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "A creek in a forest.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "A creek in a forest.wav",
+   20.0,
+   26.744
+  ],
+  [
+   "AMBIENCE- night time crickets insects wild sound (SFX).wav",
+   0.0,
+   10.0
+  ],
+  [
+   "AMBIENCE- night time crickets insects wild sound (SFX).wav",
+   10.0,
+   20.0
+  ],
+  [
+   "AMBIENCE- night time crickets insects wild sound (SFX).wav",
+   20.0,
+   29.65
+  ],
+  [
+   "AMB_earlymorning_palmovka.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "AMB_earlymorning_palmovka.wav",
+   10.0,
+   19.1
+  ],
+  [
+   "AbdnC_KingStPelican_120225.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "AbdnC_KingStPelican_120225.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "AbdnC_KingStPelican_120225.wav",
+   20.0,
+   24.3
+  ],
+  [
+   "Acid_lake-Dallol.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Acid_lake-Dallol.wav",
+   10.0,
+   18.229
+  ],
+  [
+   "Afternoon Suburb Calm.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Afternoon Suburb Calm.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Afternoon Suburb Calm.wav",
+   20.0,
+   26.509
+  ],
+  [
+   "Ahr river.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Ahr river.wav",
+   10.0,
+   19.666
+  ],
+  [
+   "Air raid siren_rising.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Air raid siren_rising.wav",
+   10.0,
+   19.732
+  ],
+  [
+   "AlleyWater.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "AlleyWater.wav",
+   10.0,
+   15.157
+  ],
+  [
+   "Ambiance, Carnival.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Ambiance, Carnival.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Ambiance, Carnival.wav",
+   20.0,
+   25.407
+  ],
+  [
+   "Ambience - Generator.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Ambience - Generator.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Ambience - Generator.wav",
+   20.0,
+   27.159
+  ],
+  [
+   "Ambience - St Kilda Beach - waves lapping rocks, people nearby, seagulls.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Ambience - St Kilda Beach - waves lapping rocks, people nearby, seagulls.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Ambience - St Kilda Beach - waves lapping rocks, people nearby, seagulls.wav",
+   20.0,
+   29.945
+  ],
+  [
+   "Ambience Urban park fountain early evening.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Ambience Urban park fountain early evening.wav",
+   10.0,
+   19.318
+  ],
+  [
+   "Ambience birds.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Ambience birds.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Ambience birds.wav",
+   20.0,
+   20.759
+  ],
+  [
+   "Ambience in Sugadh (ESI institute) in Gujrat.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Ambience in Sugadh (ESI institute) in Gujrat.wav",
+   10.0,
+   19.761
+  ],
+  [
+   "AmbientAtmosphere.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "AmbientAtmosphere.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "AmbientAtmosphere.wav",
+   20.0,
+   20.98
+  ],
+  [
+   "Ambulance Siren.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Ambulance Siren.wav",
+   10.0,
+   17.438
+  ],
+  [
+   "Appartment_Ambient_AC_TV_Fans.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Appartment_Ambient_AC_TV_Fans.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Appartment_Ambient_AC_TV_Fans.wav",
+   20.0,
+   25.798
+  ],
+  [
+   "April_2004_garden_birds01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "April_2004_garden_birds01.wav",
+   10.0,
+   19.174
+  ],
+  [
+   "Arch Leaf.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Arch Leaf.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Arch Leaf.wav",
+   20.0,
+   21.449
+  ],
+  [
+   "Armoury Site.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Armoury Site.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Armoury Site.wav",
+   20.0,
+   22.045
+  ],
+  [
+   "Atlantic Ocean Waves.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Atlantic Ocean Waves.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Atlantic Ocean Waves.wav",
+   20.0,
+   23.104
+  ],
+  [
+   "Atmo Busbahnhof (besser).wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Atmo Busbahnhof (besser).wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Atmo Busbahnhof (besser).wav",
+   20.0,
+   28.624
+  ],
+  [
+   "Atmo Wartehalle2.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Atmo Wartehalle2.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Atmo Wartehalle2.wav",
+   20.0,
+   28.544
+  ],
+  [
+   "Atmosphere on road in London.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Atmosphere on road in London.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Atmosphere on road in London.wav",
+   20.0,
+   29.033
+  ],
+  [
+   "Avion.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Avion.wav",
+   10.0,
+   15.075
+  ],
+  [
+   "BR Standard Class 4 2-6-4T Steam Engine Departing - Irwell Vale Halt ~SE1 XY stereo pair.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "BR Standard Class 4 2-6-4T Steam Engine Departing - Irwell Vale Halt ~SE1 XY stereo pair.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "BR Standard Class 4 2-6-4T Steam Engine Departing - Irwell Vale Halt ~SE1 XY stereo pair.wav",
+   20.0,
+   25.25
+  ],
+  [
+   "BUS RIDE R.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "BUS RIDE R.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "BUS RIDE R.wav",
+   20.0,
+   25.407
+  ],
+  [
+   "Backhoe.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Backhoe.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Backhoe.wav",
+   20.0,
+   28.913
+  ],
+  [
+   "Backyard Birds-001.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Backyard Birds-001.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Backyard Birds-001.wav",
+   20.0,
+   26.948
+  ],
+  [
+   "Backyard nature.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Backyard nature.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Backyard nature.wav",
+   20.0,
+   20.515
+  ],
+  [
+   "Baking dish picked up put down.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Baking dish picked up put down.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Baking dish picked up put down.wav",
+   20.0,
+   28.502
+  ],
+  [
+   "Balloon Game at Arlington Heights Carnival.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Balloon Game at Arlington Heights Carnival.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Balloon Game at Arlington Heights Carnival.wav",
+   20.0,
+   27.701
+  ],
+  [
+   "BangingOilTank.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "BangingOilTank.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "BangingOilTank.wav",
+   20.0,
+   27.918
+  ],
+  [
+   "Bangkok City Distant.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bangkok City Distant.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Bangkok City Distant.wav",
+   20.0,
+   24.545
+  ],
+  [
+   "Barn_Door_Wind_001.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Barn_Door_Wind_001.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Barn_Door_Wind_001.wav",
+   20.0,
+   24.762
+  ],
+  [
+   "Basic_Battle.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Basic_Battle.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Basic_Battle.wav",
+   20.0,
+   27.342
+  ],
+  [
+   "Bath 01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bath 01.wav",
+   10.0,
+   18.831
+  ],
+  [
+   "BathFill.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "BathFill.wav",
+   10.0,
+   18.903
+  ],
+  [
+   "Bathtub_with_Foam.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bathtub_with_Foam.wav",
+   10.0,
+   18.302
+  ],
+  [
+   "Bear Last Audio.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bear Last Audio.wav",
+   10.0,
+   17.171
+  ],
+  [
+   "Bees Collingwood.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bees Collingwood.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Bees Collingwood.wav",
+   20.0,
+   25.648
+  ],
+  [
+   "Binding my thesis.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Binding my thesis.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Binding my thesis.wav",
+   20.0,
+   23.916
+  ],
+  [
+   "BirdCallBackyard2016Long.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "BirdCallBackyard2016Long.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "BirdCallBackyard2016Long.wav",
+   20.0,
+   25.925
+  ],
+  [
+   "Birds of Klein Profijt.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Birds of Klein Profijt.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Birds of Klein Profijt.wav",
+   20.0,
+   23.6
+  ],
+  [
+   "Birds-sleeves-amb.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Birds-sleeves-amb.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Birds-sleeves-amb.wav",
+   20.0,
+   22.291
+  ],
+  [
+   "Birds_and_Water_Filling_Rain_Barrel.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Birds_and_Water_Filling_Rain_Barrel.wav",
+   10.0,
+   18.726
+  ],
+  [
+   "BlackCappedChickadee.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "BlackCappedChickadee.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "BlackCappedChickadee.wav",
+   20.0,
+   27.019
+  ],
+  [
+   "Blackbird 252.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Blackbird 252.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Blackbird 252.wav",
+   20.0,
+   22.027
+  ],
+  [
+   "Blackbird tweet with waterfall background.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Blackbird tweet with waterfall background.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Blackbird tweet with waterfall background.wav",
+   20.0,
+   21.976
+  ],
+  [
+   "Blade Big.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Blade Big.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Blade Big.wav",
+   20.0,
+   20.643
+  ],
+  [
+   "Blade sharpening.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Blade sharpening.wav",
+   10.0,
+   19.075
+  ],
+  [
+   "Blind Man Whistling.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Blind Man Whistling.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Blind Man Whistling.wav",
+   20.0,
+   29.469
+  ],
+  [
+   "Blowing on Microphone.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Blowing on Microphone.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Blowing on Microphone.wav",
+   20.0,
+   22.408
+  ],
+  [
+   "Bobcat moving pallets etc Part 2 080320.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bobcat moving pallets etc Part 2 080320.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Bobcat moving pallets etc Part 2 080320.wav",
+   20.0,
+   29.301
+  ],
+  [
+   "Boiling a cup of water.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Boiling a cup of water.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Boiling a cup of water.wav",
+   20.0,
+   25.45
+  ],
+  [
+   "BottleDrinking02.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "BottleDrinking02.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "BottleDrinking02.wav",
+   20.0,
+   26.308
+  ],
+  [
+   "Bounce-MagnetAndNail.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bounce-MagnetAndNail.wav",
+   10.0,
+   17.903
+  ],
+  [
+   "Broom_Bear_Street_Sweeper_Roadwork.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Broom_Bear_Street_Sweeper_Roadwork.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Broom_Bear_Street_Sweeper_Roadwork.wav",
+   20.0,
+   28.504
+  ],
+  [
+   "Brushing teeth.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Brushing teeth.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Brushing teeth.wav",
+   20.0,
+   24.329
+  ],
+  [
+   "Brushing_Teeth_Bathroom_Fx.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Brushing_Teeth_Bathroom_Fx.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Brushing_Teeth_Bathroom_Fx.wav",
+   20.0,
+   25.02
+  ],
+  [
+   "Bubbles water.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bubbles water.wav",
+   10.0,
+   16.377
+  ],
+  [
+   "Budds Landing Maryland Night 1.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Budds Landing Maryland Night 1.wav",
+   10.0,
+   18.634
+  ],
+  [
+   "Building Construction in Amsterdam Oost.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Building Construction in Amsterdam Oost.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Building Construction in Amsterdam Oost.wav",
+   20.0,
+   27.903
+  ],
+  [
+   "Bukit_Dinding_rainforest_jungle_01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bukit_Dinding_rainforest_jungle_01.wav",
+   10.0,
+   17.155
+  ],
+  [
+   "BulletJuneEdited192012.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "BulletJuneEdited192012.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "BulletJuneEdited192012.wav",
+   20.0,
+   29.211
+  ],
+  [
+   "Burco Conveyer Toaster running.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Burco Conveyer Toaster running.wav",
+   10.0,
+   18.354
+  ],
+  [
+   "Bus(Drive_Reverse)_1-2.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bus(Drive_Reverse)_1-2.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Bus(Drive_Reverse)_1-2.wav",
+   20.0,
+   24.401
+  ],
+  [
+   "Bush bird noises.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Bush bird noises.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Bush bird noises.wav",
+   20.0,
+   23.05
+  ],
+  [
+   "Busy Coffee Shop Counter Field Recording.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Busy Coffee Shop Counter Field Recording.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Busy Coffee Shop Counter Field Recording.wav",
+   20.0,
+   20.892
+  ],
+  [
+   "Butter knife being Tapped.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Butter knife being Tapped.wav",
+   10.0,
+   15.836
+  ],
+  [
+   "C Minor Chords Musical Soundscape.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "C Minor Chords Musical Soundscape.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "C Minor Chords Musical Soundscape.wav",
+   20.0,
+   27.504
+  ],
+  [
+   "CAR_WASH.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "CAR_WASH.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "CAR_WASH.wav",
+   20.0,
+   28.306
+  ],
+  [
+   "CFX-20130331-UK-DorsetSeaCliff02.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "CFX-20130331-UK-DorsetSeaCliff02.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "CFX-20130331-UK-DorsetSeaCliff02.wav",
+   20.0,
+   28.685
+  ],
+  [
+   "CONTACT MIC BOILING WATER 01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "CONTACT MIC BOILING WATER 01.wav",
+   10.0,
+   15.296
+  ],
+  [
+   "Cafeteria Ambience.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Cafeteria Ambience.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Cafeteria Ambience.wav",
+   20.0,
+   27.037
+  ],
+  [
+   "Calm down-town morning 02 150722_0706.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Calm down-town morning 02 150722_0706.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Calm down-town morning 02 150722_0706.wav",
+   20.0,
+   21.47
+  ],
+  [
+   "Canada Geese Squawk on a Pond with a Fountain.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Canada Geese Squawk on a Pond with a Fountain.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Canada Geese Squawk on a Pond with a Fountain.wav",
+   20.0,
+   21.983
+  ],
+  [
+   "Car Driving Interior.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Car Driving Interior.wav",
+   10.0,
+   18.708
+  ],
+  [
+   "Car Driving.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Car Driving.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Car Driving.wav",
+   20.0,
+   29.4
+  ],
+  [
+   "Car Engine Idling.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Car Engine Idling.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Car Engine Idling.wav",
+   20.0,
+   20.334
+  ],
+  [
+   "Car vs. Freight Train.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Car vs. Freight Train.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Car vs. Freight Train.wav",
+   20.0,
+   29.201
+  ],
+  [
+   "CarEntireInternal01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "CarEntireInternal01.wav",
+   10.0,
+   15.931
+  ],
+  [
+   "CarFerrySeaDogsPeople.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "CarFerrySeaDogsPeople.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "CarFerrySeaDogsPeople.wav",
+   20.0,
+   26.246
+  ],
+  [
+   "Car_Suspension_Creak.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Car_Suspension_Creak.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Car_Suspension_Creak.wav",
+   20.0,
+   21.966
+  ],
+  [
+   "Cars crossing in Rain.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Cars crossing in Rain.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Cars crossing in Rain.wav",
+   20.0,
+   25.706
+  ],
+  [
+   "Cash Machine, Indoors, Full Transaction.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Cash Machine, Indoors, Full Transaction.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Cash Machine, Indoors, Full Transaction.wav",
+   20.0,
+   24.417
+  ],
+  [
+   "Changing Room.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Changing Room.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Changing Room.wav",
+   20.0,
+   24.448
+  ],
+  [
+   "Chicharra1.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Chicharra1.wav",
+   10.0,
+   16.889
+  ],
+  [
+   "Chopping Celery.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Chopping Celery.wav",
+   10.0,
+   17.334
+  ],
+  [
+   "Chopping pieces of mushrooms vigorously.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Chopping pieces of mushrooms vigorously.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Chopping pieces of mushrooms vigorously.wav",
+   20.0,
+   26.041
+  ],
+  [
+   "Chrysalism.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Chrysalism.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Chrysalism.wav",
+   20.0,
+   26.349
+  ],
+  [
+   "City Bus.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "City Bus.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "City Bus.wav",
+   20.0,
+   27.111
+  ],
+  [
+   "City forest.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "City forest.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "City forest.wav",
+   20.0,
+   25.929
+  ],
+  [
+   "Cityscape 05 090617.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Cityscape 05 090617.wav",
+   10.0,
+   16.782
+  ],
+  [
+   "Cityscape Compounded 01.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Cityscape Compounded 01.wav",
+   10.0,
+   18.157
+  ],
+  [
+   "Clatter.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Clatter.wav",
+   10.0,
+   15.755
+  ],
+  [
+   "Clinking Glasses.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Clinking Glasses.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Clinking Glasses.wav",
+   20.0,
+   20.691
+  ],
+  [
+   "ClinkingGlass.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "ClinkingGlass.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "ClinkingGlass.wav",
+   20.0,
+   20.932
+  ],
+  [
+   "Clock.Windup.Bell.Antique.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Clock.Windup.Bell.Antique.wav",
+   10.0,
+   15.023
+  ],
+  [
+   "Close Cracking Thunder.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Close Cracking Thunder.wav",
+   10.0,
+   17.145
+  ],
+  [
+   "CoffeeGrinder_111212.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "CoffeeGrinder_111212.wav",
+   10.0,
+   15.511
+  ],
+  [
+   "CoffeeShopChatter.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "CoffeeShopChatter.wav",
+   10.0,
+   18.356
+  ],
+  [
+   "Coins Moving in Jar.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Coins Moving in Jar.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Coins Moving in Jar.wav",
+   20.0,
+   20.964
+  ],
+  [
+   "Collingwood bees, bumble bees.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Collingwood bees, bumble bees.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Collingwood bees, bumble bees.wav",
+   20.0,
+   26.837
+  ],
+  [
+   "Construction 2.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Construction 2.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Construction 2.wav",
+   20.0,
+   29.558
+  ],
+  [
+   "Cooking rice.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Cooking rice.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Cooking rice.wav",
+   20.0,
+   23.805
+  ],
+  [
+   "Cornell Big Cheer.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Cornell Big Cheer.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Cornell Big Cheer.wav",
+   20.0,
+   29.675
+  ],
+  [
+   "CourtyardHome.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "CourtyardHome.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "CourtyardHome.wav",
+   20.0,
+   21.541
+  ],
+  [
+   "Cracking and frying egg.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Cracking and frying egg.wav",
+   10.0,
+   18.974
+  ],
+  [
+   "Creacking Oak 6bft  SHORT 130418_00.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "Creacking Oak 6bft  SHORT 130418_00.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "Creacking Oak 6bft  SHORT 130418_00.wav",
+   20.0,
+   27.489
+  ],
+  [
+   "CreakingNoise.wav",
+   0.0,
+   10.0
+  ],
+  [
+   "CreakingNoise.wav",
+   10.0,
+   20.0
+  ],
+  [
+   "CreakingNoise.wav",
+   20.0,
+   29.544
+  ]
+ ],
+ "captions": [
+  [
+   "01 A pug struggles to breathe 1_14_2008.wav",
+   0
+  ],
+  [
+   "01 A pug struggles to breathe 1_14_2008.wav",
+   1
+  ],
+  [
+   "01 A pug struggles to breathe 1_14_2008.wav",
+   2
+  ],
+  [
+   "01 A pug struggles to breathe 1_14_2008.wav",
+   3
+  ],
+  [
+   "01 A pug struggles to breathe 1_14_2008.wav",
+   4
+  ],
+  [
+   "01 barreau bunker original.wav",
+   0
+  ],
+  [
+   "01 barreau bunker original.wav",
+   1
+  ],
+  [
+   "01 barreau bunker original.wav",
+   2
+  ],
+  [
+   "01 barreau bunker original.wav",
+   3
+  ],
+  [
+   "01 barreau bunker original.wav",
+   4
+  ],
+  [
+   "01 hospital elevator with computer voice.wav",
+   0
+  ],
+  [
+   "01 hospital elevator with computer voice.wav",
+   1
+  ],
+  [
+   "01 hospital elevator with computer voice.wav",
+   2
+  ],
+  [
+   "01 hospital elevator with computer voice.wav",
+   3
+  ],
+  [
+   "01 hospital elevator with computer voice.wav",
+   4
+  ],
+  [
+   "01862 heavy machine working.wav",
+   0
+  ],
+  [
+   "01862 heavy machine working.wav",
+   1
+  ],
+  [
+   "01862 heavy machine working.wav",
+   2
+  ],
+  [
+   "01862 heavy machine working.wav",
+   3
+  ],
+  [
+   "01862 heavy machine working.wav",
+   4
+  ],
+  [
+   "02-Bakken_Rollercoaster.wav",
+   0
+  ],
+  [
+   "02-Bakken_Rollercoaster.wav",
+   1
+  ],
+  [
+   "02-Bakken_Rollercoaster.wav",
+   2
+  ],
+  [
+   "02-Bakken_Rollercoaster.wav",
+   3
+  ],
+  [
+   "02-Bakken_Rollercoaster.wav",
+   4
+  ],
+  [
+   "0208 Fountain_Parque_del_Peru.wav",
+   0
+  ],
+  [
+   "0208 Fountain_Parque_del_Peru.wav",
+   1
+  ],
+  [
+   "0208 Fountain_Parque_del_Peru.wav",
+   2
+  ],
+  [
+   "0208 Fountain_Parque_del_Peru.wav",
+   3
+  ],
+  [
+   "0208 Fountain_Parque_del_Peru.wav",
+   4
+  ],
+  [
+   "0211_170236 walk downstairs.wav",
+   0
+  ],
+  [
+   "0211_170236 walk downstairs.wav",
+   1
+  ],
+  [
+   "0211_170236 walk downstairs.wav",
+   2
+  ],
+  [
+   "0211_170236 walk downstairs.wav",
+   3
+  ],
+  [
+   "0211_170236 walk downstairs.wav",
+   4
+  ],
+  [
+   "02668 stripwood noises.wav",
+   0
+  ],
+  [
+   "02668 stripwood noises.wav",
+   1
+  ],
+  [
+   "02668 stripwood noises.wav",
+   2
+  ],
+  [
+   "02668 stripwood noises.wav",
+   3
+  ],
+  [
+   "02668 stripwood noises.wav",
+   4
+  ],
+  [
+   "043015 Splashing water in bathtub.wav",
+   0
+  ],
+  [
+   "043015 Splashing water in bathtub.wav",
+   1
+  ],
+  [
+   "043015 Splashing water in bathtub.wav",
+   2
+  ],
+  [
+   "043015 Splashing water in bathtub.wav",
+   3
+  ],
+  [
+   "043015 Splashing water in bathtub.wav",
+   4
+  ],
+  [
+   "05769 carpenter&#39;s workshop ambience.wav",
+   0
+  ],
+  [
+   "05769 carpenter&#39;s workshop ambience.wav",
+   1
+  ],
+  [
+   "05769 carpenter&#39;s workshop ambience.wav",
+   2
+  ],
+  [
+   "05769 carpenter&#39;s workshop ambience.wav",
+   3
+  ],
+  [
+   "05769 carpenter&#39;s workshop ambience.wav",
+   4
+  ],
+  [
+   "06 - 333 con tren hotel saliendo de la estacion de Zamora hacia Galicia.wav",
+   0
+  ],
+  [
+   "06 - 333 con tren hotel saliendo de la estacion de Zamora hacia Galicia.wav",
+   1
+  ],
+  [
+   "06 - 333 con tren hotel saliendo de la estacion de Zamora hacia Galicia.wav",
+   2
+  ],
+  [
+   "06 - 333 con tren hotel saliendo de la estacion de Zamora hacia Galicia.wav",
+   3
+  ],
+  [
+   "06 - 333 con tren hotel saliendo de la estacion de Zamora hacia Galicia.wav",
+   4
+  ],
+  [
+   "07 ambient bell.wav",
+   0
+  ],
+  [
+   "07 ambient bell.wav",
+   1
+  ],
+  [
+   "07 ambient bell.wav",
+   2
+  ],
+  [
+   "07 ambient bell.wav",
+   3
+  ],
+  [
+   "07 ambient bell.wav",
+   4
+  ],
+  [
+   "07 storm - orage.wav",
+   0
+  ],
+  [
+   "07 storm - orage.wav",
+   1
+  ],
+  [
+   "07 storm - orage.wav",
+   2
+  ],
+  [
+   "07 storm - orage.wav",
+   3
+  ],
+  [
+   "07 storm - orage.wav",
+   4
+  ],
+  [
+   "070821_flsp_bog01.wav",
+   0
+  ],
+  [
+   "070821_flsp_bog01.wav",
+   1
+  ],
+  [
+   "070821_flsp_bog01.wav",
+   2
+  ],
+  [
+   "070821_flsp_bog01.wav",
+   3
+  ],
+  [
+   "070821_flsp_bog01.wav",
+   4
+  ],
+  [
+   "08-Garage Opening-consolidated.wav",
+   0
+  ],
+  [
+   "08-Garage Opening-consolidated.wav",
+   1
+  ],
+  [
+   "08-Garage Opening-consolidated.wav",
+   2
+  ],
+  [
+   "08-Garage Opening-consolidated.wav",
+   3
+  ],
+  [
+   "08-Garage Opening-consolidated.wav",
+   4
+  ],
+  [
+   "080809_05_FontanaKoblerov.wav",
+   0
+  ],
+  [
+   "080809_05_FontanaKoblerov.wav",
+   1
+  ],
+  [
+   "080809_05_FontanaKoblerov.wav",
+   2
+  ],
+  [
+   "080809_05_FontanaKoblerov.wav",
+   3
+  ],
+  [
+   "080809_05_FontanaKoblerov.wav",
+   4
+  ],
+  [
+   "080902_05_cicada_night_road.wav",
+   0
+  ],
+  [
+   "080902_05_cicada_night_road.wav",
+   1
+  ],
+  [
+   "080902_05_cicada_night_road.wav",
+   2
+  ],
+  [
+   "080902_05_cicada_night_road.wav",
+   3
+  ],
+  [
+   "080902_05_cicada_night_road.wav",
+   4
+  ],
+  [
+   "09-07-13_1900_Bells of Torre dos Clerigos (short).wav",
+   0
+  ],
+  [
+   "09-07-13_1900_Bells of Torre dos Clerigos (short).wav",
+   1
+  ],
+  [
+   "09-07-13_1900_Bells of Torre dos Clerigos (short).wav",
+   2
+  ],
+  [
+   "09-07-13_1900_Bells of Torre dos Clerigos (short).wav",
+   3
+  ],
+  [
+   "09-07-13_1900_Bells of Torre dos Clerigos (short).wav",
+   4
+  ],
+  [
+   "09-07-14_2338_Foz, fisherman next to the river.wav",
+   0
+  ],
+  [
+   "09-07-14_2338_Foz, fisherman next to the river.wav",
+   1
+  ],
+  [
+   "09-07-14_2338_Foz, fisherman next to the river.wav",
+   2
+  ],
+  [
+   "09-07-14_2338_Foz, fisherman next to the river.wav",
+   3
+  ],
+  [
+   "09-07-14_2338_Foz, fisherman next to the river.wav",
+   4
+  ],
+  [
+   "105bpm.wav",
+   0
+  ],
+  [
+   "105bpm.wav",
+   1
+  ],
+  [
+   "105bpm.wav",
+   2
+  ],
+  [
+   "105bpm.wav",
+   3
+  ],
+  [
+   "105bpm.wav",
+   4
+  ],
+  [
+   "110422_village_dusk.wav",
+   0
+  ],
+  [
+   "110422_village_dusk.wav",
+   1
+  ],
+  [
+   "110422_village_dusk.wav",
+   2
+  ],
+  [
+   "110422_village_dusk.wav",
+   3
+  ],
+  [
+   "110422_village_dusk.wav",
+   4
+  ],
+  [
+   "1122thrum.wav",
+   0
+  ],
+  [
+   "1122thrum.wav",
+   1
+  ],
+  [
+   "1122thrum.wav",
+   2
+  ],
+  [
+   "1122thrum.wav",
+   3
+  ],
+  [
+   "1122thrum.wav",
+   4
+  ],
+  [
+   "130915 - Exterior-Hard Rain - Door - Thunder - Metal Lawn Furniture.wav",
+   0
+  ],
+  [
+   "130915 - Exterior-Hard Rain - Door - Thunder - Metal Lawn Furniture.wav",
+   1
+  ],
+  [
+   "130915 - Exterior-Hard Rain - Door - Thunder - Metal Lawn Furniture.wav",
+   2
+  ],
+  [
+   "130915 - Exterior-Hard Rain - Door - Thunder - Metal Lawn Furniture.wav",
+   3
+  ],
+  [
+   "130915 - Exterior-Hard Rain - Door - Thunder - Metal Lawn Furniture.wav",
+   4
+  ],
+  [
+   "13gotasb.wav",
+   0
+  ],
+  [
+   "13gotasb.wav",
+   1
+  ],
+  [
+   "13gotasb.wav",
+   2
+  ],
+  [
+   "13gotasb.wav",
+   3
+  ],
+  [
+   "13gotasb.wav",
+   4
+  ],
+  [
+   "14.12.2011.001.wav",
+   0
+  ],
+  [
+   "14.12.2011.001.wav",
+   1
+  ],
+  [
+   "14.12.2011.001.wav",
+   2
+  ],
+  [
+   "14.12.2011.001.wav",
+   3
+  ],
+  [
+   "14.12.2011.001.wav",
+   4
+  ],
+  [
+   "15_Rain_Ocean_HeavierLighter_44_16.wav",
+   0
+  ],
+  [
+   "15_Rain_Ocean_HeavierLighter_44_16.wav",
+   1
+  ],
+  [
+   "15_Rain_Ocean_HeavierLighter_44_16.wav",
+   2
+  ],
+  [
+   "15_Rain_Ocean_HeavierLighter_44_16.wav",
+   3
+  ],
+  [
+   "15_Rain_Ocean_HeavierLighter_44_16.wav",
+   4
+  ],
+  [
+   "160717 HSN fishing boat passing by.wav",
+   0
+  ],
+  [
+   "160717 HSN fishing boat passing by.wav",
+   1
+  ],
+  [
+   "160717 HSN fishing boat passing by.wav",
+   2
+  ],
+  [
+   "160717 HSN fishing boat passing by.wav",
+   3
+  ],
+  [
+   "160717 HSN fishing boat passing by.wav",
+   4
+  ],
+  [
+   "161006_0075 creaking floor -nr.wav",
+   0
+  ],
+  [
+   "161006_0075 creaking floor -nr.wav",
+   1
+  ],
+  [
+   "161006_0075 creaking floor -nr.wav",
+   2
+  ],
+  [
+   "161006_0075 creaking floor -nr.wav",
+   3
+  ],
+  [
+   "161006_0075 creaking floor -nr.wav",
+   4
+  ],
+  [
+   "17-Year Cicada Mating Call.wav",
+   0
+  ],
+  [
+   "17-Year Cicada Mating Call.wav",
+   1
+  ],
+  [
+   "17-Year Cicada Mating Call.wav",
+   2
+  ],
+  [
+   "17-Year Cicada Mating Call.wav",
+   3
+  ],
+  [
+   "17-Year Cicada Mating Call.wav",
+   4
+  ],
+  [
+   "1990 repetition brass-band 01.wav",
+   0
+  ],
+  [
+   "1990 repetition brass-band 01.wav",
+   1
+  ],
+  [
+   "1990 repetition brass-band 01.wav",
+   2
+  ],
+  [
+   "1990 repetition brass-band 01.wav",
+   3
+  ],
+  [
+   "1990 repetition brass-band 01.wav",
+   4
+  ],
+  [
+   "2 08 Br Lib 2 amb kids.wav",
+   0
+  ],
+  [
+   "2 08 Br Lib 2 amb kids.wav",
+   1
+  ],
+  [
+   "2 08 Br Lib 2 amb kids.wav",
+   2
+  ],
+  [
+   "2 08 Br Lib 2 amb kids.wav",
+   3
+  ],
+  [
+   "2 08 Br Lib 2 amb kids.wav",
+   4
+  ],
+  [
+   "20 bottles nt 2_10.wav",
+   0
+  ],
+  [
+   "20 bottles nt 2_10.wav",
+   1
+  ],
+  [
+   "20 bottles nt 2_10.wav",
+   2
+  ],
+  [
+   "20 bottles nt 2_10.wav",
+   3
+  ],
+  [
+   "20 bottles nt 2_10.wav",
+   4
+  ],
+  [
+   "20060426.marsh.crikets.day.stereo.02.wav",
+   0
+  ],
+  [
+   "20060426.marsh.crikets.day.stereo.02.wav",
+   1
+  ],
+  [
+   "20060426.marsh.crikets.day.stereo.02.wav",
+   2
+  ],
+  [
+   "20060426.marsh.crikets.day.stereo.02.wav",
+   3
+  ],
+  [
+   "20060426.marsh.crikets.day.stereo.02.wav",
+   4
+  ],
+  [
+   "20061121.pine.forest.wav",
+   0
+  ],
+  [
+   "20061121.pine.forest.wav",
+   1
+  ],
+  [
+   "20061121.pine.forest.wav",
+   2
+  ],
+  [
+   "20061121.pine.forest.wav",
+   3
+  ],
+  [
+   "20061121.pine.forest.wav",
+   4
+  ],
+  [
+   "20061205.washing.machine.wash.wav",
+   0
+  ],
+  [
+   "20061205.washing.machine.wash.wav",
+   1
+  ],
+  [
+   "20061205.washing.machine.wash.wav",
+   2
+  ],
+  [
+   "20061205.washing.machine.wash.wav",
+   3
+  ],
+  [
+   "20061205.washing.machine.wash.wav",
+   4
+  ],
+  [
+   "20061215.early.morning.wav",
+   0
+  ],
+  [
+   "20061215.early.morning.wav",
+   1
+  ],
+  [
+   "20061215.early.morning.wav",
+   2
+  ],
+  [
+   "20061215.early.morning.wav",
+   3
+  ],
+  [
+   "20061215.early.morning.wav",
+   4
+  ],
+  [
+   "20070128.turbine.wav",
+   0
+  ],
+  [
+   "20070128.turbine.wav",
+   1
+  ],
+  [
+   "20070128.turbine.wav",
+   2
+  ],
+  [
+   "20070128.turbine.wav",
+   3
+  ],
+  [
+   "20070128.turbine.wav",
+   4
+  ],
+  [
+   "20070224.siren.wav",
+   0
+  ],
+  [
+   "20070224.siren.wav",
+   1
+  ],
+  [
+   "20070224.siren.wav",
+   2
+  ],
+  [
+   "20070224.siren.wav",
+   3
+  ],
+  [
+   "20070224.siren.wav",
+   4
+  ],
+  [
+   "20070318.forest.00.wav",
+   0
+  ],
+  [
+   "20070318.forest.00.wav",
+   1
+  ],
+  [
+   "20070318.forest.00.wav",
+   2
+  ],
+  [
+   "20070318.forest.00.wav",
+   3
+  ],
+  [
+   "20070318.forest.00.wav",
+   4
+  ],
+  [
+   "20070325.windy.forest.stereo.02.wav",
+   0
+  ],
+  [
+   "20070325.windy.forest.stereo.02.wav",
+   1
+  ],
+  [
+   "20070325.windy.forest.stereo.02.wav",
+   2
+  ],
+  [
+   "20070325.windy.forest.stereo.02.wav",
+   3
+  ],
+  [
+   "20070325.windy.forest.stereo.02.wav",
+   4
+  ],
+  [
+   "20070402.crowd.wav",
+   0
+  ],
+  [
+   "20070402.crowd.wav",
+   1
+  ],
+  [
+   "20070402.crowd.wav",
+   2
+  ],
+  [
+   "20070402.crowd.wav",
+   3
+  ],
+  [
+   "20070402.crowd.wav",
+   4
+  ],
+  [
+   "20070720.rbd.chicharras.02.wav",
+   0
+  ],
+  [
+   "20070720.rbd.chicharras.02.wav",
+   1
+  ],
+  [
+   "20070720.rbd.chicharras.02.wav",
+   2
+  ],
+  [
+   "20070720.rbd.chicharras.02.wav",
+   3
+  ],
+  [
+   "20070720.rbd.chicharras.02.wav",
+   4
+  ],
+  [
+   "20070819.fjord.beach.00.wav",
+   0
+  ],
+  [
+   "20070819.fjord.beach.00.wav",
+   1
+  ],
+  [
+   "20070819.fjord.beach.00.wav",
+   2
+  ],
+  [
+   "20070819.fjord.beach.00.wav",
+   3
+  ],
+  [
+   "20070819.fjord.beach.00.wav",
+   4
+  ],
+  [
+   "20070824.supper.wav",
+   0
+  ],
+  [
+   "20070824.supper.wav",
+   1
+  ],
+  [
+   "20070824.supper.wav",
+   2
+  ],
+  [
+   "20070824.supper.wav",
+   3
+  ],
+  [
+   "20070824.supper.wav",
+   4
+  ],
+  [
+   "20070918.galloping.horse.wav",
+   0
+  ],
+  [
+   "20070918.galloping.horse.wav",
+   1
+  ],
+  [
+   "20070918.galloping.horse.wav",
+   2
+  ],
+  [
+   "20070918.galloping.horse.wav",
+   3
+  ],
+  [
+   "20070918.galloping.horse.wav",
+   4
+  ],
+  [
+   "20080226.serins.rbd.02.wav",
+   0
+  ],
+  [
+   "20080226.serins.rbd.02.wav",
+   1
+  ],
+  [
+   "20080226.serins.rbd.02.wav",
+   2
+  ],
+  [
+   "20080226.serins.rbd.02.wav",
+   3
+  ],
+  [
+   "20080226.serins.rbd.02.wav",
+   4
+  ],
+  [
+   "20080320.farm.ambiance.2.wav",
+   0
+  ],
+  [
+   "20080320.farm.ambiance.2.wav",
+   1
+  ],
+  [
+   "20080320.farm.ambiance.2.wav",
+   2
+  ],
+  [
+   "20080320.farm.ambiance.2.wav",
+   3
+  ],
+  [
+   "20080320.farm.ambiance.2.wav",
+   4
+  ],
+  [
+   "20080416.buzz.stereo.wav",
+   0
+  ],
+  [
+   "20080416.buzz.stereo.wav",
+   1
+  ],
+  [
+   "20080416.buzz.stereo.wav",
+   2
+  ],
+  [
+   "20080416.buzz.stereo.wav",
+   3
+  ],
+  [
+   "20080416.buzz.stereo.wav",
+   4
+  ],
+  [
+   "20080504.horse.drawn.00.wav",
+   0
+  ],
+  [
+   "20080504.horse.drawn.00.wav",
+   1
+  ],
+  [
+   "20080504.horse.drawn.00.wav",
+   2
+  ],
+  [
+   "20080504.horse.drawn.00.wav",
+   3
+  ],
+  [
+   "20080504.horse.drawn.00.wav",
+   4
+  ],
+  [
+   "20080505_1309unlock_doors.wav",
+   0
+  ],
+  [
+   "20080505_1309unlock_doors.wav",
+   1
+  ],
+  [
+   "20080505_1309unlock_doors.wav",
+   2
+  ],
+  [
+   "20080505_1309unlock_doors.wav",
+   3
+  ],
+  [
+   "20080505_1309unlock_doors.wav",
+   4
+  ],
+  [
+   "20081102kijjaz-MediumRecordCracklesSynthesis-01.wav",
+   0
+  ],
+  [
+   "20081102kijjaz-MediumRecordCracklesSynthesis-01.wav",
+   1
+  ],
+  [
+   "20081102kijjaz-MediumRecordCracklesSynthesis-01.wav",
+   2
+  ],
+  [
+   "20081102kijjaz-MediumRecordCracklesSynthesis-01.wav",
+   3
+  ],
+  [
+   "20081102kijjaz-MediumRecordCracklesSynthesis-01.wav",
+   4
+  ],
+  [
+   "20090105.slicing.wav",
+   0
+  ],
+  [
+   "20090105.slicing.wav",
+   1
+  ],
+  [
+   "20090105.slicing.wav",
+   2
+  ],
+  [
+   "20090105.slicing.wav",
+   3
+  ],
+  [
+   "20090105.slicing.wav",
+   4
+  ],
+  [
+   "20090407.cricket.real.close.wav",
+   0
+  ],
+  [
+   "20090407.cricket.real.close.wav",
+   1
+  ],
+  [
+   "20090407.cricket.real.close.wav",
+   2
+  ],
+  [
+   "20090407.cricket.real.close.wav",
+   3
+  ],
+  [
+   "20090407.cricket.real.close.wav",
+   4
+  ],
+  [
+   "20090412.bell.strikes.12.wav",
+   0
+  ],
+  [
+   "20090412.bell.strikes.12.wav",
+   1
+  ],
+  [
+   "20090412.bell.strikes.12.wav",
+   2
+  ],
+  [
+   "20090412.bell.strikes.12.wav",
+   3
+  ],
+  [
+   "20090412.bell.strikes.12.wav",
+   4
+  ],
+  [
+   "20090712.engine.00.wav",
+   0
+  ],
+  [
+   "20090712.engine.00.wav",
+   1
+  ],
+  [
+   "20090712.engine.00.wav",
+   2
+  ],
+  [
+   "20090712.engine.00.wav",
+   3
+  ],
+  [
+   "20090712.engine.00.wav",
+   4
+  ],
+  [
+   "20090712.engine.01.wav",
+   0
+  ],
+  [
+   "20090712.engine.01.wav",
+   1
+  ],
+  [
+   "20090712.engine.01.wav",
+   2
+  ],
+  [
+   "20090712.engine.01.wav",
+   3
+  ],
+  [
+   "20090712.engine.01.wav",
+   4
+  ],
+  [
+   "20090827.pony.wav",
+   0
+  ],
+  [
+   "20090827.pony.wav",
+   1
+  ],
+  [
+   "20090827.pony.wav",
+   2
+  ],
+  [
+   "20090827.pony.wav",
+   3
+  ],
+  [
+   "20090827.pony.wav",
+   4
+  ],
+  [
+   "20091212.motorcycle.wav",
+   0
+  ],
+  [
+   "20091212.motorcycle.wav",
+   1
+  ],
+  [
+   "20091212.motorcycle.wav",
+   2
+  ],
+  [
+   "20091212.motorcycle.wav",
+   3
+  ],
+  [
+   "20091212.motorcycle.wav",
+   4
+  ],
+  [
+   "20091217.17.fountain.wav",
+   0
+  ],
+  [
+   "20091217.17.fountain.wav",
+   1
+  ],
+  [
+   "20091217.17.fountain.wav",
+   2
+  ],
+  [
+   "20091217.17.fountain.wav",
+   3
+  ],
+  [
+   "20091217.17.fountain.wav",
+   4
+  ],
+  [
+   "20091217.18.chains.wav",
+   0
+  ],
+  [
+   "20091217.18.chains.wav",
+   1
+  ],
+  [
+   "20091217.18.chains.wav",
+   2
+  ],
+  [
+   "20091217.18.chains.wav",
+   3
+  ],
+  [
+   "20091217.18.chains.wav",
+   4
+  ],
+  [
+   "20091225.rain.01.wav",
+   0
+  ],
+  [
+   "20091225.rain.01.wav",
+   1
+  ],
+  [
+   "20091225.rain.01.wav",
+   2
+  ],
+  [
+   "20091225.rain.01.wav",
+   3
+  ],
+  [
+   "20091225.rain.01.wav",
+   4
+  ],
+  [
+   "20100320.fountain.wav",
+   0
+  ],
+  [
+   "20100320.fountain.wav",
+   1
+  ],
+  [
+   "20100320.fountain.wav",
+   2
+  ],
+  [
+   "20100320.fountain.wav",
+   3
+  ],
+  [
+   "20100320.fountain.wav",
+   4
+  ],
+  [
+   "20100410.almunecar.surf.wav",
+   0
+  ],
+  [
+   "20100410.almunecar.surf.wav",
+   1
+  ],
+  [
+   "20100410.almunecar.surf.wav",
+   2
+  ],
+  [
+   "20100410.almunecar.surf.wav",
+   3
+  ],
+  [
+   "20100410.almunecar.surf.wav",
+   4
+  ],
+  [
+   "20100422.castril.playground.wav",
+   0
+  ],
+  [
+   "20100422.castril.playground.wav",
+   1
+  ],
+  [
+   "20100422.castril.playground.wav",
+   2
+  ],
+  [
+   "20100422.castril.playground.wav",
+   3
+  ],
+  [
+   "20100422.castril.playground.wav",
+   4
+  ],
+  [
+   "20100422.waterfall.birds.wav",
+   0
+  ],
+  [
+   "20100422.waterfall.birds.wav",
+   1
+  ],
+  [
+   "20100422.waterfall.birds.wav",
+   2
+  ],
+  [
+   "20100422.waterfall.birds.wav",
+   3
+  ],
+  [
+   "20100422.waterfall.birds.wav",
+   4
+  ],
+  [
+   "20100801.wharf.silence.night.wav",
+   0
+  ],
+  [
+   "20100801.wharf.silence.night.wav",
+   1
+  ],
+  [
+   "20100801.wharf.silence.night.wav",
+   2
+  ],
+  [
+   "20100801.wharf.silence.night.wav",
+   3
+  ],
+  [
+   "20100801.wharf.silence.night.wav",
+   4
+  ],
+  [
+   "20100804.idling.van.wav",
+   0
+  ],
+  [
+   "20100804.idling.van.wav",
+   1
+  ],
+  [
+   "20100804.idling.van.wav",
+   2
+  ],
+  [
+   "20100804.idling.van.wav",
+   3
+  ],
+  [
+   "20100804.idling.van.wav",
+   4
+  ],
+  [
+   "20101026Cows.wav",
+   0
+  ],
+  [
+   "20101026Cows.wav",
+   1
+  ],
+  [
+   "20101026Cows.wav",
+   2
+  ],
+  [
+   "20101026Cows.wav",
+   3
+  ],
+  [
+   "20101026Cows.wav",
+   4
+  ],
+  [
+   "20101205.02.night.dog.n.car.wav",
+   0
+  ],
+  [
+   "20101205.02.night.dog.n.car.wav",
+   1
+  ],
+  [
+   "20101205.02.night.dog.n.car.wav",
+   2
+  ],
+  [
+   "20101205.02.night.dog.n.car.wav",
+   3
+  ],
+  [
+   "20101205.02.night.dog.n.car.wav",
+   4
+  ],
+  [
+   "20110121_stream.MS.wav",
+   0
+  ],
+  [
+   "20110121_stream.MS.wav",
+   1
+  ],
+  [
+   "20110121_stream.MS.wav",
+   2
+  ],
+  [
+   "20110121_stream.MS.wav",
+   3
+  ],
+  [
+   "20110121_stream.MS.wav",
+   4
+  ],
+  [
+   "20110206_bright.winter.morning.wav",
+   0
+  ],
+  [
+   "20110206_bright.winter.morning.wav",
+   1
+  ],
+  [
+   "20110206_bright.winter.morning.wav",
+   2
+  ],
+  [
+   "20110206_bright.winter.morning.wav",
+   3
+  ],
+  [
+   "20110206_bright.winter.morning.wav",
+   4
+  ],
+  [
+   "20110423_heavy.rain.wav",
+   0
+  ],
+  [
+   "20110423_heavy.rain.wav",
+   1
+  ],
+  [
+   "20110423_heavy.rain.wav",
+   2
+  ],
+  [
+   "20110423_heavy.rain.wav",
+   3
+  ],
+  [
+   "20110423_heavy.rain.wav",
+   4
+  ],
+  [
+   "201106092013VauxsSwiftsSteigerwaldLakeNWR.wav",
+   0
+  ],
+  [
+   "201106092013VauxsSwiftsSteigerwaldLakeNWR.wav",
+   1
+  ],
+  [
+   "201106092013VauxsSwiftsSteigerwaldLakeNWR.wav",
+   2
+  ],
+  [
+   "201106092013VauxsSwiftsSteigerwaldLakeNWR.wav",
+   3
+  ],
+  [
+   "201106092013VauxsSwiftsSteigerwaldLakeNWR.wav",
+   4
+  ],
+  [
+   "20110804_river.distant.19.wav",
+   0
+  ],
+  [
+   "20110804_river.distant.19.wav",
+   1
+  ],
+  [
+   "20110804_river.distant.19.wav",
+   2
+  ],
+  [
+   "20110804_river.distant.19.wav",
+   3
+  ],
+  [
+   "20110804_river.distant.19.wav",
+   4
+  ],
+  [
+   "20121014_boat_tour_01.wav",
+   0
+  ],
+  [
+   "20121014_boat_tour_01.wav",
+   1
+  ],
+  [
+   "20121014_boat_tour_01.wav",
+   2
+  ],
+  [
+   "20121014_boat_tour_01.wav",
+   3
+  ],
+  [
+   "20121014_boat_tour_01.wav",
+   4
+  ],
+  [
+   "2013-03-28 rain in the rainforest.wav",
+   0
+  ],
+  [
+   "2013-03-28 rain in the rainforest.wav",
+   1
+  ],
+  [
+   "2013-03-28 rain in the rainforest.wav",
+   2
+  ],
+  [
+   "2013-03-28 rain in the rainforest.wav",
+   3
+  ],
+  [
+   "2013-03-28 rain in the rainforest.wav",
+   4
+  ],
+  [
+   "20130327_valparaiso.traffic.02.wav",
+   0
+  ],
+  [
+   "20130327_valparaiso.traffic.02.wav",
+   1
+  ],
+  [
+   "20130327_valparaiso.traffic.02.wav",
+   2
+  ],
+  [
+   "20130327_valparaiso.traffic.02.wav",
+   3
+  ],
+  [
+   "20130327_valparaiso.traffic.02.wav",
+   4
+  ],
+  [
+   "20130406_tourists.06.wav",
+   0
+  ],
+  [
+   "20130406_tourists.06.wav",
+   1
+  ],
+  [
+   "20130406_tourists.06.wav",
+   2
+  ],
+  [
+   "20130406_tourists.06.wav",
+   3
+  ],
+  [
+   "20130406_tourists.06.wav",
+   4
+  ],
+  [
+   "2013622thunder.wav",
+   0
+  ],
+  [
+   "2013622thunder.wav",
+   1
+  ],
+  [
+   "2013622thunder.wav",
+   2
+  ],
+  [
+   "2013622thunder.wav",
+   3
+  ],
+  [
+   "2013622thunder.wav",
+   4
+  ],
+  [
+   "20140223 - Bangkok city sounds.wav",
+   0
+  ],
+  [
+   "20140223 - Bangkok city sounds.wav",
+   1
+  ],
+  [
+   "20140223 - Bangkok city sounds.wav",
+   2
+  ],
+  [
+   "20140223 - Bangkok city sounds.wav",
+   3
+  ],
+  [
+   "20140223 - Bangkok city sounds.wav",
+   4
+  ],
+  [
+   "20140809_cruzul.river.wav",
+   0
+  ],
+  [
+   "20140809_cruzul.river.wav",
+   1
+  ],
+  [
+   "20140809_cruzul.river.wav",
+   2
+  ],
+  [
+   "20140809_cruzul.river.wav",
+   3
+  ],
+  [
+   "20140809_cruzul.river.wav",
+   4
+  ],
+  [
+   "20150330_02.soft.wind.day.MS.wav",
+   0
+  ],
+  [
+   "20150330_02.soft.wind.day.MS.wav",
+   1
+  ],
+  [
+   "20150330_02.soft.wind.day.MS.wav",
+   2
+  ],
+  [
+   "20150330_02.soft.wind.day.MS.wav",
+   3
+  ],
+  [
+   "20150330_02.soft.wind.day.MS.wav",
+   4
+  ],
+  [
+   "20160124_Pencil-on-Paper.wav",
+   0
+  ],
+  [
+   "20160124_Pencil-on-Paper.wav",
+   1
+  ],
+  [
+   "20160124_Pencil-on-Paper.wav",
+   2
+  ],
+  [
+   "20160124_Pencil-on-Paper.wav",
+   3
+  ],
+  [
+   "20160124_Pencil-on-Paper.wav",
+   4
+  ],
+  [
+   "20160506_sharpening.02.wav",
+   0
+  ],
+  [
+   "20160506_sharpening.02.wav",
+   1
+  ],
+  [
+   "20160506_sharpening.02.wav",
+   2
+  ],
+  [
+   "20160506_sharpening.02.wav",
+   3
+  ],
+  [
+   "20160506_sharpening.02.wav",
+   4
+  ],
+  [
+   "20160820_saluzzo.arcade.04.wav",
+   0
+  ],
+  [
+   "20160820_saluzzo.arcade.04.wav",
+   1
+  ],
+  [
+   "20160820_saluzzo.arcade.04.wav",
+   2
+  ],
+  [
+   "20160820_saluzzo.arcade.04.wav",
+   3
+  ],
+  [
+   "20160820_saluzzo.arcade.04.wav",
+   4
+  ],
+  [
+   "27 hn_birdspecking.wav",
+   0
+  ],
+  [
+   "27 hn_birdspecking.wav",
+   1
+  ],
+  [
+   "27 hn_birdspecking.wav",
+   2
+  ],
+  [
+   "27 hn_birdspecking.wav",
+   3
+  ],
+  [
+   "27 hn_birdspecking.wav",
+   4
+  ],
+  [
+   "451__mikejedw__bong2_variant#2.wav",
+   0
+  ],
+  [
+   "451__mikejedw__bong2_variant#2.wav",
+   1
+  ],
+  [
+   "451__mikejedw__bong2_variant#2.wav",
+   2
+  ],
+  [
+   "451__mikejedw__bong2_variant#2.wav",
+   3
+  ],
+  [
+   "451__mikejedw__bong2_variant#2.wav",
+   4
+  ],
+  [
+   "A Growing Thunderstorm.wav",
+   0
+  ],
+  [
+   "A Growing Thunderstorm.wav",
+   1
+  ],
+  [
+   "A Growing Thunderstorm.wav",
+   2
+  ],
+  [
+   "A Growing Thunderstorm.wav",
+   3
+  ],
+  [
+   "A Growing Thunderstorm.wav",
+   4
+  ],
+  [
+   "A creek in a forest.wav",
+   0
+  ],
+  [
+   "A creek in a forest.wav",
+   1
+  ],
+  [
+   "A creek in a forest.wav",
+   2
+  ],
+  [
+   "A creek in a forest.wav",
+   3
+  ],
+  [
+   "A creek in a forest.wav",
+   4
+  ],
+  [
+   "AMBIENCE- night time crickets insects wild sound (SFX).wav",
+   0
+  ],
+  [
+   "AMBIENCE- night time crickets insects wild sound (SFX).wav",
+   1
+  ],
+  [
+   "AMBIENCE- night time crickets insects wild sound (SFX).wav",
+   2
+  ],
+  [
+   "AMBIENCE- night time crickets insects wild sound (SFX).wav",
+   3
+  ],
+  [
+   "AMBIENCE- night time crickets insects wild sound (SFX).wav",
+   4
+  ],
+  [
+   "AMB_earlymorning_palmovka.wav",
+   0
+  ],
+  [
+   "AMB_earlymorning_palmovka.wav",
+   1
+  ],
+  [
+   "AMB_earlymorning_palmovka.wav",
+   2
+  ],
+  [
+   "AMB_earlymorning_palmovka.wav",
+   3
+  ],
+  [
+   "AMB_earlymorning_palmovka.wav",
+   4
+  ],
+  [
+   "AbdnC_KingStPelican_120225.wav",
+   0
+  ],
+  [
+   "AbdnC_KingStPelican_120225.wav",
+   1
+  ],
+  [
+   "AbdnC_KingStPelican_120225.wav",
+   2
+  ],
+  [
+   "AbdnC_KingStPelican_120225.wav",
+   3
+  ],
+  [
+   "AbdnC_KingStPelican_120225.wav",
+   4
+  ],
+  [
+   "Acid_lake-Dallol.wav",
+   0
+  ],
+  [
+   "Acid_lake-Dallol.wav",
+   1
+  ],
+  [
+   "Acid_lake-Dallol.wav",
+   2
+  ],
+  [
+   "Acid_lake-Dallol.wav",
+   3
+  ],
+  [
+   "Acid_lake-Dallol.wav",
+   4
+  ],
+  [
+   "Afternoon Suburb Calm.wav",
+   0
+  ],
+  [
+   "Afternoon Suburb Calm.wav",
+   1
+  ],
+  [
+   "Afternoon Suburb Calm.wav",
+   2
+  ],
+  [
+   "Afternoon Suburb Calm.wav",
+   3
+  ],
+  [
+   "Afternoon Suburb Calm.wav",
+   4
+  ],
+  [
+   "Ahr river.wav",
+   0
+  ],
+  [
+   "Ahr river.wav",
+   1
+  ],
+  [
+   "Ahr river.wav",
+   2
+  ],
+  [
+   "Ahr river.wav",
+   3
+  ],
+  [
+   "Ahr river.wav",
+   4
+  ],
+  [
+   "Air raid siren_rising.wav",
+   0
+  ],
+  [
+   "Air raid siren_rising.wav",
+   1
+  ],
+  [
+   "Air raid siren_rising.wav",
+   2
+  ],
+  [
+   "Air raid siren_rising.wav",
+   3
+  ],
+  [
+   "Air raid siren_rising.wav",
+   4
+  ],
+  [
+   "AlleyWater.wav",
+   0
+  ],
+  [
+   "AlleyWater.wav",
+   1
+  ],
+  [
+   "AlleyWater.wav",
+   2
+  ],
+  [
+   "AlleyWater.wav",
+   3
+  ],
+  [
+   "AlleyWater.wav",
+   4
+  ],
+  [
+   "Ambiance, Carnival.wav",
+   0
+  ],
+  [
+   "Ambiance, Carnival.wav",
+   1
+  ],
+  [
+   "Ambiance, Carnival.wav",
+   2
+  ],
+  [
+   "Ambiance, Carnival.wav",
+   3
+  ],
+  [
+   "Ambiance, Carnival.wav",
+   4
+  ],
+  [
+   "Ambience - Generator.wav",
+   0
+  ],
+  [
+   "Ambience - Generator.wav",
+   1
+  ],
+  [
+   "Ambience - Generator.wav",
+   2
+  ],
+  [
+   "Ambience - Generator.wav",
+   3
+  ],
+  [
+   "Ambience - Generator.wav",
+   4
+  ],
+  [
+   "Ambience - St Kilda Beach - waves lapping rocks, people nearby, seagulls.wav",
+   0
+  ],
+  [
+   "Ambience - St Kilda Beach - waves lapping rocks, people nearby, seagulls.wav",
+   1
+  ],
+  [
+   "Ambience - St Kilda Beach - waves lapping rocks, people nearby, seagulls.wav",
+   2
+  ],
+  [
+   "Ambience - St Kilda Beach - waves lapping rocks, people nearby, seagulls.wav",
+   3
+  ],
+  [
+   "Ambience - St Kilda Beach - waves lapping rocks, people nearby, seagulls.wav",
+   4
+  ],
+  [
+   "Ambience Urban park fountain early evening.wav",
+   0
+  ],
+  [
+   "Ambience Urban park fountain early evening.wav",
+   1
+  ],
+  [
+   "Ambience Urban park fountain early evening.wav",
+   2
+  ],
+  [
+   "Ambience Urban park fountain early evening.wav",
+   3
+  ],
+  [
+   "Ambience Urban park fountain early evening.wav",
+   4
+  ],
+  [
+   "Ambience birds.wav",
+   0
+  ],
+  [
+   "Ambience birds.wav",
+   1
+  ],
+  [
+   "Ambience birds.wav",
+   2
+  ],
+  [
+   "Ambience birds.wav",
+   3
+  ],
+  [
+   "Ambience birds.wav",
+   4
+  ],
+  [
+   "Ambience in Sugadh (ESI institute) in Gujrat.wav",
+   0
+  ],
+  [
+   "Ambience in Sugadh (ESI institute) in Gujrat.wav",
+   1
+  ],
+  [
+   "Ambience in Sugadh (ESI institute) in Gujrat.wav",
+   2
+  ],
+  [
+   "Ambience in Sugadh (ESI institute) in Gujrat.wav",
+   3
+  ],
+  [
+   "Ambience in Sugadh (ESI institute) in Gujrat.wav",
+   4
+  ],
+  [
+   "AmbientAtmosphere.wav",
+   0
+  ],
+  [
+   "AmbientAtmosphere.wav",
+   1
+  ],
+  [
+   "AmbientAtmosphere.wav",
+   2
+  ],
+  [
+   "AmbientAtmosphere.wav",
+   3
+  ],
+  [
+   "AmbientAtmosphere.wav",
+   4
+  ],
+  [
+   "Ambulance Siren.wav",
+   0
+  ],
+  [
+   "Ambulance Siren.wav",
+   1
+  ],
+  [
+   "Ambulance Siren.wav",
+   2
+  ],
+  [
+   "Ambulance Siren.wav",
+   3
+  ],
+  [
+   "Ambulance Siren.wav",
+   4
+  ],
+  [
+   "Appartment_Ambient_AC_TV_Fans.wav",
+   0
+  ],
+  [
+   "Appartment_Ambient_AC_TV_Fans.wav",
+   1
+  ],
+  [
+   "Appartment_Ambient_AC_TV_Fans.wav",
+   2
+  ],
+  [
+   "Appartment_Ambient_AC_TV_Fans.wav",
+   3
+  ],
+  [
+   "Appartment_Ambient_AC_TV_Fans.wav",
+   4
+  ],
+  [
+   "April_2004_garden_birds01.wav",
+   0
+  ],
+  [
+   "April_2004_garden_birds01.wav",
+   1
+  ],
+  [
+   "April_2004_garden_birds01.wav",
+   2
+  ],
+  [
+   "April_2004_garden_birds01.wav",
+   3
+  ],
+  [
+   "April_2004_garden_birds01.wav",
+   4
+  ],
+  [
+   "Arch Leaf.wav",
+   0
+  ],
+  [
+   "Arch Leaf.wav",
+   1
+  ],
+  [
+   "Arch Leaf.wav",
+   2
+  ],
+  [
+   "Arch Leaf.wav",
+   3
+  ],
+  [
+   "Arch Leaf.wav",
+   4
+  ],
+  [
+   "Armoury Site.wav",
+   0
+  ],
+  [
+   "Armoury Site.wav",
+   1
+  ],
+  [
+   "Armoury Site.wav",
+   2
+  ],
+  [
+   "Armoury Site.wav",
+   3
+  ],
+  [
+   "Armoury Site.wav",
+   4
+  ],
+  [
+   "Atlantic Ocean Waves.wav",
+   0
+  ],
+  [
+   "Atlantic Ocean Waves.wav",
+   1
+  ],
+  [
+   "Atlantic Ocean Waves.wav",
+   2
+  ],
+  [
+   "Atlantic Ocean Waves.wav",
+   3
+  ],
+  [
+   "Atlantic Ocean Waves.wav",
+   4
+  ],
+  [
+   "Atmo Busbahnhof (besser).wav",
+   0
+  ],
+  [
+   "Atmo Busbahnhof (besser).wav",
+   1
+  ],
+  [
+   "Atmo Busbahnhof (besser).wav",
+   2
+  ],
+  [
+   "Atmo Busbahnhof (besser).wav",
+   3
+  ],
+  [
+   "Atmo Busbahnhof (besser).wav",
+   4
+  ],
+  [
+   "Atmo Wartehalle2.wav",
+   0
+  ],
+  [
+   "Atmo Wartehalle2.wav",
+   1
+  ],
+  [
+   "Atmo Wartehalle2.wav",
+   2
+  ],
+  [
+   "Atmo Wartehalle2.wav",
+   3
+  ],
+  [
+   "Atmo Wartehalle2.wav",
+   4
+  ],
+  [
+   "Atmosphere on road in London.wav",
+   0
+  ],
+  [
+   "Atmosphere on road in London.wav",
+   1
+  ],
+  [
+   "Atmosphere on road in London.wav",
+   2
+  ],
+  [
+   "Atmosphere on road in London.wav",
+   3
+  ],
+  [
+   "Atmosphere on road in London.wav",
+   4
+  ],
+  [
+   "Avion.wav",
+   0
+  ],
+  [
+   "Avion.wav",
+   1
+  ],
+  [
+   "Avion.wav",
+   2
+  ],
+  [
+   "Avion.wav",
+   3
+  ],
+  [
+   "Avion.wav",
+   4
+  ],
+  [
+   "BR Standard Class 4 2-6-4T Steam Engine Departing - Irwell Vale Halt ~SE1 XY stereo pair.wav",
+   0
+  ],
+  [
+   "BR Standard Class 4 2-6-4T Steam Engine Departing - Irwell Vale Halt ~SE1 XY stereo pair.wav",
+   1
+  ],
+  [
+   "BR Standard Class 4 2-6-4T Steam Engine Departing - Irwell Vale Halt ~SE1 XY stereo pair.wav",
+   2
+  ],
+  [
+   "BR Standard Class 4 2-6-4T Steam Engine Departing - Irwell Vale Halt ~SE1 XY stereo pair.wav",
+   3
+  ],
+  [
+   "BR Standard Class 4 2-6-4T Steam Engine Departing - Irwell Vale Halt ~SE1 XY stereo pair.wav",
+   4
+  ],
+  [
+   "BUS RIDE R.wav",
+   0
+  ],
+  [
+   "BUS RIDE R.wav",
+   1
+  ],
+  [
+   "BUS RIDE R.wav",
+   2
+  ],
+  [
+   "BUS RIDE R.wav",
+   3
+  ],
+  [
+   "BUS RIDE R.wav",
+   4
+  ],
+  [
+   "Backhoe.wav",
+   0
+  ],
+  [
+   "Backhoe.wav",
+   1
+  ],
+  [
+   "Backhoe.wav",
+   2
+  ],
+  [
+   "Backhoe.wav",
+   3
+  ],
+  [
+   "Backhoe.wav",
+   4
+  ],
+  [
+   "Backyard Birds-001.wav",
+   0
+  ],
+  [
+   "Backyard Birds-001.wav",
+   1
+  ],
+  [
+   "Backyard Birds-001.wav",
+   2
+  ],
+  [
+   "Backyard Birds-001.wav",
+   3
+  ],
+  [
+   "Backyard Birds-001.wav",
+   4
+  ],
+  [
+   "Backyard nature.wav",
+   0
+  ],
+  [
+   "Backyard nature.wav",
+   1
+  ],
+  [
+   "Backyard nature.wav",
+   2
+  ],
+  [
+   "Backyard nature.wav",
+   3
+  ],
+  [
+   "Backyard nature.wav",
+   4
+  ],
+  [
+   "Baking dish picked up put down.wav",
+   0
+  ],
+  [
+   "Baking dish picked up put down.wav",
+   1
+  ],
+  [
+   "Baking dish picked up put down.wav",
+   2
+  ],
+  [
+   "Baking dish picked up put down.wav",
+   3
+  ],
+  [
+   "Baking dish picked up put down.wav",
+   4
+  ],
+  [
+   "Balloon Game at Arlington Heights Carnival.wav",
+   0
+  ],
+  [
+   "Balloon Game at Arlington Heights Carnival.wav",
+   1
+  ],
+  [
+   "Balloon Game at Arlington Heights Carnival.wav",
+   2
+  ],
+  [
+   "Balloon Game at Arlington Heights Carnival.wav",
+   3
+  ],
+  [
+   "Balloon Game at Arlington Heights Carnival.wav",
+   4
+  ],
+  [
+   "BangingOilTank.wav",
+   0
+  ],
+  [
+   "BangingOilTank.wav",
+   1
+  ],
+  [
+   "BangingOilTank.wav",
+   2
+  ],
+  [
+   "BangingOilTank.wav",
+   3
+  ],
+  [
+   "BangingOilTank.wav",
+   4
+  ],
+  [
+   "Bangkok City Distant.wav",
+   0
+  ],
+  [
+   "Bangkok City Distant.wav",
+   1
+  ],
+  [
+   "Bangkok City Distant.wav",
+   2
+  ],
+  [
+   "Bangkok City Distant.wav",
+   3
+  ],
+  [
+   "Bangkok City Distant.wav",
+   4
+  ],
+  [
+   "Barn_Door_Wind_001.wav",
+   0
+  ],
+  [
+   "Barn_Door_Wind_001.wav",
+   1
+  ],
+  [
+   "Barn_Door_Wind_001.wav",
+   2
+  ],
+  [
+   "Barn_Door_Wind_001.wav",
+   3
+  ],
+  [
+   "Barn_Door_Wind_001.wav",
+   4
+  ],
+  [
+   "Basic_Battle.wav",
+   0
+  ],
+  [
+   "Basic_Battle.wav",
+   1
+  ],
+  [
+   "Basic_Battle.wav",
+   2
+  ],
+  [
+   "Basic_Battle.wav",
+   3
+  ],
+  [
+   "Basic_Battle.wav",
+   4
+  ],
+  [
+   "Bath 01.wav",
+   0
+  ],
+  [
+   "Bath 01.wav",
+   1
+  ],
+  [
+   "Bath 01.wav",
+   2
+  ],
+  [
+   "Bath 01.wav",
+   3
+  ],
+  [
+   "Bath 01.wav",
+   4
+  ],
+  [
+   "BathFill.wav",
+   0
+  ],
+  [
+   "BathFill.wav",
+   1
+  ],
+  [
+   "BathFill.wav",
+   2
+  ],
+  [
+   "BathFill.wav",
+   3
+  ],
+  [
+   "BathFill.wav",
+   4
+  ],
+  [
+   "Bathtub_with_Foam.wav",
+   0
+  ],
+  [
+   "Bathtub_with_Foam.wav",
+   1
+  ],
+  [
+   "Bathtub_with_Foam.wav",
+   2
+  ],
+  [
+   "Bathtub_with_Foam.wav",
+   3
+  ],
+  [
+   "Bathtub_with_Foam.wav",
+   4
+  ],
+  [
+   "Bear Last Audio.wav",
+   0
+  ],
+  [
+   "Bear Last Audio.wav",
+   1
+  ],
+  [
+   "Bear Last Audio.wav",
+   2
+  ],
+  [
+   "Bear Last Audio.wav",
+   3
+  ],
+  [
+   "Bear Last Audio.wav",
+   4
+  ],
+  [
+   "Bees Collingwood.wav",
+   0
+  ],
+  [
+   "Bees Collingwood.wav",
+   1
+  ],
+  [
+   "Bees Collingwood.wav",
+   2
+  ],
+  [
+   "Bees Collingwood.wav",
+   3
+  ],
+  [
+   "Bees Collingwood.wav",
+   4
+  ],
+  [
+   "Binding my thesis.wav",
+   0
+  ],
+  [
+   "Binding my thesis.wav",
+   1
+  ],
+  [
+   "Binding my thesis.wav",
+   2
+  ],
+  [
+   "Binding my thesis.wav",
+   3
+  ],
+  [
+   "Binding my thesis.wav",
+   4
+  ],
+  [
+   "BirdCallBackyard2016Long.wav",
+   0
+  ],
+  [
+   "BirdCallBackyard2016Long.wav",
+   1
+  ],
+  [
+   "BirdCallBackyard2016Long.wav",
+   2
+  ],
+  [
+   "BirdCallBackyard2016Long.wav",
+   3
+  ],
+  [
+   "BirdCallBackyard2016Long.wav",
+   4
+  ],
+  [
+   "Birds of Klein Profijt.wav",
+   0
+  ],
+  [
+   "Birds of Klein Profijt.wav",
+   1
+  ],
+  [
+   "Birds of Klein Profijt.wav",
+   2
+  ],
+  [
+   "Birds of Klein Profijt.wav",
+   3
+  ],
+  [
+   "Birds of Klein Profijt.wav",
+   4
+  ],
+  [
+   "Birds-sleeves-amb.wav",
+   0
+  ],
+  [
+   "Birds-sleeves-amb.wav",
+   1
+  ],
+  [
+   "Birds-sleeves-amb.wav",
+   2
+  ],
+  [
+   "Birds-sleeves-amb.wav",
+   3
+  ],
+  [
+   "Birds-sleeves-amb.wav",
+   4
+  ],
+  [
+   "Birds_and_Water_Filling_Rain_Barrel.wav",
+   0
+  ],
+  [
+   "Birds_and_Water_Filling_Rain_Barrel.wav",
+   1
+  ],
+  [
+   "Birds_and_Water_Filling_Rain_Barrel.wav",
+   2
+  ],
+  [
+   "Birds_and_Water_Filling_Rain_Barrel.wav",
+   3
+  ],
+  [
+   "Birds_and_Water_Filling_Rain_Barrel.wav",
+   4
+  ],
+  [
+   "BlackCappedChickadee.wav",
+   0
+  ],
+  [
+   "BlackCappedChickadee.wav",
+   1
+  ],
+  [
+   "BlackCappedChickadee.wav",
+   2
+  ],
+  [
+   "BlackCappedChickadee.wav",
+   3
+  ],
+  [
+   "BlackCappedChickadee.wav",
+   4
+  ],
+  [
+   "Blackbird 252.wav",
+   0
+  ],
+  [
+   "Blackbird 252.wav",
+   1
+  ],
+  [
+   "Blackbird 252.wav",
+   2
+  ],
+  [
+   "Blackbird 252.wav",
+   3
+  ],
+  [
+   "Blackbird 252.wav",
+   4
+  ],
+  [
+   "Blackbird tweet with waterfall background.wav",
+   0
+  ],
+  [
+   "Blackbird tweet with waterfall background.wav",
+   1
+  ],
+  [
+   "Blackbird tweet with waterfall background.wav",
+   2
+  ],
+  [
+   "Blackbird tweet with waterfall background.wav",
+   3
+  ],
+  [
+   "Blackbird tweet with waterfall background.wav",
+   4
+  ],
+  [
+   "Blade Big.wav",
+   0
+  ],
+  [
+   "Blade Big.wav",
+   1
+  ],
+  [
+   "Blade Big.wav",
+   2
+  ],
+  [
+   "Blade Big.wav",
+   3
+  ],
+  [
+   "Blade Big.wav",
+   4
+  ],
+  [
+   "Blade sharpening.wav",
+   0
+  ],
+  [
+   "Blade sharpening.wav",
+   1
+  ],
+  [
+   "Blade sharpening.wav",
+   2
+  ],
+  [
+   "Blade sharpening.wav",
+   3
+  ],
+  [
+   "Blade sharpening.wav",
+   4
+  ],
+  [
+   "Blind Man Whistling.wav",
+   0
+  ],
+  [
+   "Blind Man Whistling.wav",
+   1
+  ],
+  [
+   "Blind Man Whistling.wav",
+   2
+  ],
+  [
+   "Blind Man Whistling.wav",
+   3
+  ],
+  [
+   "Blind Man Whistling.wav",
+   4
+  ],
+  [
+   "Blowing on Microphone.wav",
+   0
+  ],
+  [
+   "Blowing on Microphone.wav",
+   1
+  ],
+  [
+   "Blowing on Microphone.wav",
+   2
+  ],
+  [
+   "Blowing on Microphone.wav",
+   3
+  ],
+  [
+   "Blowing on Microphone.wav",
+   4
+  ],
+  [
+   "Bobcat moving pallets etc Part 2 080320.wav",
+   0
+  ],
+  [
+   "Bobcat moving pallets etc Part 2 080320.wav",
+   1
+  ],
+  [
+   "Bobcat moving pallets etc Part 2 080320.wav",
+   2
+  ],
+  [
+   "Bobcat moving pallets etc Part 2 080320.wav",
+   3
+  ],
+  [
+   "Bobcat moving pallets etc Part 2 080320.wav",
+   4
+  ],
+  [
+   "Boiling a cup of water.wav",
+   0
+  ],
+  [
+   "Boiling a cup of water.wav",
+   1
+  ],
+  [
+   "Boiling a cup of water.wav",
+   2
+  ],
+  [
+   "Boiling a cup of water.wav",
+   3
+  ],
+  [
+   "Boiling a cup of water.wav",
+   4
+  ],
+  [
+   "BottleDrinking02.wav",
+   0
+  ],
+  [
+   "BottleDrinking02.wav",
+   1
+  ],
+  [
+   "BottleDrinking02.wav",
+   2
+  ],
+  [
+   "BottleDrinking02.wav",
+   3
+  ],
+  [
+   "BottleDrinking02.wav",
+   4
+  ],
+  [
+   "Bounce-MagnetAndNail.wav",
+   0
+  ],
+  [
+   "Bounce-MagnetAndNail.wav",
+   1
+  ],
+  [
+   "Bounce-MagnetAndNail.wav",
+   2
+  ],
+  [
+   "Bounce-MagnetAndNail.wav",
+   3
+  ],
+  [
+   "Bounce-MagnetAndNail.wav",
+   4
+  ],
+  [
+   "Broom_Bear_Street_Sweeper_Roadwork.wav",
+   0
+  ],
+  [
+   "Broom_Bear_Street_Sweeper_Roadwork.wav",
+   1
+  ],
+  [
+   "Broom_Bear_Street_Sweeper_Roadwork.wav",
+   2
+  ],
+  [
+   "Broom_Bear_Street_Sweeper_Roadwork.wav",
+   3
+  ],
+  [
+   "Broom_Bear_Street_Sweeper_Roadwork.wav",
+   4
+  ],
+  [
+   "Brushing teeth.wav",
+   0
+  ],
+  [
+   "Brushing teeth.wav",
+   1
+  ],
+  [
+   "Brushing teeth.wav",
+   2
+  ],
+  [
+   "Brushing teeth.wav",
+   3
+  ],
+  [
+   "Brushing teeth.wav",
+   4
+  ],
+  [
+   "Brushing_Teeth_Bathroom_Fx.wav",
+   0
+  ],
+  [
+   "Brushing_Teeth_Bathroom_Fx.wav",
+   1
+  ],
+  [
+   "Brushing_Teeth_Bathroom_Fx.wav",
+   2
+  ],
+  [
+   "Brushing_Teeth_Bathroom_Fx.wav",
+   3
+  ],
+  [
+   "Brushing_Teeth_Bathroom_Fx.wav",
+   4
+  ],
+  [
+   "Bubbles water.wav",
+   0
+  ],
+  [
+   "Bubbles water.wav",
+   1
+  ],
+  [
+   "Bubbles water.wav",
+   2
+  ],
+  [
+   "Bubbles water.wav",
+   3
+  ],
+  [
+   "Bubbles water.wav",
+   4
+  ],
+  [
+   "Budds Landing Maryland Night 1.wav",
+   0
+  ],
+  [
+   "Budds Landing Maryland Night 1.wav",
+   1
+  ],
+  [
+   "Budds Landing Maryland Night 1.wav",
+   2
+  ],
+  [
+   "Budds Landing Maryland Night 1.wav",
+   3
+  ],
+  [
+   "Budds Landing Maryland Night 1.wav",
+   4
+  ],
+  [
+   "Building Construction in Amsterdam Oost.wav",
+   0
+  ],
+  [
+   "Building Construction in Amsterdam Oost.wav",
+   1
+  ],
+  [
+   "Building Construction in Amsterdam Oost.wav",
+   2
+  ],
+  [
+   "Building Construction in Amsterdam Oost.wav",
+   3
+  ],
+  [
+   "Building Construction in Amsterdam Oost.wav",
+   4
+  ],
+  [
+   "Bukit_Dinding_rainforest_jungle_01.wav",
+   0
+  ],
+  [
+   "Bukit_Dinding_rainforest_jungle_01.wav",
+   1
+  ],
+  [
+   "Bukit_Dinding_rainforest_jungle_01.wav",
+   2
+  ],
+  [
+   "Bukit_Dinding_rainforest_jungle_01.wav",
+   3
+  ],
+  [
+   "Bukit_Dinding_rainforest_jungle_01.wav",
+   4
+  ],
+  [
+   "BulletJuneEdited192012.wav",
+   0
+  ],
+  [
+   "BulletJuneEdited192012.wav",
+   1
+  ],
+  [
+   "BulletJuneEdited192012.wav",
+   2
+  ],
+  [
+   "BulletJuneEdited192012.wav",
+   3
+  ],
+  [
+   "BulletJuneEdited192012.wav",
+   4
+  ],
+  [
+   "Burco Conveyer Toaster running.wav",
+   0
+  ],
+  [
+   "Burco Conveyer Toaster running.wav",
+   1
+  ],
+  [
+   "Burco Conveyer Toaster running.wav",
+   2
+  ],
+  [
+   "Burco Conveyer Toaster running.wav",
+   3
+  ],
+  [
+   "Burco Conveyer Toaster running.wav",
+   4
+  ],
+  [
+   "Bus(Drive_Reverse)_1-2.wav",
+   0
+  ],
+  [
+   "Bus(Drive_Reverse)_1-2.wav",
+   1
+  ],
+  [
+   "Bus(Drive_Reverse)_1-2.wav",
+   2
+  ],
+  [
+   "Bus(Drive_Reverse)_1-2.wav",
+   3
+  ],
+  [
+   "Bus(Drive_Reverse)_1-2.wav",
+   4
+  ],
+  [
+   "Bush bird noises.wav",
+   0
+  ],
+  [
+   "Bush bird noises.wav",
+   1
+  ],
+  [
+   "Bush bird noises.wav",
+   2
+  ],
+  [
+   "Bush bird noises.wav",
+   3
+  ],
+  [
+   "Bush bird noises.wav",
+   4
+  ],
+  [
+   "Busy Coffee Shop Counter Field Recording.wav",
+   0
+  ],
+  [
+   "Busy Coffee Shop Counter Field Recording.wav",
+   1
+  ],
+  [
+   "Busy Coffee Shop Counter Field Recording.wav",
+   2
+  ],
+  [
+   "Busy Coffee Shop Counter Field Recording.wav",
+   3
+  ],
+  [
+   "Busy Coffee Shop Counter Field Recording.wav",
+   4
+  ],
+  [
+   "Butter knife being Tapped.wav",
+   0
+  ],
+  [
+   "Butter knife being Tapped.wav",
+   1
+  ],
+  [
+   "Butter knife being Tapped.wav",
+   2
+  ],
+  [
+   "Butter knife being Tapped.wav",
+   3
+  ],
+  [
+   "Butter knife being Tapped.wav",
+   4
+  ],
+  [
+   "C Minor Chords Musical Soundscape.wav",
+   0
+  ],
+  [
+   "C Minor Chords Musical Soundscape.wav",
+   1
+  ],
+  [
+   "C Minor Chords Musical Soundscape.wav",
+   2
+  ],
+  [
+   "C Minor Chords Musical Soundscape.wav",
+   3
+  ],
+  [
+   "C Minor Chords Musical Soundscape.wav",
+   4
+  ],
+  [
+   "CAR_WASH.wav",
+   0
+  ],
+  [
+   "CAR_WASH.wav",
+   1
+  ],
+  [
+   "CAR_WASH.wav",
+   2
+  ],
+  [
+   "CAR_WASH.wav",
+   3
+  ],
+  [
+   "CAR_WASH.wav",
+   4
+  ],
+  [
+   "CFX-20130331-UK-DorsetSeaCliff02.wav",
+   0
+  ],
+  [
+   "CFX-20130331-UK-DorsetSeaCliff02.wav",
+   1
+  ],
+  [
+   "CFX-20130331-UK-DorsetSeaCliff02.wav",
+   2
+  ],
+  [
+   "CFX-20130331-UK-DorsetSeaCliff02.wav",
+   3
+  ],
+  [
+   "CFX-20130331-UK-DorsetSeaCliff02.wav",
+   4
+  ],
+  [
+   "CONTACT MIC BOILING WATER 01.wav",
+   0
+  ],
+  [
+   "CONTACT MIC BOILING WATER 01.wav",
+   1
+  ],
+  [
+   "CONTACT MIC BOILING WATER 01.wav",
+   2
+  ],
+  [
+   "CONTACT MIC BOILING WATER 01.wav",
+   3
+  ],
+  [
+   "CONTACT MIC BOILING WATER 01.wav",
+   4
+  ],
+  [
+   "Cafeteria Ambience.wav",
+   0
+  ],
+  [
+   "Cafeteria Ambience.wav",
+   1
+  ],
+  [
+   "Cafeteria Ambience.wav",
+   2
+  ],
+  [
+   "Cafeteria Ambience.wav",
+   3
+  ],
+  [
+   "Cafeteria Ambience.wav",
+   4
+  ],
+  [
+   "Calm down-town morning 02 150722_0706.wav",
+   0
+  ],
+  [
+   "Calm down-town morning 02 150722_0706.wav",
+   1
+  ],
+  [
+   "Calm down-town morning 02 150722_0706.wav",
+   2
+  ],
+  [
+   "Calm down-town morning 02 150722_0706.wav",
+   3
+  ],
+  [
+   "Calm down-town morning 02 150722_0706.wav",
+   4
+  ],
+  [
+   "Canada Geese Squawk on a Pond with a Fountain.wav",
+   0
+  ],
+  [
+   "Canada Geese Squawk on a Pond with a Fountain.wav",
+   1
+  ],
+  [
+   "Canada Geese Squawk on a Pond with a Fountain.wav",
+   2
+  ],
+  [
+   "Canada Geese Squawk on a Pond with a Fountain.wav",
+   3
+  ],
+  [
+   "Canada Geese Squawk on a Pond with a Fountain.wav",
+   4
+  ],
+  [
+   "Car Driving Interior.wav",
+   0
+  ],
+  [
+   "Car Driving Interior.wav",
+   1
+  ],
+  [
+   "Car Driving Interior.wav",
+   2
+  ],
+  [
+   "Car Driving Interior.wav",
+   3
+  ],
+  [
+   "Car Driving Interior.wav",
+   4
+  ],
+  [
+   "Car Driving.wav",
+   0
+  ],
+  [
+   "Car Driving.wav",
+   1
+  ],
+  [
+   "Car Driving.wav",
+   2
+  ],
+  [
+   "Car Driving.wav",
+   3
+  ],
+  [
+   "Car Driving.wav",
+   4
+  ],
+  [
+   "Car Engine Idling.wav",
+   0
+  ],
+  [
+   "Car Engine Idling.wav",
+   1
+  ],
+  [
+   "Car Engine Idling.wav",
+   2
+  ],
+  [
+   "Car Engine Idling.wav",
+   3
+  ],
+  [
+   "Car Engine Idling.wav",
+   4
+  ],
+  [
+   "Car vs. Freight Train.wav",
+   0
+  ],
+  [
+   "Car vs. Freight Train.wav",
+   1
+  ],
+  [
+   "Car vs. Freight Train.wav",
+   2
+  ],
+  [
+   "Car vs. Freight Train.wav",
+   3
+  ],
+  [
+   "Car vs. Freight Train.wav",
+   4
+  ],
+  [
+   "CarEntireInternal01.wav",
+   0
+  ],
+  [
+   "CarEntireInternal01.wav",
+   1
+  ],
+  [
+   "CarEntireInternal01.wav",
+   2
+  ],
+  [
+   "CarEntireInternal01.wav",
+   3
+  ],
+  [
+   "CarEntireInternal01.wav",
+   4
+  ],
+  [
+   "CarFerrySeaDogsPeople.wav",
+   0
+  ],
+  [
+   "CarFerrySeaDogsPeople.wav",
+   1
+  ],
+  [
+   "CarFerrySeaDogsPeople.wav",
+   2
+  ],
+  [
+   "CarFerrySeaDogsPeople.wav",
+   3
+  ],
+  [
+   "CarFerrySeaDogsPeople.wav",
+   4
+  ],
+  [
+   "Car_Suspension_Creak.wav",
+   0
+  ],
+  [
+   "Car_Suspension_Creak.wav",
+   1
+  ],
+  [
+   "Car_Suspension_Creak.wav",
+   2
+  ],
+  [
+   "Car_Suspension_Creak.wav",
+   3
+  ],
+  [
+   "Car_Suspension_Creak.wav",
+   4
+  ],
+  [
+   "Cars crossing in Rain.wav",
+   0
+  ],
+  [
+   "Cars crossing in Rain.wav",
+   1
+  ],
+  [
+   "Cars crossing in Rain.wav",
+   2
+  ],
+  [
+   "Cars crossing in Rain.wav",
+   3
+  ],
+  [
+   "Cars crossing in Rain.wav",
+   4
+  ],
+  [
+   "Cash Machine, Indoors, Full Transaction.wav",
+   0
+  ],
+  [
+   "Cash Machine, Indoors, Full Transaction.wav",
+   1
+  ],
+  [
+   "Cash Machine, Indoors, Full Transaction.wav",
+   2
+  ],
+  [
+   "Cash Machine, Indoors, Full Transaction.wav",
+   3
+  ],
+  [
+   "Cash Machine, Indoors, Full Transaction.wav",
+   4
+  ],
+  [
+   "Changing Room.wav",
+   0
+  ],
+  [
+   "Changing Room.wav",
+   1
+  ],
+  [
+   "Changing Room.wav",
+   2
+  ],
+  [
+   "Changing Room.wav",
+   3
+  ],
+  [
+   "Changing Room.wav",
+   4
+  ],
+  [
+   "Chicharra1.wav",
+   0
+  ],
+  [
+   "Chicharra1.wav",
+   1
+  ],
+  [
+   "Chicharra1.wav",
+   2
+  ],
+  [
+   "Chicharra1.wav",
+   3
+  ],
+  [
+   "Chicharra1.wav",
+   4
+  ],
+  [
+   "Chopping Celery.wav",
+   0
+  ],
+  [
+   "Chopping Celery.wav",
+   1
+  ],
+  [
+   "Chopping Celery.wav",
+   2
+  ],
+  [
+   "Chopping Celery.wav",
+   3
+  ],
+  [
+   "Chopping Celery.wav",
+   4
+  ],
+  [
+   "Chopping pieces of mushrooms vigorously.wav",
+   0
+  ],
+  [
+   "Chopping pieces of mushrooms vigorously.wav",
+   1
+  ],
+  [
+   "Chopping pieces of mushrooms vigorously.wav",
+   2
+  ],
+  [
+   "Chopping pieces of mushrooms vigorously.wav",
+   3
+  ],
+  [
+   "Chopping pieces of mushrooms vigorously.wav",
+   4
+  ],
+  [
+   "Chrysalism.wav",
+   0
+  ],
+  [
+   "Chrysalism.wav",
+   1
+  ],
+  [
+   "Chrysalism.wav",
+   2
+  ],
+  [
+   "Chrysalism.wav",
+   3
+  ],
+  [
+   "Chrysalism.wav",
+   4
+  ],
+  [
+   "City Bus.wav",
+   0
+  ],
+  [
+   "City Bus.wav",
+   1
+  ],
+  [
+   "City Bus.wav",
+   2
+  ],
+  [
+   "City Bus.wav",
+   3
+  ],
+  [
+   "City Bus.wav",
+   4
+  ],
+  [
+   "City forest.wav",
+   0
+  ],
+  [
+   "City forest.wav",
+   1
+  ],
+  [
+   "City forest.wav",
+   2
+  ],
+  [
+   "City forest.wav",
+   3
+  ],
+  [
+   "City forest.wav",
+   4
+  ],
+  [
+   "Cityscape 05 090617.wav",
+   0
+  ],
+  [
+   "Cityscape 05 090617.wav",
+   1
+  ],
+  [
+   "Cityscape 05 090617.wav",
+   2
+  ],
+  [
+   "Cityscape 05 090617.wav",
+   3
+  ],
+  [
+   "Cityscape 05 090617.wav",
+   4
+  ],
+  [
+   "Cityscape Compounded 01.wav",
+   0
+  ],
+  [
+   "Cityscape Compounded 01.wav",
+   1
+  ],
+  [
+   "Cityscape Compounded 01.wav",
+   2
+  ],
+  [
+   "Cityscape Compounded 01.wav",
+   3
+  ],
+  [
+   "Cityscape Compounded 01.wav",
+   4
+  ],
+  [
+   "Clatter.wav",
+   0
+  ],
+  [
+   "Clatter.wav",
+   1
+  ],
+  [
+   "Clatter.wav",
+   2
+  ],
+  [
+   "Clatter.wav",
+   3
+  ],
+  [
+   "Clatter.wav",
+   4
+  ],
+  [
+   "Clinking Glasses.wav",
+   0
+  ],
+  [
+   "Clinking Glasses.wav",
+   1
+  ],
+  [
+   "Clinking Glasses.wav",
+   2
+  ],
+  [
+   "Clinking Glasses.wav",
+   3
+  ],
+  [
+   "Clinking Glasses.wav",
+   4
+  ],
+  [
+   "ClinkingGlass.wav",
+   0
+  ],
+  [
+   "ClinkingGlass.wav",
+   1
+  ],
+  [
+   "ClinkingGlass.wav",
+   2
+  ],
+  [
+   "ClinkingGlass.wav",
+   3
+  ],
+  [
+   "ClinkingGlass.wav",
+   4
+  ],
+  [
+   "Clock.Windup.Bell.Antique.wav",
+   0
+  ],
+  [
+   "Clock.Windup.Bell.Antique.wav",
+   1
+  ],
+  [
+   "Clock.Windup.Bell.Antique.wav",
+   2
+  ],
+  [
+   "Clock.Windup.Bell.Antique.wav",
+   3
+  ],
+  [
+   "Clock.Windup.Bell.Antique.wav",
+   4
+  ],
+  [
+   "Close Cracking Thunder.wav",
+   0
+  ],
+  [
+   "Close Cracking Thunder.wav",
+   1
+  ],
+  [
+   "Close Cracking Thunder.wav",
+   2
+  ],
+  [
+   "Close Cracking Thunder.wav",
+   3
+  ],
+  [
+   "Close Cracking Thunder.wav",
+   4
+  ],
+  [
+   "CoffeeGrinder_111212.wav",
+   0
+  ],
+  [
+   "CoffeeGrinder_111212.wav",
+   1
+  ],
+  [
+   "CoffeeGrinder_111212.wav",
+   2
+  ],
+  [
+   "CoffeeGrinder_111212.wav",
+   3
+  ],
+  [
+   "CoffeeGrinder_111212.wav",
+   4
+  ],
+  [
+   "CoffeeShopChatter.wav",
+   0
+  ],
+  [
+   "CoffeeShopChatter.wav",
+   1
+  ],
+  [
+   "CoffeeShopChatter.wav",
+   2
+  ],
+  [
+   "CoffeeShopChatter.wav",
+   3
+  ],
+  [
+   "CoffeeShopChatter.wav",
+   4
+  ],
+  [
+   "Coins Moving in Jar.wav",
+   0
+  ],
+  [
+   "Coins Moving in Jar.wav",
+   1
+  ],
+  [
+   "Coins Moving in Jar.wav",
+   2
+  ],
+  [
+   "Coins Moving in Jar.wav",
+   3
+  ],
+  [
+   "Coins Moving in Jar.wav",
+   4
+  ],
+  [
+   "Collingwood bees, bumble bees.wav",
+   0
+  ],
+  [
+   "Collingwood bees, bumble bees.wav",
+   1
+  ],
+  [
+   "Collingwood bees, bumble bees.wav",
+   2
+  ],
+  [
+   "Collingwood bees, bumble bees.wav",
+   3
+  ],
+  [
+   "Collingwood bees, bumble bees.wav",
+   4
+  ],
+  [
+   "Construction 2.wav",
+   0
+  ],
+  [
+   "Construction 2.wav",
+   1
+  ],
+  [
+   "Construction 2.wav",
+   2
+  ],
+  [
+   "Construction 2.wav",
+   3
+  ],
+  [
+   "Construction 2.wav",
+   4
+  ],
+  [
+   "Cooking rice.wav",
+   0
+  ],
+  [
+   "Cooking rice.wav",
+   1
+  ],
+  [
+   "Cooking rice.wav",
+   2
+  ],
+  [
+   "Cooking rice.wav",
+   3
+  ],
+  [
+   "Cooking rice.wav",
+   4
+  ],
+  [
+   "Cornell Big Cheer.wav",
+   0
+  ],
+  [
+   "Cornell Big Cheer.wav",
+   1
+  ],
+  [
+   "Cornell Big Cheer.wav",
+   2
+  ],
+  [
+   "Cornell Big Cheer.wav",
+   3
+  ],
+  [
+   "Cornell Big Cheer.wav",
+   4
+  ],
+  [
+   "CourtyardHome.wav",
+   0
+  ],
+  [
+   "CourtyardHome.wav",
+   1
+  ],
+  [
+   "CourtyardHome.wav",
+   2
+  ],
+  [
+   "CourtyardHome.wav",
+   3
+  ],
+  [
+   "CourtyardHome.wav",
+   4
+  ],
+  [
+   "Cracking and frying egg.wav",
+   0
+  ],
+  [
+   "Cracking and frying egg.wav",
+   1
+  ],
+  [
+   "Cracking and frying egg.wav",
+   2
+  ],
+  [
+   "Cracking and frying egg.wav",
+   3
+  ],
+  [
+   "Cracking and frying egg.wav",
+   4
+  ],
+  [
+   "Creacking Oak 6bft  SHORT 130418_00.wav",
+   0
+  ],
+  [
+   "Creacking Oak 6bft  SHORT 130418_00.wav",
+   1
+  ],
+  [
+   "Creacking Oak 6bft  SHORT 130418_00.wav",
+   2
+  ],
+  [
+   "Creacking Oak 6bft  SHORT 130418_00.wav",
+   3
+  ],
+  [
+   "Creacking Oak 6bft  SHORT 130418_00.wav",
+   4
+  ],
+  [
+   "CreakingNoise.wav",
+   0
+  ],
+  [
+   "CreakingNoise.wav",
+   1
+  ],
+  [
+   "CreakingNoise.wav",
+   2
+  ],
+  [
+   "CreakingNoise.wav",
+   3
+  ],
+  [
+   "CreakingNoise.wav",
+   4
+  ]
+ ]
+}

@@ -34,6 +34,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import uuid
 from pathlib import Path
 
@@ -74,8 +75,9 @@ GOLDEN = json.loads(
     ).read_text()
 )
 FIXTURES = Path(__file__).parent / "fixtures" / "omni_eval"
-MANIFEST_PATH = FIXTURES / "manifest.json"
-VECTORS_PATH = FIXTURES / "vectors.npz"
+GOLDENS = Path(__file__).parent / "goldens"
+MANIFEST_PATH = GOLDENS / "omni_eval_manifest.json"
+VECTORS_PATH = GOLDENS / "omni_eval_vectors.npz"
 CLOTHO = json.loads((FIXTURES / "clotho.json").read_text())
 RECORD_GOLDEN = os.environ.get("RECORD_GOLDEN") == "1"
 CLOTHO_CLIPS = 200
@@ -222,7 +224,6 @@ def _record(remote_inference) -> None:
     caption_refs = [(clip, i) for clip in sorted(captions) for i in range(5)]
 
     def clap_window(clip: str, start: float, end: float) -> np.ndarray:
-
         return clap._request_vector(
             "/embed/audio",
             {
@@ -237,7 +238,8 @@ def _record(remote_inference) -> None:
 
     def arm(name: str, service: str, inputs: list, embed) -> np.ndarray:
         """One arm's vectors, kept on disk keyed by its inputs and the
-        service's revision, so a re-record after a failure resumes."""
+        service's revision, so a re-record interrupted by a failure resumes.
+        A completed recording clears the cache."""
         key = hashlib.sha256(
             json.dumps([endpoints[service].model_revision, inputs]).encode()
         ).hexdigest()[:16]
@@ -299,7 +301,7 @@ def _record(remote_inference) -> None:
             lambda v, s, e: xclip.embed_video_segment(by_name[v], s, e),
         ),
     }
-    FIXTURES.mkdir(parents=True, exist_ok=True)
+    GOLDENS.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         VECTORS_PATH,
         **{name: _unit(rows).astype(np.float16) for name, rows in vectors.items()},
@@ -324,6 +326,7 @@ def _record(remote_inference) -> None:
         )
         + "\n"
     )
+    shutil.rmtree(cache)
 
 
 def _unit(rows: np.ndarray) -> np.ndarray:
@@ -455,6 +458,29 @@ def test_audio_arm_metrics(recording, arm):
     )
 
 
+def test_a_swapped_query_vector_breaks_the_metric_pins(recording):
+    manifest, recorded = recording
+    vectors = {name: array.copy() for name, array in recorded.items()}
+    first = VIDEO_METRICS["omni_video_audio"]["correct_at_1"][0]
+    other = next(
+        i for i, video in enumerate(GOLDEN_EXPECTED) if video != GOLDEN_EXPECTED[first]
+    )
+    vectors["omni_queries"][[first, other]] = vectors["omni_queries"][[other, first]]
+    captions = [clip for clip, _ in manifest["captions"]]
+    vectors["clap_captions"][[0, 5]] = vectors["clap_captions"][[5, 0]]
+    assert captions[0] != captions[5]
+
+    video = _metrics(
+        _video_rankings(manifest, vectors, "omni_video_audio"), GOLDEN_EXPECTED
+    )
+    audio = _metrics(_audio_rankings(manifest, vectors, "clap"), captions)
+
+    assert first not in video["correct_at_1"]
+    assert {k: v for k, v in audio.items() if k != "correct_at_1"} != (
+        AUDIO_METRICS["clap"]
+    )
+
+
 MUTATIONS = {
     "drop a chunk vector": lambda m, v: v.__setitem__(
         "omni_av_chunks", v["omni_av_chunks"][1:]
@@ -580,5 +606,164 @@ def test_served_search_returns_the_recorded_top_video_for_every_query(
 
 
 # Measured from the committed recording (see the module docstring).
-VIDEO_METRICS: dict = {}
-AUDIO_METRICS: dict = {}
+VIDEO_METRICS = {
+    "omni_video": {
+        "recall_at_1": 48,
+        "mrr": 0.5183,
+        "correct_at_1": [
+            1,
+            2,
+            4,
+            5,
+            6,
+            10,
+            16,
+            17,
+            18,
+            21,
+            22,
+            32,
+            33,
+            35,
+            36,
+            40,
+            41,
+            42,
+            45,
+            48,
+            49,
+            50,
+            53,
+            56,
+            58,
+            65,
+            66,
+            68,
+            73,
+            74,
+            76,
+            79,
+            80,
+            85,
+            86,
+            88,
+            93,
+            94,
+            96,
+            100,
+            102,
+            103,
+            107,
+            111,
+            112,
+            113,
+            117,
+            124,
+        ],
+    },
+    "omni_video_audio": {
+        "recall_at_1": 50,
+        "mrr": 0.5301,
+        "correct_at_1": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            10,
+            16,
+            17,
+            18,
+            21,
+            22,
+            32,
+            33,
+            36,
+            40,
+            41,
+            42,
+            45,
+            48,
+            49,
+            50,
+            53,
+            56,
+            58,
+            65,
+            66,
+            68,
+            73,
+            74,
+            76,
+            78,
+            79,
+            80,
+            85,
+            86,
+            88,
+            93,
+            96,
+            100,
+            102,
+            103,
+            107,
+            108,
+            111,
+            112,
+            113,
+            117,
+            121,
+            124,
+        ],
+    },
+    "xclip": {
+        "recall_at_1": 39,
+        "mrr": 0.4698,
+        "correct_at_1": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            10,
+            16,
+            18,
+            32,
+            33,
+            40,
+            41,
+            42,
+            45,
+            48,
+            49,
+            50,
+            56,
+            58,
+            61,
+            62,
+            63,
+            65,
+            66,
+            68,
+            71,
+            78,
+            79,
+            83,
+            85,
+            93,
+            96,
+            102,
+            113,
+            116,
+            117,
+            120,
+            124,
+        ],
+    },
+}
+AUDIO_METRICS = {
+    "clap": {"recall_at_1": 331, "recall_at_10": 796, "mrr": 0.4838},
+    "omni_audio": {"recall_at_1": 90, "recall_at_10": 448, "mrr": 0.2029},
+}
