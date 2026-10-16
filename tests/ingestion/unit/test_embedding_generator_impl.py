@@ -908,7 +908,7 @@ class TestEmbeddingGeneratorImpl:
         """
         from PIL import Image as PILImage
 
-        config = {**frame_based_config, "token_pool_factor": 3}
+        config = {**frame_based_config, "model_config": {"token_pool_factor": 3}}
         generator, client = self._make_remote_generator(
             config, mock_logger, mock_backend_client
         )
@@ -953,6 +953,49 @@ class TestEmbeddingGeneratorImpl:
         assert result is not None
         assert result.shape == (30, 320)
 
+    def test_shipped_colqwen_profiles_pool_with_their_configured_factor(
+        self, mock_logger, mock_backend_client, tmp_path
+    ):
+        """Every shipped profile that configures ``model_config.token_pool_factor``
+        pools on the remote frame path. The generator receives the profile dict
+        exactly as config.json stores it, so a reader looking anywhere but
+        ``model_config`` leaves the 30 tokens unpooled."""
+        import json
+
+        from PIL import Image as PILImage
+
+        repo_root = Path(__file__).resolve().parents[3]
+        profiles = json.loads((repo_root / "configs" / "config.json").read_text())[
+            "backend"
+        ]["profiles"]
+        pooled = {
+            name: profile
+            for name, profile in profiles.items()
+            if "token_pool_factor" in profile.get("model_config", {})
+        }
+        assert sorted(pooled) == [
+            "document_visual_colpali",
+            "image_colpali_mv",
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_mv_chunk_30s",
+        ]
+
+        frame_path = tmp_path / "frame.png"
+        PILImage.new("RGB", (8, 8), (10, 20, 30)).save(frame_path)
+        tokens = (
+            np.random.default_rng(0).standard_normal((1, 30, 320)).astype(np.float32)
+        )
+        shapes = {}
+        for name, profile in pooled.items():
+            generator, client = self._make_remote_generator(
+                dict(profile), mock_logger, mock_backend_client
+            )
+            with patch.object(
+                client, "process_images", return_value={"embeddings": tokens}
+            ):
+                shapes[name] = generator._generate_frame_embeddings(frame_path).shape
+        assert shapes == {name: (10, 320) for name in pooled}
+
     @patch("PIL.Image.fromarray")
     @patch("cv2.cvtColor")
     @patch("cv2.VideoCapture")
@@ -977,7 +1020,7 @@ class TestEmbeddingGeneratorImpl:
             "fps": 1.0,
             "embedding_type": "multi_vector",
             "model_loader": "colqwen",
-            "token_pool_factor": 3,
+            "model_config": {"token_pool_factor": 3},
         }
         generator, client = self._make_remote_generator(
             config, mock_logger, mock_backend_client
@@ -1024,7 +1067,7 @@ class TestEmbeddingGeneratorImpl:
             **frame_based_config,
             "embedding_type": "multi_vector",
             "model_loader": "xclip",
-            "token_pool_factor": 3,
+            "model_config": {"token_pool_factor": 3},
         }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
         generator.xclip_loader = Mock()

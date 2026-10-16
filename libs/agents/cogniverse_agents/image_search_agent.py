@@ -20,7 +20,6 @@ from cogniverse_agents.search.vespa_query import (
 )
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_core.common.models.model_loaders import get_or_load_model
 from cogniverse_core.query.encoders import QueryEncoderFactory
 
 logger = logging.getLogger(__name__)
@@ -67,9 +66,6 @@ class ImageSearchDeps(AgentDeps):
     """Dependencies for image search agent"""
 
     vespa_endpoint: str = Field("http://localhost:8080", description="Vespa endpoint")
-    colpali_model: str = Field(
-        "TomoroAI/tomoro-colqwen3-embed-4b", description="ColPali model name"
-    )
     encoder_config: Any = Field(
         None,
         description="Merged config (ConfigUtils) supplying backend.profiles and "
@@ -102,7 +98,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         Initialize Image Search Agent with typed dependencies.
 
         Args:
-            deps: Typed dependencies with tenant_id, vespa_endpoint, colpali_model
+            deps: Typed dependencies with tenant_id, vespa_endpoint, encoder_config
             port: A2A server port
 
         Raises:
@@ -138,15 +134,12 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         super().__init__(deps=deps, config=config, dspy_module=ImageSearchModule())
 
         self._vespa_endpoint = deps.vespa_endpoint
-        self._colpali_model_name = deps.colpali_model
         self._tenant_id = deps.tenant_id
         self._encoder_config = deps.encoder_config
         self._image_profile = deps.image_profile
         self._deployed_image_schema = deps.deployed_image_schema
 
-        # Lazy load models
-        self._colpali_model = None
-        self._colpali_processor = None
+        # The encoder resolves lazily through QueryEncoderFactory
         self._query_encoder = None
 
         logger.info(f"Initialized ImageSearchAgent for tenant: {deps.tenant_id}")
@@ -159,30 +152,6 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 
         backend = get_backend()
         return backend.schema_exists("image_colpali_mv", tenant_id=self._tenant_id)
-
-    @property
-    def colpali_model(self):
-        """Lazy load ColPali model"""
-        if self._colpali_model is None:
-            logger.info(f"Loading ColPali model: {self._colpali_model_name}")
-            config = {
-                "colpali_model": self._colpali_model_name,
-                "embedding_type": "multi_vector",
-                "model_loader": "colpali",
-            }
-            self._colpali_model, self._colpali_processor = get_or_load_model(
-                self._colpali_model_name, config, logger
-            )
-            logger.info("✅ ColPali model loaded")
-        return self._colpali_model
-
-    @property
-    def colpali_processor(self):
-        """Get ColPali processor"""
-        if self._colpali_processor is None:
-            # Trigger model loading
-            _ = self.colpali_model
-        return self._colpali_processor
 
     @property
     def query_encoder(self):

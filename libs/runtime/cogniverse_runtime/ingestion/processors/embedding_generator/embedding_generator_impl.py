@@ -59,7 +59,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         # Storage mode determines if we create one doc per segment or one doc total
         self.storage_mode = self.profile_config.get("storage_mode", "multi_doc")
 
-        self._token_pool_factor = self.profile_config.get("token_pool_factor")
+        self._token_pool_factor = (self.profile_config.get("model_config") or {}).get(
+            "token_pool_factor"
+        )
 
         # Model and processor
         self.model = None

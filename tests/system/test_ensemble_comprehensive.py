@@ -12,7 +12,6 @@ Uses REAL profiles from the system, not artificial test profiles.
 """
 
 import asyncio
-import json
 import logging
 import time
 from pathlib import Path
@@ -42,9 +41,6 @@ REAL_PROFILES = {
 
 
 def test_visual_profiles_use_the_deployed_encoder_contract():
-    profile_file = Path("configs/profiles/colqwen_chunks_profile.json")
-    standalone_profile = json.loads(profile_file.read_text())
-
     assert (
         FRAME_PROFILE.embedding_model,
         FRAME_PROFILE.schema_config["embedding_dim"],
@@ -63,10 +59,17 @@ def test_visual_profiles_use_the_deployed_encoder_contract():
     for profile in REAL_PROFILES.values():
         schema = load_raw_schema_json(profile.schema_name)
         assert schema["name"] == profile.schema_name
-    assert standalone_profile["embedding_model"] == (
-        "TomoroAI/tomoro-colqwen3-embed-4b"
+    assert (CHUNK_PROFILE.profile_name, FRAME_PROFILE.profile_name) == (
+        "video_colqwen_omni_mv_chunk_30s",
+        "video_colpali_smol500_mv_frame",
     )
-    assert standalone_profile["model_config"]["embedding_dim"] == 320
+    assert {
+        profile.profile_name: profile.extra_config["inference_services"]["embedding"]
+        for profile in (FRAME_PROFILE, CHUNK_PROFILE)
+    } == {
+        "video_colqwen_omni_mv_chunk_30s": "vllm_colpali",
+        "video_colpali_smol500_mv_frame": "vllm_colpali",
+    }
 
 
 @pytest.fixture(scope="module")

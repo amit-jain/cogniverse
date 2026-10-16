@@ -733,8 +733,8 @@
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
         "schema_config": {
-          "schema_name": "video_colpali",
-          "model_name": "ColPali",
+          "schema_name": "video_colpali_smol500_mv_frame",
+          "model_name": "ColQwen3",
           "num_patches": 1024,
           "embedding_dim": 320,
           "binary_dim": 40
@@ -784,8 +784,8 @@
           "embedding": "vllm_colpali"
         },
         "schema_config": {
-          "schema_name": "image_colpali",
-          "model_name": "ColPali",
+          "schema_name": "image_colpali_mv",
+          "model_name": "ColQwen3",
           "num_patches": 1024,
           "embedding_dim": 320,
           "binary_dim": 40
