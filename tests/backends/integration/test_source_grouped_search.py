@@ -490,6 +490,7 @@ class TestSourceIdentityAttribute:
                 )
         assert identities == {
             "audio_content": "audio_id",
+            "audio_embeddinggemma2": "audio_id",
             "code_lateon_mv": "code_id",
             "document_text": "document_id",
             "document_visual": "document_id",
@@ -497,6 +498,7 @@ class TestSourceIdentityAttribute:
             "lateon_mv": "text_id",
             "video_colpali_smol500_mv_frame": "video_id",
             "video_colqwen_omni_mv_chunk_30s": "video_id",
+            "video_embeddinggemma2_sv_chunk_6s": "video_id",
             "video_xclip_sv_chunk_6s": "video_id",
             "wiki_pages": "doc_id",
         }

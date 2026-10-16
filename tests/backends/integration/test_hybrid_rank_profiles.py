@@ -141,6 +141,7 @@ FUSED_HYBRIDS = [
     ("agent_memories", "hybrid"),
     ("audio_content", "hybrid_semantic_bm25"),
     ("audio_content", "hybrid_acoustic_bm25"),
+    ("audio_embeddinggemma2", "hybrid_acoustic_bm25"),
     ("code_lateon_mv", "hybrid_float_bm25"),
     ("document_text", "hybrid_float_bm25"),
     ("document_text", "hybrid_binary_bm25"),
@@ -160,6 +161,8 @@ FUSED_HYBRIDS = [
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_binary_bm25"),
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_float_bm25_no_description"),
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_binary_bm25_no_description"),
+    ("video_embeddinggemma2_sv_chunk_6s", "hybrid_float_bm25"),
+    ("video_embeddinggemma2_sv_chunk_6s", "hybrid_binary_bm25"),
     ("video_xclip_sv_chunk_6s", "hybrid_float_bm25"),
     ("video_xclip_sv_chunk_6s", "hybrid_binary_bm25"),
 ]
@@ -172,6 +175,8 @@ TEXT_FIRST_HYBRIDS = [
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_bm25_float"),
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_bm25_binary_no_description"),
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_bm25_float_no_description"),
+    ("video_embeddinggemma2_sv_chunk_6s", "hybrid_bm25_binary"),
+    ("video_embeddinggemma2_sv_chunk_6s", "hybrid_bm25_float"),
     ("video_xclip_sv_chunk_6s", "hybrid_bm25_binary"),
     ("video_xclip_sv_chunk_6s", "hybrid_bm25_float"),
 ]
