@@ -10,7 +10,10 @@ keeps firing while the blocking call is in flight — i.e. it was offloaded.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -903,7 +906,16 @@ async def test_audio_search_backend_resolution_offloaded(monkeypatch):
     from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
     backend = _media_backend(monkeypatch)
+    shipped_backend = json.loads(Path("configs/config.json").read_text())["backend"]
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.get_config",
+        lambda **kwargs: {"backend": shipped_backend},
+    )
     d = object.__new__(AgentDispatcher)
+    d._config_manager = MagicMock()
+    d._config_manager.get_system_config.return_value = SimpleNamespace(
+        inference_service_urls={}
+    )
     result = {}
 
     async def _run():
