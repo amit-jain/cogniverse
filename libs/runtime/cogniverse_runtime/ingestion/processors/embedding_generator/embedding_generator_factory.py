@@ -139,7 +139,7 @@ def create_embedding_generator(
             profile_config=profile_config,
             service_urls=service_urls,
             profile_service_key="acoustic_embedding",
-            target_field="clap_endpoint_url",
+            target_field="acoustic_endpoint_url",
         )
         loader = profile_config.get("model_loader", "")
         service_name = (profile_config.get("inference_services") or {}).get("embedding")

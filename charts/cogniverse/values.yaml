@@ -1215,11 +1215,25 @@ inference:
       type: ClusterIP
       port: 8000
       nodePort: 29003
+    # deploy/vllm_audio: the device's pinned vLLM image with the audio
+    # packages installed, which input_audio parts need.
     image:
-      repository: vllm/vllm-openai-cpu
-      tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
+      repository: cogniverse/vllm-audio-cpu
+      tag: "0.1.0"
       pullPolicy: IfNotPresent
-    imagesByDevice: {}
+    imagesByDevice:
+      cpu:
+        repository: cogniverse/vllm-audio-cpu
+        tag: "0.1.0"
+        pullPolicy: IfNotPresent
+      cuda:
+        repository: cogniverse/vllm-audio-cuda
+        tag: "0.1.0"
+        pullPolicy: IfNotPresent
+      rocm:
+        repository: cogniverse/vllm-audio-rocm
+        tag: "0.1.0"
+        pullPolicy: IfNotPresent
     dtype: auto
     extraArgs:
       - "--runner"
@@ -1789,11 +1803,13 @@ config:
   # environment values file, e.g. values.k3s.yaml for the local stack).
   tenants: []
 
-  # Profile that backend.default_profiles.video and active_video_profile
-  # select. Empty selects no video profile. The CPU defaults enable no visual
-  # embedder, so the device overlays that do make the selection.
+  # Profiles that backend.default_profiles selects per type when a search
+  # names none; video also sets active_video_profile. Empty selects no video
+  # profile. The CPU defaults enable no visual embedder, so the device
+  # overlays that do make the video selection.
   defaultProfiles:
     video: ""
+    audio: audio_clap_semantic
 
   # Model configuration
   models:

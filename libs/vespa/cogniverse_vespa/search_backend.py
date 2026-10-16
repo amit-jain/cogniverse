@@ -1348,47 +1348,15 @@ class VespaSearchBackend(SearchBackend):
                 f"{profile_name}"
             )
         else:
-            # 2. Auto-select based on type
-            # Get all profiles for this type
-            type_profiles = {
-                name: config
-                for name, config in profiles_snapshot.items()
-                if config.get("type") == content_type
-            }
+            from cogniverse_foundation.config.utils import select_type_profile
 
-            if len(type_profiles) == 1:
-                # Only one profile for this type - auto-select
-                profile_name = list(type_profiles.keys())[0]
-                logger.debug(
-                    f"[{correlation_id}] Auto-selected single profile for type '{content_type}': {profile_name}"
-                )
-            elif len(type_profiles) > 1:
-                # 3. Check default_profiles
-                default_config = default_profiles_snapshot.get(content_type, {})
-                profile_name = default_config.get("profile")
-
-                if not profile_name:
-                    raise ValueError(
-                        f"Multiple profiles available for type '{content_type}' but no default configured. "
-                        f"Available profiles: {list(type_profiles.keys())}. "
-                        f"Either specify 'profile' in query_dict or configure backend.default_profiles.{content_type}.profile"
-                    )
-
-                if profile_name not in type_profiles:
-                    raise ValueError(
-                        f"Default profile '{profile_name}' for type '{content_type}' not found in available profiles: "
-                        f"{list(type_profiles.keys())}"
-                    )
-
-                logger.debug(
-                    f"[{correlation_id}] Using default profile for type '{content_type}': {profile_name}"
-                )
-            else:
-                # 4. No profiles for this type
-                raise ValueError(
-                    f"No profiles found for type '{content_type}'. "
-                    f"Available types: {set(p.get('type') for p in profiles_snapshot.values())}"
-                )
+            profile_name = select_type_profile(
+                profiles_snapshot, default_profiles_snapshot, content_type
+            )
+            logger.debug(
+                f"[{correlation_id}] Selected profile for type '{content_type}': "
+                f"{profile_name}"
+            )
 
         # Get profile config from the same snapshot used above
         profile_config = profiles_snapshot[profile_name]

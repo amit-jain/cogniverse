@@ -557,10 +557,10 @@ def test_every_vllm_image_in_every_values_file_runs_the_pinned_build():
     )
 
     assert images == {
-        "values.yaml": [("vllm/vllm-openai-cpu", VLLM_IMAGE_TAG)] * 6,
+        "values.yaml": [("vllm/vllm-openai-cpu", VLLM_IMAGE_TAG)] * 5,
         "values.cpu.yaml": [],
-        "values.cuda.yaml": [("vllm/vllm-openai", VLLM_IMAGE_TAG)] * 2,
-        "values.rocm.yaml": [("vllm/vllm-openai-rocm", VLLM_IMAGE_TAG)] * 6,
+        "values.cuda.yaml": [("vllm/vllm-openai", VLLM_IMAGE_TAG)],
+        "values.rocm.yaml": [("vllm/vllm-openai-rocm", VLLM_IMAGE_TAG)] * 5,
     }
     assert audio_bases == [
         ("CPU_BASE", f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}"),
@@ -846,7 +846,9 @@ def test_base_values_select_no_video_profile():
     there, so they select no video profile rather than one nothing serves."""
     config = _chart_config(_render())
 
-    assert config["backend"]["default_profiles"] == {}
+    assert config["backend"]["default_profiles"] == {
+        "audio": {"profile": "audio_clap_semantic"}
+    }
     assert "active_video_profile" not in config
     assert resolve_default_profile(config) is None
 
@@ -860,7 +862,8 @@ def test_rocm_overlay_selects_the_shipped_default_video_profile():
         "video_colpali_smol500_mv_frame"
     )
     assert config["backend"]["default_profiles"] == {
-        "video": {"profile": "video_colpali_smol500_mv_frame"}
+        "video": {"profile": "video_colpali_smol500_mv_frame"},
+        "audio": {"profile": "audio_clap_semantic"},
     }
     assert config["active_video_profile"] == "video_colpali_smol500_mv_frame"
     assert resolve_default_profile(config) == "video_colpali_smol500_mv_frame"
@@ -996,7 +999,9 @@ def test_cpu_composition_omits_visual_ingestion(values: tuple[str, ...]):
     docs = _render(*_PROD_SECRETS, values=values)
     config = _chart_config(docs)
 
-    assert config["backend"]["default_profiles"] == {}
+    assert config["backend"]["default_profiles"] == {
+        "audio": {"profile": "audio_clap_semantic"}
+    }
     assert "active_video_profile" not in config
     assert resolve_default_profile(config) is None
     assert "vllm_colpali" not in _service_urls(docs)
@@ -2491,13 +2496,14 @@ def test_shipped_profiles_render_exactly_these_inference_containers():
 
 
 def test_rocm_omni_embed_serves_the_pinned_model_at_one_frame_per_second():
-    """The ROCm overlay serves EmbeddingGemma 2 on the GPU from the pinned
-    nightly, sampling video at 1 fps, with memory reserved as it is limited."""
+    """The ROCm overlay serves EmbeddingGemma 2 on the GPU from the audio image
+    built on the pinned nightly, sampling video at 1 fps, with memory reserved
+    as it is limited."""
     docs = _render(values="values.rocm.yaml")
     deployment = _inference_deployments(docs)["vllm_omni_embed"]
     container = deployment["spec"]["template"]["spec"]["containers"][0]
 
-    assert container["image"] == f"vllm/vllm-openai-rocm:{VLLM_IMAGE_TAG}"
+    assert container["image"] == "cogniverse/vllm-audio-rocm:0.1.0"
     assert container["args"] == [
         "serve",
         "google/embeddinggemma-2",

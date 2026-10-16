@@ -586,6 +586,43 @@ def resolve_default_profile(config: Any, modality: str = "video") -> Optional[st
     return None
 
 
+def select_type_profile(
+    profiles: Dict[str, Any], default_profiles: Dict[str, Any], content_type: str
+) -> str:
+    """The profile a request of ``content_type`` that names none searches.
+
+    The type's only profile, else ``default_profiles.<type>.profile``.
+
+    Raises:
+        ValueError: no profile has the type, several do and no default picks
+            one, or the default is not a profile of the type.
+    """
+    type_profiles = sorted(
+        name for name, config in profiles.items() if config.get("type") == content_type
+    )
+    if len(type_profiles) == 1:
+        return type_profiles[0]
+    if not type_profiles:
+        available = sorted({config.get("type") for config in profiles.values()})
+        raise ValueError(
+            f"No profiles found for type '{content_type}'. Available types: {available}"
+        )
+    profile_name = (default_profiles.get(content_type) or {}).get("profile")
+    if not profile_name:
+        raise ValueError(
+            f"Multiple profiles available for type '{content_type}' but no default "
+            f"configured. Available profiles: {type_profiles}. Either specify "
+            f"'profile' in query_dict or configure "
+            f"backend.default_profiles.{content_type}.profile"
+        )
+    if profile_name not in type_profiles:
+        raise ValueError(
+            f"Default profile '{profile_name}' for type '{content_type}' not found "
+            f"in available profiles: {type_profiles}"
+        )
+    return profile_name
+
+
 def get_config_value(
     key: str,
     default: Any = None,

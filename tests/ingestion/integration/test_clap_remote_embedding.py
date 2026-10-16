@@ -208,7 +208,7 @@ def _audio_generator(clap_url, tmp_path):
     generator.logger = logging.getLogger("test_clap_contract")
     generator.profile_config = {
         "embedding_model": "laion/clap-htsat-unfused",
-        "clap_endpoint_url": clap_url,
+        "acoustic_endpoint_url": clap_url,
     }
     generator.colbert_model = _UnreachedEncoder()
     generator.model_name = "lightonai/LateOn"

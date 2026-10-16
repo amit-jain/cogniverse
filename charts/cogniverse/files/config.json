@@ -895,6 +895,56 @@
         "semantic_model": "lightonai/LateOn",
         "schema_config": {"schema_name": "audio_content", "embedding_dim": 128, "binary_dim": 16}
       },
+      "audio_embeddinggemma2": {
+        "type": "audio",
+        "description": "EmbeddingGemma 2 acoustic embeddings (768-dim), one document per audio window of at most 10 s, in one space with text so a text query retrieves sounds directly. Served by the vllm_omni_embed service.",
+        "schema_name": "audio_embeddinggemma2",
+        "result_granularity": "source",
+        "embedding_model": "google/embeddinggemma-2",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": true,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "AudioFileSegmentationStrategy",
+            "params": {
+              "max_files": 10000
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "AudioEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "single_vector",
+        "model_loader": "embeddinggemma2",
+        "modalities": [
+          "audio"
+        ],
+        "inference_services": {
+          "embedding": "vllm_omni_embed",
+          "transcription": "vllm_asr",
+          "acoustic_embedding": "vllm_omni_embed"
+        },
+        "schema_config": {
+          "schema_name": "audio_embeddinggemma2",
+          "model_name": "EmbeddingGemma-2",
+          "embedding_dim": 768
+        }
+      },
       "document_text_semantic": {
         "type": "document",
         "description": "Document text extraction with LateOn multi-vector embeddings (128-dim per token). Supports PDF, TXT, and Markdown files.",
@@ -1288,9 +1338,16 @@
       }
     },
     "default_profiles": {
-{{- with .Values.config.defaultProfiles.video }}
-      "video": {
-        "profile": {{ . | quote }}
+{{- $selected := list }}
+{{- range $modality := list "video" "audio" }}
+{{- with index $.Values.config.defaultProfiles $modality }}
+{{- $selected = append $selected (dict "modality" $modality "profile" .) }}
+{{- end }}
+{{- end }}
+{{- range $i, $entry := $selected }}
+{{- if $i }},{{ end }}
+      {{ $entry.modality | quote }}: {
+        "profile": {{ $entry.profile | quote }}
       }
 {{- end }}
     }

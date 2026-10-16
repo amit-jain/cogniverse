@@ -1,0 +1,235 @@
+{
+  "name": "audio_embeddinggemma2",
+  "document": {
+    "name": "audio_embeddinggemma2",
+    "fields": [
+      {
+        "name": "audio_id",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "audio_title",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "index"
+        ],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "source_url",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "creation_timestamp",
+        "type": "long",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "audio_transcript",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "index"
+        ],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "audio_path",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "audio_duration",
+        "type": "double",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "audio_language",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "chunk_index",
+        "type": "int",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "chunk_count",
+        "type": "int",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "chunk_start",
+        "type": "int",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "chunk_end",
+        "type": "int",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "acoustic_embedding",
+        "type": "tensor<float>(v[768])",
+        "indexing": [
+          "attribute",
+          "index"
+        ],
+        "index": {
+          "hnsw": {
+            "max-links-per-node": 16,
+            "neighbors-to-explore-at-insert": 200
+          }
+        },
+        "attribute": [
+          "distance-metric: angular"
+        ]
+      },
+      {
+        "name": "entity_ids",
+        "type": "array<string>",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "relation_ids",
+        "type": "array<string>",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "claim_ids",
+        "type": "array<string>",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": [
+        "audio_title",
+        "audio_transcript"
+      ]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "default",
+      "inputs": [
+        {
+          "name": "query(acoustic_query)",
+          "type": "tensor<float>(v[768])"
+        }
+      ],
+      "first_phase": "closeness(field, acoustic_embedding)",
+      "timeout": 2.0
+    },
+    {
+      "name": "transcript_search",
+      "first_phase": "bm25(audio_title) + bm25(audio_transcript)",
+      "timeout": 2.0
+    },
+    {
+      "name": "acoustic_similarity",
+      "inputs": [
+        {
+          "name": "query(acoustic_query)",
+          "type": "tensor<float>(v[768])"
+        }
+      ],
+      "first_phase": "closeness(field, acoustic_embedding)",
+      "timeout": 2.0
+    },
+    {
+      "name": "hybrid_acoustic_bm25",
+      "inputs": [
+        {
+          "name": "query(acoustic_query)",
+          "type": "tensor<float>(v[768])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "acoustic_score",
+          "expression": "closeness(field, acoustic_embedding)"
+        },
+        {
+          "name": "text_score",
+          "expression": "nativeRank(audio_title, audio_transcript)"
+        }
+      ],
+      "first_phase": "acoustic_score + text_score",
+      "timeout": 2.0
+    }
+  ],
+  "document_mapping": {
+    "id": "audio_id",
+    "title": "audio_title",
+    "text_content": "audio_transcript",
+    "content_path": "audio_path",
+    "created_at": "creation_timestamp",
+    "created_at_format": "epoch",
+    "embeddings": {
+      "acoustic_embedding": "acoustic_embedding"
+    }
+  }
+}

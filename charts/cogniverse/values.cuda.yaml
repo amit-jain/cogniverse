@@ -52,11 +52,6 @@ inference:
     enabled: true
     device: cuda
     gpuCount: 1
-    imagesByDevice:
-      cuda:
-        repository: vllm/vllm-openai
-        tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
-        pullPolicy: IfNotPresent
     resources:
       limits:
         cpu: "4"

@@ -1201,6 +1201,45 @@ class TestDeviceImageBuilds:
             "inference.vllm_asr.imagesByDevice.rocm.tag": DEV_TAGS["vllm_audio"],
         }
 
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_transcription_and_omni_embedding_share_one_audio_image_build(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        _completed(mock_run)
+        root = _with_vllm_asr(
+            _make_project_root(tmp_path), "rocm", "cogniverse/vllm-audio-rocm"
+        )
+        chart_dir = root / "charts" / "cogniverse"
+        values = yaml.safe_load((chart_dir / "values.yaml").read_text())
+        values["inference"]["vllm_omni_embed"] = {
+            "enabled": True,
+            "device": "rocm",
+            "image": {"repository": "cogniverse/vllm-audio-rocm", "tag": "0.1.0"},
+        }
+        (chart_dir / "values.yaml").write_text(yaml.safe_dump(values))
+
+        built = build_images(root, torch_backend="cpu", versions=DEV_VERSIONS)
+
+        audio_tag = f"cogniverse/vllm-audio-rocm:{DEV_TAGS['vllm_audio']}"
+        assert built == [
+            f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}",
+            f"cogniverse/web:{DEV_TAGS['web']}",
+            f"cogniverse/gliner:{DEV_TAGS['gliner']}",
+            audio_tag,
+        ]
+        assert [
+            call[0][0][-2] for call in mock_run.call_args_list if "build" in call[0][0]
+        ].count(audio_tag) == 1
+        assert dev_image_set_values(
+            root, torch_backend="cpu", versions=DEV_VERSIONS
+        ) == {
+            "runtime.imagesByBackend.cpu.tag": DEV_TAGS["runtime"],
+            "web.image.tag": DEV_TAGS["web"],
+            "inference.gliner.image.tag": DEV_TAGS["gliner"],
+            "inference.vllm_asr.imagesByDevice.rocm.tag": DEV_TAGS["vllm_audio"],
+            "inference.vllm_omni_embed.imagesByDevice.rocm.tag": DEV_TAGS["vllm_audio"],
+        }
+
     def test_another_devices_audio_image_is_refused(self, tmp_path: Path) -> None:
         from cogniverse_cli.images import device_image_services
 

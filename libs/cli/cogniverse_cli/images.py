@@ -60,20 +60,23 @@ LOCAL_IMAGE_BUILDS = {
     "gliner": (GLINER_REPO, "deploy/gliner/Dockerfile", "."),
     **SIDECAR_BUILDS,
 }
-# Whisper runs on vLLM, but from an image derived from the device's vLLM image
-# with the audio packages installed, so its pod starts without network access.
-# One repository per device, keyed by inference service name; the service's
-# ``device`` picks both the repository and the upstream image it derives from.
+# Whisper and EmbeddingGemma 2 run on vLLM, but from an image derived from the
+# device's vLLM image with the audio packages installed, so their pods decode
+# audio and start without network access. One repository per device, keyed by
+# inference service name; the service's ``device`` picks both the repository
+# and the upstream image it derives from. Services sharing a tag build it once.
+_VLLM_AUDIO_BUILD = (
+    {
+        "cpu": "cogniverse/vllm-audio-cpu",
+        "cuda": "cogniverse/vllm-audio-cuda",
+        "rocm": "cogniverse/vllm-audio-rocm",
+    },
+    "deploy/vllm_audio/Dockerfile",
+    ".",
+)
 DEVICE_IMAGE_BUILDS = {
-    "vllm_asr": (
-        {
-            "cpu": "cogniverse/vllm-audio-cpu",
-            "cuda": "cogniverse/vllm-audio-cuda",
-            "rocm": "cogniverse/vllm-audio-rocm",
-        },
-        "deploy/vllm_audio/Dockerfile",
-        ".",
-    ),
+    "vllm_asr": _VLLM_AUDIO_BUILD,
+    "vllm_omni_embed": _VLLM_AUDIO_BUILD,
 }
 # colpali and the DenseOn dense embedder are served by stock vLLM, not
 # built here:
@@ -711,7 +714,8 @@ def build_images(
     passing the overlays helm receives is what brings an enabled sidecar into
     the build; omitting them builds the chart-default set only. The PyLate
     image is shared by colbert_pylate and code_colbert_pylate and builds once.
-    Whisper builds the ``DEVICE_IMAGE_BUILDS`` image for its device. ColPali
+    Whisper and EmbeddingGemma 2 build the ``DEVICE_IMAGE_BUILDS`` image for
+    their device. ColPali
     and DenseOn are served by stock vLLM and pulled directly.
 
     Raises when those values enable a first-party (``cogniverse/*``) service

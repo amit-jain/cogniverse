@@ -317,20 +317,22 @@ class TestAudioAnalysisAgent:
 
         mock_post.assert_not_called()
 
-    def test_clap_headers_reject_non_bearer_credentials(self):
-        with pytest.raises(ValueError, match="clap_headers.*Authorization"):
+    def test_acoustic_headers_reject_non_bearer_credentials(self):
+        with pytest.raises(ValueError, match="acoustic_headers.*Authorization"):
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
-                clap_endpoint="https://clap.modal.run",
-                clap_headers={"Modal-Key": "wrong-auth-scheme"},
+                acoustic_endpoint="https://clap.modal.run",
+                acoustic_headers={"Modal-Key": "wrong-auth-scheme"},
                 config_manager=_in_memory_config_manager(),
             )
 
-    def test_clap_headers_require_endpoint(self):
-        with pytest.raises(ValueError, match="clap_headers requires clap_endpoint"):
+    def test_acoustic_headers_require_endpoint(self):
+        with pytest.raises(
+            ValueError, match="acoustic_headers requires acoustic_endpoint"
+        ):
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
-                clap_headers={"Authorization": "Bearer modal-clap-secret"},
+                acoustic_headers={"Authorization": "Bearer modal-clap-secret"},
                 config_manager=_in_memory_config_manager(),
             )
 
@@ -341,7 +343,7 @@ class TestAudioAnalysisAgent:
         monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", initial_token)
         deps = AudioAnalysisDeps(
             tenant_id="test_tenant",
-            clap_endpoint="https://clap.modal.run",
+            acoustic_endpoint="https://clap.modal.run",
             config_manager=_in_memory_config_manager(),
         )
         monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY")
@@ -352,7 +354,7 @@ class TestAudioAnalysisAgent:
         generator = agent.embedding_generator
 
         assert revalidated is deps
-        assert deps.clap_headers == {}
+        assert deps.acoustic_headers == {}
         assert generator._clap_endpoint_url == "https://clap.modal.run"
         assert generator._clap_headers == {"Authorization": f"Bearer {initial_token}"}
         with pytest.raises(TypeError):
@@ -366,11 +368,11 @@ class TestAudioAnalysisAgent:
     def test_modal_clap_endpoint_rejects_dependency_headers(self, monkeypatch, headers):
         monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
 
-        with pytest.raises(ValueError, match="clap_headers.*Modal"):
+        with pytest.raises(ValueError, match="acoustic_headers.*Modal"):
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
-                clap_endpoint="https://clap.modal.run",
-                clap_headers=headers,
+                acoustic_endpoint="https://clap.modal.run",
+                acoustic_headers=headers,
                 config_manager=_in_memory_config_manager(),
             )
 
@@ -383,7 +385,7 @@ class TestAudioAnalysisAgent:
         ):
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
-                clap_endpoint="https://clap.modal.run",
+                acoustic_endpoint="https://clap.modal.run",
                 config_manager=_in_memory_config_manager(),
             )
 
@@ -499,6 +501,7 @@ class TestAudioAnalysisAgent:
             {
                 "query": "AI podcast",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "transcript_search",
                 "tenant_id": "test_tenant",
                 "top_k": 20,
@@ -524,6 +527,7 @@ class TestAudioAnalysisAgent:
             {
                 "query": "machine learning",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "phased_semantic",
                 "tenant_id": "test_tenant",
                 "top_k": 10,
@@ -554,6 +558,7 @@ class TestAudioAnalysisAgent:
             {
                 "query": "what was said about AI",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "phased_semantic",
                 "tenant_id": "test_tenant",
                 "top_k": 7,
@@ -686,6 +691,7 @@ class TestAudioAnalysisAgent:
             {
                 "query": "machine learning",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "phased_semantic",
                 "tenant_id": "test_tenant",
                 "top_k": 10,
@@ -1527,6 +1533,9 @@ class TestAudioSearchEventLoop:
         agent._tenant_id = "acme:acme"
         agent._vespa_endpoint = "http://vespa:8080"
         agent._deployed_audio_schema = None
+        agent._audio_profile = "audio_clap_semantic"
+        agent._audio_schema = "audio_content"
+        agent._acoustic_service = "clap_embed"
         agent._backend_type = "vespa"
         agent._backend_config = {}
         agent.bind_config_manager(_in_memory_config_manager())
@@ -1546,6 +1555,7 @@ class TestAudioSearchEventLoop:
             assert query_dict == {
                 "query": "q",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "transcript_search",
                 "tenant_id": "acme:acme",
                 "top_k": 5,
@@ -1630,6 +1640,9 @@ def _bare_acoustic_agent(blocking_embed):
     agent._tenant_id = "test:test"
     agent._vespa_endpoint = "http://fake-vespa:8080"
     agent._deployed_audio_schema = None
+    agent._audio_profile = "audio_clap_semantic"
+    agent._audio_schema = "audio_content"
+    agent._acoustic_service = "clap_embed"
     agent._embedding_generator = SimpleNamespace(
         generate_acoustic_text_embedding=blocking_embed
     )
@@ -1648,6 +1661,7 @@ async def test_search_hybrid_offloads_blocking_backend_search(monkeypatch):
         assert query_dict == {
             "query": "q",
             "type": "audio",
+            "profile": "audio_clap_semantic",
             "strategy": "hybrid_semantic_bm25",
             "tenant_id": "test:test",
             "top_k": 5,

@@ -247,7 +247,7 @@ def fed_documents(vespa_with_schemas, audio_wav_files, pylate_server, clap_url):
                 "schema_name": "audio_content",
                 "inference_services": {"embedding": "colbert_pylate"},
                 "remote_inference_url": pylate_server,
-                "clap_endpoint_url": clap_url,
+                "acoustic_endpoint_url": clap_url,
             },
             backend_client=IngestionBackendAdapter(audio_client),
         )

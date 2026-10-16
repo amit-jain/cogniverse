@@ -206,7 +206,7 @@ def audio_schema(shared_vespa, pylate_server, clap_url, audio_wav_files):
                 "schema_name": BASE_SCHEMA,
                 "inference_services": {"embedding": EMBEDDING_SERVICE},
                 "remote_inference_url": pylate_server,
-                "clap_endpoint_url": clap_url,
+                "acoustic_endpoint_url": clap_url,
             },
             backend_client=IngestionBackendAdapter(client),
         )

@@ -248,6 +248,26 @@ def audio_windows(
     return windows
 
 
+def media_duration_seconds(media_path: Path) -> float:
+    """A media file's duration as ffprobe reports it."""
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+            str(media_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return float(result.stdout.strip())
+
+
 def _has_audio_stream(media_path: Path) -> bool:
     result = subprocess.run(
         [
@@ -982,6 +1002,15 @@ class _EmbeddingGemma2Remote:
             ],
             timeout=SEGMENT_EMBED_TIMEOUT_S,
         )
+
+    def embed_audio_clip(self, audio_path: Path) -> np.ndarray:
+        """A whole clip as the normalized mean of its window vectors."""
+        vectors = [
+            self.embed_audio_window(audio_path, start, end)
+            for start, end in audio_windows(media_duration_seconds(audio_path))
+        ]
+        mean = np.mean(vectors, axis=0)
+        return (mean / np.linalg.norm(mean)).astype(np.float32)
 
     def embed_text(self, text: str) -> np.ndarray:
         return self.client.embed_messages(
