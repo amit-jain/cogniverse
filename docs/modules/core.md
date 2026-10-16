@@ -2211,7 +2211,9 @@ video-segment request, so the remote service can reject requests for any other
 checkpoint instead of silently selecting a default. Remote loader cache keys
 include a one-way fingerprint of the exact credential snapshot used to
 construct the client. A custom endpoint key or rotated Modal environment key
-therefore cannot reuse a client authenticated with another key.
+therefore cannot reuse a client authenticated with another key. A config's
+`modalities` are part of the key too, so the EmbeddingGemma 2 audio and video
+profiles on one service keep separate wrappers.
 
 **ColQwen3/Tomoro is remote-only.** `TomoroAI/tomoro-colqwen3-embed-4b`
 (architecture `qwen3_vl`) has no in-process loader: the pinned

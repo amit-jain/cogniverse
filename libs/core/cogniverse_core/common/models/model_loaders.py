@@ -1792,6 +1792,9 @@ def get_or_load_model(
         cache_key = (
             f"{model_name}@{config['remote_inference_url']}|{credential_fingerprint}"
         )
+    # Profiles sharing a model and service still differ in what they send.
+    if config.get("modalities"):
+        cache_key += f"|{','.join(sorted(config['modalities']))}"
 
     def _cached_entry():
         """Return the valid cached pair, evicting invalid entries. Caller

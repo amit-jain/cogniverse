@@ -27,6 +27,7 @@ from cogniverse_core.common.models.model_loaders import (
     RemoteInferenceClient,
     _extract_audio_wav_b64,
     audio_windows,
+    get_or_load_model,
 )
 from cogniverse_foundation.config.inference_service import (
     InferenceServiceUnavailableError,
@@ -198,6 +199,39 @@ def test_a_frames_only_profile_sends_no_audio(tmp_path):
     assert [part["type"] for part in body["messages"][0]["content"]] == [
         "video_url",
     ]
+
+
+def test_cached_profiles_on_one_service_send_their_own_modalities(tmp_path):
+    # The audio profile and the video+audio profile share the model and the
+    # service URL; whichever loads first must not decide what the other sends.
+    video = _tone_video(tmp_path / "tone.mp4", 2.0)
+
+    def load(modalities: list[str]):
+        return get_or_load_model(
+            "google/embeddinggemma-2",
+            {
+                "model_loader": "embeddinggemma2",
+                "remote_inference_url": server.url,
+                "modalities": modalities,
+            },
+        )[0]
+
+    with _OmniServer(lambda body: _ok(_vector(1.0))) as server:
+        audio_only = load(["audio"])
+        video_and_audio = load(["video", "audio"])
+        video_and_audio.process_video_segment(video, 0.0, 2.0)
+        audio_only.process_video_segment(video, 0.0, 2.0)
+        reordered = load(["audio", "video"])
+
+    assert [
+        [part["type"] for part in body["messages"][0]["content"]]
+        for body in server.bodies
+    ] == [["video_url", "input_audio"], ["input_audio"]]
+    assert (audio_only.modalities, video_and_audio.modalities) == (
+        ("audio",),
+        ("video", "audio"),
+    )
+    assert reordered is video_and_audio
 
 
 def test_query_text_carries_the_query_prompt():
