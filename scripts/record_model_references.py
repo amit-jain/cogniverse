@@ -19,6 +19,19 @@ revision, on CPU:
     docker run --rm -u "$(id -u)" -v "$PWD:/repo" -w /repo \
         cogniverse/face-embed:<tag> python scripts/record_model_references.py face_embed
 
+- ``embeddinggemma2.json``: normalized ``sentence_transformers`` vectors for
+  ``google/embeddinggemma-2`` (``vllm_omni_embed``) of the first six golden
+  retrieval queries with the query prompt. The model needs transformers 5.19
+  and sentence-transformers 6.1, newer than the workspace pins, so record it
+  in an isolated environment:
+
+    uv run --isolated --no-project --with sentence-transformers==6.1.0 \
+        --with transformers==5.19.0 --with torch --with torchvision \
+        --with numpy --with pillow --with librosa --with av \
+        --index https://download.pytorch.org/whl/cpu \
+        --index-strategy unsafe-best-match \
+        python scripts/record_model_references.py embeddinggemma2
+
 Each file records the model, revision, library versions, device and inputs
 beside the outputs. Regenerate after a pinned revision changes:
 
@@ -50,10 +63,17 @@ DENSEON_PROMPT = "document: "
 
 
 def _spec(service: str):
-    sys.path.insert(0, str(REPO_ROOT / "libs" / "foundation"))
-    from cogniverse_foundation.inference_specs import get_inference_service_spec
+    # Loaded by path: the module is stdlib-only, while the package's __init__
+    # needs the workspace's dependencies, which an isolated recording
+    # environment does not install.
+    import importlib.util
 
-    return get_inference_service_spec(service)
+    path = REPO_ROOT / "libs/foundation/cogniverse_foundation/inference_specs.py"
+    module_spec = importlib.util.spec_from_file_location("inference_specs", path)
+    module = importlib.util.module_from_spec(module_spec)
+    sys.modules["inference_specs"] = module
+    module_spec.loader.exec_module(module)
+    return module.get_inference_service_spec(service)
 
 
 def _require_cpu(model) -> str:
@@ -138,6 +158,51 @@ def record_denseon() -> None:
     )
 
 
+OMNI_QUERY_PROMPT = "task: search result | query: "
+GOLDEN_QUERIES = (
+    REPO_ROOT / "data/testset/evaluation/sample_videos_retrieval_queries.json"
+)
+
+
+def record_embeddinggemma2() -> None:
+    import numpy as np
+    import sentence_transformers
+
+    spec = _spec("vllm_omni_embed")
+    model = sentence_transformers.SentenceTransformer(
+        spec.model_id, device="cpu", revision=spec.model_revision
+    )
+    device = _require_cpu(model)
+    queries = [row["query"] for row in json.loads(GOLDEN_QUERIES.read_text())[:6]]
+    cases = []
+    for text in queries:
+        vector = np.asarray(
+            model.encode([text], prompt=OMNI_QUERY_PROMPT, normalize_embeddings=True)[
+                0
+            ],
+            dtype=np.float32,
+        )
+        cases.append({"text": text, "is_query": True, "embedding": vector.tolist()})
+    _write(
+        "embeddinggemma2.json",
+        {
+            "service": spec.name,
+            "model": spec.model_id,
+            "revision": spec.model_revision,
+            "library": {
+                "sentence_transformers": version("sentence-transformers"),
+                "transformers": version("transformers"),
+                "torch": version("torch"),
+            },
+            "device": device,
+            "prompt": OMNI_QUERY_PROMPT,
+            "normalized": True,
+            "recorded_by": "scripts/record_model_references.py",
+            "cases": cases,
+        },
+    )
+
+
 FACE_FRAMES_DIR = OUTPUT_DIR / "face_embed"
 
 
@@ -192,6 +257,7 @@ RECORDERS = {
     "lateon": record_lateon,
     "denseon": record_denseon,
     "face_embed": record_face_embed,
+    "embeddinggemma2": record_embeddinggemma2,
 }
 
 
