@@ -243,8 +243,10 @@ inference:
       - '{"image":1,"video":1,"audio":1}'
       - "--media-io-kwargs"
       - '{"video":{"fps":1}}'
-      # 0.08 = 7.7 GiB: 1.5 GiB of bf16 weights for the 740M model plus one
-      # 8192-token multimodal step. Provisional until measured on the pod.
+      # 0.08 = 7.7 GiB, the free-memory guard for the startup profile of an
+      # 8192-token multimodal step. A pooling model keeps no KV cache: measured
+      # 2.6 GiB on the GPU and a 5.3 GiB pod working set after 6 s video +
+      # 10 s audio requests (1.42 GiB of weights).
       - "--gpu-memory-utilization"
       - "0.08"
     # Step lengths vary with every mix of frames, audio and text, and tuning
