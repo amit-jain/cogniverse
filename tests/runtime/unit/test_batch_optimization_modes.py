@@ -1461,7 +1461,9 @@ class TestProfileSelectionTrainingExamples:
         unavailable_profile = BackendProfileConfig.from_dict(
             "unavailable_video_profile",
             shipped_profile(
-                profile_type="video", embedding_type="single_vector"
+                profile_type="video",
+                embedding_type="single_vector",
+                model_loader="xclip",
             ).to_dict(),
         )
         config_manager = ConfigManager(store=InMemoryConfigStore())
@@ -5792,6 +5794,7 @@ class TestProfileSelectionOptimization:
             "lateon_mv": "title",
             "video_colqwen_omni_mv_chunk_30s": "video_title",
             "video_xclip_sv_chunk_6s": "video_title",
+            "video_embeddinggemma2_sv_chunk_6s": "video_title",
             "code_lateon_mv": "chunk_name",
             "wiki_semantic": "title",
         }

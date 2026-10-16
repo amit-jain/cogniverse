@@ -50,6 +50,7 @@ def shipped_profile(
     embedding_type: str,
     process_type: str | None = None,
     extract_keyframes: bool | None = None,
+    model_loader: str | None = None,
 ) -> BackendProfileConfig:
     """Select one shipped profile by capabilities and resolve its base schema."""
     profiles = {
@@ -68,6 +69,7 @@ def shipped_profile(
             extract_keyframes is None
             or profile.pipeline_config.get("extract_keyframes") == extract_keyframes
         )
+        and (model_loader is None or profile.model_loader == model_loader)
     }
     if len(matches) != 1:
         criteria = {
@@ -75,6 +77,7 @@ def shipped_profile(
             "embedding_type": embedding_type,
             "process_type": process_type,
             "extract_keyframes": extract_keyframes,
+            "model_loader": model_loader,
         }
         raise ValueError(
             f"Expected exactly one shipped profile for {criteria}; "

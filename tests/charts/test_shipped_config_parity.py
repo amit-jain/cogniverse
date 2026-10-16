@@ -508,3 +508,76 @@ def test_schema_config_names_the_schema_and_model_the_profile_uses(path: Path):
         "video_colpali_smol500_mv_frame": "ColQwen3",
         "video_colqwen_omni_mv_chunk_30s": "ColQwen3",
     }
+
+
+def _leaf_paths(value: Any, prefix: str = "") -> dict[str, Any]:
+    if isinstance(value, dict):
+        leaves: dict[str, Any] = {}
+        for key, item in value.items():
+            leaves.update(_leaf_paths(item, f"{prefix}.{key}" if prefix else key))
+        return leaves
+    return {prefix: value}
+
+
+@pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.parent.name)
+def test_the_omni_video_profile_differs_from_xclip_only_in_its_model(path: Path):
+    """The EmbeddingGemma 2 chunk profile is compared against X-CLIP, so every
+    segmentation, transcription and schema setting must be X-CLIP's own."""
+    profiles = load_shipped_config(path)["backend"]["profiles"]
+    xclip = _leaf_paths(profiles["video_xclip_sv_chunk_6s"])
+    omni = _leaf_paths(profiles["video_embeddinggemma2_sv_chunk_6s"])
+
+    differing = {
+        key: (xclip.get(key), omni.get(key))
+        for key in xclip.keys() | omni.keys()
+        if xclip.get(key) != omni.get(key)
+    }
+
+    assert differing == {
+        "description": (
+            profiles["video_xclip_sv_chunk_6s"]["description"],
+            "EmbeddingGemma 2 6-second chunk single-vector embeddings, 768-dim. "
+            "Each chunk's frames (1 fps) and audio track are embedded together "
+            "into one space with text, so a text query retrieves clips directly. "
+            "Served by the vllm_omni_embed service.",
+        ),
+        "schema_name": (
+            "video_xclip_sv_chunk_6s",
+            "video_embeddinggemma2_sv_chunk_6s",
+        ),
+        "embedding_model": (
+            "microsoft/xclip-large-patch14",
+            "google/embeddinggemma-2",
+        ),
+        "model_loader": ("xclip", "embeddinggemma2"),
+        "modalities": (None, ["video", "audio"]),
+        "inference_services.embedding": ("video_embed", "vllm_omni_embed"),
+        "inference_config.model_type": ("xclip", "embeddinggemma2"),
+        "inference_config.query_encoder": (
+            "microsoft/xclip-large-patch14",
+            "google/embeddinggemma-2",
+        ),
+        "model_specific.sampling_fps": (2.0, None),
+        "model_specific.max_frames_per_chunk": (8, None),
+        "model_specific.min_frames": (8, None),
+        "schema_config.schema_name": (
+            "video_xclip_sv_chunk_6s",
+            "video_embeddinggemma2_sv_chunk_6s",
+        ),
+        "schema_config.model_name": ("X-CLIP-Large", "EmbeddingGemma-2"),
+    }
+
+
+def test_the_omni_video_schema_is_the_xclip_schema_renamed():
+    xclip = (
+        REPO_ROOT / "configs/schemas/video_xclip_sv_chunk_6s_schema.json"
+    ).read_text()
+    omni = json.loads(
+        (
+            REPO_ROOT / "configs/schemas/video_embeddinggemma2_sv_chunk_6s_schema.json"
+        ).read_text()
+    )
+
+    assert omni == json.loads(
+        xclip.replace("video_xclip_sv_chunk_6s", "video_embeddinggemma2_sv_chunk_6s")
+    )

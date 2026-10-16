@@ -67,7 +67,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         # Model and processor
         self.model = None
         self.processor = None
-        self.xclip_loader = None
+        self.segment_loader = None
         self.colbert_model = None
 
         # Per-thread cv2 capture cache: concurrent video threads share this
@@ -86,9 +86,10 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
     def _segment_embedder(self):
         """Loader that embeds a whole video segment in one remote call.
 
-        X-CLIP returns ``{"embeddings_np": ...}`` from ``process_video_segment``.
+        X-CLIP and EmbeddingGemma 2 return ``{"embeddings_np": ...}`` from
+        ``process_video_segment``.
         """
-        return self.xclip_loader
+        return self.segment_loader
 
     def _embed_segment_remotely(
         self,
@@ -155,8 +156,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 self.colbert_model, _ = get_or_load_model(
                     model_name, self.profile_config, self.logger
                 )
-            elif model_loader == "xclip":
-                self.xclip_loader, _ = get_or_load_model(
+            elif model_loader in ("xclip", "embeddinggemma2"):
+                self.segment_loader, _ = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )
             elif model_loader in ("colpali", "colqwen"):

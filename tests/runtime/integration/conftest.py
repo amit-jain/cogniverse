@@ -181,7 +181,7 @@ def config_manager(vespa_instance):
         tenant_id="test:unit",
     )
     single_vector_video = shipped_profile(
-        profile_type="video", embedding_type="single_vector"
+        profile_type="video", embedding_type="single_vector", model_loader="xclip"
     )
     cm.add_backend_profile(
         dataclasses.replace(single_vector_video, profile_name="test_xclip"),

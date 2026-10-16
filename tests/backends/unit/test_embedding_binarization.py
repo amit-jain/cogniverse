@@ -190,7 +190,9 @@ class TestSchemaNameAuthority:
         assert out["0"] == np.packbits(embeddings[0] > 0).tobytes().hex()
 
     def test_sv_schema_returns_flat_list(self):
-        profile = shipped_profile(profile_type="video", embedding_type="single_vector")
+        profile = shipped_profile(
+            profile_type="video", embedding_type="single_vector", model_loader="xclip"
+        )
         schema = load_raw_schema_json(profile.schema_name)
         fields = {
             field["name"]: field["type"] for field in schema["document"]["fields"]

@@ -150,7 +150,7 @@ class TestEmbeddingGeneratorImpl:
         assert generator.backend_client == mock_backend_client
         assert generator.schema_name == "test_schema"
         assert generator.storage_mode == "multi_doc"
-        assert generator.xclip_loader == mock_loader
+        assert generator.segment_loader == mock_loader
 
         mock_get_model.assert_called_once_with("test_model", basic_config, mock_logger)
 
@@ -165,7 +165,7 @@ class TestEmbeddingGeneratorImpl:
 
         assert generator.model is None
         assert generator.processor is None
-        assert generator.xclip_loader is None
+        assert generator.segment_loader is None
 
         # Model should not be loaded for frame_based
         mock_get_model.assert_not_called()
@@ -187,7 +187,28 @@ class TestEmbeddingGeneratorImpl:
 
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
 
-        assert generator.xclip_loader == mock_loader
+        assert generator.segment_loader == mock_loader
+        assert generator.model is None
+
+    def test_initialization_embeddinggemma2_loads_the_remote_segment_embedder(
+        self, mock_logger, mock_backend_client
+    ):
+        """An EmbeddingGemma 2 profile embeds each segment remotely, sending
+        the media its ``modalities`` name."""
+        config = {
+            "schema_name": "video_embeddinggemma2_sv_chunk_6s",
+            "embedding_model": "google/embeddinggemma-2",
+            "embedding_type": "single_vector",
+            "model_loader": "embeddinggemma2",
+            "modalities": ["video", "audio"],
+            "remote_inference_url": "http://127.0.0.1:9",
+        }
+
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+
+        assert type(generator.segment_loader).__name__ == "_EmbeddingGemma2Remote"
+        assert generator.segment_loader.modalities == ("video", "audio")
+        assert generator.segment_loader.client.endpoint_url == "http://127.0.0.1:9"
         assert generator.model is None
 
     @patch("cogniverse_core.common.models.get_or_load_model")
@@ -1083,7 +1104,7 @@ class TestEmbeddingGeneratorImpl:
             "model_config": {"token_pool_factor": 3},
         }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
-        generator.xclip_loader = Mock()
+        generator.segment_loader = Mock()
 
         mock_result = Mock()
         mock_result.returncode = 0
@@ -1092,7 +1113,7 @@ class TestEmbeddingGeneratorImpl:
 
         rng = np.random.default_rng(1)
         single_vector = rng.standard_normal((768,)).astype(np.float32)
-        generator.xclip_loader.process_video_segment.return_value = {
+        generator.segment_loader.process_video_segment.return_value = {
             "embeddings_np": single_vector
         }
 
@@ -1278,7 +1299,7 @@ class TestEmbeddingGeneratorImpl:
         generator.model_name = "colqwen_test"
 
         assert generator.model is None
-        assert generator.xclip_loader is None  # non-X-CLIP else branch
+        assert generator.segment_loader is None  # non-X-CLIP else branch
 
         mock_cap = Mock()
         mock_cap.get.return_value = 25.0  # fps
@@ -1333,7 +1354,7 @@ class TestEmbeddingGeneratorImpl:
         generator = EmbeddingGeneratorImpl(
             xclip_config, mock_logger, mock_backend_client
         )
-        generator.xclip_loader = Mock()
+        generator.segment_loader = Mock()
 
         # Mock ffprobe output
         mock_result = Mock()
@@ -1343,14 +1364,14 @@ class TestEmbeddingGeneratorImpl:
 
         # Mock xclip processing
         mock_embeddings = np.random.rand(768)
-        generator.xclip_loader.process_video_segment.return_value = {
+        generator.segment_loader.process_video_segment.return_value = {
             "embeddings_np": mock_embeddings
         }
 
         result = generator._generate_chunk_embeddings(Path("/path/to/chunk.mp4"))
 
         np.testing.assert_array_equal(result, mock_embeddings)
-        generator.xclip_loader.process_video_segment.assert_called_once_with(
+        generator.segment_loader.process_video_segment.assert_called_once_with(
             Path("/path/to/chunk.mp4"), 0, 30.5
         )
 
@@ -1502,10 +1523,10 @@ class TestEmbeddingGeneratorImpl:
         generator = EmbeddingGeneratorImpl(
             frame_based_config, mock_logger, mock_backend_client
         )
-        generator.xclip_loader = Mock()
+        generator.segment_loader = Mock()
 
         mock_embeddings = np.random.rand(768)
-        generator.xclip_loader.process_video_segment.return_value = {
+        generator.segment_loader.process_video_segment.return_value = {
             "embeddings_np": mock_embeddings
         }
 
@@ -1514,7 +1535,7 @@ class TestEmbeddingGeneratorImpl:
         )
 
         np.testing.assert_array_equal(result, mock_embeddings)
-        generator.xclip_loader.process_video_segment.assert_called_once_with(
+        generator.segment_loader.process_video_segment.assert_called_once_with(
             Path("/video.mp4"), 10.0, 20.0
         )
 
@@ -1525,8 +1546,8 @@ class TestEmbeddingGeneratorImpl:
         generator = EmbeddingGeneratorImpl(
             frame_based_config, mock_logger, mock_backend_client
         )
-        generator.xclip_loader = Mock()
-        generator.xclip_loader.process_video_segment.return_value = None
+        generator.segment_loader = Mock()
+        generator.segment_loader.process_video_segment.return_value = None
 
         result = generator._generate_time_segment_embeddings(
             Path("/video.mp4"), 10.0, 20.0
@@ -1723,7 +1744,7 @@ class TestEmbeddingGeneratorImpl:
 
         assert generator.colbert_model == mock_colbert
         assert generator.model is None
-        assert generator.xclip_loader is None
+        assert generator.segment_loader is None
         mock_get_model.assert_called_once_with(
             "lightonai/Reason-ModernColBERT", config, mock_logger
         )

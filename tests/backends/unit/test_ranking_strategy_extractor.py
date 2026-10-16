@@ -743,6 +743,7 @@ _TEXT_FIRST = {
         "hybrid_bm25_float_no_description",
     ],
     "video_xclip_sv_chunk_6s": ["hybrid_bm25_binary", "hybrid_bm25_float"],
+    "video_embeddinggemma2_sv_chunk_6s": ["hybrid_bm25_binary", "hybrid_bm25_float"],
 }
 
 
