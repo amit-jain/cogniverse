@@ -63,22 +63,30 @@ def test_shipped_config_passes_system_tenant_startup_parse(path: Path):
     assert parsed.backend_config.profiles
 
 
-_SELECTED = {"video": {"profile": "video_colpali_smol500_mv_frame"}}
+_SELECTED_VIDEO = {"video": {"profile": "video_colpali_smol500_mv_frame"}}
+# Two shipped audio profiles, so audio searches that name none need a default.
+_SELECTED_AUDIO = {"audio": {"profile": "audio_clap_semantic"}}
+_SELECTED = {**_SELECTED_VIDEO, **_SELECTED_AUDIO}
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    "path",
-    [SHIPPED, REPO_ROOT / "configs" / "examples" / "config.example.json"],
-    ids=lambda p: p.name,
+    ("path", "expected"),
+    [
+        (SHIPPED, _SELECTED),
+        (REPO_ROOT / "configs" / "examples" / "config.example.json", _SELECTED_VIDEO),
+    ],
+    ids=["config.json", "config.example.json"],
 )
-def test_local_configs_select_the_default_video_profile_by_name_only(path: Path):
+def test_local_configs_select_the_default_video_profile_by_name_only(
+    path: Path, expected: dict
+):
     """The Vespa search backend reads default_profiles.<type>.strategy as a
     ranking-strategy name ahead of the profile's own default_ranking, so a
     value no schema ranks with only hides that default."""
     config = json.loads(path.read_text())
 
-    assert config["backend"]["default_profiles"] == _SELECTED
+    assert config["backend"]["default_profiles"] == expected
 
 
 def _composed_chart_config(values: tuple[str, ...], *set_args: str) -> dict[str, Any]:
@@ -110,7 +118,7 @@ def _composed_chart_config(values: tuple[str, ...], *set_args: str) -> dict[str,
 @pytest.mark.parametrize(
     ("values", "set_args", "expected"),
     [
-        ((), (), {}),
+        ((), (), _SELECTED_AUDIO),
         (
             ("values.k3s.yaml", "values.rocm.yaml", "values.modal-llm.yaml"),
             (),

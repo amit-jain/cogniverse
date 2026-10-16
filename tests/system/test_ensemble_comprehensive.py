@@ -32,7 +32,7 @@ CHUNK_PROFILE = shipped_profile(
     profile_type="video", embedding_type="multi_vector", process_type="video_chunks"
 )
 SINGLE_VECTOR_PROFILE = shipped_profile(
-    profile_type="video", embedding_type="single_vector"
+    profile_type="video", embedding_type="single_vector", model_loader="xclip"
 )
 REAL_PROFILES = {
     profile.profile_name: profile

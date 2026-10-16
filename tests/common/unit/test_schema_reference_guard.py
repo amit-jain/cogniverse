@@ -128,7 +128,8 @@ SCHEMA_REFERENCE_FIXTURES = {
     ),
     "tests/backends/unit/test_ranking_strategy_extractor.py": (
         "Temporary ranking definitions and missing file cases",
-        "ghost memo_bound memo_probe poison_probe s survivor video_colpali_sv_frame",
+        "ghost memo_bound memo_probe poison_probe s s00 survivor "
+        "video_colpali_sv_frame",
     ),
     "tests/backends/unit/test_schema_name_matching.py": (
         "Adversarial vector token parser inputs",

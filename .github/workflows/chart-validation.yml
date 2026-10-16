@@ -31,6 +31,8 @@ on:
       - 'libs/cli/cogniverse_cli/images.py'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
+      # test_inference_chart.py pins the vLLM audio image's base tags.
+      - 'deploy/vllm_audio/Dockerfile'
   pull_request:
     branches: [main]
     paths:
@@ -62,6 +64,8 @@ on:
       - 'libs/cli/cogniverse_cli/images.py'
       - 'libs/vespa/cogniverse_vespa/backend.py'
       - 'libs/vespa/cogniverse_vespa/vespa_schema_manager.py'
+      # test_inference_chart.py pins the vLLM audio image's base tags.
+      - 'deploy/vllm_audio/Dockerfile'
 
 jobs:
   chart-validation:

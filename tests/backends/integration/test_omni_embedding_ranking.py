@@ -79,6 +79,12 @@ VECTORS_PATH = FIXTURES / "vectors.npz"
 CLOTHO = json.loads((FIXTURES / "clotho.json").read_text())
 RECORD_GOLDEN = os.environ.get("RECORD_GOLDEN") == "1"
 CLOTHO_CLIPS = 200
+# The corpus videos by name: every expected video plus three distractors. The
+# files are gitignored, so the recording keeps their durations.
+SAMPLE_VIDEO_STEMS = sorted(
+    {row["expected_videos"][0] for row in GOLDEN}
+    | {"big_buck_bunny_clip", "elephant_dream_clip", "for_bigger_blazes"}
+)
 OMNI_VIDEO_PROFILE = "video_embeddinggemma2_sv_chunk_6s"
 
 # Arm -> (service, vector array of its windows, vector array of its queries).
@@ -99,20 +105,28 @@ def _sample_videos() -> list[Path]:
     )
 
 
-def _video_windows(videos: list[Path]) -> list[tuple[str, float, float]]:
-    """The chunks the X-CLIP profile's own segmenter cuts each video into."""
-    processor = SingleVectorVideoProcessor(
+def _segmenter() -> SingleVectorVideoProcessor:
+    return SingleVectorVideoProcessor(
         logging.getLogger("omni-eval"),
         **PROFILES["video_xclip_sv_chunk_6s"]["strategies"]["segmentation"]["params"],
     )
-    windows = []
-    for video in videos:
-        duration = processor._get_video_info(video)["duration"]
-        windows.extend(
-            (video.name, round(start, 3), round(end, 3))
-            for start, end in processor._calculate_segment_boundaries(duration)
-        )
-    return windows
+
+
+def _video_durations(videos: list[Path]) -> dict[str, float]:
+    segmenter = _segmenter()
+    return {
+        video.name: segmenter._get_video_info(video)["duration"] for video in videos
+    }
+
+
+def _video_windows(durations: dict[str, float]) -> list[tuple[str, float, float]]:
+    """The chunks the X-CLIP profile's own segmenter cuts each video into."""
+    segmenter = _segmenter()
+    return [
+        (name, round(start, 3), round(end, 3))
+        for name in sorted(durations)
+        for start, end in segmenter._calculate_segment_boundaries(durations[name])
+    ]
 
 
 def _clotho_audio_windows(
@@ -194,7 +208,8 @@ def _record(remote_inference) -> None:
 
     videos = _sample_videos()
     by_name = {video.name: video for video in videos}
-    video_windows = _video_windows(videos)
+    video_durations = _video_durations(videos)
+    video_windows = _video_windows(video_durations)
     queries = [row["query"] for row in GOLDEN]
 
     audio_dir, captions = _clotho_inputs(
@@ -259,6 +274,7 @@ def _record(remote_inference) -> None:
                     }
                     for service, endpoint in endpoints.items()
                 },
+                "video_durations": video_durations,
                 "video_windows": [list(w) for w in video_windows],
                 "clotho_durations": durations,
                 "audio_windows": [list(w) for w in windows],
@@ -290,8 +306,11 @@ def _validate(manifest: dict, vectors: dict[str, np.ndarray]) -> None:
         }
         for service in ("video_embed", "vllm_omni_embed", "clap_embed")
     }
+    assert sorted(Path(n).stem for n in manifest["video_durations"]) == (
+        SAMPLE_VIDEO_STEMS
+    )
     assert [tuple(w) for w in manifest["video_windows"]] == _video_windows(
-        _sample_videos()
+        manifest["video_durations"]
     )
     assert sorted(manifest["clotho_durations"]) == CLOTHO["clips"]
     assert [tuple(w) for w in manifest["audio_windows"]] == _clotho_audio_windows(
@@ -413,6 +432,9 @@ MUTATIONS = {
         "not_a_clotho_clip.wav", 1.0
     ),
     "move a chunk boundary": lambda m, v: m["video_windows"][0].__setitem__(2, 5.5),
+    "change a duration": lambda m, v: m["video_durations"].__setitem__(
+        "v_-6dz6tBH77I.mp4", 9.5
+    ),
 }
 
 

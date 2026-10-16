@@ -18,6 +18,8 @@ on:
       - '.github/workflows/ingestion-tests.yml'
       # test_audio_processor.py reads the shipped config.
       - 'configs/config.json'
+      # test_process_type_contract.py reads the configs directory.
+      - 'configs/**'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -34,6 +36,8 @@ on:
       - 'pyproject.toml'
       # test_audio_processor.py reads the shipped config.
       - 'configs/config.json'
+      # test_process_type_contract.py reads the configs directory.
+      - 'configs/**'
 
 env:
   CARGO_NET_RETRY: "10"
