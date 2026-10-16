@@ -1194,6 +1194,66 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 5
 
+  # EmbeddingGemma 2: one 768-dim vector for text, images, video and audio,
+  # or any interleaving of them, from vLLM's pooling runner over
+  # /v1/embeddings. Served only by the cluster (no Modal app). Video is
+  # sampled at 1 fps; each frame costs 142 tokens of the 8192 context.
+  vllm_omni_embed:
+    enabled: false
+    externalUrl: ""
+    engine: vllm_embed
+    model: google/embeddinggemma-2
+    # Must match INFERENCE_SERVICE_SPECS["vllm_omni_embed"].model_revision.
+    revision: 914f7f89142e33e77833254d9c9b90c3cef7303b
+    type: single_vector
+    device: cpu
+    gpuCount: 1
+    nodeSelector: {}
+    tolerations: []
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 8000
+      nodePort: 29003
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
+      pullPolicy: IfNotPresent
+    imagesByDevice: {}
+    dtype: auto
+    extraArgs:
+      - "--runner"
+      - "pooling"
+      - "--max-model-len"
+      - "8192"
+      - "--limit-mm-per-prompt"
+      - '{"image":1,"video":1,"audio":1}'
+      - "--media-io-kwargs"
+      - '{"video":{"fps":1}}'
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+      requests:
+        cpu: "1"
+        memory: "8Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 120
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 10
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 0
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 5
+
   # GLiNER zero-shot NER served by the canonical CLI server image.
   # GatewayAgent + EntityExtractionAgent post text + label sets to
   # /predict_entities; the slim runtime image excludes torch+gliner by

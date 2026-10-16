@@ -82,7 +82,14 @@ _SERVICE_DEPENDENCIES = derive_service_dependencies(
 # Services whose engine is vLLM: they identify themselves through the OpenAI
 # model list rather than the custom servers' ``/health`` payload.
 _MODEL_LIST_SERVICES = frozenset(
-    {"vllm_colpali", "denseon", "vllm_llm_student", "vllm_llm_teacher", "vllm_asr"}
+    {
+        "vllm_colpali",
+        "denseon",
+        "vllm_llm_student",
+        "vllm_llm_teacher",
+        "vllm_asr",
+        "vllm_omni_embed",
+    }
 )
 
 

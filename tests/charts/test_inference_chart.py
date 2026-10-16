@@ -557,10 +557,10 @@ def test_every_vllm_image_in_every_values_file_runs_the_pinned_build():
     )
 
     assert images == {
-        "values.yaml": [("vllm/vllm-openai-cpu", VLLM_IMAGE_TAG)] * 5,
+        "values.yaml": [("vllm/vllm-openai-cpu", VLLM_IMAGE_TAG)] * 6,
         "values.cpu.yaml": [],
-        "values.cuda.yaml": [("vllm/vllm-openai", VLLM_IMAGE_TAG)],
-        "values.rocm.yaml": [("vllm/vllm-openai-rocm", VLLM_IMAGE_TAG)] * 5,
+        "values.cuda.yaml": [("vllm/vllm-openai", VLLM_IMAGE_TAG)] * 2,
+        "values.rocm.yaml": [("vllm/vllm-openai-rocm", VLLM_IMAGE_TAG)] * 6,
     }
     assert audio_bases == [
         ("CPU_BASE", f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}"),
@@ -669,6 +669,7 @@ def test_k3s_exposes_every_stateless_inference_service_on_a_unique_node_port():
         "inference.vllm_llm_student.enabled=true",
         "inference.clap_embed.enabled=true",
         "inference.face_embed.enabled=true",
+        "inference.vllm_omni_embed.enabled=true",
         values="values.k3s.yaml",
     )
     services = _inference_services(docs)
@@ -682,6 +683,7 @@ def test_k3s_exposes_every_stateless_inference_service_on_a_unique_node_port():
         "clap_embed": 29008,
         "face_embed": 29009,
         "vllm_llm_student": 29010,
+        "vllm_omni_embed": 29003,
     }
 
     actual_ports = {}
@@ -1738,6 +1740,7 @@ def test_rocm_overlay_wires_tunableop_env_on_rocm_pods_only():
         "denseon",
         "colbert_pylate",
         "code_colbert_pylate",
+        "vllm_omni_embed",
     }, rocm_pods
     # vllm_colpali replays its results file without tuning new shapes: its
     # batched steps vary in length, and tuning an unseen one stalls the
@@ -1748,6 +1751,7 @@ def test_rocm_overlay_wires_tunableop_env_on_rocm_pods_only():
         "vllm_llm_student": "1",
         "vllm_llm_teacher": "1",
         "denseon": "1",
+        "vllm_omni_embed": "0",
     }
     for key, tuning in expected_tuning.items():
         env = _inference_env(deps, key)
@@ -1835,7 +1839,13 @@ def test_cpu_overlay_keeps_tunableop_env_off_even_when_global_toggle_is_on():
 # Helm cannot read the Python spec map, so values.yaml holds a second copy of
 # each model id and sha; test_chart_model_pins_match_inference_service_specs
 # fails as soon as the two copies disagree.
-REVISION_PINNED_SERVICES = ("vllm_colpali", "vllm_llm_student", "denseon", "vllm_asr")
+REVISION_PINNED_SERVICES = (
+    "vllm_colpali",
+    "vllm_llm_student",
+    "denseon",
+    "vllm_asr",
+    "vllm_omni_embed",
+)
 
 
 def test_chart_model_pins_match_inference_service_specs():
@@ -2097,7 +2107,7 @@ def test_external_url_skips_the_model_cache_pvc():
 def test_external_url_predecessor_is_skipped_by_its_successors_gate():
     """In the rocm startup chain denseon follows vllm_asr; a Modal-hosted
     vllm_asr deploys no local Service, so denseon waits on the nearest earlier
-    entry with a pod (vllm_llm_student) rather than on a /health that can
+    entry with a pod (vllm_omni_embed) rather than on a /health that can
     never answer, and rather than starting ungated."""
     docs = _render(
         "inference.vllm_asr.externalUrl=https://amit--cogniverse-vllm-asr.modal.run",
@@ -2109,7 +2119,7 @@ def test_external_url_predecessor_is_skipped_by_its_successors_gate():
     gates = [c for c in inits if c["name"] == "startup-gate"]
     assert [
         {e["name"]: e["value"] for e in gate["env"]}["GATE_URL"] for gate in gates
-    ] == ["http://cogniverse-vllm-llm-student:8000/health"]
+    ] == ["http://cogniverse-vllm-omni-embed:8000/health"]
 
 
 def test_external_url_on_denseon_redirects_the_semantic_embed_url():
@@ -2387,6 +2397,7 @@ def test_every_engine_the_shipped_values_select_is_one_the_chart_implements():
         "vllm_colpali": "vllm_token_embed",
         "vllm_llm_student": "vllm_chat",
         "vllm_llm_teacher": "vllm_chat",
+        "vllm_omni_embed": "vllm_embed",
     }
     assert set(shipped.values()) == set(_ENGINE_CONTAINER_NAMES) - {"vllm"}
 
@@ -2463,6 +2474,7 @@ def test_shipped_profiles_render_exactly_these_inference_containers():
             "gliner": "gliner",
             "vllm_asr": "vllm-transcription",
             "vllm_colpali": "vllm-token-embed",
+            "vllm_omni_embed": "vllm-embed",
         },
         "rocm": {
             "code_colbert_pylate": "pylate",
@@ -2473,5 +2485,51 @@ def test_shipped_profiles_render_exactly_these_inference_containers():
             "vllm_colpali": "vllm-token-embed",
             "vllm_llm_student": "vllm-chat",
             "vllm_llm_teacher": "vllm-chat",
+            "vllm_omni_embed": "vllm-embed",
         },
     }
+
+
+def test_rocm_omni_embed_serves_the_pinned_model_at_one_frame_per_second():
+    """The ROCm overlay serves EmbeddingGemma 2 on the GPU from the pinned
+    nightly, sampling video at 1 fps, with memory reserved as it is limited."""
+    docs = _render(values="values.rocm.yaml")
+    deployment = _inference_deployments(docs)["vllm_omni_embed"]
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+
+    assert container["image"] == f"vllm/vllm-openai-rocm:{VLLM_IMAGE_TAG}"
+    assert container["args"] == [
+        "serve",
+        "google/embeddinggemma-2",
+        "--revision",
+        "914f7f89142e33e77833254d9c9b90c3cef7303b",
+        "--convert",
+        "embed",
+        "--dtype",
+        "auto",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--runner",
+        "pooling",
+        "--max-model-len",
+        "8192",
+        "--limit-mm-per-prompt",
+        '{"image":1,"video":1,"audio":1}',
+        "--media-io-kwargs",
+        '{"video":{"fps":1}}',
+        "--gpu-memory-utilization",
+        "0.08",
+    ]
+    assert (
+        container["resources"]["requests"]["memory"]
+        == container["resources"]["limits"]["memory"]
+    )
+    k3s_services = _inference_services(
+        _render(values=("values.k3s.yaml", "values.rocm.yaml"))
+    )
+    assert k3s_services["vllm_omni_embed"]["spec"]["ports"][0]["nodePort"] == 29003
+    assert _service_urls(docs)["vllm_omni_embed"] == (
+        "http://cogniverse-vllm-omni-embed:8000"
+    )

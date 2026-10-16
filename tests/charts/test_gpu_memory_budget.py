@@ -136,23 +136,24 @@ def test_deployed_rocm_modal_models_fit_the_unified_pool_budget():
 
     assert utilizations == {
         "vllm_colpali": 0.18,
+        "vllm_omni_embed": 0.08,
         "vllm_asr": 0.04,
         "denseon": 0.05,
     }
 
     total = round(sum(utilizations.values()), 4)
-    assert total == 0.27
+    assert total == 0.35
     assert total <= MAX_UTILIZATION_SUM
-    assert round(total * POOL_GIB, 2) == 25.92
+    assert round(total * POOL_GIB, 2) == 33.6
     # Named headroom: what the budget still has after every model reserves.
-    assert round((MAX_UTILIZATION_SUM - total) * POOL_GIB, 2) == 19.20
+    assert round((MAX_UTILIZATION_SUM - total) * POOL_GIB, 2) == 11.52
 
 
 def test_all_local_serving_exceeds_the_pool_budget_which_is_why_modal_is_default():
     """All-local serving does not fit this host, and the numbers say by how much.
 
     Measured rather than asserted: with the chat models resident the declared
-    fractions sum to 0.69 of a 96 GiB pool -- 66.24 GiB -- against a 45.12 GiB
+    fractions sum to 0.77 of a 96 GiB pool -- 73.92 GiB -- against a 45.12 GiB
     ceiling. Peak GTT during a full run with everything resident measured
     56-59 GiB, and the three hard freezes on this host all began with the
     stack idle at that residency. Modal serving is the resolution; this pins
@@ -164,15 +165,16 @@ def test_all_local_serving_exceeds_the_pool_budget_which_is_why_modal_is_default
         "vllm_colpali": 0.18,
         "vllm_llm_student": 0.22,
         "vllm_llm_teacher": 0.2,
+        "vllm_omni_embed": 0.08,
         "vllm_asr": 0.04,
         "denseon": 0.05,
     }
 
     total = round(sum(utilizations.values()), 4)
-    assert total == 0.69
+    assert total == 0.77
     assert total > MAX_UTILIZATION_SUM
-    assert round(total * POOL_GIB, 2) == 66.24
-    assert round((total - MAX_UTILIZATION_SUM) * POOL_GIB, 2) == 21.12
+    assert round(total * POOL_GIB, 2) == 73.92
+    assert round((total - MAX_UTILIZATION_SUM) * POOL_GIB, 2) == 28.8
 
 
 def _pool_pods(*extra: str) -> dict[str, dict]:
@@ -219,6 +221,7 @@ def test_pool_pods_declare_a_fraction_or_limit():
         "vllm_colpali": {"fraction": 0.18, "limit_gib": 20.0},
         "vllm_llm_student": {"fraction": 0.22, "limit_gib": 24.0},
         "vllm_llm_teacher": {"fraction": 0.2, "limit_gib": 20.0},
+        "vllm_omni_embed": {"fraction": 0.08, "limit_gib": 8.0},
         "vllm_asr": {"fraction": 0.04, "limit_gib": 6.0},
         "denseon": {"fraction": 0.05, "limit_gib": 4.0},
         # PyTorch services: the caching allocator has no fraction knob, so

@@ -15,6 +15,7 @@ inferenceStartup:
     - vllm_llm_teacher
     - vllm_colpali
     - vllm_llm_student
+    - vllm_omni_embed
     - vllm_asr
     - denseon
     - colbert_pylate
@@ -227,6 +228,36 @@ inference:
       requests:
         cpu: "1"
         memory: "4Gi"
+
+  # Helm replaces lists, so this repeats every base extraArg.
+  vllm_omni_embed:
+    enabled: true
+    device: rocm
+    gpuCount: 1
+    imagesByDevice: *vllmRocmImage
+    extraArgs:
+      - "--runner"
+      - "pooling"
+      - "--max-model-len"
+      - "8192"
+      - "--limit-mm-per-prompt"
+      - '{"image":1,"video":1,"audio":1}'
+      - "--media-io-kwargs"
+      - '{"video":{"fps":1}}'
+      # 0.08 = 7.7 GiB: 1.5 GiB of bf16 weights for the 740M model plus one
+      # 8192-token multimodal step. Provisional until measured on the pod.
+      - "--gpu-memory-utilization"
+      - "0.08"
+    # Step lengths vary with every mix of frames, audio and text, and tuning
+    # a shape the results file lacks stalls the engine; tuned shapes still apply.
+    tunableOpTuning: false
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+      requests:
+        cpu: "4"
+        memory: "8Gi"
 
 runtime:
   backend: rocm

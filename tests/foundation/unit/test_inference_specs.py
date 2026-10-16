@@ -63,7 +63,14 @@ EXPECTED_MODELS = {
         "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f",
         512,
     ),
+    "vllm_omni_embed": (
+        "google/embeddinggemma-2",
+        "914f7f89142e33e77833254d9c9b90c3cef7303b",
+        768,
+    ),
 }
+
+CLUSTER_ONLY_SERVICES = {"vllm_omni_embed"}
 
 EXPECTED_HF_TOKEN_SERVICES = {"vllm_llm_student", "vllm_llm_teacher"}
 
@@ -110,8 +117,10 @@ def test_exact_hf_token_services_are_the_chat_models():
     assert observed == EXPECTED_HF_TOKEN_SERVICES
 
 
-def test_each_service_has_an_independent_scale_to_zero_app():
-    specs = tuple(INFERENCE_SERVICE_SPECS.values())
+def test_each_modal_service_has_an_independent_scale_to_zero_app():
+    specs = tuple(
+        spec for spec in INFERENCE_SERVICE_SPECS.values() if spec.modal_deployable
+    )
 
     assert len(specs) == 11
     assert len({spec.modal_app for spec in specs}) == 11
@@ -120,9 +129,9 @@ def test_each_service_has_an_independent_scale_to_zero_app():
     )
     assert all(spec.min_containers == 0 for spec in specs)
     assert {spec.name: spec.scaledown_window for spec in specs} == {
-        name: 300 for name in EXPECTED_MODELS
+        name: 300 for name in set(EXPECTED_MODELS) - CLUSTER_ONLY_SERVICES
     }
-    assert set(EXPECTED_MODELS) == {spec.name for spec in specs}
+    assert set(EXPECTED_MODELS) - CLUSTER_ONLY_SERVICES == {spec.name for spec in specs}
     assert all(spec.boot_deadline_seconds == 600.0 for spec in specs)
 
 
@@ -137,6 +146,42 @@ def test_mutable_or_missing_model_revisions_are_rejected():
     for spec in INFERENCE_SERVICE_SPECS.values():
         assert spec.model_revision
         assert spec.model_revision not in {"main", "master", "latest"}
+
+
+def test_cluster_only_services_are_exactly_the_omni_embedder():
+    assert {
+        name
+        for name, spec in INFERENCE_SERVICE_SPECS.items()
+        if not spec.modal_deployable
+    } == CLUSTER_ONLY_SERVICES
+
+
+def test_omni_embed_definition_pins_the_cluster_only_contract():
+    assert get_inference_service_spec("vllm_omni_embed") == InferenceServiceSpec(
+        name="vllm_omni_embed",
+        model_id="google/embeddinggemma-2",
+        model_revision="914f7f89142e33e77833254d9c9b90c3cef7303b",
+        output_dimension=768,
+        gpu_candidates=(),
+        context_window=8192,
+        modal_deployable=False,
+    )
+
+
+def test_a_cluster_only_spec_with_modal_gpus_is_refused():
+    with pytest.raises(ValueError) as exc:
+        InferenceServiceSpec(
+            name="vllm_omni_embed",
+            model_id="google/embeddinggemma-2",
+            model_revision="914f7f89142e33e77833254d9c9b90c3cef7303b",
+            output_dimension=768,
+            gpu_candidates=("L4",),
+            modal_deployable=False,
+        )
+
+    assert str(exc.value) == (
+        "vllm_omni_embed: a cluster-only service names no Modal GPU candidates"
+    )
 
 
 def test_unknown_service_is_an_error():

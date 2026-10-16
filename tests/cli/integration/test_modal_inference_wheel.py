@@ -82,10 +82,13 @@ _INSTALLED_WHEEL_PROBE = textwrap.dedent(
         def get_current_stats(self):
             return SimpleNamespace(num_total_runners=self.active)
 
-    services = tuple(INFERENCE_SERVICE_SPECS)
-    functions = {
-        contract.modal_app: Function(name)
+    services = tuple(
+        name
         for name, contract in INFERENCE_SERVICE_SPECS.items()
+        if contract.modal_deployable
+    )
+    functions = {
+        INFERENCE_SERVICE_SPECS[name].modal_app: Function(name) for name in services
     }
 
     def load(contract):

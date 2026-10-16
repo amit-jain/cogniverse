@@ -490,9 +490,15 @@ class ModalInferenceLifecycle:
     @staticmethod
     def _service_spec(service: str) -> InferenceServiceSpec:
         try:
-            return get_inference_service_spec(service)
+            spec = get_inference_service_spec(service)
         except KeyError:
             raise ValueError(f"unknown inference service {service!r}") from None
+        if not spec.modal_deployable:
+            raise ValueError(
+                f"inference service {service!r} is served only by the cluster; "
+                "it has no Modal deployment"
+            )
+        return spec
 
     def _redact(self, error: object) -> str:
         message = str(error)

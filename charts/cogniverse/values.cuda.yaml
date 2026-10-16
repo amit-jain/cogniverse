@@ -48,6 +48,23 @@ inference:
         cpu: "2"
         memory: "8Gi"
 
+  vllm_omni_embed:
+    enabled: true
+    device: cuda
+    gpuCount: 1
+    imagesByDevice:
+      cuda:
+        repository: vllm/vllm-openai
+        tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
+        pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+      requests:
+        cpu: "2"
+        memory: "8Gi"
+
   # The locally built cogniverse/pylate image bakes the host's torch
   # backend (cuda here) — no per-device image override.
   colbert_pylate:

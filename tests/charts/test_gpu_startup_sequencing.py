@@ -82,13 +82,14 @@ def test_rocm_chain_gates_each_model_on_its_predecessor():
     }
 
     # Both chat models are served from Modal, so the sequence re-forms over
-    # the pods that run: vllm_asr waits on vllm_colpali, the nearest earlier
-    # entry with a pod, and each position keeps its own budget.
+    # the pods that run: vllm_omni_embed waits on vllm_colpali, the nearest
+    # earlier entry with a pod, and each position keeps its own budget.
     assert chain == {
-        "vllm_asr": ("http://cogniverse-vllm-colpali:8000/health", "1800"),
-        "denseon": ("http://cogniverse-vllm-asr:8000/health", "2400"),
-        "colbert_pylate": ("http://cogniverse-denseon:8000/health", "3000"),
-        "code_colbert_pylate": ("http://cogniverse-colbert-pylate:8000/health", "3600"),
+        "vllm_omni_embed": ("http://cogniverse-vllm-colpali:8000/health", "1800"),
+        "vllm_asr": ("http://cogniverse-vllm-omni-embed:8000/health", "2400"),
+        "denseon": ("http://cogniverse-vllm-asr:8000/health", "3000"),
+        "colbert_pylate": ("http://cogniverse-denseon:8000/health", "3600"),
+        "code_colbert_pylate": ("http://cogniverse-colbert-pylate:8000/health", "4200"),
     }
 
 
@@ -113,10 +114,11 @@ def test_gated_deployments_extend_the_rollout_progress_deadline():
     assert deadlines == {
         "gliner": None,
         "vllm_colpali": None,
-        "vllm_asr": 2700,
-        "denseon": 3300,
-        "colbert_pylate": 3900,
-        "code_colbert_pylate": 4500,
+        "vllm_omni_embed": 2700,
+        "vllm_asr": 3300,
+        "denseon": 3900,
+        "colbert_pylate": 4500,
+        "code_colbert_pylate": 5100,
     }
 
 
@@ -156,6 +158,7 @@ def test_gating_leaves_the_readiness_contract_untouched():
 
     assert probes == {
         "vllm_colpali": (0, 600),
+        "vllm_omni_embed": (0, 120),
         "vllm_asr": (0, 600),
         "denseon": (0, 90),
         "colbert_pylate": (0, 120),
@@ -184,7 +187,8 @@ def test_disabled_entry_mid_sequence_is_skipped_not_ungating_its_successor():
     assert "vllm_colpali" not in deployments
     assert gated == {
         "vllm_llm_student": "http://cogniverse-vllm-llm-teacher:8000/health",
-        "vllm_asr": "http://cogniverse-vllm-llm-student:8000/health",
+        "vllm_omni_embed": "http://cogniverse-vllm-llm-student:8000/health",
+        "vllm_asr": "http://cogniverse-vllm-omni-embed:8000/health",
         "denseon": "http://cogniverse-vllm-asr:8000/health",
         "colbert_pylate": "http://cogniverse-denseon:8000/health",
         "code_colbert_pylate": "http://cogniverse-colbert-pylate:8000/health",
@@ -210,7 +214,8 @@ def test_consecutive_disabled_entries_are_all_skipped():
     }
 
     assert gated == {
-        "colbert_pylate": "http://cogniverse-vllm-colpali:8000/health",
+        "vllm_omni_embed": "http://cogniverse-vllm-colpali:8000/health",
+        "colbert_pylate": "http://cogniverse-vllm-omni-embed:8000/health",
         "code_colbert_pylate": "http://cogniverse-colbert-pylate:8000/health",
     }
 
@@ -330,6 +335,7 @@ def test_the_release_check_covers_gated_model_pods():
             "vllm_asr",
             "vllm_colpali",
             "vllm_llm_student",
+            "vllm_omni_embed",
         ],
         "k3s+rocm": [
             "code_colbert_pylate",
@@ -338,12 +344,14 @@ def test_the_release_check_covers_gated_model_pods():
             "vllm_asr",
             "vllm_colpali",
             "vllm_llm_student",
+            "vllm_omni_embed",
         ],
         "k3s+rocm+modal": [
             "code_colbert_pylate",
             "colbert_pylate",
             "denseon",
             "vllm_asr",
+            "vllm_omni_embed",
         ],
     }
 
@@ -407,7 +415,13 @@ def test_the_gate_runs_from_the_curl_image_the_jobs_already_pull():
     )
     assert gates == {
         name: (CURL_IMAGE, "IfNotPresent", ["sh", "-c"])
-        for name in ("vllm_asr", "denseon", "colbert_pylate", "code_colbert_pylate")
+        for name in (
+            "vllm_omni_embed",
+            "vllm_asr",
+            "denseon",
+            "colbert_pylate",
+            "code_colbert_pylate",
+        )
     }
 
 

@@ -35,6 +35,7 @@ _ALL_SERVICES_ON = (
     "inference.vllm_llm_student.enabled=true",
     "inference.vllm_llm_teacher.enabled=true",
     "inference.vllm_colpali.enabled=true",
+    "inference.vllm_omni_embed.enabled=true",
 )
 
 # Every way the chart backs the model cache, on every device overlay.
@@ -100,6 +101,7 @@ def test_every_inference_pod_starts_without_network(scenario: str) -> None:
         "vllm_colpali",
         "vllm_llm_student",
         "vllm_llm_teacher",
+        "vllm_omni_embed",
     }
     violations = {
         svc: problems

@@ -106,6 +106,10 @@ inference:
   denseon:
     service:
       type: NodePort
+  # Dev override for the EmbeddingGemma 2 omni-embedding pod.
+  vllm_omni_embed:
+    service:
+      type: NodePort
   vllm_asr:
     service:
       type: NodePort

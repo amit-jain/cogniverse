@@ -45,6 +45,8 @@ class InferenceServiceSpec:
     # endpoint is external and needs to wake from zero.
     boot_deadline_seconds: float = 600.0
     min_containers: int = 0
+    # False for a service the local cluster serves and Modal never deploys.
+    modal_deployable: bool = True
 
     def __post_init__(self) -> None:
         if not self.model_revision or self.model_revision in {
@@ -55,7 +57,12 @@ class InferenceServiceSpec:
             raise ValueError(
                 f"{self.name}: model_revision must identify an immutable artifact"
             )
-        if not self.gpu_candidates:
+        if not self.modal_deployable:
+            if self.gpu_candidates:
+                raise ValueError(
+                    f"{self.name}: a cluster-only service names no Modal GPU candidates"
+                )
+        elif not self.gpu_candidates:
             raise ValueError(f"{self.name}: at least one GPU candidate is required")
         if self.context_window is not None and self.context_window <= 0:
             raise ValueError(
@@ -190,6 +197,15 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             512,
             "T4",
             "L4",
+        ),
+        "vllm_omni_embed": InferenceServiceSpec(
+            name="vllm_omni_embed",
+            model_id="google/embeddinggemma-2",
+            model_revision="914f7f89142e33e77833254d9c9b90c3cef7303b",
+            output_dimension=768,
+            gpu_candidates=(),
+            context_window=8192,
+            modal_deployable=False,
         ),
     }
 )
