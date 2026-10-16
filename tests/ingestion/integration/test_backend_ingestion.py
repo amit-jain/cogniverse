@@ -113,6 +113,30 @@ class TestRealProcessorExtraction:
         )
 
 
+def _persist_inference_services(backend_port: int, inference_endpoints) -> None:
+    """Persist the services resolved for this test in its Vespa configuration."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+
+    service_urls = json.loads(os.environ.get("INFERENCE_SERVICE_URLS", "{}"))
+    config_manager = create_default_config_manager()
+    config_manager.set_system_config(
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=backend_port,
+            inference_service_urls=service_urls,
+        )
+    )
+    stored = ConfigManager(store=config_manager.store).get_system_config()
+    assert stored.inference_service_urls == service_urls
+    assert {
+        service: stored.inference_service_urls.get(service)
+        for service in inference_endpoints
+    } == {
+        service: endpoint.base_url for service, endpoint in inference_endpoints.items()
+    }
+
+
 @pytest.mark.integration
 @pytest.mark.requires_vespa
 class TestVespaBackendIngestion:
@@ -159,31 +183,7 @@ class TestVespaBackendIngestion:
 
     @pytest.fixture(autouse=True)
     def configured_inference_services(self, vespa_backend, inference_endpoints):
-        """Persist the services resolved for this test in its Vespa configuration."""
-        import json
-        import os
-
-        from cogniverse_foundation.config.manager import ConfigManager
-        from cogniverse_foundation.config.unified_config import SystemConfig
-
-        service_urls = json.loads(os.environ.get("INFERENCE_SERVICE_URLS", "{}"))
-        config_manager = create_default_config_manager()
-        config_manager.set_system_config(
-            SystemConfig(
-                backend_url="http://localhost",
-                backend_port=vespa_backend.http_port,
-                inference_service_urls=service_urls,
-            )
-        )
-        stored = ConfigManager(store=config_manager.store).get_system_config()
-        assert stored.inference_service_urls == service_urls
-        assert {
-            service: stored.inference_service_urls.get(service)
-            for service in inference_endpoints
-        } == {
-            service: endpoint.base_url
-            for service, endpoint in inference_endpoints.items()
-        }
+        _persist_inference_services(vespa_backend.http_port, inference_endpoints)
 
     @pytest.fixture
     def vespa_test_videos(self, vespa_backend):
@@ -761,6 +761,14 @@ class TestVespaIngestionViaMinio:
 class TestComprehensiveIngestion:
     """Comprehensive ingestion tests (local development only)."""
 
+    @pytest.fixture(autouse=True)
+    def configured_inference_services(
+        self, ingestion_vespa_backend, inference_endpoints
+    ):
+        _persist_inference_services(
+            ingestion_vespa_backend["http_port"], inference_endpoints
+        )
+
     @pytest.fixture
     def all_test_videos(self):
         """Get all committed test videos (present on every checkout)."""
@@ -774,6 +782,7 @@ class TestComprehensiveIngestion:
     @pytest.mark.requires_vespa
     @pytest.mark.requires_inference("video_embed")
     @pytest.mark.requires_inference("vllm_colpali")
+    @pytest.mark.requires_inference("vllm_asr")
     @pytest.mark.asyncio
     async def test_multi_profile_ingestion(
         self, ingestion_vespa_backend, all_test_videos, tmp_path
@@ -829,6 +838,7 @@ class TestComprehensiveIngestion:
     @pytest.mark.benchmark
     @pytest.mark.requires_vespa
     @pytest.mark.requires_inference("vllm_colpali")
+    @pytest.mark.requires_inference("vllm_asr")
     @pytest.mark.asyncio
     async def test_ingestion_performance(
         self, ingestion_vespa_backend, all_test_videos, tmp_path
