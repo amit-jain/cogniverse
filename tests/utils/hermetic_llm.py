@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from cogniverse_foundation.inference_specs import VLLM_IMAGE_TAG
 from tests.utils.vllm_sidecar import (
     EXACT_MODEL_LABEL,
     ModelEndpointDiscoveryError,
@@ -190,8 +191,8 @@ def assert_local_spawn_fits(model: str, available_gb: float) -> None:
 
 
 _IMAGES = {
-    "rocm": "vllm/vllm-openai-rocm:v0.23.0",
-    "cpu": "vllm/vllm-openai-cpu:v0.23.0",
+    "rocm": f"vllm/vllm-openai-rocm:{VLLM_IMAGE_TAG}",
+    "cpu": f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}",
 }
 
 

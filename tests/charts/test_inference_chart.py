@@ -44,6 +44,7 @@ from cogniverse_core.registries.schema_deploy_lease import DEFAULT_WAIT_SECONDS
 from cogniverse_foundation.config.utils import resolve_default_profile
 from cogniverse_foundation.inference_specs import (
     INFERENCE_SERVICE_SPECS,
+    VLLM_IMAGE_TAG,
     get_inference_service_spec,
 )
 from cogniverse_runtime.admin.profile_models import SchemaDeploymentResponse
@@ -508,10 +509,9 @@ def test_vllm_colpali_serves_tomoro_token_embed():
     docs = _render("inference.vllm_colpali.enabled=true")
     dep = _inference_deployments(docs)["vllm_colpali"]
     c = dep["spec"]["template"]["spec"]["containers"][0]
-    # Pinned image, not a floating ``latest``: ColQwen3 support landed in
-    # vLLM 0.21, and a stale cached ``latest`` silently serves 0.20 which
-    # fails to load the model.
-    assert c["image"] == "vllm/vllm-openai-cpu:v0.23.0"
+    # Pinned image, not a floating ``latest`` or ``nightly``: a stale cached
+    # floating tag silently serves whatever vLLM it was pulled at.
+    assert c["image"] == f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}"
     args = c["args"]
     assert "TomoroAI/tomoro-colqwen3-embed-4b" in args
     assert args[args.index("--runner") + 1] == "pooling"
@@ -519,6 +519,43 @@ def test_vllm_colpali_serves_tomoro_token_embed():
     # qwen3_vl's ViT tower OOMs vLLM's startup profiler on a worst-case
     # video buffer unless video multimodal input is disabled.
     assert args[args.index("--limit-mm-per-prompt") + 1] == '{"video":0,"image":1}'
+
+
+def _vllm_image_tags(node, found: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    if isinstance(node, dict):
+        repository = node.get("repository")
+        if isinstance(repository, str) and repository.startswith("vllm/vllm-openai"):
+            found.append((repository, node.get("tag")))
+        for value in node.values():
+            _vllm_image_tags(value, found)
+    elif isinstance(node, list):
+        for item in node:
+            _vllm_image_tags(item, found)
+    return found
+
+
+def test_every_vllm_image_in_every_values_file_runs_the_pinned_build():
+    """All vLLM services run one vLLM build. The chart pins it as a literal in
+    each values file, so each literal is compared against the constant the
+    Modal apps and test sidecars read."""
+    images = {
+        name: sorted(
+            _vllm_image_tags(yaml.safe_load((CHART_PATH / name).read_text()), [])
+        )
+        for name in (
+            "values.yaml",
+            "values.cpu.yaml",
+            "values.cuda.yaml",
+            "values.rocm.yaml",
+        )
+    }
+
+    assert images == {
+        "values.yaml": [("vllm/vllm-openai-cpu", VLLM_IMAGE_TAG)] * 6,
+        "values.cpu.yaml": [("vllm/vllm-openai-cpu", VLLM_IMAGE_TAG)],
+        "values.cuda.yaml": [("vllm/vllm-openai", VLLM_IMAGE_TAG)] * 2,
+        "values.rocm.yaml": [("vllm/vllm-openai-rocm", VLLM_IMAGE_TAG)] * 6,
+    }
 
 
 def test_inference_readiness_has_no_fixed_cold_start_delay():

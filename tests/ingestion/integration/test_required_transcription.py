@@ -125,7 +125,7 @@ def empty_asr():
             self.rfile.read(int(self.headers["Content-Length"]))
             posts.append(len(posts))
             body = json.dumps(
-                {"text": "", "language": "en", "duration": "1.0", "segments": []}
+                {"text": "", "language": "en", "duration": 1.0, "segments": []}
             ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

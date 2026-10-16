@@ -8,7 +8,6 @@ for real audio search. Supports transcript, semantic, and acoustic search.
 import asyncio
 import logging
 import math
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -285,23 +284,7 @@ def _remote_non_negative_number(value: Any, url: str, path: str) -> float:
 
 
 def _remote_duration_seconds(value: Any, url: str) -> float:
-    if (
-        not isinstance(value, str)
-        or re.fullmatch(r"(?:0|[1-9]\d*)(?:\.\d+)?", value) is None
-    ):
-        raise _remote_contract_error(
-            url,
-            "$.duration",
-            "expected a finite non-negative decimal string",
-        )
-    duration = float(value)
-    if not math.isfinite(duration):
-        raise _remote_contract_error(
-            url,
-            "$.duration",
-            "expected a finite non-negative decimal string",
-        )
-    return duration
+    return _remote_non_negative_number(value, url, "$.duration")
 
 
 def _parse_remote_transcription(body: Any, url: str) -> Dict[str, Any]:

@@ -22,7 +22,7 @@ The test fixture chain builds the full real backend on demand:
   the session-scoped `shared_vespa` container (see `tests/conftest.py`), with
   `video_colpali_smol500_mv_frame_test_unit` deployed at test setup.
 - **Real vLLM ColPali**: `vllm_sidecar` fixture spawns
-  `vllm/vllm-openai-cpu:v0.23.0` serving `TomoroAI/tomoro-colqwen3-embed-4b`
+  `vllm/vllm-openai-cpu:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` serving `TomoroAI/tomoro-colqwen3-embed-4b`
   (pooling runner, `embed` convert mode, 320-dim per-token embeddings) and
   binds `RemoteColPaliLoader` against it.
 - **Real seed corpus**: three documents with real per-token ColPali
@@ -58,8 +58,7 @@ Each case asserts on the returned `List[SearchResult]`:
   runs and every cache entry stays user-owned — the personal
   `~/.cache/huggingface` is never mounted into test containers).
 - Host RAM headroom for the vLLM CPU sidecar: `tests/utils/vllm_sidecar.py`
-  sets `VLLM_CPU_MEMORY_UTILIZATION=0.05` and `VLLM_CPU_KVCACHE_SPACE=2`
-  (GiB) on the container, plus a merged `--gpu-memory-utilization 0.10`
+  sets `VLLM_CPU_KVCACHE_SPACE=2` (GiB) on the container, plus a merged `--gpu-memory-utilization 0.10`
   and (for colqwen3 models) `--limit-mm-per-prompt {"video":0,"image":1}`
   to avoid a vision-tower startup OOM.
 - Environment variables `BACKEND_URL` / `BACKEND_PORT` set (or a

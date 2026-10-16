@@ -26,7 +26,10 @@ import requests
 from cogniverse_cli.inference_endpoints import ResolvedInferenceEndpoint
 
 import tests.utils.hermetic_llm as hermetic_llm
-from cogniverse_foundation.inference_specs import get_inference_service_spec
+from cogniverse_foundation.inference_specs import (
+    VLLM_IMAGE_TAG,
+    get_inference_service_spec,
+)
 from tests.fixtures.inference import (
     InferenceSessionResolver,
     LocalEndpointProvider,
@@ -744,6 +747,14 @@ def test_failed_generic_launch_reports_logs_and_removes_container(monkeypatch):
     assert ["docker", "rm", "-f", container] in commands
 
 
+@pytest.fixture(autouse=True)
+def _host_ram_fits_every_sidecar(monkeypatch):
+    """Spawn-path tests drive recorded docker calls, so the host-RAM refusal
+    must not depend on the machine running them; the refusal itself is pinned
+    in test_hermetic_llm.py. The probe reports room for the largest sidecar."""
+    monkeypatch.setattr(hermetic_llm, "available_ram_gb", lambda: 64.0)
+
+
 @pytest.fixture
 def image_provisioning_docker(monkeypatch, tmp_path):
     import tests.utils.vllm_sidecar as sidecar_module
@@ -1013,7 +1024,7 @@ def test_whisper_fallback_installs_audio_extras_before_serving(monkeypatch):
     assert len(docker_runs) == 1
     command = docker_runs[0]
     assert command[command.index("--entrypoint") + 1] == "sh"
-    image_index = command.index("vllm/vllm-openai-cpu:v0.23.0")
+    image_index = command.index(f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}")
     assert command[image_index + 1 :] == [
         "-c",
         (
@@ -1044,16 +1055,18 @@ def test_writable_test_hf_cache_raises_with_context_when_unwritable(
     surface later as an opaque permission error mid-download."""
     import tests.utils.vllm_sidecar as sidecar_module
 
+    # A file where the cache directory must go blocks it for every user,
+    # root included; permission bits alone do not stop root.
     blocked = tmp_path / "blocked"
-    blocked.mkdir()
-    blocked.chmod(0o555)
+    blocked.write_bytes(b"")
     monkeypatch.setattr(sidecar_module, "TEST_HF_CACHE", str(blocked / "huggingface"))
 
-    try:
-        with pytest.raises(RuntimeError, match="not writable"):
-            sidecar_module.writable_test_hf_cache()
-    finally:
-        blocked.chmod(0o755)
+    with pytest.raises(
+        RuntimeError,
+        match=r"^test HF cache .*/blocked/huggingface is not writable "
+        r"\(NotADirectoryError: ",
+    ):
+        sidecar_module.writable_test_hf_cache()
 
 
 def test_pinned_fallback_validates_cached_files_then_runs_offline(
@@ -1085,7 +1098,7 @@ def test_pinned_fallback_validates_cached_files_then_runs_offline(
     command = docker_runs[0]
     offline_index = command.index("HF_HUB_OFFLINE=1")
     assert command[offline_index - 1] == "-e"
-    image_index = command.index("vllm/vllm-openai-cpu:v0.23.0")
+    image_index = command.index(f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}")
     assert command[image_index + 1 :] == [
         "-c",
         (
@@ -1830,7 +1843,7 @@ def test_exact_model_rocm_spawn_marks_the_container_and_keeps_every_flag(monkeyp
         "render",
         "--security-opt",
         "seccomp=unconfined",
-        "vllm/vllm-openai-rocm:v0.23.0",
+        f"vllm/vllm-openai-rocm:{VLLM_IMAGE_TAG}",
         "--model",
         GEMMA,
         "--max-model-len",
@@ -1861,7 +1874,7 @@ def test_exact_model_cpu_spawn_marks_the_container_and_keeps_every_flag(monkeypa
         "--oom-score-adj=400",
         "-e",
         "VLLM_CPU_KVCACHE_SPACE=4",
-        "vllm/vllm-openai-cpu:v0.23.0",
+        f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}",
         "--model",
         GEMMA,
         "--max-model-len",

@@ -365,7 +365,7 @@ class _LoaderWhisper:
                     {
                         "text": text,
                         "language": "en",
-                        "duration": "1.0",
+                        "duration": 1.0,
                         "segments": (
                             [{"start": 0.0, "end": 1.0, "text": text}] if text else []
                         ),

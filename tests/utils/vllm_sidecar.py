@@ -45,6 +45,7 @@ import requests
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 
+from cogniverse_foundation.inference_specs import VLLM_IMAGE_TAG
 from cogniverse_runtime.inference_services import parse_inference_service_urls
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ def _probe_timeout(base_url: str) -> float:
     return _REMOTE_PROBE_TIMEOUT_S
 
 
-DEFAULT_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
+DEFAULT_IMAGE = f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 600
 DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS = 30
 DOCKER_IMAGE_PULL_TIMEOUT_SECONDS = 300
@@ -1290,8 +1291,6 @@ class VllmSidecarFactory:
                 f"{OWNER_LABEL}={os.getpid()}",
                 "-p",
                 f"{port}:8000",
-                "-e",
-                "VLLM_CPU_MEMORY_UTILIZATION=0.05",
                 "-e",
                 "VLLM_CPU_KVCACHE_SPACE=2",
                 "--oom-score-adj=500",
