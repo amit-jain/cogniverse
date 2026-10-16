@@ -5789,6 +5789,7 @@ class TestProfileSelectionOptimization:
             "video_colpali_smol500_mv_frame": "video_title",
             "image_colpali_mv": "image_title",
             "audio_clap_semantic": "audio_title",
+            "audio_embeddinggemma2": "audio_title",
             "document_text_semantic": "document_title",
             "document_visual_colpali": "document_title",
             "lateon_mv": "title",

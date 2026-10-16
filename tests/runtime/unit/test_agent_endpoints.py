@@ -1708,6 +1708,7 @@ class TestAudioTextSearchBackendContract:
             {
                 "query": "listen to podcasts about deep learning run 4",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "phased_semantic",
                 "tenant_id": "acme:prod",
                 "top_k": 3,

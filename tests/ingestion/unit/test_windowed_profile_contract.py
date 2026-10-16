@@ -106,8 +106,11 @@ def test_windowing_profiles_declare_source_granularity_and_chunk_fields(
         )
 
     chunk_ints = ("int", "int", "int", "int")
+    # Audio windows are spans of time; the text windows are character spans.
+    chunk_seconds = ("int", "int", "double", "double")
     assert declared == {
         "audio_clap_semantic": ("source", chunk_ints, "audio_id"),
+        "audio_embeddinggemma2": ("source", chunk_seconds, "audio_id"),
         "document_text_semantic": ("source", chunk_ints, "document_id"),
         "lateon_mv": ("source", chunk_ints, "text_id"),
         "code_lateon_mv": ("source", chunk_ints, "code_id"),
