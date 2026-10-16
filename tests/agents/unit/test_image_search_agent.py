@@ -80,31 +80,26 @@ class TestImageSearchAgent:
         """Test agent initialization"""
         # Construction must produce the right deferred-load state — the
         # private fields are the contract the lazy loader depends on.
-        assert self.agent._colpali_model is None  # Lazy loaded
-        assert self.agent._colpali_processor is None  # Lazy loaded
         assert self.agent._query_encoder is None  # Lazy loaded
         assert self.agent._vespa_endpoint == "http://localhost:8080"
 
-    @patch("cogniverse_agents.image_search_agent.get_or_load_model")
-    def test_colpali_model_lazy_loading(self, mock_get_model):
-        """Test ColPali model is lazy loaded on first access"""
-        mock_model = MagicMock()
-        mock_processor = MagicMock()
-        mock_get_model.return_value = (mock_model, mock_processor)
+    def test_visual_model_comes_only_from_the_image_profile(self):
+        """The agent has no in-process model path: the model it encodes with is
+        the image profile's embedding_model, served by that profile's sidecar,
+        and neither the deps nor the agent carry a separate model name."""
+        assert self.agent._image_profile == "image_colpali_mv"
+        profile = _CONFIG["backend"]["profiles"]["image_colpali_mv"]
+        encoder = self.agent.query_encoder
 
-        # Access colpali_model property
-        model = self.agent.colpali_model
-
-        # The lazy loader MUST return the exact mock instance — not a
-        # different MagicMock, not a constructed real model.
-        assert model is mock_model
-        # Confirm the loader was called with the right model name + the
-        # config dict that contains the ColPali key (the model loader
-        # depends on both).
-        assert mock_get_model.called
-        call_args = mock_get_model.call_args[0]
-        assert call_args[0] == "TomoroAI/tomoro-colqwen3-embed-4b"  # model_name
-        assert "colpali_model" in call_args[1]  # config
+        assert type(encoder).__name__ == "ColPaliFamilyQueryEncoder"
+        assert encoder.model_name == profile["embedding_model"]
+        assert encoder._remote_client.endpoint_url == _COLPALI_URL
+        assert "colpali_model" not in ImageSearchDeps.model_fields
+        assert [
+            name
+            for name in ("colpali_model", "colpali_processor")
+            if hasattr(ImageSearchAgent, name)
+        ] == []
 
     def test_query_encoder_routes_through_deployed_sidecar(self):
         """The encoder must resolve through QueryEncoderFactory so the image

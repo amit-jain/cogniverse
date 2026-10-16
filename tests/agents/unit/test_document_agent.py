@@ -46,22 +46,19 @@ class TestDocumentAgent:
     def test_initialization(self):
         """Test agent initialization"""
         assert self.agent is not None
-        assert self.agent._colpali_model is None  # Lazy loaded
+        assert self.agent._query_encoder is None  # Lazy loaded
         assert self.agent._vespa_endpoint == "http://localhost:8080"
 
-    @patch("cogniverse_agents.document_agent.get_or_load_model")
-    def test_colpali_model_lazy_loading(self, mock_get_model):
-        """Test ColPali model is lazy loaded on first access"""
-        mock_model = MagicMock()
-        mock_processor = MagicMock()
-        mock_get_model.return_value = (mock_model, mock_processor)
-
-        # Access colpali_model property
-        model = self.agent.colpali_model
-
-        # Verify model was loaded
-        assert model is not None
-        assert mock_get_model.called
+    def test_agent_carries_no_separate_visual_model_name(self):
+        """The visual model is the visual profile's embedding_model, resolved
+        through QueryEncoderFactory; neither the deps nor the agent carry a
+        second model name that could disagree with it."""
+        assert "colpali_model" not in DocumentAgentDeps.model_fields
+        assert [
+            name
+            for name in ("colpali_model", "colpali_processor")
+            if hasattr(DocumentAgent, name)
+        ] == []
 
     def test_select_strategy_visual(self):
         """Test strategy selection for visual queries"""

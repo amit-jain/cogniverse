@@ -434,6 +434,22 @@ def test_shipped_golden_dataset_carries_no_unusable_rows():
     assert no_expected == []
 
 
+def _schema_config_identity(config: dict[str, Any]) -> dict[str, tuple[Any, Any]]:
+    """Per profile: (schema_config.schema_name, schema_name) and the label
+    schema_config gives the profile's embedding model."""
+    return {
+        name: (
+            (profile["schema_config"].get("schema_name"), profile["schema_name"]),
+            (
+                profile["schema_config"].get("model_name"),
+                profile["embedding_model"],
+            ),
+        )
+        for name, profile in config["backend"]["profiles"].items()
+        if "schema_name" in profile.get("schema_config", {})
+    }
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "path",
@@ -464,3 +480,31 @@ def test_shipped_configs_carry_the_promotion_gate(path: Path):
         triggers.optimization_gap_share,
         triggers.optimization_skip_above_score,
     ) == (0.05, 0.5, 0.95)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "path",
+    [*CONFIGS, REPO_ROOT / "configs" / "examples" / "config.example.json"],
+    ids=lambda p: f"{p.parent.name}/{p.name}",
+)
+def test_schema_config_names_the_schema_and_model_the_profile_uses(path: Path):
+    """``schema_config`` restates the profile's schema and model. A restatement
+    that names a schema no file defines, or a model family the profile does not
+    serve, misleads every reader of the profile."""
+    identity = _schema_config_identity(load_shipped_config(path))
+
+    mismatched_schemas = {
+        name: names for name, (names, _) in identity.items() if names[0] != names[1]
+    }
+    tomoro_labels = {
+        name: label
+        for name, (_, (label, model)) in identity.items()
+        if model == "TomoroAI/tomoro-colqwen3-embed-4b" and label is not None
+    }
+    assert mismatched_schemas == {}
+    assert tomoro_labels == {
+        "image_colpali_mv": "ColQwen3",
+        "video_colpali_smol500_mv_frame": "ColQwen3",
+        "video_colqwen_omni_mv_chunk_30s": "ColQwen3",
+    }
