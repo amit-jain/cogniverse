@@ -409,6 +409,106 @@ class TestVespaBackendIngestion:
         cosine = float(served @ stored_vector / np.linalg.norm(stored_vector))
         assert cosine >= 0.99, cosine
 
+    @pytest.mark.slow
+    @pytest.mark.requires_inference("vllm_omni_embed", "vllm_asr")
+    @pytest.mark.asyncio
+    async def test_omni_audio_profile_feeds_one_document_per_window(
+        self, vespa_backend, vespa_test_videos, tmp_path
+    ):
+        """An uploaded audio file lands as one document per window of at most
+        10 s, each carrying the vector EmbeddingGemma 2 serves for it."""
+        import subprocess
+
+        import numpy as np
+        import requests
+
+        from cogniverse_core.common.models.model_loaders import ModelLoaderFactory
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_runtime.ingestion.pipeline import (
+            PipelineConfig,
+            VideoIngestionPipeline,
+        )
+
+        profile_name = "audio_embeddinggemma2"
+        source = next(v for v in vespa_test_videos if v.stem == "v_-D1gdv_gQyw")
+        audio_dir = tmp_path / "audio"
+        audio_dir.mkdir()
+        wav = audio_dir / "v_-D1gdv_gQyw.wav"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(source),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                str(wav),
+            ],
+            check=True,
+        )
+        config_manager = create_default_config_manager()
+        config = PipelineConfig.from_config(
+            tenant_id="test:unit", config_manager=config_manager
+        )
+        config.video_dir = audio_dir
+        config.search_backend = "vespa"
+        pipeline = VideoIngestionPipeline(
+            tenant_id="test_tenant",
+            config=config,
+            config_manager=config_manager,
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            schema_name=profile_name,
+        )
+
+        result = await pipeline.process_video_async(wav)
+
+        assert "error" not in result, result
+        hits = requests.post(
+            f"http://localhost:{vespa_backend.http_port}/search/",
+            json={
+                "yql": "select * from sources * where true",
+                "hits": 100,
+                "presentation.format.tensors": "short-value",
+            },
+            timeout=30,
+        ).json()["root"]["children"]
+        stored = sorted(
+            (
+                hit["fields"]["chunk_index"],
+                round(hit["fields"]["chunk_start"], 2),
+                round(hit["fields"]["chunk_end"], 2),
+                hit["fields"]["chunk_count"],
+            )
+            for hit in hits
+            if hit["fields"]["sddocname"].startswith(profile_name)
+        )
+        assert stored == [(0, 0.0, 10.0, 2), (1, 10.0, 18.07, 2)]
+
+        omni = ModelLoaderFactory.create_loader(
+            "google/embeddinggemma-2",
+            {
+                "model_loader": "embeddinggemma2",
+                "remote_inference_url": json.loads(
+                    os.environ["INFERENCE_SERVICE_URLS"]
+                )["vllm_omni_embed"],
+                "modalities": ["audio"],
+            },
+        ).load_model()[0]
+        first = next(
+            hit["fields"]
+            for hit in hits
+            if hit["fields"]["sddocname"].startswith(profile_name)
+            and hit["fields"]["chunk_index"] == 0
+        )
+        served = omni.embed_audio_window(wav, 0.0, 10.0)
+        stored_vector = np.asarray(first["acoustic_embedding"], dtype=np.float32)
+        cosine = float(served @ stored_vector / np.linalg.norm(stored_vector))
+        assert cosine >= 0.99, cosine
+
     @pytest.mark.local_only
     @pytest.mark.requires_inference("video_embed")
     @skip_heavy_models_in_ci
