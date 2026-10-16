@@ -147,7 +147,7 @@ def unusable_asr(request):
             temperature = float(_TEMPERATURE.search(sent).group(1))
             text = loops[temperature] if loops else ""
             body = json.dumps(
-                {"text": text, "language": "en", "duration": "1.0", "segments": []}
+                {"text": text, "language": "en", "duration": 1.0, "segments": []}
             ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

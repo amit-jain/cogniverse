@@ -747,7 +747,7 @@ class TestAudioAnalysisAgent:
         response = {
             "text": "hello world",
             "language": "en",
-            "duration": "1.23",
+            "duration": 1.23,
             "segments": [
                 {"start": 0.0, "end": 1.0, "text": "hello"},
                 {"start": 1.0, "end": 1.23, "text": "world"},
@@ -812,7 +812,7 @@ class TestAudioAnalysisAgent:
         response = {
             "text": " I'm going to go.",
             "language": "en",
-            "duration": "1.5",
+            "duration": 1.5,
             "segments": [
                 {
                     "start": 0.0,
@@ -881,7 +881,7 @@ class TestAudioAnalysisAgent:
             return {
                 "text": f"transcript-{index}",
                 "language": "en",
-                "duration": "1.0",
+                "duration": 1.0,
                 "segments": [
                     {
                         "start": 0.0,
@@ -962,27 +962,27 @@ class TestAudioAnalysisAgent:
         [
             ([], "$: expected an object"),
             (
-                {"language": "en", "duration": "1.0", "segments": []},
+                {"language": "en", "duration": 1.0, "segments": []},
                 "$.text: field is required",
             ),
             (
                 {
                     "text": 7,
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [],
                 },
                 "$.text: expected a string",
             ),
             (
-                {"text": "ok", "duration": "1.0", "segments": []},
+                {"text": "ok", "duration": 1.0, "segments": []},
                 "$.language: field is required",
             ),
             (
                 {
                     "text": "ok",
                     "language": 7,
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [],
                 },
                 "$.language: expected a non-empty string",
@@ -991,7 +991,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "   ",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [],
                 },
                 "$.language: expected a non-empty string",
@@ -1004,33 +1004,33 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": 1.0,
+                    "duration": "1.0",
                     "segments": [],
                 },
-                "$.duration: expected a finite non-negative decimal string",
+                "$.duration: expected a finite non-negative number",
             ),
             (
                 {"text": "ok", "language": "en", "duration": False, "segments": []},
-                "$.duration: expected a finite non-negative decimal string",
+                "$.duration: expected a finite non-negative number",
             ),
             (
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "-0.1",
+                    "duration": -0.1,
                     "segments": [],
                 },
-                "$.duration: expected a finite non-negative decimal string",
+                "$.duration: expected a finite non-negative number",
             ),
             (
-                {"text": "ok", "language": "en", "duration": "1.0"},
+                {"text": "ok", "language": "en", "duration": 1.0},
                 "$.segments: field is required",
             ),
             (
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": {},
                 },
                 "$.segments: expected a list",
@@ -1039,7 +1039,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [7],
                 },
                 "$.segments[0]: expected an object",
@@ -1048,7 +1048,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"end": 1.0, "text": "ok"}],
                 },
                 "$.segments[0].start: field is required",
@@ -1057,7 +1057,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": "0.0", "end": 1.0, "text": "ok"}],
                 },
                 "$.segments[0].start: expected a finite non-negative number",
@@ -1066,7 +1066,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": -0.1, "end": 1.0, "text": "ok"}],
                 },
                 "$.segments[0].start: expected a finite non-negative number",
@@ -1075,7 +1075,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": 0.0, "text": "ok"}],
                 },
                 "$.segments[0].end: field is required",
@@ -1084,7 +1084,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": 0.0, "end": False, "text": "ok"}],
                 },
                 "$.segments[0].end: expected a finite non-negative number",
@@ -1093,7 +1093,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": 0.75, "end": 0.5, "text": "ok"}],
                 },
                 "$.segments[0].end: must be greater than or equal to start",
@@ -1102,7 +1102,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": 0.0, "end": 1.0}],
                 },
                 "$.segments[0].text: field is required",
@@ -1111,7 +1111,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": 0.0, "end": 1.0, "text": 7}],
                 },
                 "$.segments[0].text: expected a string",
@@ -1143,7 +1143,7 @@ class TestAudioAnalysisAgent:
         # Recorded from the live server (v_-vnSFKJNB94 chunk 3): "Thank you."
         # timed to 29.98 s on an 18.77 s chunk.
         recorded = {
-            "duration": "18.769625",
+            "duration": 18.769625,
             "language": "en",
             "text": " Thank you.",
             "segments": [
@@ -1223,7 +1223,7 @@ class TestAudioAnalysisAgent:
         response = {
             "text": "ok",
             "language": "en",
-            "duration": "0.5",
+            "duration": 0.5,
             "segments": [],
         }
 
@@ -1250,12 +1250,12 @@ class TestAudioAnalysisAgent:
         clip = tmp_path / "audio.wav"
         clip_bytes = _write_tone(clip)
         answers = [
-            {"text": "", "language": "en", "duration": "1.0", "segments": []},
+            {"text": "", "language": "en", "duration": 1.0, "segments": []},
             {"text": " hello"},
             {
                 "text": " hello",
                 "language": "en",
-                "duration": "1.0",
+                "duration": 1.0,
                 "segments": [{"start": 0.0, "end": 1.0, "text": " hello"}],
             },
         ]
@@ -1295,7 +1295,7 @@ class TestAudioAnalysisAgent:
     ):
         clip = tmp_path / "audio.wav"
         _write_tone(clip)
-        empty = {"text": "", "language": "en", "duration": "1.0", "segments": []}
+        empty = {"text": "", "language": "en", "duration": 1.0, "segments": []}
 
         with _transcription_server(empty) as (base_url, captured_requests):
             agent = _agent_for_remote_transcription(
@@ -1327,7 +1327,7 @@ class TestAudioAnalysisAgent:
         def answer(body: bytes) -> dict:
             if b'name="response_format"\r\n\r\njson\r\n' in body:
                 return {"text": " *BANG* *BANG*"}
-            return {"text": "", "language": "en", "duration": "1.0", "segments": []}
+            return {"text": "", "language": "en", "duration": 1.0, "segments": []}
 
         with _transcription_server(answer) as (base_url, captured_requests):
             agent = _agent_for_remote_transcription(
@@ -1358,7 +1358,7 @@ class TestAudioAnalysisAgent:
         def answer(body: bytes) -> dict:
             if b'name="response_format"\r\n\r\njson\r\n' in body:
                 return {"usage": {"type": "duration", "seconds": 1}}
-            return {"text": "", "language": "en", "duration": "1.0", "segments": []}
+            return {"text": "", "language": "en", "duration": 1.0, "segments": []}
 
         with _transcription_server(answer) as (base_url, _):
             agent = _agent_for_remote_transcription(
@@ -1389,7 +1389,7 @@ class TestAudioAnalysisAgent:
             return {
                 "text": text,
                 "language": "en",
-                "duration": f"{seconds:.6f}",
+                "duration": seconds,
                 "segments": [{"start": 0.0, "end": seconds, "text": text}],
             }
 
@@ -1586,7 +1586,7 @@ class TestAudioSearchEventLoop:
                     "text": "hello world",
                     "language": "en",
                     "segments": [],
-                    "duration": "1.0",
+                    "duration": 1.0,
                 }
 
         def blocking_post(url, **kwargs):
