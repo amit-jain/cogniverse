@@ -508,6 +508,10 @@ class RemoteInferenceClient:
 
         from PIL import Image
 
+        from cogniverse_foundation.inference_specs import get_inference_service_spec
+
+        dim = get_inference_service_spec("vllm_colpali").output_dimension
+
         def encode_and_post(img) -> tuple[np.ndarray, Dict[str, Any]]:
             if isinstance(img, (str, Path)):
                 with Image.open(img) as pil_img:
@@ -534,6 +538,10 @@ class RemoteInferenceClient:
                         ],
                     }
                 ],
+                # Raw float32 bytes: a JSON float list is parsed into one
+                # Python float per value (~280k per image), several responses
+                # at a time.
+                "encoding_format": "base64",
             }
             response = self.session.post(
                 f"{self.endpoint_url}/pooling",
@@ -542,14 +550,17 @@ class RemoteInferenceClient:
             )
             response.raise_for_status()
             body = response.json()
-            # The server's vectors are float32 values; holding them as float32
-            # arrays straight away drops the parsed JSON (a Python float object
-            # per value) before the next response arrives.
-            vectors = np.asarray(
-                body.get("data", [{}])[0].get("data", []), dtype=np.float32
+            values = np.frombuffer(
+                base64.b64decode(body.get("data", [{}])[0].get("data", "")),
+                dtype=np.float32,
             )
             body.pop("data", None)
-            return vectors, body
+            if values.size % dim:
+                raise ValueError(
+                    f"vllm_colpali at {self.endpoint_url} returned {values.size} "
+                    f"values, not a whole number of {dim}-dim token vectors"
+                )
+            return values.reshape(-1, dim), body
 
         if len(images) <= 1:
             results = [encode_and_post(img) for img in images]
