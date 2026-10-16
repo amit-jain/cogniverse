@@ -110,7 +110,9 @@ class StrategyConfig:
         )
 
         # Resolve storage strategy
-        storage_mode = self._resolve_storage_mode(profile, processing_type)
+        storage_mode = self._resolve_storage_mode(
+            profile, processing_type, segmentation
+        )
 
         # Get schema and ranking strategies
         schema_name = profile.get("schema_name")
@@ -230,7 +232,7 @@ class StrategyConfig:
         return "frames"
 
     def _resolve_storage_mode(
-        self, profile: dict[str, Any], processing_type: str
+        self, profile: dict[str, Any], processing_type: str, segmentation: str
     ) -> str:
         """Resolve storage mode"""
         # For multi-vector models (patches > 1), always use multi_doc
@@ -245,16 +247,10 @@ class StrategyConfig:
                 else "multi_doc"
             )
 
-        # Check process_type for video_chunks (single doc for single-vector only)
-        if (
-            profile.get("process_type") == "video_chunks"
-            and processing_type == "single_vector"
-        ):
-            return "single_doc"
-
-        # Based on processing type
-        if processing_type == "single_vector":
-            # Single vector typically uses single doc for chunks
+        # A single-vector schema holds one vector per document, so only a
+        # whole-video embedding fits in one; chunks and windows are a
+        # document each.
+        if processing_type == "single_vector" and segmentation == "global":
             return "single_doc"
 
         return "multi_doc"
