@@ -2418,8 +2418,8 @@ and then raises `InferenceServiceUnavailableError` naming the service.
 
 Selected by `model_loader: embeddinggemma2`. The profile's `modalities`
 (`video`, `audio`, or both) decide what `process_video_segment` sends for a
-chunk: the document prompt, then the chunk cut to mp4 and/or its audio as
-16 kHz mono WAV. `embed_audio_window(path, start, end)` embeds one audio span,
+chunk: the chunk cut to mp4 and/or its audio as 16 kHz mono WAV, with no
+prompt (the model takes task prefixes on text only). `embed_audio_window(path, start, end)` embeds one audio span,
 `embed_audio_clip(path)` a whole clip as the normalized mean of its
 `audio_windows` (consecutive spans of at most 10 s), and `embed_text(query)` a
 query with the retrieval prompt.

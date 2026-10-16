@@ -275,14 +275,14 @@ the other custom sidecars (see the image table below).
 | Model | `google/embeddinggemma-2` (740M, 768-dim, pinned revision `914f7f89…` passed to `vllm serve --revision`) |
 | Image | `cogniverse/vllm-audio-{cpu,cuda,rocm}`, the image `vllm_asr` runs: vLLM serves `input_audio` parts only with the audio packages installed |
 | Engine | `vllm_embed`, plus `--runner pooling --max-model-len 8192 --limit-mm-per-prompt '{"image":1,"video":1,"audio":1}' --media-io-kwargs '{"video":{"fps":1}}'` |
-| Endpoint | `POST /v1/embeddings` with one chat message whose content is text, `video_url` and `input_audio` parts, and `add_special_tokens: true` |
+| Endpoint | `POST /v1/embeddings` with one chat message whose content is a text part (queries) or `video_url` and `input_audio` parts (documents), and `add_special_tokens: true` |
 | NodePort | 29003 |
 | ROCm GPU memory | `--gpu-memory-utilization 0.08`; TunableOp replays tuned shapes without tuning new ones |
 | Default state | disabled in `values.yaml`; enabled by `values.rocm.yaml` and `values.cuda.yaml`. Served only by the cluster: `InferenceServiceSpec.modal_deployable` is false and the Modal lifecycle refuses it |
 
 Video is sampled at one frame per second. Queries carry the prompt
-`task: search result | query: `, documents `title: none | text: `.
-Without `add_special_tokens` vLLM's chat path drops BOS and EOS and the
+`task: search result | query: `; video and audio documents carry no prompt,
+since the model takes task prefixes on text only. Without `add_special_tokens` vLLM's chat path drops BOS and EOS and the
 vectors drift from the model's own encoding. Used by the
 `video_embeddinggemma2_sv_chunk_6s` profile (each 6 s chunk's frames and audio
 in one input) and the `audio_embeddinggemma2` profile (one vector per audio

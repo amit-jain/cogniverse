@@ -21,13 +21,15 @@ revision, on CPU:
 
 - ``embeddinggemma2.json``: normalized ``sentence_transformers`` vectors for
   ``google/embeddinggemma-2`` (``vllm_omni_embed``) of the first six golden
-  retrieval queries with the query prompt. The model needs transformers 5.19
+  retrieval queries with the query prompt, and of a 10 s audio window and a
+  6 s video chunk of a corpus clip, cut with the ffmpeg arguments ingestion
+  uses and embedded without a prefix. The model needs transformers 5.19
   and sentence-transformers 6.1, newer than the workspace pins, so record it
   in an isolated environment:
 
     uv run --isolated --no-project --with sentence-transformers==6.1.0 \
         --with transformers==5.19.0 --with torch --with torchvision \
-        --with numpy --with pillow --with librosa --with av \
+        --with torchcodec --with numpy --with pillow --with librosa --with av \
         --index https://download.pytorch.org/whl/cpu \
         --index-strategy unsafe-best-match \
         python scripts/record_model_references.py embeddinggemma2
@@ -48,6 +50,7 @@ os.environ["HIP_VISIBLE_DEVICES"] = ""
 
 import json  # noqa: E402
 import sys  # noqa: E402
+import tempfile  # noqa: E402
 from importlib.metadata import version  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -162,6 +165,48 @@ OMNI_QUERY_PROMPT = "task: search result | query: "
 GOLDEN_QUERIES = (
     REPO_ROOT / "data/testset/evaluation/sample_videos_retrieval_queries.json"
 )
+OMNI_MEDIA_SOURCE = "data/testset/evaluation/sample_videos/v_-IMXSEIabMM.mp4"
+# (media, start s, end s, ffmpeg output arguments): the arguments
+# _extract_audio_wav_b64 and _extract_segment_b64 cut with.
+OMNI_MEDIA_CASES = (
+    ("audio", 0.0, 10.0, ["-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"]),
+    ("video", 0.0, 6.0, ["-c:v", "libx264", "-c:a", "aac"]),
+)
+
+
+def _omni_media_case(model, tmp_dir: Path, media, start, end, ffmpeg_args) -> dict:
+    import subprocess
+
+    import numpy as np
+
+    cut = tmp_dir / f"{media}.{'wav' if media == 'audio' else 'mp4'}"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(REPO_ROOT / OMNI_MEDIA_SOURCE),
+            "-ss",
+            str(start),
+            "-t",
+            str(end - start),
+            *ffmpeg_args,
+            "-y",
+            str(cut),
+        ],
+        check=True,
+    )
+    vector = np.asarray(
+        model.encode({media: str(cut)}, normalize_embeddings=True), dtype=np.float32
+    )
+    return {
+        "media": media,
+        "source": OMNI_MEDIA_SOURCE,
+        "start": start,
+        "end": end,
+        "embedding": vector.tolist(),
+    }
 
 
 def record_embeddinggemma2() -> None:
@@ -183,6 +228,10 @@ def record_embeddinggemma2() -> None:
             dtype=np.float32,
         )
         cases.append({"text": text, "is_query": True, "embedding": vector.tolist()})
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        media_cases = [
+            _omni_media_case(model, Path(tmp_dir), *case) for case in OMNI_MEDIA_CASES
+        ]
     _write(
         "embeddinggemma2.json",
         {
@@ -199,6 +248,7 @@ def record_embeddinggemma2() -> None:
             "normalized": True,
             "recorded_by": "scripts/record_model_references.py",
             "cases": cases,
+            "media_cases": media_cases,
         },
     )
 

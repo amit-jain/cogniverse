@@ -7,8 +7,9 @@ Resolves the cluster's service and pins what the production client relies on:
 - every content part the client sends is accepted and lands in one space with
   the query text: a chunk of a snow-shoveling news clip is nearer to a query
   about snow shoveling than to an unrelated one, for each modality;
-- production query vectors match the Sentence-Transformers reference recorded
-  on CPU by ``scripts/record_model_references.py`` (cosine >= 0.99);
+- production query vectors, and the bare audio window and video chunk
+  documents ingestion sends, match the Sentence-Transformers reference
+  recorded on CPU by ``scripts/record_model_references.py`` (cosine >= 0.99);
 - a request past the 8192-token context surfaces the server's 400.
 """
 
@@ -22,13 +23,16 @@ import pytest
 import requests
 
 from cogniverse_core.common.models.model_loaders import (
-    OMNI_DOCUMENT_PROMPT,
     ModelLoaderFactory,
     RemoteInferenceClient,
     _extract_segment_b64,
 )
 from cogniverse_core.query.encoders import EmbeddingGemma2QueryEncoder
-from tests.utils.model_references import load_reference, reference_embedding
+from tests.utils.model_references import (
+    load_reference,
+    reference_embedding,
+    reference_media_embedding,
+)
 
 pytestmark = [
     pytest.mark.requires_docker,
@@ -82,7 +86,7 @@ def test_the_service_serves_the_pinned_model(omni_url):
 
 
 def test_video_is_sampled_at_one_frame_per_second(omni_url):
-    prompt = [{"type": "text", "text": OMNI_DOCUMENT_PROMPT}]
+    prompt = [{"type": "text", "text": "snow"}]
 
     def video_tokens(seconds: float) -> int:
         video = {
@@ -140,6 +144,24 @@ def test_query_vectors_match_the_sentence_transformers_reference(omni_url):
     assert {text: cosine >= 0.99 for text, cosine in cosines.items()} == {
         text: True for text in cosines
     }, cosines
+
+
+@pytest.mark.parametrize("media", ("audio", "video"))
+def test_media_documents_match_the_sentence_transformers_reference(omni_url, media):
+    reference = load_reference("embeddinggemma2")
+    case, expected = reference_media_embedding(reference, media)
+    source = Path(case["source"])
+    assert source == SNOW_CLIP
+    wrapper = _wrapper(omni_url, [media])
+    if media == "audio":
+        served = wrapper.embed_audio_window(source, case["start"], case["end"])
+    else:
+        served = wrapper.process_video_segment(source, case["start"], case["end"])[
+            "embeddings_np"
+        ]
+
+    # A task prefix on the media moves the vector to cosine 0.93-0.99.
+    assert round(float(served @ (expected / np.linalg.norm(expected))), 4) >= 0.999
 
 
 def test_a_request_past_the_context_is_refused_with_the_server_reason(omni_url):

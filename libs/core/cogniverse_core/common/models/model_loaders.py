@@ -223,9 +223,9 @@ def _extract_segment_b64(video_path: Path, start_time: float, end_time: float) -
 
 
 OMNI_EMBED_SERVICE = "vllm_omni_embed"
-# EmbeddingGemma 2's Sentence-Transformers prompts for retrieval.
+# EmbeddingGemma 2's retrieval query prefix. Video and audio documents are
+# embedded bare: the model takes task prefixes on text only.
 OMNI_QUERY_PROMPT = "task: search result | query: "
-OMNI_DOCUMENT_PROMPT = "title: none | text: "
 OMNI_MODALITIES = frozenset({"video", "audio"})
 OMNI_AUDIO_SAMPLE_RATE = 16000
 # Both acoustic embedders see audio in windows of at most this length: CLAP
@@ -990,7 +990,7 @@ class _EmbeddingGemma2Remote:
         self, video_path: Path, start_time: float, end_time: float
     ) -> Dict[str, Any]:
         started = time.monotonic()
-        content: List[Dict[str, Any]] = [{"type": "text", "text": OMNI_DOCUMENT_PROMPT}]
+        content: List[Dict[str, Any]] = []
         if "video" in self.modalities:
             video_b64 = _extract_segment_b64(video_path, start_time, end_time)
             content.append(
@@ -1011,10 +1011,7 @@ class _EmbeddingGemma2Remote:
         self, audio_path: Path, start_time: float, end_time: float
     ) -> np.ndarray:
         return self.client.embed_messages(
-            [
-                {"type": "text", "text": OMNI_DOCUMENT_PROMPT},
-                self._audio_part(audio_path, start_time, end_time),
-            ],
+            [self._audio_part(audio_path, start_time, end_time)],
             timeout=SEGMENT_EMBED_TIMEOUT_S,
         )
 

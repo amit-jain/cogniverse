@@ -22,7 +22,6 @@ import numpy as np
 import pytest
 
 from cogniverse_core.common.models.model_loaders import (
-    OMNI_DOCUMENT_PROMPT,
     OMNI_QUERY_PROMPT,
     ModelLoaderFactory,
     RemoteInferenceClient,
@@ -157,11 +156,37 @@ def test_document_request_is_the_exact_message(tmp_path):
     assert set(message) == {"role", "content"}
     assert message["role"] == "user"
     content = message["content"]
-    assert [part["type"] for part in content] == ["text", "video_url", "input_audio"]
-    assert content[0] == {"type": "text", "text": "title: none | text: "}
-    assert content[1]["video_url"]["url"].startswith("data:video/mp4;base64,")
-    assert content[2]["input_audio"]["format"] == "wav"
-    assert _wav_samples(content[2]["input_audio"]["data"]) == (16000, 1, 32000)
+    # Media carries no task prefix: EmbeddingGemma 2 prefixes text only.
+    assert [sorted(part) for part in content] == [
+        ["type", "video_url"],
+        ["input_audio", "type"],
+    ]
+    assert [part["type"] for part in content] == ["video_url", "input_audio"]
+    assert content[0]["video_url"]["url"].startswith("data:video/mp4;base64,")
+    assert content[1]["input_audio"]["format"] == "wav"
+    assert _wav_samples(content[1]["input_audio"]["data"]) == (16000, 1, 32000)
+
+
+def test_audio_window_request_is_the_bare_audio(tmp_path):
+    video = _tone_video(tmp_path / "tone.mp4", 2.0)
+    with _OmniServer(lambda body: _ok(_vector(1.0))) as server:
+        _loader(server.url, ["audio"]).embed_audio_window(video, 0.5, 1.5)
+
+    [body] = server.bodies
+    assert body["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": _extract_audio_wav_b64(video, 0.5, 1.5),
+                        "format": "wav",
+                    },
+                }
+            ],
+        }
+    ]
 
 
 def test_a_frames_only_profile_sends_no_audio(tmp_path):
@@ -171,7 +196,6 @@ def test_a_frames_only_profile_sends_no_audio(tmp_path):
 
     [body] = server.bodies
     assert [part["type"] for part in body["messages"][0]["content"]] == [
-        "text",
         "video_url",
     ]
 
@@ -185,7 +209,6 @@ def test_query_text_carries_the_query_prompt():
         {"type": "text", "text": "task: search result | query: a dog barks"}
     ]
     assert OMNI_QUERY_PROMPT == "task: search result | query: "
-    assert OMNI_DOCUMENT_PROMPT == "title: none | text: "
 
 
 def test_vector_is_l2_normalized():
