@@ -222,6 +222,95 @@ def _extract_segment_b64(video_path: Path, start_time: float, end_time: float) -
             pass
 
 
+OMNI_EMBED_SERVICE = "vllm_omni_embed"
+# EmbeddingGemma 2's Sentence-Transformers prompts for retrieval.
+OMNI_QUERY_PROMPT = "task: search result | query: "
+OMNI_DOCUMENT_PROMPT = "title: none | text: "
+OMNI_MODALITIES = frozenset({"video", "audio"})
+OMNI_AUDIO_SAMPLE_RATE = 16000
+# Both acoustic embedders see audio in windows of at most this length: CLAP
+# crops anything longer at random, EmbeddingGemma 2 truncates past ~11.2 s.
+AUDIO_WINDOW_SECONDS = 10.0
+
+
+def audio_windows(
+    duration_s: float, window_s: float = AUDIO_WINDOW_SECONDS
+) -> list[tuple[float, float]]:
+    """Consecutive ``[start, end)`` windows from 0 s, the last one shorter."""
+    if duration_s <= 0:
+        raise ValueError(f"audio duration must be positive, got {duration_s}")
+    windows = []
+    start = 0.0
+    while start < duration_s:
+        end = min(start + window_s, duration_s)
+        windows.append((start, end))
+        start = end
+    return windows
+
+
+def _has_audio_stream(media_path: Path) -> bool:
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            str(media_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return bool(result.stdout.strip())
+
+
+def _extract_audio_wav_b64(
+    media_path: Path,
+    start_time: float,
+    end_time: float,
+    sample_rate: int = OMNI_AUDIO_SAMPLE_RATE,
+) -> str:
+    """``[start_time, end_time)`` of a file's audio as base64 mono 16-bit WAV."""
+    import base64
+    import tempfile
+
+    if not _has_audio_stream(media_path):
+        raise ValueError(f"{media_path} has no audio stream to embed")
+    # A file, not a pipe: ffmpeg can only write the WAV header's data length
+    # once it can seek back to it.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        wav_path = Path(tmp_dir) / "window.wav"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-ss",
+                str(start_time),
+                "-t",
+                str(end_time - start_time),
+                "-i",
+                str(media_path),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                str(sample_rate),
+                "-c:a",
+                "pcm_s16le",
+                str(wav_path),
+            ],
+            capture_output=True,
+            check=True,
+        )
+        return base64.b64encode(wav_path.read_bytes()).decode("utf-8")
+
+
 class RemoteInferenceClient:
     """
     Client for remote model inference providers.
@@ -561,6 +650,80 @@ class RemoteInferenceClient:
             "/embed/text", {"text": text}, timeout=self.query_encode_timeout_s
         )
 
+    def embed_messages(self, content: List[Dict[str, Any]], *, timeout: float):
+        """One ``vllm_omni_embed`` vector for a chat message's content parts.
+
+        Returns the L2-normalized float32 vector. A 4xx is the request's
+        fault and raises ValueError at once; an unreachable, hung or failing
+        server is retried, then raises InferenceServiceUnavailableError.
+        """
+        from cogniverse_foundation.inference_specs import (
+            get_inference_service_spec,
+        )
+
+        spec = get_inference_service_spec(OMNI_EMBED_SERVICE)
+        payload = {
+            "model": spec.model_id,
+            "messages": [{"role": "user", "content": content}],
+        }
+        try:
+            data = self._breaker.call(
+                self._post_embeddings_retried, payload, timeout=timeout
+            )
+        except requests.HTTPError as exc:
+            raise InferenceServiceUnavailableError(
+                OMNI_EMBED_SERVICE,
+                f"{OMNI_EMBED_SERVICE} at {self.endpoint_url} failed "
+                f"({exc.response.status_code}): {exc.response.text}",
+            ) from exc
+        except (requests.RequestException, ConnectionError, TimeoutError) as exc:
+            raise InferenceServiceUnavailableError(
+                OMNI_EMBED_SERVICE,
+                f"{OMNI_EMBED_SERVICE} at {self.endpoint_url} did not answer: "
+                f"{type(exc).__name__}: {exc}",
+            ) from exc
+
+        items = data.get("data") if isinstance(data, dict) else None
+        if not items or not isinstance(items[0], dict) or not items[0].get("embedding"):
+            raise ValueError(
+                f"{OMNI_EMBED_SERVICE} at {self.endpoint_url} returned no vector"
+            )
+        vector = np.asarray(items[0]["embedding"], dtype=np.float32)
+        if vector.shape != (spec.output_dimension,):
+            raise ValueError(
+                f"{OMNI_EMBED_SERVICE} at {self.endpoint_url} returned a "
+                f"{vector.size}-dim vector; the service contract is "
+                f"{spec.output_dimension}"
+            )
+        norm = float(np.linalg.norm(vector))
+        if not np.isfinite(norm) or norm == 0.0:
+            raise ValueError(
+                f"{OMNI_EMBED_SERVICE} at {self.endpoint_url} returned a vector "
+                f"with norm {norm}"
+            )
+        return vector / norm
+
+    @retry_with_backoff(
+        config=RetryConfig(
+            max_attempts=3,
+            initial_delay=0.5,
+            exceptions=(requests.RequestException, ConnectionError, TimeoutError),
+        )
+    )
+    def _post_embeddings_retried(
+        self, payload: Dict[str, Any], *, timeout: float
+    ) -> Any:
+        response = self.session.post(
+            f"{self.endpoint_url}/v1/embeddings", json=payload, timeout=timeout
+        )
+        if 400 <= response.status_code < 500:
+            raise ValueError(
+                f"{OMNI_EMBED_SERVICE} at {self.endpoint_url} rejected the request "
+                f"({response.status_code}): {response.text}"
+            )
+        response.raise_for_status()
+        return response.json()
+
     def process_video_segment(
         self, video_path: Path, start_time: float, end_time: float, **kwargs
     ) -> Dict[str, Any]:
@@ -734,6 +897,110 @@ class RemoteXClipLoader(ModelLoader):
                 self.client._close()
 
         return XClipRemoteWrapper(self.client, self.model_name), None
+
+
+class RemoteEmbeddingGemma2Loader(ModelLoader):
+    """Remote loader for EmbeddingGemma 2 on the ``vllm_omni_embed`` service.
+
+    One model embeds the query text and the indexed media into the same
+    space. The profile's ``modalities`` choose what a video chunk sends: its
+    frames, its audio track, or both in one input.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        config: Dict[str, Any],
+        logger: Optional[logging.Logger] = None,
+        *,
+        _resolved_headers: Optional[Mapping[str, str]] = None,
+    ):
+        super().__init__(model_name, config, logger)
+
+        self.remote_url = config.get("remote_inference_url")
+        if not self.remote_url:
+            raise ValueError(
+                "remote_inference_url required for remote EmbeddingGemma 2 loader"
+            )
+        modalities = list(config.get("modalities") or [])
+        if not modalities or not set(modalities) <= OMNI_MODALITIES:
+            raise ValueError(
+                "embeddinggemma2 modalities must be a non-empty subset of "
+                f"{sorted(OMNI_MODALITIES)}, got {modalities}"
+            )
+        self.modalities = tuple(modalities)
+        resolved_headers = _resolved_headers or _resolved_inference_headers(
+            self.remote_url, config.get("remote_inference_api_key")
+        )
+        self.client = RemoteInferenceClient(
+            self.remote_url,
+            logger=self.logger,
+            _resolved_headers=resolved_headers,
+        )
+
+    def load_model(self) -> Tuple[Any, Any]:
+        """Return the remote EmbeddingGemma 2 wrapper."""
+        self.logger.info(
+            f"Initialized remote EmbeddingGemma 2 inference at {self.remote_url}"
+        )
+        return _EmbeddingGemma2Remote(self.client, self.modalities), None
+
+
+class _EmbeddingGemma2Remote:
+    def __init__(self, client: RemoteInferenceClient, modalities: Tuple[str, ...]):
+        self.client = client
+        self.modalities = modalities
+
+    def process_video_segment(
+        self, video_path: Path, start_time: float, end_time: float
+    ) -> Dict[str, Any]:
+        started = time.monotonic()
+        content: List[Dict[str, Any]] = [{"type": "text", "text": OMNI_DOCUMENT_PROMPT}]
+        if "video" in self.modalities:
+            video_b64 = _extract_segment_b64(video_path, start_time, end_time)
+            content.append(
+                {
+                    "type": "video_url",
+                    "video_url": {"url": f"data:video/mp4;base64,{video_b64}"},
+                }
+            )
+        if "audio" in self.modalities:
+            content.append(self._audio_part(video_path, start_time, end_time))
+        vector = self.client.embed_messages(content, timeout=SEGMENT_EMBED_TIMEOUT_S)
+        return {
+            "embeddings_np": vector,
+            "processing_time": time.monotonic() - started,
+        }
+
+    def embed_audio_window(
+        self, audio_path: Path, start_time: float, end_time: float
+    ) -> np.ndarray:
+        return self.client.embed_messages(
+            [
+                {"type": "text", "text": OMNI_DOCUMENT_PROMPT},
+                self._audio_part(audio_path, start_time, end_time),
+            ],
+            timeout=SEGMENT_EMBED_TIMEOUT_S,
+        )
+
+    def embed_text(self, text: str) -> np.ndarray:
+        return self.client.embed_messages(
+            [{"type": "text", "text": f"{OMNI_QUERY_PROMPT}{text}"}],
+            timeout=self.client.query_encode_timeout_s,
+        )
+
+    @staticmethod
+    def _audio_part(media_path: Path, start_time: float, end_time: float) -> dict:
+        return {
+            "type": "input_audio",
+            "input_audio": {
+                "data": _extract_audio_wav_b64(media_path, start_time, end_time),
+                "format": "wav",
+            },
+        }
+
+    def _close(self) -> None:
+        self.client._close()
 
 
 class RemoteColBERTLoader(ModelLoader):
@@ -1381,6 +1648,7 @@ class ModelLoaderFactory:
         "colpali": RemoteColPaliLoader,
         "colqwen": RemoteColPaliLoader,
         "xclip": RemoteXClipLoader,
+        "embeddinggemma2": RemoteEmbeddingGemma2Loader,
         "colbert": RemoteColBERTLoader,
         "whisper": RemoteWhisperLoader,
     }
@@ -1440,7 +1708,9 @@ class ModelLoaderFactory:
 
 # The model_loader values ingestion embeds with: the loaders
 # EmbeddingGeneratorImpl dispatches to, each with a remote loader.
-EMBEDDING_MODEL_LOADERS = frozenset({"colbert", "colpali", "colqwen", "xclip"})
+EMBEDDING_MODEL_LOADERS = frozenset(
+    {"colbert", "colpali", "colqwen", "xclip", "embeddinggemma2"}
+)
 
 
 # Global bounded LRU model cache to avoid reloading.
