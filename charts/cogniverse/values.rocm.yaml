@@ -243,6 +243,10 @@ inference:
       - '{"image":1,"video":1,"audio":1}'
       - "--media-io-kwargs"
       - '{"video":{"fps":1}}'
+      # Every chunk is a new input, so the processor cache (4 GiB in each of
+      # the API and engine processes by default) only fills the pod's memory.
+      - "--mm-processor-cache-gb"
+      - "0"
       # 0.08 = 7.7 GiB, the free-memory guard for the startup profile of an
       # 8192-token multimodal step. A pooling model keeps no KV cache: measured
       # 2.6 GiB on the GPU and a 5.3 GiB pod working set after 6 s video +

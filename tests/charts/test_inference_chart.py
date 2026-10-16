@@ -2525,6 +2525,8 @@ def test_rocm_omni_embed_serves_the_pinned_model_at_one_frame_per_second():
         '{"image":1,"video":1,"audio":1}',
         "--media-io-kwargs",
         '{"video":{"fps":1}}',
+        "--mm-processor-cache-gb",
+        "0",
         "--gpu-memory-utilization",
         "0.08",
     ]

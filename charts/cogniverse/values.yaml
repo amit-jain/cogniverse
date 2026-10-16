@@ -1244,6 +1244,10 @@ inference:
       - '{"image":1,"video":1,"audio":1}'
       - "--media-io-kwargs"
       - '{"video":{"fps":1}}'
+      # Every chunk is a new input, so the processor cache (4 GiB in each of
+      # the API and engine processes by default) only fills the pod's memory.
+      - "--mm-processor-cache-gb"
+      - "0"
     resources:
       limits:
         cpu: "4"
