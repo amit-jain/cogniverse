@@ -232,37 +232,77 @@ def _record(remote_inference) -> None:
             },
         )
 
+    cache = Path.home() / ".cache" / "cogniverse" / "omni_eval_arms"
+    cache.mkdir(parents=True, exist_ok=True)
+
+    def arm(name: str, service: str, inputs: list, embed) -> np.ndarray:
+        """One arm's vectors, kept on disk keyed by its inputs and the
+        service's revision, so a re-record after a failure resumes."""
+        key = hashlib.sha256(
+            json.dumps([endpoints[service].model_revision, inputs]).encode()
+        ).hexdigest()[:16]
+        path = cache / f"{name}-{key}.npy"
+        if path.exists():
+            return np.load(path)
+        rows = np.asarray([embed(*item) for item in inputs], dtype=np.float32)
+        np.save(path, rows)
+        return rows
+
+    caption_inputs = [(captions[c][i],) for c, i in caption_refs]
     vectors = {
-        "xclip_chunks": [
-            xclip.embed_video_segment(by_name[v], s, e) for v, s, e in video_windows
-        ],
-        "omni_av_chunks": [
-            omni_av.process_video_segment(by_name[v], s, e)["embeddings_np"]
-            for v, s, e in video_windows
-        ],
-        "omni_v_chunks": [
-            omni_v.process_video_segment(by_name[v], s, e)["embeddings_np"]
-            for v, s, e in video_windows
-        ],
-        "xclip_queries": [xclip.embed_text(q) for q in queries],
-        "omni_queries": [omni_av.embed_text(q) for q in queries],
-        "clap_windows": [clap_window(c, s, e) for c, s, e in windows],
-        "omni_audio_windows": [
-            omni_a.embed_audio_window(audio_dir / c, s, e) for c, s, e in windows
-        ],
-        "clap_captions": [
-            clap.generate_acoustic_text_embedding(captions[c][i])
-            for c, i in caption_refs
-        ],
-        "omni_captions": [omni_a.embed_text(captions[c][i]) for c, i in caption_refs],
+        "omni_av_chunks": arm(
+            "omni_av_chunks",
+            "vllm_omni_embed",
+            video_windows,
+            lambda v, s, e: omni_av.process_video_segment(by_name[v], s, e)[
+                "embeddings_np"
+            ],
+        ),
+        "omni_v_chunks": arm(
+            "omni_v_chunks",
+            "vllm_omni_embed",
+            video_windows,
+            lambda v, s, e: omni_v.process_video_segment(by_name[v], s, e)[
+                "embeddings_np"
+            ],
+        ),
+        "xclip_queries": arm(
+            "xclip_queries", "video_embed", [(q,) for q in queries], xclip.embed_text
+        ),
+        "omni_queries": arm(
+            "omni_queries",
+            "vllm_omni_embed",
+            [(q,) for q in queries],
+            omni_av.embed_text,
+        ),
+        "clap_windows": arm("clap_windows", "clap_embed", windows, clap_window),
+        "omni_audio_windows": arm(
+            "omni_audio_windows",
+            "vllm_omni_embed",
+            windows,
+            lambda c, s, e: omni_a.embed_audio_window(audio_dir / c, s, e),
+        ),
+        "clap_captions": arm(
+            "clap_captions",
+            "clap_embed",
+            caption_inputs,
+            clap.generate_acoustic_text_embedding,
+        ),
+        "omni_captions": arm(
+            "omni_captions", "vllm_omni_embed", caption_inputs, omni_a.embed_text
+        ),
+        # Last: X-CLIP runs on CPU, about 20 s a chunk.
+        "xclip_chunks": arm(
+            "xclip_chunks",
+            "video_embed",
+            video_windows,
+            lambda v, s, e: xclip.embed_video_segment(by_name[v], s, e),
+        ),
     }
     FIXTURES.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         VECTORS_PATH,
-        **{
-            name: _unit(np.asarray(rows, dtype=np.float32)).astype(np.float16)
-            for name, rows in vectors.items()
-        },
+        **{name: _unit(rows).astype(np.float16) for name, rows in vectors.items()},
     )
     MANIFEST_PATH.write_text(
         json.dumps(
