@@ -204,7 +204,8 @@ def test_default_nearest_neighbor_remains_approximate(
 
     assert (
         params["yql"] == "select * from agent_memories_acme_acme where "
-        "{targetHits: 1}nearestNeighbor(embedding, qt) "
+        "{targetHits: 1, hnsw.exploreAdditionalHits: 200}"
+        "nearestNeighbor(embedding, qt) "
         'AND user_id contains "scientists"'
     )
     assert "approximate: false" not in params["yql"]
@@ -393,7 +394,8 @@ def test_nearest_neighbor_hybrid_ors_the_query_terms(
     assert params["yql"] == (
         "select * from video_xclip_acme_acme where "
         '({grammar: "any"}userInput(@userQuery)) OR '
-        "({targetHits: 10}nearestNeighbor(embedding, qt))"
+        "({targetHits: 10, hnsw.exploreAdditionalHits: 200}"
+        "nearestNeighbor(embedding, qt))"
     )
     assert params["userQuery"] == "man shoveling snow"
 
@@ -404,6 +406,7 @@ def test_nearest_neighbor_hybrid_keeps_filters(backend: VespaSearchBackend) -> N
     assert params["yql"] == (
         "select * from video_xclip_acme_acme where "
         '(({grammar: "any"}userInput(@userQuery)) OR '
-        "({targetHits: 10}nearestNeighbor(embedding, qt))) "
+        "({targetHits: 10, hnsw.exploreAdditionalHits: 200}"
+        "nearestNeighbor(embedding, qt))) "
         'AND video_id contains "v1"'
     )

@@ -43,6 +43,7 @@ from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
 from cogniverse_runtime.ingestion.processors.audio_transcriber import AudioTranscriber
+from cogniverse_vespa._yql import nearest_neighbor
 
 logger = logging.getLogger(__name__)
 
@@ -836,9 +837,8 @@ class AudioAnalysisAgent(
         # acoustic_similarity ranks via closeness(field, acoustic_embedding),
         # which binds to a nearestNeighbor operator over the HNSW field; the
         # query tensor is the profile input query(acoustic_query).
-        yql = (
-            f"select * from {self._schema_name} where "
-            f"{{targetHits:{limit}}}nearestNeighbor(acoustic_embedding, acoustic_query)"
+        yql = f"select * from {self._schema_name} where " + nearest_neighbor(
+            "acoustic_embedding", "acoustic_query", limit
         )
 
         params = {

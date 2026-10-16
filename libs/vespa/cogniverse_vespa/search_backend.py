@@ -45,6 +45,7 @@ from cogniverse_sdk.interfaces.backend import (
     SearchBackend,
 )
 from cogniverse_vespa._vespa_factory import apply_failfast_timeouts, make_vespa_app
+from cogniverse_vespa._yql import nearest_neighbor as yql_nearest_neighbor
 from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
@@ -1803,11 +1804,11 @@ class VespaSearchBackend(SearchBackend):
             # Use nearestNeighbor for visual search
             nn_field = rank_config.get("nearestneighbor_field", "embedding")
             nn_tensor = rank_config.get("nearestneighbor_tensor", "qt")
-            nn_annotations = f"targetHits: {limit}"
-            if not nearest_neighbor_approximate:
-                nn_annotations += ", approximate: false"
-            nearest_neighbor = (
-                f"{{{nn_annotations}}}nearestNeighbor({nn_field}, {nn_tensor})"
+            nearest_neighbor = yql_nearest_neighbor(
+                nn_field,
+                nn_tensor,
+                limit,
+                approximate=nearest_neighbor_approximate,
             )
 
             if rank_config.get("needs_text_query") and query_text:

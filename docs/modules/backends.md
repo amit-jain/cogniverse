@@ -1727,7 +1727,11 @@ uses the candidate budget `max(top_k, min(top_k * source_collapse_oversample,
 than `top_k` sources come back and the match count reached the budget, the
 returned `SearchResultBatch` has `source_search_incomplete=True`: sources beyond
 the budget may exist. `False` does not make the search exhaustive: approximate
-`nearestNeighbor` retrieval can still miss segments. `targetHits` applies per
+`nearestNeighbor` retrieval can still miss segments. Every approximate
+`nearestNeighbor` term, built by `cogniverse_vespa._yql.nearest_neighbor`,
+explores `NEAREST_NEIGHBOR_EXPLORE_ADDITIONAL_HITS` (200) HNSW candidates
+beyond `targetHits`; `nearest_neighbor_approximate: false` in the query scans
+every document instead. `targetHits` applies per
 content node, so on a multi-node content cluster more segments than the budget
 can reach grouping and the flag can be `True` although no node's budget was
 full. `total_count` is the number of matched segments. `source_collapse_oversample`

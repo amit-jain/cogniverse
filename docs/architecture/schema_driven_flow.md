@@ -713,6 +713,7 @@ if schema_name not in strategies or strategy_name not in strategies[schema_name]
 
 Use the extracted `RankingStrategyInfo` to determine the correct search method:
 ```python
+from cogniverse_vespa._yql import nearest_neighbor as yql_nearest_neighbor
 from cogniverse_vespa.ranking_strategy_extractor import RankingStrategyExtractor
 
 extractor = RankingStrategyExtractor()
@@ -723,7 +724,8 @@ if strategy_info.use_nearestneighbor:
     # Global embedding - use nearestNeighbor
     field = strategy_info.nearestneighbor_field  # "embedding" or "embedding_binary"
     tensor = strategy_info.nearestneighbor_tensor  # "qt" or "qtb"
-    nearest_neighbor = f"({{targetHits:100}}nearestNeighbor({field}, {tensor}))"
+    # {targetHits: N, hnsw.exploreAdditionalHits: 200}nearestNeighbor(field, tensor)
+    nearest_neighbor = f"({yql_nearest_neighbor(field, tensor, limit)})"
     if strategy_info.needs_text_query:
         # Hybrid - the nearest neighbours plus every document with a query term
         yql = f'where ({{grammar: "any"}}userInput(@userQuery)) OR {nearest_neighbor}'

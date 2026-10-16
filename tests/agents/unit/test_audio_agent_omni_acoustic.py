@@ -108,7 +108,8 @@ async def test_acoustic_search_embeds_with_the_profile_service_and_its_schema():
     assert search == {
         "yql": (
             "select * from audio_embeddinggemma2_acme_prod where "
-            "{targetHits:3}nearestNeighbor(acoustic_embedding, acoustic_query)"
+            "{targetHits: 3, hnsw.exploreAdditionalHits: 200}"
+            "nearestNeighbor(acoustic_embedding, acoustic_query)"
         ),
         "hits": 3,
         "ranking.profile": "acoustic_similarity",
