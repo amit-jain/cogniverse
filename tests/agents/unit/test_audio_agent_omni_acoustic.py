@@ -10,11 +10,17 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from cogniverse_agents.audio_analysis_agent import AudioAnalysisAgent, AudioAnalysisDeps
+from cogniverse_agents.audio_analysis_agent import (
+    AudioAnalysisAgent,
+    AudioAnalysisDeps,
+    AudioSearchInput,
+)
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from tests.utils.memory_store import InMemoryConfigStore
 
@@ -71,19 +77,37 @@ HIT = {
 }
 
 
-def _agent(omni_url: str, vespa_url: str) -> AudioAnalysisAgent:
+def _agent(
+    omni_url: str, vespa_url: str, schema_loader=None, audio_schema=None
+) -> AudioAnalysisAgent:
     return AudioAnalysisAgent(
         deps=AudioAnalysisDeps(
             tenant_id="acme:prod",
             vespa_endpoint=vespa_url,
             audio_profile="audio_embeddinggemma2",
-            audio_schema="audio_embeddinggemma2",
+            audio_schema=audio_schema or "audio_embeddinggemma2",
             acoustic_service="vllm_omni_embed",
             acoustic_endpoint=omni_url,
             deployed_audio_schema=True,
             config_manager=ConfigManager(store=InMemoryConfigStore()),
+            schema_loader=schema_loader,
         )
     )
+
+
+def _acoustic_search(limit: int) -> dict:
+    expected = np.zeros(768)
+    expected[7] = 1.0
+    return {
+        "yql": (
+            "select * from audio_embeddinggemma2_acme_prod where "
+            f"{{targetHits: {limit}, hnsw.exploreAdditionalHits: 200}}"
+            "nearestNeighbor(acoustic_embedding, acoustic_query)"
+        ),
+        "hits": limit,
+        "ranking.profile": "acoustic_similarity",
+        "input.query(acoustic_query)": expected.tolist(),
+    }
 
 
 async def test_acoustic_search_embeds_with_the_profile_service_and_its_schema():
@@ -103,21 +127,63 @@ async def test_acoustic_search_embeds_with_the_profile_service_and_its_schema():
     ]
     [(path, search)] = vespa.posts
     assert path == "/search/"
-    expected = np.zeros(768)
-    expected[7] = 1.0
-    assert search == {
-        "yql": (
-            "select * from audio_embeddinggemma2_acme_prod where "
-            "{targetHits: 3, hnsw.exploreAdditionalHits: 200}"
-            "nearestNeighbor(acoustic_embedding, acoustic_query)"
-        ),
-        "hits": 3,
-        "ranking.profile": "acoustic_similarity",
-        "input.query(acoustic_query)": expected.tolist(),
-    }
+    assert search == _acoustic_search(3)
     assert [(r.audio_id, r.audio_url) for r in results] == [
         ("rain", "s3://bucket/rain.wav")
     ]
+
+
+async def test_a_search_naming_no_mode_ranks_the_omni_profile_acoustically():
+    # The omni audio schema has no transcript-embedding rank profile, so the
+    # mode a caller leaves unset is the acoustic one its schema ranks with.
+    with (
+        _JsonServer(
+            lambda body: {"data": [{"index": 0, "embedding": QUERY_VECTOR}]}
+        ) as omni,
+        _JsonServer(lambda body: {"root": {"children": [HIT]}}) as vespa,
+    ):
+        agent = _agent(
+            omni.url, vespa.url, FilesystemSchemaLoader(Path("configs/schemas"))
+        )
+        output = await agent._process_impl(
+            AudioSearchInput(query="rain on a tin roof", limit=3)
+        )
+
+    [(_, search)] = vespa.posts
+    assert search == _acoustic_search(3)
+    assert [r.audio_id for r in output.results] == ["rain"]
+
+
+async def test_a_profile_ranking_with_no_default_mode_is_refused(tmp_path):
+    (tmp_path / "audio_bare_schema.json").write_text(
+        json.dumps({"name": "audio_bare", "rank_profiles": [{"name": "default"}]})
+    )
+    agent = _agent(
+        "http://127.0.0.1:1",
+        "http://127.0.0.1:1",
+        FilesystemSchemaLoader(tmp_path),
+        audio_schema="audio_bare",
+    )
+
+    with pytest.raises(ValueError) as caught:
+        await agent.search_audio("rain", limit=3)
+
+    assert str(caught.value) == (
+        "Audio profile 'audio_embeddinggemma2' (schema 'audio_bare') ranks with "
+        "none of ['phased_semantic', 'acoustic_similarity']; name a search mode"
+    )
+
+
+async def test_a_search_naming_no_mode_needs_a_schema_loader():
+    agent = _agent("http://127.0.0.1:1", "http://127.0.0.1:1")
+
+    with pytest.raises(ValueError) as caught:
+        await agent.search_audio("rain", limit=3)
+
+    assert str(caught.value) == (
+        "Audio search on profile 'audio_embeddinggemma2' names no mode and the "
+        "agent has no schema loader to choose one"
+    )
 
 
 def test_an_unknown_acoustic_service_is_refused():

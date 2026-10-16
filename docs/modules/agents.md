@@ -2645,10 +2645,15 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
 
 **Search Modes:**
 
-- `semantic` - Default. ColBERT (`phased_semantic`) over transcript text
+- `semantic` - ColBERT (`phased_semantic`) over transcript text
 - `transcript` - Lexical BM25 (`transcript_search`) over `audio_title` and `audio_transcript`
 - `hybrid` - Every clip ranked by ColBERT binary MaxSim plus `nativeRank` of `audio_title` and `audio_transcript` (`hybrid_semantic_bm25`)
-- `acoustic` - CLAP text-to-audio similarity over `acoustic_embedding`
+- `acoustic` - Text-to-audio similarity over `acoustic_embedding` (`acoustic_similarity`), embedded by the profile's `acoustic_service`
+
+A search that names no mode takes the first of `semantic` and `acoustic` whose
+rank profile the audio profile's schema declares (`DEFAULT_SEARCH_MODES`):
+`semantic` on `audio_content`, `acoustic` on `audio_embeddinggemma2`. A schema
+with neither raises `ValueError` naming the profile.
 
 Text modes go through the shared search backend with `type="audio"`; the
 backend selects the tenant's audio profile and encodes the query on demand.
@@ -2663,7 +2668,7 @@ clip with CLAP and searches `acoustic_embedding`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `query` | str | Search query |
-| `search_mode` | str | Mode: transcript, semantic, acoustic, hybrid |
+| `search_mode` | Optional[str] | Mode: transcript, semantic, acoustic, hybrid; unset takes the profile's default |
 | `limit` | int | Number of results (default: 20) |
 
 **Output Fields:**
@@ -2722,9 +2727,11 @@ the resolved headers as one immutable mapping for every multipart request. An
 authentication error, timeout, or serving failure is raised to the caller
 without exposing the credential or producing an empty transcript.
 
-The dispatcher searches the tenant's audio profile: the request's profile, the
-only audio-type profile, or `backend.default_profiles.audio`
-(`select_type_profile`). `AudioAnalysisDeps` carries that `audio_profile`, its
+The dispatcher searches the tenant's deployed audio profile
+(`audio_search_target`): the only audio-type profile whose schema the tenant
+has deployed, else `backend.default_profiles.audio` among several
+(`select_type_profile`); a tenant with none deployed gets a no-content answer.
+`AudioAnalysisDeps` carries that `audio_profile`, its
 `audio_schema`, the `acoustic_service` that embeds its `acoustic_embedding`
 field (`clap_embed` or `vllm_omni_embed`) and that service's
 `acoustic_endpoint`. Acoustic mode and acoustic reference-clip similarity embed

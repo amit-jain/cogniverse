@@ -77,8 +77,12 @@ class AudioSearchInput(AgentInput):
     """Type-safe input for audio search"""
 
     query: str = PydanticField(..., description="Search query")
-    search_mode: str = PydanticField(
-        "semantic", description="Search mode: transcript, semantic, acoustic, hybrid"
+    search_mode: Optional[str] = PydanticField(
+        None,
+        description=(
+            "Search mode: transcript, semantic, acoustic, hybrid; unset takes "
+            "the profile's default"
+        ),
     )
     limit: int = PydanticField(20, description="Number of results")
 
@@ -94,6 +98,16 @@ class AudioSearchOutput(AgentOutput):
 
 # Services that embed an audio profile's acoustic_embedding field.
 ACOUSTIC_SERVICES = frozenset({"clap_embed", "vllm_omni_embed"})
+
+# The rank profile each search mode ranks with.
+SEARCH_MODE_STRATEGIES = {
+    "semantic": "phased_semantic",
+    "transcript": "transcript_search",
+    "hybrid": "hybrid_semantic_bm25",
+    "acoustic": "acoustic_similarity",
+}
+# A search naming no mode takes the first of these its profile's schema has.
+DEFAULT_SEARCH_MODES = ("semantic", "acoustic")
 
 
 class AudioAnalysisDeps(AgentDeps):
@@ -564,7 +578,7 @@ class AudioAnalysisAgent(
     async def search_audio(
         self,
         query: str,
-        search_mode: str = "semantic",
+        search_mode: Optional[str] = None,
         limit: int = 20,
     ) -> List[AudioResult]:
         """
@@ -572,15 +586,18 @@ class AudioAnalysisAgent(
 
         Args:
             query: Text query
-            search_mode: "acoustic", "transcript", "semantic", or "hybrid"
+            search_mode: "acoustic", "transcript", "semantic", or "hybrid";
+                None takes the first of ``DEFAULT_SEARCH_MODES`` the profile's
+                schema ranks with
             limit: Number of results
 
         Returns:
             List of AudioResult with relevance scores
         """
-        logger.info(f"🔍 Searching audio: query='{query}', mode={search_mode}")
-
         try:
+            if search_mode is None:
+                search_mode = await asyncio.to_thread(self._default_search_mode)
+            logger.info(f"🔍 Searching audio: query='{query}', mode={search_mode}")
             if search_mode == "acoustic":
                 results = await self._search_acoustic(query, limit)
             elif search_mode == "transcript":
@@ -755,6 +772,24 @@ class AudioAnalysisAgent(
         backend = get_backend()
         return backend.schema_exists(self._audio_schema, tenant_id=self._tenant_id)
 
+    def _default_search_mode(self) -> str:
+        if self.schema_loader is None:
+            raise ValueError(
+                f"Audio search on profile {self._audio_profile!r} names no mode "
+                "and the agent has no schema loader to choose one"
+            )
+        schema = self.schema_loader.load_schema(self._audio_schema)
+        rank_profiles = {profile["name"] for profile in schema["rank_profiles"]}
+        for mode in DEFAULT_SEARCH_MODES:
+            if SEARCH_MODE_STRATEGIES[mode] in rank_profiles:
+                return mode
+        raise ValueError(
+            f"Audio profile {self._audio_profile!r} (schema {self._audio_schema!r}) "
+            "ranks with none of "
+            f"{[SEARCH_MODE_STRATEGIES[mode] for mode in DEFAULT_SEARCH_MODES]}; "
+            "name a search mode"
+        )
+
     def _build_backend_query(
         self, query: str, strategy: str, limit: int
     ) -> Dict[str, Any]:
@@ -795,7 +830,9 @@ class AudioAnalysisAgent(
     async def _search_transcript(self, query: str, limit: int) -> List[AudioResult]:
         """Search by transcript text using backend BM25."""
         try:
-            return await self._search_backend_mode(query, "transcript_search", limit)
+            return await self._search_backend_mode(
+                query, SEARCH_MODE_STRATEGIES["transcript"], limit
+            )
         except Exception as e:
             logger.error(f"❌ Transcript search failed: {e}")
             raise
@@ -803,7 +840,9 @@ class AudioAnalysisAgent(
     async def _search_semantic(self, query: str, limit: int) -> List[AudioResult]:
         """Search by ColBERT semantic similarity through the backend."""
         try:
-            return await self._search_backend_mode(query, "phased_semantic", limit)
+            return await self._search_backend_mode(
+                query, SEARCH_MODE_STRATEGIES["semantic"], limit
+            )
         except Exception as e:
             logger.error(f"❌ Semantic search failed: {e}")
             raise
@@ -844,7 +883,7 @@ class AudioAnalysisAgent(
         params = {
             "yql": yql,
             "hits": limit,
-            "ranking.profile": "acoustic_similarity",
+            "ranking.profile": SEARCH_MODE_STRATEGIES["acoustic"],
             "input.query(acoustic_query)": query_embedding.tolist(),
         }
 
@@ -891,7 +930,9 @@ class AudioAnalysisAgent(
     async def _search_hybrid(self, query: str, limit: int) -> List[AudioResult]:
         """Search by semantic+BM25 hybrid text retrieval through the backend."""
         try:
-            return await self._search_backend_mode(query, "hybrid_semantic_bm25", limit)
+            return await self._search_backend_mode(
+                query, SEARCH_MODE_STRATEGIES["hybrid"], limit
+            )
         except Exception as e:
             logger.error(f"❌ Hybrid search failed: {e}")
             raise

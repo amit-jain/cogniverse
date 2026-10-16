@@ -23,6 +23,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Callable,
     Dict,
     List,
     Optional,
@@ -719,17 +720,31 @@ class GroundingPlan:
 
 
 def audio_search_target(
-    backend_config: Dict[str, Any], service_urls: Dict[str, str]
-) -> Dict[str, Any]:
+    backend_config: Dict[str, Any],
+    service_urls: Dict[str, str],
+    is_deployed: Callable[[str], bool],
+) -> Optional[Dict[str, Any]]:
     """The audio profile an audio search runs on, with its schema and the
-    service and URL that embed its acoustic field."""
+    service and URL that embed its acoustic field.
+
+    The tenant's only deployed audio profile, else
+    ``backend.default_profiles.audio`` among several (``select_type_profile``);
+    None when the tenant has deployed no audio profile.
+    """
     from cogniverse_foundation.config.utils import select_type_profile
 
-    profiles = backend_config.get("profiles") or {}
+    deployed = {
+        name: config
+        for name, config in (backend_config.get("profiles") or {}).items()
+        if config.get("type") == "audio"
+        and is_deployed(config.get("schema_name", name))
+    }
+    if not deployed:
+        return None
     profile = select_type_profile(
-        profiles, backend_config.get("default_profiles") or {}, "audio"
+        deployed, backend_config.get("default_profiles") or {}, "audio"
     )
-    config = profiles[profile]
+    config = deployed[profile]
     service = (config.get("inference_services") or {}).get("acoustic_embedding")
     return {
         "audio_profile": profile,
@@ -4270,18 +4285,17 @@ class AgentDispatcher:
             )
         ).get("backend", {})
         sys_cfg = await asyncio.to_thread(self._config_manager.get_system_config)
-        target = audio_search_target(
-            backend_config, sys_cfg.inference_service_urls or {}
-        )
-
         # Tenant schemas deploy on first ingest, so a tenant that never
-        # ingested audio has no schema for its audio profile. That is a
-        # no-content answer; a registry lookup failure raises and is not read
-        # as one.
+        # ingested audio has no audio schema. That is a no-content answer; a
+        # registry lookup failure raises and is not read as one.
         backend = await asyncio.to_thread(get_backend)
-        if not await asyncio.to_thread(
-            backend.schema_exists, target["audio_schema"], tenant_id
-        ):
+        target = await asyncio.to_thread(
+            audio_search_target,
+            backend_config,
+            sys_cfg.inference_service_urls or {},
+            lambda schema: backend.schema_exists(schema, tenant_id),
+        )
+        if target is None:
             return {
                 "status": "success",
                 "agent": "audio_analysis_agent",

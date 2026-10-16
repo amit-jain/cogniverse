@@ -923,7 +923,10 @@ async def test_audio_search_backend_resolution_offloaded(monkeypatch):
 
     ticks = await _ticks_during(_run)
     assert ticks >= 10, f"only {ticks} ticks — get_backend ran on the event loop"
-    assert backend.schema_exists.call_args.args == ("audio_content", "acme:acme")
+    assert [c.args for c in backend.schema_exists.call_args_list] == [
+        ("audio_content", "acme:acme"),
+        ("audio_embeddinggemma2", "acme:acme"),
+    ]
     assert result == {
         "status": "success",
         "agent": "audio_analysis_agent",

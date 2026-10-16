@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
 
@@ -511,9 +512,14 @@ class TestAudioAnalysisAgent:
 
     @pytest.mark.asyncio
     async def test_search_audio_default_mode_is_semantic(self):
+        # audio_content's schema ranks with phased_semantic, the first
+        # default mode a profile's schema can serve.
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
         backend = MagicMock()
         backend.search = MagicMock(return_value=[])
         self.agent._get_backend = MagicMock(return_value=backend)
+        self.agent.schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         self.agent._embedding_generator = MagicMock(
             generate_acoustic_text_embedding=MagicMock(
                 side_effect=AssertionError("acoustic embedding should not be used")
