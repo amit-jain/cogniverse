@@ -313,7 +313,8 @@ class TestVespaBackendIngestion:
         assert "embeddings" in result.get("results", {})
 
     @pytest.mark.slow
-    @pytest.mark.requires_inference("vllm_omni_embed", "vllm_asr")
+    @pytest.mark.requires_inference("vllm_omni_embed")
+    @pytest.mark.requires_inference("vllm_asr")
     @pytest.mark.asyncio
     async def test_omni_video_profile_feeds_one_document_per_chunk(
         self, vespa_backend, vespa_test_videos
@@ -399,18 +400,26 @@ class TestVespaBackendIngestion:
             },
         ).load_model()[0]
         first = next(
-            hit["fields"]
+            hit
             for hit in hits
             if hit["fields"]["sddocname"].startswith(profile_name)
             and hit["fields"]["segment_id"] == 0
         )
+        _, namespace, doctype, _, docid = first["id"].split(":", 4)
+        stored_fields = requests.get(
+            f"http://localhost:{vespa_backend.http_port}/document/v1/"
+            f"{namespace}/{doctype}/docid/{docid}",
+            params={"format.tensors": "short-value"},
+            timeout=30,
+        ).json()["fields"]
         served = omni.process_video_segment(video, *boundaries[0])["embeddings_np"]
-        stored_vector = np.asarray(first["embedding"], dtype=np.float32)
+        stored_vector = np.asarray(stored_fields["embedding"], dtype=np.float32)
         cosine = float(served @ stored_vector / np.linalg.norm(stored_vector))
         assert cosine >= 0.99, cosine
 
     @pytest.mark.slow
-    @pytest.mark.requires_inference("vllm_omni_embed", "vllm_asr")
+    @pytest.mark.requires_inference("vllm_omni_embed")
+    @pytest.mark.requires_inference("vllm_asr")
     @pytest.mark.asyncio
     async def test_omni_audio_profile_feeds_one_document_per_window(
         self, vespa_backend, vespa_test_videos, tmp_path
@@ -499,13 +508,22 @@ class TestVespaBackendIngestion:
             },
         ).load_model()[0]
         first = next(
-            hit["fields"]
+            hit
             for hit in hits
             if hit["fields"]["sddocname"].startswith(profile_name)
             and hit["fields"]["chunk_index"] == 0
         )
+        _, namespace, doctype, _, docid = first["id"].split(":", 4)
+        stored_fields = requests.get(
+            f"http://localhost:{vespa_backend.http_port}/document/v1/"
+            f"{namespace}/{doctype}/docid/{docid}",
+            params={"format.tensors": "short-value"},
+            timeout=30,
+        ).json()["fields"]
         served = omni.embed_audio_window(wav, 0.0, 10.0)
-        stored_vector = np.asarray(first["acoustic_embedding"], dtype=np.float32)
+        stored_vector = np.asarray(
+            stored_fields["acoustic_embedding"], dtype=np.float32
+        )
         cosine = float(served @ stored_vector / np.linalg.norm(stored_vector))
         assert cosine >= 0.99, cosine
 

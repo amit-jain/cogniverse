@@ -119,13 +119,11 @@
         ],
         "index": {
           "hnsw": {
+            "distance-metric": "angular",
             "max-links-per-node": 16,
             "neighbors-to-explore-at-insert": 200
           }
-        },
-        "attribute": [
-          "distance-metric: angular"
-        ]
+        }
       },
       {
         "name": "entity_ids",
