@@ -682,9 +682,13 @@ class RemoteInferenceClient:
         )
 
         spec = get_inference_service_spec(OMNI_EMBED_SERVICE)
+        # The chat path skips the tokenizer's BOS/EOS unless asked; without
+        # them the vector drifts from the model's own (Sentence-Transformers)
+        # encoding to a cosine as low as 0.62.
         payload = {
             "model": spec.model_id,
             "messages": [{"role": "user", "content": content}],
+            "add_special_tokens": True,
         }
         try:
             data = self._breaker.call(

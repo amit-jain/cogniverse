@@ -148,8 +148,11 @@ def test_document_request_is_the_exact_message(tmp_path):
         _loader(server.url, ["video", "audio"]).process_video_segment(video, 0.0, 2.0)
 
     [body] = server.bodies
-    assert set(body) == {"model", "messages"}
-    assert body["model"] == "google/embeddinggemma-2"
+    assert set(body) == {"model", "messages", "add_special_tokens"}
+    assert (body["model"], body["add_special_tokens"]) == (
+        "google/embeddinggemma-2",
+        True,
+    )
     [message] = body["messages"]
     assert set(message) == {"role", "content"}
     assert message["role"] == "user"
