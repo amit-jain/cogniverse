@@ -170,12 +170,9 @@ class RankingStrategyExtractor:
 
         # nearestNeighbor (ANN) is derived structurally: the profile's FIRST
         # phase must score against a dense 1-d embedding attribute (directly
-        # via closeness/attribute or through a profile function). The previous
-        # profile-NAME allowlist silently dropped ANN for any profile named
-        # outside it — the wiki hybrid/semantic_search profiles ranked
-        # BM25-only with a dead closeness term. Multi-vector (mapped) fields
-        # never match; text-first profiles (bm25 first phase with a vector
-        # second phase) correctly stay off ANN.
+        # via closeness/attribute or through a profile function). Multi-vector
+        # (mapped) fields never match; text-first profiles (bm25 first phase
+        # with a vector second phase) stay off ANN.
         use_nearestneighbor = False
         nearestneighbor_field = None
         nearestneighbor_tensor = None
