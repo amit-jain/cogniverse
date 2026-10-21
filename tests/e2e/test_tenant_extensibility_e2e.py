@@ -1078,7 +1078,7 @@ def _get_runtime_config_manager():
         "vllm_colpali": "http://localhost:33901",
         "colbert_pylate": "http://localhost:33902",
         "code_colbert_pylate": "http://localhost:33904",
-        "video_embed": "http://localhost:33903",
+        "vllm_omni_embed": "http://localhost:33903",
         "vllm_asr": "http://localhost:33905",
     }
     # Served in place of the stored URLs and never written: storing

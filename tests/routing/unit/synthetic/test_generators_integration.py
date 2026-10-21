@@ -170,7 +170,7 @@ def video_workflow_sample(topic: str) -> dict[str, str]:
         "topic": topic,
         "profile_type": "video",
         "modality": "VIDEO",
-        "schema_name": "video_xclip_sv_chunk_6s",
+        "schema_name": "video_embeddinggemma2_sv_chunk_6s",
     }
 
 
@@ -201,7 +201,7 @@ def workflow_content_sample(
         "topic": topic,
         "profile_type": profile_type,
         "modality": modality,
-        "schema_name": "video_xclip_sv_chunk_6s",
+        "schema_name": "video_embeddinggemma2_sv_chunk_6s",
         "embedding_type": embedding_type,
     }
 
@@ -212,7 +212,7 @@ def routing_sample(topic: str, title: str, segment_description: str) -> dict[str
         "title": title,
         "video_title": title,
         "segment_description": segment_description,
-        "schema_name": "video_xclip_sv_chunk_6s",
+        "schema_name": "video_embeddinggemma2_sv_chunk_6s",
         "profile_type": "video",
         "modality": "VIDEO",
         "embedding_type": "video",
@@ -519,7 +519,7 @@ class TestProfileGeneratorIntegration:
     @pytest.mark.asyncio
     async def test_profile_generator_with_mock_data(self):
         generator = ProfileGenerator(profile_labeler=select_profile)
-        video_profile = _shipped_backend_profile("video_xclip_sv_chunk_6s")
+        video_profile = _shipped_backend_profile("video_embeddinggemma2_sv_chunk_6s")
 
         mock_content = [
             video_profile_sample(
@@ -1181,7 +1181,7 @@ class TestWorkflowGeneratorIntegration:
                     {
                         "profile_type": "video",
                         "modality": "VIDEO",
-                        "schema_name": "video_xclip_sv_chunk_6s",
+                        "schema_name": "video_embeddinggemma2_sv_chunk_6s",
                     },
                     workflow_content_sample(
                         "Redis lease coordination", "video", "VIDEO"
@@ -1228,7 +1228,7 @@ class TestWorkflowGeneratorIntegration:
                 sampled_content=[
                     {
                         "topic": "Redis lease coordination",
-                        "schema_name": "video_xclip_sv_chunk_6s",
+                        "schema_name": "video_embeddinggemma2_sv_chunk_6s",
                         "embedding_type": "video",
                     },
                     workflow_content_sample("Apollo lunar landing", "video", "VIDEO"),
@@ -1444,7 +1444,7 @@ class TestWorkflowGeneratorIntegration:
             optimizer="workflow",
             schema_name="WorkflowExecutionSchema",
             count=1,
-            selected_profiles=["video_xclip_sv_chunk_6s"],
+            selected_profiles=["video_embeddinggemma2_sv_chunk_6s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python")],
             metadata={"sampled_content_count": 2},
@@ -1481,7 +1481,7 @@ class TestWorkflowGeneratorIntegration:
         added = await intelligence.generate_synthetic_training_data(
             count=1,
             backend_resolver=object,
-            backend_config={"profiles": {"video_xclip_sv_chunk_6s": {}}},
+            backend_config={"profiles": {"video_embeddinggemma2_sv_chunk_6s": {}}},
             generator_config=object(),
             agents_config=CONFIGURED_AGENTS,
         )
@@ -1524,7 +1524,7 @@ class TestWorkflowGeneratorIntegration:
             optimizer="workflow",
             schema_name="WorkflowExecutionSchema",
             count=4,
-            selected_profiles=["video_xclip_sv_chunk_6s"],
+            selected_profiles=["video_embeddinggemma2_sv_chunk_6s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python") for example in examples],
             metadata={"sampled_content_count": 2},
@@ -1563,7 +1563,7 @@ class TestWorkflowGeneratorIntegration:
             await intelligence.generate_synthetic_training_data(
                 count=4,
                 backend_resolver=object,
-                backend_config={"profiles": {"video_xclip_sv_chunk_6s": {}}},
+                backend_config={"profiles": {"video_embeddinggemma2_sv_chunk_6s": {}}},
                 generator_config=object(),
                 agents_config=CONFIGURED_AGENTS,
             )
@@ -1588,7 +1588,7 @@ class TestWorkflowGeneratorIntegration:
             optimizer="workflow",
             schema_name="WorkflowExecutionSchema",
             count=2,
-            selected_profiles=["video_xclip_sv_chunk_6s"],
+            selected_profiles=["video_embeddinggemma2_sv_chunk_6s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python") for example in examples],
             metadata={"sampled_content_count": 2},
@@ -1636,7 +1636,7 @@ class TestWorkflowGeneratorIntegration:
             await intelligence.generate_synthetic_training_data(
                 count=2,
                 backend_resolver=object,
-                backend_config={"profiles": {"video_xclip_sv_chunk_6s": {}}},
+                backend_config={"profiles": {"video_embeddinggemma2_sv_chunk_6s": {}}},
                 generator_config=object(),
                 agents_config=CONFIGURED_AGENTS,
             )
@@ -1661,7 +1661,7 @@ class TestWorkflowGeneratorIntegration:
             optimizer="workflow",
             schema_name="WorkflowExecutionSchema",
             count=2,
-            selected_profiles=["video_xclip_sv_chunk_6s"],
+            selected_profiles=["video_embeddinggemma2_sv_chunk_6s"],
             profile_selection_reasoning="Selected source video profile",
             data=[example.model_dump(mode="python") for example in examples],
             metadata={"sampled_content_count": 2},
@@ -1708,7 +1708,7 @@ class TestWorkflowGeneratorIntegration:
         call = {
             "count": 2,
             "backend_resolver": object,
-            "backend_config": {"profiles": {"video_xclip_sv_chunk_6s": {}}},
+            "backend_config": {"profiles": {"video_embeddinggemma2_sv_chunk_6s": {}}},
             "generator_config": object(),
             "agents_config": CONFIGURED_AGENTS,
         }

@@ -30,10 +30,7 @@ logger = logging.getLogger(__name__)
 # service; the tomoro model these profiles pin cannot load in-process
 # (pylate caps transformers below the 4.57 it needs), so the endpoint
 # must be provisioned or every document fails to embed.
-pytestmark = [
-    pytest.mark.requires_inference("vllm_colpali"),
-    pytest.mark.requires_inference("video_embed"),
-]
+pytestmark = [pytest.mark.requires_inference("vllm_colpali")]
 
 
 @pytest.fixture(scope="module")
@@ -97,10 +94,10 @@ def ensemble_system_setup():
                 "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                 "embedding_dim": 320,
             },
-            "xclip_profile": {
+            "embeddinggemma2_profile": {
                 "schema": schema_name,
-                "embedding_model": "microsoft/xclip-large-patch14",
-                "embedding_dim": 1024,
+                "embedding_model": "google/embeddinggemma-2",
+                "embedding_dim": 768,
             },
             "colqwen_profile": {
                 "schema": schema_name,
@@ -236,8 +233,8 @@ class TestEnsembleSearchEndToEnd:
             """Mock encoder but with realistic behavior"""
             encoder = Mock()
             # Return embeddings that match the expected dimension
-            if "xclip" in model_name.lower():
-                encoder.encode = Mock(return_value=np.random.rand(1024))
+            if "embeddinggemma" in model_name.lower():
+                encoder.encode = Mock(return_value=np.random.rand(768))
             else:
                 encoder.encode = Mock(return_value=np.random.rand(320))
             return encoder
@@ -341,8 +338,8 @@ class TestEnsembleSearchEndToEnd:
             def encode_with_timing(query):
                 """Simulate encoding latency (real models take 10-50ms)"""
                 time.sleep(0.01)  # 10ms encoding time
-                if "xclip" in model_name.lower():
-                    return np.random.rand(1024)
+                if "embeddinggemma" in model_name.lower():
+                    return np.random.rand(768)
                 return np.random.rand(320)
 
             encoder.encode = encode_with_timing
@@ -419,7 +416,7 @@ class TestEnsembleSearchEndToEnd:
                         ("test_video_2", 0.85),
                     ]
                 )
-            elif profile == "xclip_profile":
+            elif profile == "embeddinggemma2_profile":
                 return _create_mock_search_results(
                     [
                         ("test_video_1", 0.92),  # Overlap with colpali
@@ -515,8 +512,8 @@ class TestEnsembleSearchEndToEnd:
             """Simulate one profile failing"""
             profile = query_dict.get("profile")
 
-            if profile == "xclip_profile":
-                raise Exception("X-CLIP profile unavailable")
+            if profile == "embeddinggemma2_profile":
+                raise Exception("EmbeddingGemma 2 profile unavailable")
 
             # Other profiles succeed
             return _create_mock_search_results(

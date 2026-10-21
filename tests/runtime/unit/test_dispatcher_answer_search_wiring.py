@@ -1386,11 +1386,11 @@ class TestStreamingSearchResolvesTheSelectedProfile:
             "search_agent",
             "find the demo",
             "acme:acme",
-            context={"profiles": ["video_xclip_sv_chunk_6s"]},
+            context={"profiles": ["video_embeddinggemma2_sv_chunk_6s"]},
         )
 
-        assert agent.deps.profile == "video_xclip_sv_chunk_6s"
-        assert typed_input.profiles == ["video_xclip_sv_chunk_6s"]
+        assert agent.deps.profile == "video_embeddinggemma2_sv_chunk_6s"
+        assert typed_input.profiles == ["video_embeddinggemma2_sv_chunk_6s"]
 
     async def test_concurrent_streams_share_one_agent_per_tenant_profile(
         self, search_dispatcher, monkeypatch

@@ -48,7 +48,7 @@ libs/core/cogniverse_core/
 │   ├── agent_models.py              # Agent data models
 │   ├── cache/                       # Caching infrastructure
 │   ├── media/                       # Media URI dispatch (file://, pvc://, s3://, http://)
-│   ├── models/                      # Model loaders (X-CLIP, etc.)
+│   ├── models/                      # Model loaders (ColPali, EmbeddingGemma 2, etc.)
 │   └── utils/                       # Utility functions
 └── memory/                           # Memory management
     ├── manager.py                   # Mem0MemoryManager
@@ -115,7 +115,7 @@ surface without repeating their implementation guides.
 | Model module | Public API | Purpose |
 | --- | --- | --- |
 | `models.model_loaders` | `ModelLoader`, `ColPaliModelLoader`, `ColQwenModelLoader`, `ColBERTModelLoader`, `ModelLoaderFactory`, `get_or_load_model`, `is_remote_only_model`, `COLPALI_PROCESSOR_REVISIONS`, `EMBEDDING_MODEL_LOADERS` | Local loader contracts, concrete loaders, loader selection, cache lookup, the Hub processor revisions the ColPali loader pins, and the `model_loader` values ingestion embeds with. |
-| `models.model_loaders` | `RemoteInferenceClient`, `RemoteColPaliLoader`, `RemoteXClipLoader`, `RemoteColBERTLoader`, `RemoteWhisperLoader`, `RemoteGlinerClient`, `get_or_load_gliner`, `GLINER_ENTITY_THRESHOLD` | Authenticated remote inference clients, cached GLiNER resolution, and the one GLiNER entity threshold both paths use. |
+| `models.model_loaders` | `RemoteInferenceClient`, `RemoteColPaliLoader`, `RemoteEmbeddingGemma2Loader`, `RemoteColBERTLoader`, `RemoteWhisperLoader`, `RemoteGlinerClient`, `get_or_load_gliner`, `GLINER_ENTITY_THRESHOLD` | Authenticated remote inference clients, cached GLiNER resolution, and the one GLiNER entity threshold both paths use. |
 | `models.semantic_embedder` | `SemanticEmbedder`, `RemoteOpenAIEmbedder`, `SemanticEmbedderNotConfiguredError`, `get_semantic_embedder`, `reset_semantic_embedder_cache` | OpenAI-compatible semantic embedding and cache control. |
 
 | Utility module | Public API | Purpose |
@@ -1714,7 +1714,7 @@ Integration tests name each production inference dependency with
 `@pytest.mark.requires_inference("<service>")`. Collection resolves the named
 services plus every service a shipped profile using that embedding service
 resolves at pipeline init, derived from `configs/config.json` through the
-production `StrategyFactory`: `vllm_colpali`, `video_embed` and
+production `StrategyFactory`: `vllm_colpali`, `vllm_omni_embed` and
 `colbert_pylate` each expand to include `vllm_asr`. The registered automatic
 provider order is:
 

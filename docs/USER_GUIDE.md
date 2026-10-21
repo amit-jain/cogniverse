@@ -206,10 +206,10 @@ colpali_results = agent.search_by_text(
 )
 
 # Search with a different profile via SearchInput for ensemble
-xclip_deps = SearchAgentDeps(profile="video_xclip_sv_chunk_6s")
-xclip_agent = SearchAgent(deps=xclip_deps, config_manager=config_manager, schema_loader=schema_loader)
+chunk_deps = SearchAgentDeps(profile="video_embeddinggemma2_sv_chunk_6s")
+chunk_agent = SearchAgent(deps=chunk_deps, config_manager=config_manager, schema_loader=schema_loader)
 
-xclip_results = xclip_agent.search_by_text(
+chunk_results = chunk_agent.search_by_text(
     query="cooking tutorial",
     tenant_id="your_org:production",
     top_k=10,
@@ -270,15 +270,15 @@ Choose the best embedding model for your use case:
 | Model | Type | Best For | Dimensions |
 |-------|------|----------|------------|
 | **ColPali** | Frame-level | Visual documents, text-rich videos | 320 (patch) |
-| **X-CLIP** | Temporal video | Text-to-video clip retrieval | 768 |
+| **EmbeddingGemma 2** | 6 s video chunks (frames + audio) | Text-to-video clip retrieval | 768 |
 | **ColQwen3 Omni** | Multi-modal | Text+visual fusion | 320 (patch) |
 
 **Switching Models:**
 ```bash
-# Use X-CLIP for global video understanding
+# Use EmbeddingGemma 2 for 6 s clip retrieval
 uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
-  --profile video_xclip_sv_chunk_6s \
+  --profile video_embeddinggemma2_sv_chunk_6s \
   --tenant-id default
 ```
 
@@ -396,11 +396,11 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 Ingest with multiple models for best coverage:
 
 ```bash
-# Ingest with ColPali, X-CLIP, and ColQwen
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+# Ingest with ColPali, EmbeddingGemma 2, and ColQwen
+uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_colpali_smol500_mv_frame \
-            video_xclip_sv_chunk_6s \
+            video_embeddinggemma2_sv_chunk_6s \
             video_colqwen_omni_mv_chunk_30s \
   --tenant-id default
 ```
@@ -580,18 +580,9 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.p
   --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame \
-             video_xclip_sv_chunk_6s \
+             video_embeddinggemma2_sv_chunk_6s \
              video_colqwen_omni_mv_chunk_30s \
   --all-strategies
-```
-
-**Results Table:**
-```text
-Profile                              | MRR@10 | NDCG@10 | Precision@5
--------------------------------------|--------|---------|-------------
-video_colpali_smol500_mv_frame       | 0.82   | 0.79    | 0.75
-video_xclip_sv_chunk_6s   | 0.78   | 0.74    | 0.70
-video_colqwen_omni_mv_chunk_30s      | 0.85   | 0.82    | 0.78
 ```
 
 ---
@@ -1418,14 +1409,11 @@ The following environment variables are honored by the system:
 # Configuration File Discovery
 export COGNIVERSE_CONFIG=/path/to/config.json  # Override config file path
 
-# JAX Configuration (required for X-CLIP models)
-export JAX_PLATFORM_NAME=cpu  # Required on Apple Silicon or systems without GPU
-
 # HuggingFace (for model downloads)
 export HF_TOKEN=your_token_here  # HuggingFace access token for gated models
 ```
 
-**Note:** Most configuration is done via `configs/config.json`. Environment variables are minimal - primarily `JAX_PLATFORM_NAME` for X-CLIP compatibility and `COGNIVERSE_CONFIG` to override the config file location.
+**Note:** Most configuration is done via `configs/config.json`. Environment variables are minimal - primarily `COGNIVERSE_CONFIG` to override the config file location.
 
 ---
 
@@ -1533,7 +1521,7 @@ tail -f outputs/logs/*.log
 
 ### For Content Managers
 
-1. **Use Multiple Profiles**: Ingest with ColPali (frames), X-CLIP (global), and ColQwen (chunks) for best coverage
+1. **Use Multiple Profiles**: Ingest with ColPali (frames), EmbeddingGemma 2 (6 s chunks with audio), and ColQwen (30 s chunks) for best coverage
 2. **Enable Transcription**: Always transcribe audio for text search
 3. **Monitor Quality**: Run evaluations weekly to track search quality
 4. **Organize by Tenant**: Use separate tenants for different content libraries

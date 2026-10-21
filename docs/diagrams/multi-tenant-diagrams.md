@@ -163,38 +163,38 @@ flowchart TB
 flowchart LR
     subgraph "Base Schemas"
         ColPali["<span style='color:#000'>video_colpali_smol500_mv_frame</span>"]
-        X-CLIP["<span style='color:#000'>video_xclip_sv_chunk_6s</span>"]
+        EG2["<span style='color:#000'>video_embeddinggemma2_sv_chunk_6s</span>"]
         ColQwen["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s</span>"]
     end
 
     subgraph "Tenant A - acme:production"
         ColPaliA["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_production</span>"]
-        X-CLIPA["<span style='color:#000'>video_xclip_sv_chunk_6s_acme_production</span>"]
+        EG2A["<span style='color:#000'>video_embeddinggemma2_sv_chunk_6s_acme_production</span>"]
         ColQwenA["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_acme_production</span>"]
     end
 
     subgraph "Tenant B - globex:production"
         ColPaliB["<span style='color:#000'>video_colpali_smol500_mv_frame_globex_production</span>"]
-        X-CLIPB["<span style='color:#000'>video_xclip_sv_chunk_6s_globex_production</span>"]
+        EG2B["<span style='color:#000'>video_embeddinggemma2_sv_chunk_6s_globex_production</span>"]
         ColQwenB["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s_globex_production</span>"]
     end
 
     ColPali -->|+ _acme_production| ColPaliA
-    X-CLIP -->|+ _acme_production| X-CLIPA
+    EG2 -->|+ _acme_production| EG2A
     ColQwen -->|+ _acme_production| ColQwenA
 
     ColPali -->|+ _globex_production| ColPaliB
-    X-CLIP -->|+ _globex_production| X-CLIPB
+    EG2 -->|+ _globex_production| EG2B
     ColQwen -->|+ _globex_production| ColQwenB
 
     style ColPali fill:#90caf9,stroke:#1565c0,color:#000
-    style X-CLIP fill:#90caf9,stroke:#1565c0,color:#000
+    style EG2 fill:#90caf9,stroke:#1565c0,color:#000
     style ColQwen fill:#90caf9,stroke:#1565c0,color:#000
     style ColPaliA fill:#ffcc80,stroke:#ef6c00,color:#000
-    style X-CLIPA fill:#ffcc80,stroke:#ef6c00,color:#000
+    style EG2A fill:#ffcc80,stroke:#ef6c00,color:#000
     style ColQwenA fill:#ffcc80,stroke:#ef6c00,color:#000
     style ColPaliB fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style X-CLIPB fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style EG2B fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ColQwenB fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
@@ -290,17 +290,17 @@ flowchart TB
     subgraph "Vespa Instance"
         subgraph "Tenant: acme:production"
             SchemaA1["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_production<br/>Documents: 1000</span>"]
-            SchemaA2["<span style='color:#000'>video_xclip_sv_chunk_6s_acme_production<br/>Documents: 500</span>"]
+            SchemaA2["<span style='color:#000'>video_embeddinggemma2_sv_chunk_6s_acme_production<br/>Documents: 500</span>"]
         end
 
         subgraph "Tenant: globex:production"
             SchemaB1["<span style='color:#000'>video_colpali_smol500_mv_frame_globex_production<br/>Documents: 2000</span>"]
-            SchemaB2["<span style='color:#000'>video_xclip_sv_chunk_6s_globex_production<br/>Documents: 800</span>"]
+            SchemaB2["<span style='color:#000'>video_embeddinggemma2_sv_chunk_6s_globex_production<br/>Documents: 800</span>"]
         end
 
         subgraph "Tenant: acme:staging"
             SchemaC1["<span style='color:#000'>video_colpali_smol500_mv_frame_acme_staging<br/>Documents: 300</span>"]
-            SchemaC2["<span style='color:#000'>video_xclip_sv_chunk_6s_acme_staging<br/>Documents: 150</span>"]
+            SchemaC2["<span style='color:#000'>video_embeddinggemma2_sv_chunk_6s_acme_staging<br/>Documents: 150</span>"]
         end
     end
 

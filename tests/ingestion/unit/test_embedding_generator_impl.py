@@ -120,7 +120,7 @@ class TestEmbeddingGeneratorImpl:
             "embedding_model": "test_model",
             "storage_mode": "multi_doc",
             "embedding_type": "multi_vector",
-            "model_loader": "xclip",
+            "model_loader": "embeddinggemma2",
         }
 
     @pytest.fixture
@@ -137,7 +137,7 @@ class TestEmbeddingGeneratorImpl:
     def test_initialization_with_model_load(
         self, mock_get_model, basic_config, mock_logger, mock_backend_client
     ):
-        """Test EmbeddingGeneratorImpl initialization loads model for xclip."""
+        """Test EmbeddingGeneratorImpl initialization loads model for embeddinggemma2."""
         mock_loader = Mock()
         mock_get_model.return_value = (mock_loader, None)
 
@@ -171,15 +171,15 @@ class TestEmbeddingGeneratorImpl:
         mock_get_model.assert_not_called()
 
     @patch("cogniverse_core.common.models.get_or_load_model")
-    def test_initialization_xclip_model(
+    def test_initialization_embeddinggemma2_model(
         self, mock_get_model, mock_logger, mock_backend_client
     ):
-        """Test EmbeddingGeneratorImpl initialization with X-CLIP model."""
+        """Test EmbeddingGeneratorImpl initialization with EmbeddingGemma 2."""
         config = {
             "schema_name": "test_schema",
-            "embedding_model": "microsoft/xclip-large-patch14",
-            "embedding_type": "multi_vector",
-            "model_loader": "xclip",
+            "embedding_model": "google/embeddinggemma-2",
+            "embedding_type": "single_vector",
+            "model_loader": "embeddinggemma2",
         }
 
         mock_loader = Mock()
@@ -245,8 +245,8 @@ class TestEmbeddingGeneratorImpl:
                     f"model_loader={loader} should defer model loading"
                 )
 
-        # ColBERT and X-CLIP should load model at init
-        for loader in ("colbert", "xclip"):
+        # ColBERT and EmbeddingGemma 2 should load model at init
+        for loader in ("colbert", "embeddinggemma2"):
             config = {
                 "embedding_type": "multi_vector",
                 "embedding_model": "test_model",
@@ -1083,7 +1083,7 @@ class TestEmbeddingGeneratorImpl:
 
     @patch("cogniverse_core.common.models.get_or_load_model")
     @patch("subprocess.run")
-    def test_generate_chunk_embeddings_xclip_single_vector_not_pooled(
+    def test_generate_chunk_embeddings_segment_embedder_single_vector_not_pooled(
         self,
         mock_subprocess,
         mock_get_or_load_model,
@@ -1091,7 +1091,7 @@ class TestEmbeddingGeneratorImpl:
         mock_logger,
         mock_backend_client,
     ):
-        """An X-CLIP single-vector chunk return is never pooled, even
+        """A single-vector chunk return from the segment embedder is never pooled, even
         when token_pool_factor is set — pooling a single vector is corrupting.
 
         The shape guard (ndim == 2 and shape[0] > 1) protects it.
@@ -1100,7 +1100,7 @@ class TestEmbeddingGeneratorImpl:
         config = {
             **frame_based_config,
             "embedding_type": "multi_vector",
-            "model_loader": "xclip",
+            "model_loader": "embeddinggemma2",
             "model_config": {"token_pool_factor": 3},
         }
         generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
@@ -1280,7 +1280,7 @@ class TestEmbeddingGeneratorImpl:
         """The time-segment path must lazy-load ColQwen, like the frame path.
 
         Time-based (single-vector) segments with a ColQwen/ColPali loader take
-        the non-X-CLIP branch, which uses ``self.model``/``self.processor``.
+        the non-segment-embedder branch, which uses ``self.model``/``self.processor``.
         Without the guard the model stays ``None`` and the segment yields no
         embedding. This pins that ``_load_model`` fires from this path too.
         """
@@ -1299,7 +1299,7 @@ class TestEmbeddingGeneratorImpl:
         generator.model_name = "colqwen_test"
 
         assert generator.model is None
-        assert generator.segment_loader is None  # non-X-CLIP else branch
+        assert generator.segment_loader is None  # frame-extraction branch
 
         mock_cap = Mock()
         mock_cap.get.return_value = 25.0  # fps
@@ -1332,27 +1332,27 @@ class TestEmbeddingGeneratorImpl:
 
     @patch("cogniverse_core.common.models.get_or_load_model")
     @patch("subprocess.run")
-    def test_generate_chunk_embeddings_xclip(
+    def test_generate_chunk_embeddings_embeddinggemma2(
         self,
         mock_subprocess,
         mock_get_or_load_model,
         mock_logger,
         mock_backend_client,
     ):
-        """Test _generate_chunk_embeddings with X-CLIP model."""
-        # Constructor calls ``get_or_load_model`` for model_loader=xclip; the
-        # mock stands in for the remote video_embed sidecar client so the test
-        # needs no network and instantiates without the sidecar.
+        """Test _generate_chunk_embeddings with EmbeddingGemma 2."""
+        # Constructor calls ``get_or_load_model`` for model_loader=embeddinggemma2;
+        # the mock stands in for the remote vllm_omni_embed client so the test
+        # needs no network.
         mock_get_or_load_model.return_value = (Mock(), None)
-        xclip_config = {
+        segment_config = {
             "schema_name": "test_schema",
             "embedding_model": "test_model",
             "storage_mode": "multi_doc",
-            "embedding_type": "multi_vector",
-            "model_loader": "xclip",
+            "embedding_type": "single_vector",
+            "model_loader": "embeddinggemma2",
         }
         generator = EmbeddingGeneratorImpl(
-            xclip_config, mock_logger, mock_backend_client
+            segment_config, mock_logger, mock_backend_client
         )
         generator.segment_loader = Mock()
 
@@ -1362,7 +1362,7 @@ class TestEmbeddingGeneratorImpl:
         mock_result.stdout = "30.5"
         mock_subprocess.return_value = mock_result
 
-        # Mock xclip processing
+        # Mock the remote segment embedding
         mock_embeddings = np.random.rand(768)
         generator.segment_loader.process_video_segment.return_value = {
             "embeddings_np": mock_embeddings
@@ -1516,10 +1516,10 @@ class TestEmbeddingGeneratorImpl:
             f"unexpected shape (3,){_EMPTY_EMBEDDING_CONTEXT}"
         )
 
-    def test_generate_time_segment_embeddings_xclip(
+    def test_generate_time_segment_embeddings_segment_embedder(
         self, frame_based_config, mock_logger, mock_backend_client
     ):
-        """Test _generate_time_segment_embeddings with X-CLIP."""
+        """Test _generate_time_segment_embeddings with a remote segment embedder."""
         generator = EmbeddingGeneratorImpl(
             frame_based_config, mock_logger, mock_backend_client
         )
@@ -1539,10 +1539,10 @@ class TestEmbeddingGeneratorImpl:
             Path("/video.mp4"), 10.0, 20.0
         )
 
-    def test_generate_time_segment_embeddings_xclip_no_result(
+    def test_generate_time_segment_embeddings_segment_embedder_no_result(
         self, frame_based_config, mock_logger, mock_backend_client
     ):
-        """Test _generate_time_segment_embeddings with X-CLIP returning no result."""
+        """Test _generate_time_segment_embeddings with the segment embedder returning no result."""
         generator = EmbeddingGeneratorImpl(
             frame_based_config, mock_logger, mock_backend_client
         )
@@ -1884,18 +1884,22 @@ class TestModelLoaderFactoryModelLoader:
         )
         assert isinstance(loader, ColQwenModelLoader)
 
-    def test_xclip_loader(self):
+    def test_embeddinggemma2_loader(self):
         from cogniverse_core.common.models.model_loaders import (
             ModelLoaderFactory,
-            RemoteXClipLoader,
+            RemoteEmbeddingGemma2Loader,
         )
 
         loader = ModelLoaderFactory.create_loader(
-            "microsoft/xclip-large-patch14",
-            {"model_loader": "xclip", "remote_inference_url": "http://localhost:9999"},
+            "google/embeddinggemma-2",
+            {
+                "model_loader": "embeddinggemma2",
+                "remote_inference_url": "http://localhost:9999",
+                "modalities": ["video", "audio"],
+            },
             None,
         )
-        assert isinstance(loader, RemoteXClipLoader)
+        assert isinstance(loader, RemoteEmbeddingGemma2Loader)
 
     def test_missing_model_loader_raises(self):
         from cogniverse_core.common.models.model_loaders import ModelLoaderFactory

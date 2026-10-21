@@ -143,14 +143,6 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "T4",
             "L4",
         ),
-        "video_embed": _spec(
-            "video_embed",
-            "microsoft/xclip-large-patch14",
-            "a9dd1429a16cf305df2aaea232d5e8dceba1c675",
-            768,
-            "T4",
-            "L4",
-        ),
         "vllm_llm_student": _spec(
             "vllm_llm_student",
             "google/gemma-4-e4b-it",

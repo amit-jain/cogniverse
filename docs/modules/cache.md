@@ -1828,7 +1828,7 @@ from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
 pipeline_cache = PipelineArtifactCache(
     cache_manager=cache_manager,
     ttl=604800,
-    profile="video_xclip_sv_chunk_6s"
+    profile="video_embeddinggemma2_sv_chunk_6s"
 )
 
 video_path = "/path/to/long_video.mp4"

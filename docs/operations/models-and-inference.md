@@ -16,7 +16,7 @@ Cogniverse runs five classes of inference services:
 | Class | Purpose |
 |---|---|
 | **LLMs** (chat / generation) | Agent reasoning, query enhancement, distillation. Two tiers: a small **student** model used at runtime, and a larger **teacher** model used only during DSPy optimization (`BootstrapFewShot`'s `teacher_settings`). |
-| **Visual / multimodal embeddings** | ColPali/ColQwen (one pod, one model, shared by both retrieval families) for video/image patch embeddings, X-CLIP for chunk embeddings. |
+| **Visual / multimodal embeddings** | ColPali/ColQwen (one pod, one model, shared by both retrieval families) for video/image patch embeddings, EmbeddingGemma 2 for single-vector video-chunk and audio embeddings. |
 | **Text embeddings** | ColBERT-style late-interaction (LateOn, served by the PyLate sidecar) for documents/code, DenseOn (ModernBERT, served by vLLM) for query/single-vector text. |
 | **Audio (ASR + acoustic embeddings)** | Whisper transcription of audio files; CLAP for a joint audio/text acoustic embedding space. |
 | **Vision/NLP sidecars** | GLiNER zero-shot entity extraction (gateway routing + entity extraction agents), InsightFace face embeddings (knowledge-graph face clustering). |
@@ -244,28 +244,6 @@ a CPU-only `cogniverse up` does not allocate a ColPali/ColQwen pod. On ROCm
 7.12+ with gfx1151 and on CUDA, the device overlay enables the service and the
 official vLLM pooling runner serves the `vllm_token_embed` multi-vector
 contract.
-
-### X-CLIP (chunk-level video embeddings, `video_embed` sidecar)
-
-| Field | Value |
-|---|---|
-| Chart key | `inference.video_embed` |
-| Model | `microsoft/xclip-large-patch14` (~1.7 GiB, 768-dim) |
-| Revision | `a9dd1429a16cf305df2aaea232d5e8dceba1c675` |
-| Image | `cogniverse/video-embed` (CUSTOM, `deploy/video_embed/Dockerfile`, module `cogniverse_cli.modal_inference.servers.video_embed`) |
-| Engine | `fastapi` (CPU only) |
-| Endpoints | `POST /embed/video`, `POST /embed/text` (one joint space) |
-| Health | `GET /health` loads the pinned model, then returns `{"status": "ready", "model": "microsoft/xclip-large-patch14", "model_revision": "a9dd1429a16cf305df2aaea232d5e8dceba1c675"}`; a load failure returns HTTP 503 |
-| Kubernetes probes | HTTP `GET /health` readiness on port 8000; TCP liveness on port 8000 |
-| NodePort | 29012 |
-| Default state | disabled in `values.yaml`; enabled in the local k3d overlay (`values.k3s.yaml`) |
-
-Used by the `video_xclip_sv_chunk_6s` profile, which embeds 6-second clips
-and text queries into the same space so a text query retrieves clips
-directly. The runtime image ships no torch, so text-to-video search works
-only through this sidecar (`inference_service_urls["video_embed"]`).
-`cogniverse up` builds and imports the image from the repository root like
-the other custom sidecars (see the image table below).
 
 ### EmbeddingGemma 2 (text, video and audio in one space, `vllm_omni_embed`)
 
@@ -523,7 +501,6 @@ keyframes`.
 | `colbert_pylate` | `cogniverse/pylate` | **Yes** (`deploy/pylate/Dockerfile`) |
 | `code_colbert_pylate` | `cogniverse/pylate` (shared image, built once) | **Yes** (`deploy/pylate/Dockerfile`) |
 | `denseon` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
-| `video_embed` | `cogniverse/video-embed` | **Yes** (`deploy/video_embed/Dockerfile`) |
 | `clap_embed` | `cogniverse/clap-embed` | **Yes** (`deploy/clap_embed/`) |
 | `gliner` | `cogniverse/gliner` | **Yes** (`deploy/gliner/Dockerfile`) |
 | `face_embed` | `cogniverse/face-embed` | **Yes** (`deploy/face_embed/`) |
@@ -624,7 +601,7 @@ way to pick one.
 ## Device selection (`device:` per service)
 
 Each vLLM-backed `inference.<svc>` block has a `device:` key (the FastAPI
-sidecars that are always CPU-only — `clap_embed`, `face_embed`, `video_embed` — omit it
+sidecars that are always CPU-only — `clap_embed`, `face_embed` — omit it
 entirely; `gliner` sets `device: cpu` for documentation even though nothing
 reads it for GPU scheduling). Values:
 

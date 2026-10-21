@@ -177,15 +177,15 @@ def test_colpali_or_colqwen_boundary():
     ...
 
 
-@pytest.mark.requires_inference("video_embed")
-def test_xclip_boundary():
+@pytest.mark.requires_inference("vllm_omni_embed")
+def test_embeddinggemma2_boundary():
     ...
 ```
 
 ColPali and ColQwen use the same `vllm_colpali` HTTP service. The collector
 also requests every service a shipped profile using the named embedding service
 resolves at pipeline init, derived from `configs/config.json` (`vllm_asr` for
-`vllm_colpali`, `video_embed` and `colbert_pylate`). Use
+`vllm_colpali`, `vllm_omni_embed` and `colbert_pylate`). Use
 `@pytest.mark.requires_modal_inference("vllm_llm_student")` only when the test
 explicitly requires that exact service through paid Modal provisioning.
 

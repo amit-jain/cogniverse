@@ -329,12 +329,10 @@ def test_model_image_markers_cover_every_model_service() -> None:
         "cogniverse/gliner",
         "cogniverse/clap-embed",
         "cogniverse/face-embed",
-        "cogniverse/video-embed",
         "deploy/pylate/Dockerfile",
         "deploy/gliner/Dockerfile",
         "deploy/clap_embed/Dockerfile",
         "deploy/face_embed/Dockerfile",
-        "deploy/video_embed/Dockerfile",
         "cogniverse/vllm-audio",
         "deploy/vllm_audio/Dockerfile",
     } == markers

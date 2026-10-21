@@ -296,7 +296,7 @@ Expected 768 values, got 1024
 
 - Check schema embedding dimension matches model:
   - ColPali (Tomoro ColQwen3), `video_colpali_smol500_mv_frame`: multi-vector, 320-dim patches (float) or 40-dim (binary): `tensor<bfloat16>(patch{}, v[320])`
-  - X-CLIP, single-vector profile `video_xclip_sv_chunk_6s`: 768-dim: `tensor<float>(v[768])`
+  - EmbeddingGemma 2, single-vector profile `video_embeddinggemma2_sv_chunk_6s`: 768-dim float `tensor<float>(v[768])`, binary code `tensor<int8>(v[96])`
 
 ```bash
 # Check schema tensor types (schemas are JSON files in configs/schemas/)

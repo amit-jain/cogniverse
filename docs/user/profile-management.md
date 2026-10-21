@@ -7,7 +7,7 @@ This guide shows how to manage backend profiles (video processing configurations
 Backend profiles define how videos are processed and indexed in Cogniverse. Each profile specifies:
 
 - **Schema**: Vespa schema template for document structure
-- **Embedding Model**: Model used for generating embeddings (e.g., ColPali, X-CLIP)
+- **Embedding Model**: Model used for generating embeddings (e.g., ColPali, EmbeddingGemma 2)
 - **Embedding Type**: Processing approach (multi_vector, single_vector)
 - **Strategies**: Processing strategy configurations (segmentation, embedding, etc.)
 - **Pipeline Configuration**: Processing pipeline settings
@@ -264,7 +264,7 @@ curl -X POST http://localhost:8000/admin/profiles \
 ## Best Practices
 
 1. **Naming Convention**: Use descriptive, structured names
-   - Good: `video_xclip_sv_chunk_6s`
+   - Good: `video_embeddinggemma2_sv_chunk_6s`
    - Bad: `my_profile_v2`
 
 2. **Documentation**: Always add meaningful descriptions

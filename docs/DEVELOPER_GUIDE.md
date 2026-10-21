@@ -1135,9 +1135,6 @@ cogniverse up
 ```bash
 # Reduce ingestion concurrency
 uv run python scripts/run_ingestion.py --tenant-id acme:acme --video_dir data/videos --max-concurrent 1
-
-# Force JAX (X-CLIP) onto CPU instead of GPU
-export JAX_PLATFORM_NAME=cpu
 ```
 
 ### Debug Mode

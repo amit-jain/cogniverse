@@ -1,9 +1,5 @@
 {
  "services": {
-  "video_embed": {
-   "model": "microsoft/xclip-large-patch14",
-   "revision": "a9dd1429a16cf305df2aaea232d5e8dceba1c675"
-  },
   "vllm_omni_embed": {
    "model": "google/embeddinggemma-2",
    "revision": "914f7f89142e33e77833254d9c9b90c3cef7303b"

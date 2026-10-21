@@ -1,9 +1,8 @@
-"""EmbeddingGemma 2 against X-CLIP (video) and CLAP (audio), recorded once.
+"""EmbeddingGemma 2 on video, and against CLAP on audio, recorded once.
 
 Video: the 13 clips of ``data/testset/evaluation/sample_videos`` cut into the
-chunks the ``video_xclip_sv_chunk_6s`` segmenter produces, embedded by X-CLIP
-(8 frames per chunk, as the ``video_embed`` sidecar samples), by EmbeddingGemma
-2 from 1 fps frames and the chunk's audio, and by EmbeddingGemma 2 from frames
+chunks the ``video_embeddinggemma2_sv_chunk_6s`` segmenter produces, embedded
+by EmbeddingGemma 2 from 1 fps frames and the chunk's audio, and from frames
 only. The queries are the 125 golden retrieval queries, each with one expected
 video. A video's score is its best chunk's.
 
@@ -45,7 +44,6 @@ import requests
 from cogniverse_core.common.models.model_loaders import (
     ModelLoaderFactory,
     RemoteClapClient,
-    RemoteInferenceClient,
     _extract_audio_wav_b64,
     audio_windows,
     media_duration_seconds,
@@ -91,7 +89,6 @@ OMNI_VIDEO_PROFILE = "video_embeddinggemma2_sv_chunk_6s"
 
 # Arm -> (service, vector array of its windows, vector array of its queries).
 VIDEO_ARMS = {
-    "xclip": ("video_embed", "xclip_chunks", "xclip_queries"),
     "omni_video_audio": ("vllm_omni_embed", "omni_av_chunks", "omni_queries"),
     "omni_video": ("vllm_omni_embed", "omni_v_chunks", "omni_queries"),
 }
@@ -110,7 +107,7 @@ def _sample_videos() -> list[Path]:
 def _segmenter() -> SingleVectorVideoProcessor:
     return SingleVectorVideoProcessor(
         logging.getLogger("omni-eval"),
-        **PROFILES["video_xclip_sv_chunk_6s"]["strategies"]["segmentation"]["params"],
+        **PROFILES[OMNI_VIDEO_PROFILE]["strategies"]["segmentation"]["params"],
     )
 
 
@@ -122,7 +119,7 @@ def _video_durations(videos: list[Path]) -> dict[str, float]:
 
 
 def _video_windows(durations: dict[str, float]) -> list[tuple[str, float, float]]:
-    """The chunks the X-CLIP profile's own segmenter cuts each video into."""
+    """The chunks the profile's own segmenter cuts each video into."""
     segmenter = _segmenter()
     return [
         (name, round(start, 3), round(end, 3))
@@ -183,7 +180,7 @@ def _clotho_inputs(cache: Path) -> tuple[Path, dict[str, list[str]]]:
 def _record(remote_inference) -> None:
     endpoints = {
         service: remote_inference.resolve(service)
-        for service in ("video_embed", "vllm_omni_embed", "clap_embed")
+        for service in ("vllm_omni_embed", "clap_embed")
     }
 
     def omni(modalities):
@@ -198,10 +195,6 @@ def _record(remote_inference) -> None:
         )
         return loader.load_model()[0]
 
-    xclip = RemoteInferenceClient(
-        endpoints["video_embed"].base_url,
-        _resolved_headers=endpoints["video_embed"].headers,
-    )
     clap = RemoteClapClient(
         endpoints["clap_embed"].base_url,
         _resolved_headers=endpoints["clap_embed"].headers,
@@ -268,9 +261,6 @@ def _record(remote_inference) -> None:
                 "embeddings_np"
             ],
         ),
-        "xclip_queries": arm(
-            "xclip_queries", "video_embed", [(q,) for q in queries], xclip.embed_text
-        ),
         "omni_queries": arm(
             "omni_queries",
             "vllm_omni_embed",
@@ -292,13 +282,6 @@ def _record(remote_inference) -> None:
         ),
         "omni_captions": arm(
             "omni_captions", "vllm_omni_embed", caption_inputs, omni_a.embed_text
-        ),
-        # Last: X-CLIP runs on CPU, about 20 s a chunk.
-        "xclip_chunks": arm(
-            "xclip_chunks",
-            "video_embed",
-            video_windows,
-            lambda v, s, e: xclip.embed_video_segment(by_name[v], s, e),
         ),
     }
     GOLDENS.mkdir(parents=True, exist_ok=True)
@@ -347,7 +330,7 @@ def _validate(manifest: dict, vectors: dict[str, np.ndarray]) -> None:
             "model": get_inference_service_spec(service).model_id,
             "revision": get_inference_service_spec(service).model_revision,
         }
-        for service in ("video_embed", "vllm_omni_embed", "clap_embed")
+        for service in ("vllm_omni_embed", "clap_embed")
     }
     assert sorted(Path(n).stem for n in manifest["video_durations"]) == (
         SAMPLE_VIDEO_STEMS
@@ -369,10 +352,8 @@ def _validate(manifest: dict, vectors: dict[str, np.ndarray]) -> None:
         "captions": len(manifest["captions"]),
     }
     expected_shapes = {
-        "xclip_chunks": (rows["video_windows"], "video_embed"),
         "omni_av_chunks": (rows["video_windows"], "vllm_omni_embed"),
         "omni_v_chunks": (rows["video_windows"], "vllm_omni_embed"),
-        "xclip_queries": (rows["golden"], "video_embed"),
         "omni_queries": (rows["golden"], "vllm_omni_embed"),
         "clap_windows": (rows["audio_windows"], "clap_embed"),
         "omni_audio_windows": (rows["audio_windows"], "vllm_omni_embed"),
@@ -714,51 +695,6 @@ VIDEO_METRICS = {
             113,
             117,
             121,
-            124,
-        ],
-    },
-    "xclip": {
-        "recall_at_1": 39,
-        "mrr": 0.4698,
-        "correct_at_1": [
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            10,
-            16,
-            18,
-            32,
-            33,
-            40,
-            41,
-            42,
-            45,
-            48,
-            49,
-            50,
-            56,
-            58,
-            61,
-            62,
-            63,
-            65,
-            66,
-            68,
-            71,
-            78,
-            79,
-            83,
-            85,
-            93,
-            96,
-            102,
-            113,
-            116,
-            117,
-            120,
             124,
         ],
     },

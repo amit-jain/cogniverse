@@ -40,7 +40,6 @@ E2E_HOST_PORTS = {
     33909: 29009,
     33910: 29010,
     33911: 29011,
-    33912: 29012,  # video_embed (X-CLIP)
 }
 
 # The Phoenix UI a browser on the host opens; the chart's phoenix.uiUrl.

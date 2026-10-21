@@ -67,7 +67,7 @@ def test_lvt_schema_enables_nearest_neighbor(tmp_path):
     path = _write_schema(
         tmp_path,
         {
-            "name": "video_xclip_lvt_global",
+            "name": "video_embeddinggemma2_lvt_global",
             "document": {
                 "fields": [{"name": "embedding", "type": "tensor<float>(x[128])"}]
             },
@@ -656,7 +656,7 @@ _FIRST_PHASE_EMBEDDING_FIELDS = {
         "hybrid_acoustic_bm25": "acoustic_embedding",
         "transcript_search": None,
     },
-    "video_xclip_sv_chunk_6s": {
+    "video_embeddinggemma2_sv_chunk_6s": {
         "hybrid_float_bm25": "embedding",
         "hybrid_binary_bm25": "embedding_binary",
         "hybrid_bm25_float": "embedding",
@@ -699,8 +699,8 @@ def test_single_vector_hybrids_retrieve_as_their_first_phase_scores():
     """The fused dense hybrids keep nearestNeighbor retrieval on the field
     their first phase scores; the text-first ones retrieve by text."""
     schemas = _REPO_ROOT / "configs" / "schemas"
-    xclip = RankingStrategyExtractor().extract_from_schema(
-        schemas / "video_xclip_sv_chunk_6s_schema.json"
+    video = RankingStrategyExtractor().extract_from_schema(
+        schemas / "video_embeddinggemma2_sv_chunk_6s_schema.json"
     )
     audio = RankingStrategyExtractor().extract_from_schema(
         schemas / "audio_content_schema.json"
@@ -714,10 +714,10 @@ def test_single_vector_hybrids_retrieve_as_their_first_phase_scores():
             info.needs_text_query,
         )
         for name, info in (
-            ("hybrid_float_bm25", xclip["hybrid_float_bm25"]),
-            ("hybrid_binary_bm25", xclip["hybrid_binary_bm25"]),
-            ("hybrid_bm25_float", xclip["hybrid_bm25_float"]),
-            ("hybrid_bm25_binary", xclip["hybrid_bm25_binary"]),
+            ("hybrid_float_bm25", video["hybrid_float_bm25"]),
+            ("hybrid_binary_bm25", video["hybrid_binary_bm25"]),
+            ("hybrid_bm25_float", video["hybrid_bm25_float"]),
+            ("hybrid_bm25_binary", video["hybrid_bm25_binary"]),
             ("hybrid_acoustic_bm25", audio["hybrid_acoustic_bm25"]),
         )
     } == {
@@ -742,7 +742,6 @@ _TEXT_FIRST = {
         "hybrid_bm25_binary_no_description",
         "hybrid_bm25_float_no_description",
     ],
-    "video_xclip_sv_chunk_6s": ["hybrid_bm25_binary", "hybrid_bm25_float"],
     "video_embeddinggemma2_sv_chunk_6s": ["hybrid_bm25_binary", "hybrid_bm25_float"],
 }
 
@@ -864,12 +863,17 @@ def test_text_match_candidates_reach_the_search_backend(tmp_path):
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_vespa.search_backend import VespaSearchBackend
 
-    source = _REPO_ROOT / "configs" / "schemas" / "video_xclip_sv_chunk_6s_schema.json"
+    source = (
+        _REPO_ROOT
+        / "configs"
+        / "schemas"
+        / "video_embeddinggemma2_sv_chunk_6s_schema.json"
+    )
     (tmp_path / source.name).write_text(source.read_text())
     backend = object.__new__(VespaSearchBackend)
     backend._schema_loader = FilesystemSchemaLoader(tmp_path)
 
-    loaded = backend._load_ranking_strategies()["video_xclip_sv_chunk_6s"]
+    loaded = backend._load_ranking_strategies()["video_embeddinggemma2_sv_chunk_6s"]
 
     assert {
         name: loaded[name]["text_candidates_only"]

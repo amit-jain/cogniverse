@@ -708,7 +708,9 @@ _MODALITY_FIXTURES = [
     pytest.param(
         "video_chunk",
         shipped_profile(
-            profile_type="video", embedding_type="single_vector", model_loader="xclip"
+            profile_type="video",
+            embedding_type="single_vector",
+            model_loader="embeddinggemma2",
         ).schema_name,
         "content_backrefs_video_chunk.json",
         id="video_chunk",

@@ -12,7 +12,9 @@ def test_selects_shipped_video_by_capabilities(tmp_path, monkeypatch, change_cwd
     if change_cwd:
         monkeypatch.chdir(tmp_path)
     profile = helpers.shipped_profile(
-        profile_type="video", embedding_type="single_vector", model_loader="xclip"
+        profile_type="video",
+        embedding_type="single_vector",
+        model_loader="embeddinggemma2",
     )
     source = json.loads(helpers._PROFILES_PATH.read_text())["backend"]["profiles"]
     expected = {
@@ -20,7 +22,7 @@ def test_selects_shipped_video_by_capabilities(tmp_path, monkeypatch, change_cwd
         for name, value in source.items()
         if value["type"] == "video"
         and value["embedding_type"] == "single_vector"
-        and value["model_loader"] == "xclip"
+        and value["model_loader"] == "embeddinggemma2"
     }
     assert {profile.profile_name: profile.to_dict()} == expected
     assert (

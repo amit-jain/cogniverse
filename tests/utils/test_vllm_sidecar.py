@@ -254,7 +254,6 @@ def test_e2e_discovery_maps_exact_workload_to_published_port(monkeypatch):
     [
         ("MODEL_NAME", "gliner"),
         ("CLAP_EMBED_MODEL", "clap_embed"),
-        ("VIDEO_EMBED_MODEL", "video_embed"),
         ("FACE_EMBED_MODEL", "face_embed"),
     ],
 )
@@ -1414,9 +1413,9 @@ def test_isolated_multi_profile_collection_requests_every_profile_service(
     inference_plugin.pytest_collection_modifyitems(config, [item])
 
     assert config._cogniverse_required_inference_services == {
-        "video_embed",
         "vllm_asr",
         "vllm_colpali",
+        "vllm_omni_embed",
     }
 
 

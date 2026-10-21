@@ -275,43 +275,6 @@ class TestVespaBackendIngestion:
         assert result is not None
         assert "embeddings" in result.get("results", {})
 
-    @pytest.mark.local_only
-    @pytest.mark.requires_inference("video_embed")
-    @skip_heavy_models_in_ci
-    @skip_if_low_memory
-    @pytest.mark.asyncio
-    async def test_xclip_vespa_ingestion(
-        self, vespa_backend, vespa_test_videos, tmp_path
-    ):
-        """Test X-CLIP model ingestion to Vespa (local only)."""
-        from cogniverse_runtime.ingestion.pipeline import (
-            PipelineConfig,
-            VideoIngestionPipeline,
-        )
-
-        config_manager = create_default_config_manager()
-        config = PipelineConfig.from_config(
-            tenant_id="test:unit", config_manager=config_manager
-        )
-        config.video_dir = vespa_test_videos[0].parent
-        config.search_backend = "vespa"
-        config.max_frames_per_video = 1
-
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-        pipeline = VideoIngestionPipeline(
-            tenant_id="test_tenant",
-            config=config,
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-            schema_name="video_xclip_sv_chunk_6s",
-        )
-        result = await pipeline.process_video_async(vespa_test_videos[0])
-
-        assert result is not None
-        assert "embeddings" in result.get("results", {})
-
     @pytest.mark.slow
     @pytest.mark.requires_inference("vllm_omni_embed")
     @pytest.mark.requires_inference("vllm_asr")
@@ -528,7 +491,8 @@ class TestVespaBackendIngestion:
         assert cosine >= 0.99, cosine
 
     @pytest.mark.local_only
-    @pytest.mark.requires_inference("video_embed")
+    @pytest.mark.requires_inference("vllm_omni_embed")
+    @pytest.mark.requires_inference("vllm_asr")
     @skip_heavy_models_in_ci
     @skip_if_low_memory
     @pytest.mark.asyncio
@@ -538,7 +502,7 @@ class TestVespaBackendIngestion:
         """Two videos ingested CONCURRENTLY through ONE pipeline must land in
         Vespa each carrying its OWN source_url — never cross-assigned.
 
-        Real X-CLIP embeddings, real Vespa feed, real concurrency. The
+        Real EmbeddingGemma 2 embeddings, real Vespa feed, real concurrency. The
         pipeline shares one instance across the concurrent videos; when the
         per-video identity lived on that shared instance a downstream await let
         one video overwrite another's video_path/source_url, so a video's
@@ -570,7 +534,7 @@ class TestVespaBackendIngestion:
             config=config,
             config_manager=config_manager,
             schema_loader=schema_loader,
-            schema_name="video_xclip_sv_chunk_6s",
+            schema_name="video_embeddinggemma2_sv_chunk_6s",
         )
 
         await pipeline.process_videos_concurrent([v0, v1], max_concurrent=2)
@@ -656,7 +620,7 @@ class TestVespaIngestionViaMinio:
     ``VideoIngestionPipeline.process_video_async`` end-to-end against real
     Vespa + real MinIO containers.
 
-    Heavy model invocation (ColPali / X-CLIP / ColQwen) is disabled so
+    Heavy model invocation (ColPali / EmbeddingGemma 2 / ColQwen) is disabled so
     the test is runnable without GPU/large model weights — the focus is the
     URI → locator → orchestrator → Vespa chain, not the
     embedding model itself.
@@ -780,7 +744,7 @@ class TestComprehensiveIngestion:
 
     @pytest.mark.slow
     @pytest.mark.requires_vespa
-    @pytest.mark.requires_inference("video_embed")
+    @pytest.mark.requires_inference("vllm_omni_embed")
     @pytest.mark.requires_inference("vllm_colpali")
     @pytest.mark.requires_inference("vllm_asr")
     @pytest.mark.asyncio
@@ -790,12 +754,12 @@ class TestComprehensiveIngestion:
         """Test ingestion with multiple profiles.
 
         Gated on both exact embedding services because ``profiles_to_test``
-        includes ColPali, X-CLIP, and ColQwen profiles. The pipeline
+        includes ColPali, EmbeddingGemma 2, and ColQwen profiles. The pipeline
         raises at initialization when either declared service URL is absent.
         """
         profiles_to_test = [
             "video_colpali_smol500_mv_frame",
-            "video_xclip_sv_chunk_6s",
+            "video_embeddinggemma2_sv_chunk_6s",
             "video_colqwen_omni_mv_chunk_30s",
         ]
 

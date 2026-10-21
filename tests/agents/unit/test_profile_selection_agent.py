@@ -466,7 +466,7 @@ class TestProfileSelectionAgent:
             shipped_profile(
                 profile_type="video",
                 embedding_type="single_vector",
-                model_loader="xclip",
+                model_loader="embeddinggemma2",
             ).to_dict(),
         )
         profile_agent.deps.available_profiles = [

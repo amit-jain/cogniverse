@@ -58,7 +58,9 @@ def _profile_selection_example_profiles() -> dict[str, str]:
     unavailable_profile = BackendProfileConfig.from_dict(
         "unavailable_video_profile",
         shipped_profile(
-            profile_type="video", embedding_type="single_vector", model_loader="xclip"
+            profile_type="video",
+            embedding_type="single_vector",
+            model_loader="embeddinggemma2",
         ).to_dict(),
     )
     config_manager = ConfigManager(store=InMemoryConfigStore())

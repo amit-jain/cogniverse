@@ -726,18 +726,18 @@ class TestSearchNodesRealVespa:
     def test_search_nodes_survives_conflicting_query_tensor_schema(
         self, graph_vespa, shared_memory_vespa, graph_query_backend, monkeypatch
     ):
-        """Restrict rank inputs to graph qtb[16] despite X-CLIP qtb[96]."""
+        """Restrict rank inputs to graph qtb[16] despite the video chunk qtb[96]."""
         from tests.utils.vespa_test_helpers import deploy_tenant_schema
 
         deploy_tenant_schema(
             shared_memory_vespa,
             tenant_id=TENANT_ID,
-            base_schema_name="video_xclip_sv_chunk_6s",
+            base_schema_name="video_embeddinggemma2_sv_chunk_6s",
             config_manager=shared_memory_vespa["config_manager"],
         )
         port = graph_vespa["http_port"]
-        conflicting = schema_full_name("video_xclip_sv_chunk_6s", TENANT_ID)
-        # The graph probe document doesn't fit the xclip schema, so
+        conflicting = schema_full_name("video_embeddinggemma2_sv_chunk_6s", TENANT_ID)
+        # The graph probe document doesn't fit the video chunk schema, so
         # poll doc-type liveness via GET: 404 = type known + doc absent.
         probe_url = (
             f"http://localhost:{port}/document/v1/graph_content/"

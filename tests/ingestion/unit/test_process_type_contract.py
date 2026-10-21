@@ -47,9 +47,7 @@ def test_an_unknown_process_type_falls_to_the_default(strategy_config):
     assert resolved == ("frame_based", "frames")
 
 
-@pytest.mark.parametrize(
-    "profile", ("video_xclip_sv_chunk_6s", "video_embeddinggemma2_sv_chunk_6s")
-)
+@pytest.mark.parametrize("profile", ("video_embeddinggemma2_sv_chunk_6s",))
 def test_single_vector_chunk_profiles_store_one_document_per_chunk(profile):
     """Their schemas hold one vector per document, with the chunk's
     segment_id and span; stacking a video's chunks into one document is

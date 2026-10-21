@@ -707,12 +707,12 @@ class TestProfileAPICRUD:
             "no_loader": (
                 {},
                 "Profile type 'video' requires a model_loader, one of: "
-                "['colbert', 'colpali', 'colqwen', 'embeddinggemma2', 'xclip']",
+                "['colbert', 'colpali', 'colqwen', 'embeddinggemma2']",
             ),
             "bad_loader": (
                 {"model_loader": "whisper"},
                 "Invalid model_loader 'whisper'. Must be one of: "
-                "['colbert', 'colpali', 'colqwen', 'embeddinggemma2', 'xclip']",
+                "['colbert', 'colpali', 'colqwen', 'embeddinggemma2']",
             ),
             "bad_process": (
                 {"model_loader": "colpali", "process_type": "chunks"},
@@ -807,7 +807,7 @@ class TestProfileAPICRUD:
             "process_types": sorted(PROCESS_TYPES),
         }
         assert (choices["model_loaders"], choices["embedding_types"]) == (
-            ["colbert", "colpali", "colqwen", "embeddinggemma2", "xclip"],
+            ["colbert", "colpali", "colqwen", "embeddinggemma2"],
             ["multi_vector", "single_vector"],
         )
 

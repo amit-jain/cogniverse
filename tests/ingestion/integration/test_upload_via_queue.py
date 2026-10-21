@@ -1027,7 +1027,7 @@ async def test_omitted_profile_crosses_real_minio_redis_and_worker(
 
     tenant_profiles = {
         "boundary:alpha": PROFILE,
-        "boundary:beta": "video_xclip_sv_chunk_6s",
+        "boundary:beta": "video_embeddinggemma2_sv_chunk_6s",
     }
     video_bytes = b"owned-real-minio-redis-worker-boundary"
     monkeypatch.setenv("REDIS_URL", redis_container)

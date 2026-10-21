@@ -457,7 +457,10 @@ def test_telemetry_boundary_failure_exits_without_completion(
     _peer(app, peer)
 
 
-SHIPPED_PROFILES = ["video_colpali_smol500_mv_frame", "video_xclip_sv_chunk_6s"]
+SHIPPED_PROFILES = [
+    "video_colpali_smol500_mv_frame",
+    "video_embeddinggemma2_sv_chunk_6s",
+]
 
 
 def _workflow_default_profiles():
@@ -513,7 +516,7 @@ def test_a_tenant_with_no_stored_rows_provisions_the_shipped_profiles(
     assert deployed.stdout.strip() == (
         f"Provisioned schemas for tenant {canonical}: "
         "video_colpali_smol500_mv_frame_provisionfresh_provisionfresh, "
-        "video_xclip_sv_chunk_6s_provisionfresh_provisionfresh"
+        "video_embeddinggemma2_sv_chunk_6s_provisionfresh_provisionfresh"
     )
     for base in profiles:
         row = _registry_row(cm, canonical, base)
@@ -528,7 +531,7 @@ def test_a_tenant_with_no_stored_rows_provisions_the_shipped_profiles(
     assert verified.stdout.strip() == (
         f"Provisioned verify for tenant {canonical}: "
         "video_colpali_smol500_mv_frame_provisionfresh_provisionfresh, "
-        "video_xclip_sv_chunk_6s_provisionfresh_provisionfresh"
+        "video_embeddinggemma2_sv_chunk_6s_provisionfresh_provisionfresh"
     )
     _peer(app, peer)
 

@@ -181,10 +181,12 @@ def config_manager(vespa_instance):
         tenant_id="test:unit",
     )
     single_vector_video = shipped_profile(
-        profile_type="video", embedding_type="single_vector", model_loader="xclip"
+        profile_type="video",
+        embedding_type="single_vector",
+        model_loader="embeddinggemma2",
     )
     cm.add_backend_profile(
-        dataclasses.replace(single_vector_video, profile_name="test_xclip"),
+        dataclasses.replace(single_vector_video, profile_name="test_embeddinggemma2"),
         tenant_id="test:unit",
     )
 
@@ -250,7 +252,7 @@ def config_manager(vespa_instance):
         (seed_tenant, base_name, f"{base_name}_schema.json")
         for seed_tenant, base_name in (
             [("test:unit", video_schema), ("test:unit", "agent_memories")]
-            + [("test:unit", "video_xclip_sv_chunk_6s")]
+            + [("test:unit", "video_embeddinggemma2_sv_chunk_6s")]
             + [(tenant, video_schema) for tenant in _per_test_tenants[1:]]
         )
     ]

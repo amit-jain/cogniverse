@@ -15,21 +15,23 @@ import pytest
 
 _REPO_ROOT = Path(__file__).parents[3]
 
-# The processor class ``AutoProcessor.from_pretrained(<model>)`` resolves to for
-# each sidecar's pinned model; constructing it with defaults runs the same
-# backend checks as the real load without fetching the checkpoint.
+# The processor class each sidecar's model load builds for its pinned model
+# (``ClapProcessor`` wraps ``ClapFeatureExtractor`` for the audio it is sent);
+# constructing it with defaults runs the same backend checks as the real load
+# without fetching the checkpoint.
 _SIDECAR_PROCESSOR_PROBES = {
-    "video_embed": textwrap.dedent(
+    "clap_embed": textwrap.dedent(
         """
+        import librosa
         import transformers
-        processor = transformers.VideoMAEImageProcessor()
-        print(type(processor).__name__, sorted(processor.size))
+        extractor = transformers.ClapFeatureExtractor()
+        print(type(extractor).__name__, extractor.sampling_rate)
         """
     ),
 }
 
 _EXPECTED_PROBE_OUTPUT = {
-    "video_embed": "VideoMAEImageProcessor ['shortest_edge']",
+    "clap_embed": "ClapFeatureExtractor 48000",
 }
 
 

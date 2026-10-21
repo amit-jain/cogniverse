@@ -188,7 +188,7 @@ class StrategyConfig:
             else:
                 return "direct_video", "windows"
         elif profile.get("model_specific", {}).get("chunk_duration"):
-            # Single-vector with chunks (X-CLIP)
+            # Single-vector with chunks
             return "single_vector", "chunks"
 
         # 5. Check process_type in profile

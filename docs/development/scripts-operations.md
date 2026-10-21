@@ -120,7 +120,7 @@ flowchart TB
     Pipeline["<span style='color:#000'>VideoIngestionPipeline<br/>• Video Processing<br/>• Embedding Generation<br/>• Vespa Upload</span>"]
 
     ColPali["<span style='color:#000'>ColPali Profile<br/>Frame-based</span>"]
-    X-CLIP["<span style='color:#000'>X-CLIP Profile<br/>Global embeddings</span>"]
+    EG2["<span style='color:#000'>EmbeddingGemma 2 Profile<br/>Single-vector chunks</span>"]
     ColQwen["<span style='color:#000'>ColQwen Profile<br/>Chunk-based</span>"]
 
     Concurrent["<span style='color:#000'>Concurrent Async<br/>Video Processing<br/>max_concurrent=3</span>"]
@@ -136,11 +136,11 @@ flowchart TB
     AdvMode --> Pipeline
 
     Pipeline --> ColPali
-    Pipeline --> X-CLIP
+    Pipeline --> EG2
     Pipeline --> ColQwen
 
     ColPali --> Concurrent
-    X-CLIP --> Concurrent
+    EG2 --> Concurrent
     ColQwen --> Concurrent
 
     Concurrent --> Vespa
@@ -151,7 +151,7 @@ flowchart TB
     style AdvMode fill:#b0bec5,stroke:#546e7a,color:#000
     style Pipeline fill:#ffcc80,stroke:#ef6c00,color:#000
     style ColPali fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style X-CLIP fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style EG2 fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ColQwen fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Concurrent fill:#ffcc80,stroke:#ef6c00,color:#000
     style Vespa fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -328,7 +328,7 @@ pipeline = (create_pipeline()
 from cogniverse_runtime.ingestion.pipeline_builder import build_simple_pipeline
 
 for profile in ["video_colpali_smol500_mv_frame",
-                "video_xclip_sv_chunk_6s"]:
+                "video_embeddinggemma2_sv_chunk_6s"]:
     pipeline = build_simple_pipeline(
         tenant_id="acme_corp",  # Tenant-specific processing
         video_dir=Path("data/videos"),
@@ -1021,7 +1021,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame \
-           video_xclip_sv_chunk_6s \
+           video_embeddinggemma2_sv_chunk_6s \
            video_colqwen_omni_mv_chunk_30s
 
 # Output shows processing for each profile:
@@ -1032,18 +1032,18 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 # ✅ Profile video_colpali_smol500_mv_frame completed!
 #
 # ============================================================
-# 🎯 Processing with profile: video_xclip_sv_chunk_6s
+# 🎯 Processing with profile: video_embeddinggemma2_sv_chunk_6s
 # ============================================================
 # ...
-# ✅ Profile video_xclip_sv_chunk_6s completed!
+# ✅ Profile video_embeddinggemma2_sv_chunk_6s completed!
 #
 # ============================================================
 # 📊 Overall Summary
 # ============================================================
 # Processed 3 profiles
-# ✅ video_colpali_smol500_mv_frame: 3/3 videos succeeded, 180 docs in 45.3s
-# ✅ video_xclip_sv_chunk_6s: 3/3 videos succeeded, 90 docs in 38.1s
-# ⚠️ video_colqwen_omni_mv_chunk_30s: 2/3 videos succeeded, 120 docs in 52.7s
+# ✅ video_colpali_smol500_mv_frame: 3/3 videos succeeded, <docs> docs in <secs>s
+# ✅ video_embeddinggemma2_sv_chunk_6s: 3/3 videos succeeded, <docs> docs in <secs>s
+# ⚠️ video_colqwen_omni_mv_chunk_30s: 2/3 videos succeeded, <docs> docs in <secs>s
 ```
 
 ### Example 3: Test Mode Ingestion
@@ -1282,7 +1282,6 @@ See [Web Client](../modules/web-client.md) to run it locally.
 
 # Throughput metrics:
 # - ColPali frame-based: ~4-5 docs/sec (GPU)
-# - X-CLIP global: ~2-3 docs/sec (GPU)
 # - ColQwen chunk-based: ~3-4 docs/sec (GPU)
 ```
 
@@ -1413,12 +1412,10 @@ tail -f outputs/logs/ingestion_pipeline.log
 ```python
 # GPU required for:
 # - ColPali embedding generation
-# - X-CLIP encoding
 # - ColQwen embedding generation
 
 # GPU memory requirements:
 # - ColPali Smol 500M: ~2 GB VRAM
-# - X-CLIP: ~4 GB VRAM
 # - ColQwen Omni: ~6 GB VRAM
 
 # For multiple profiles:
@@ -1449,7 +1446,7 @@ tail -f outputs/logs/ingestion_pipeline.log
 
 # Example:
 # Process 1: --profile video_colpali_smol500_mv_frame
-# Process 2: --profile video_xclip_sv_chunk_6s
+# Process 2: --profile video_embeddinggemma2_sv_chunk_6s
 # Process 3: --profile video_colqwen_omni_mv_chunk_30s
 ```
 

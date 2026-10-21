@@ -90,7 +90,9 @@ def tomoro_service_configured(config_manager):
     previous = dict(sys_cfg.inference_service_urls)
     sys_cfg.inference_service_urls = dict(previous)
     sys_cfg.inference_service_urls["tomoro_embedding"] = "http://tomoro.invalid:8000"
-    sys_cfg.inference_service_urls["video_embed"] = "http://video-embed.invalid:8000"
+    sys_cfg.inference_service_urls["vllm_omni_embed"] = (
+        "http://vllm-omni-embed.invalid:8000"
+    )
     config_manager.set_system_config(sys_cfg)
     QueryEncoderFactory._encoder_cache.clear()
     yield
@@ -195,19 +197,20 @@ class TestListProfilesIntegration:
         assert data["count"] == len(data["profiles"])
         assert {n for n in profile_names if n.startswith("test_")} == {
             "test_colpali",
-            "test_xclip",
+            "test_embeddinggemma2",
         }
 
         assert "test_colpali" in profile_names
-        assert "test_xclip" in profile_names
+        assert "test_embeddinggemma2" in profile_names
 
         profiles_by_name = {p["name"]: p for p in data["profiles"]}
         assert profiles_by_name["test_colpali"]["model"] == COLPALI_MODEL_NAME
         assert profiles_by_name["test_colpali"]["type"] == "video"
         assert (
-            profiles_by_name["test_xclip"]["model"] == "microsoft/xclip-large-patch14"
+            profiles_by_name["test_embeddinggemma2"]["model"]
+            == "google/embeddinggemma-2"
         )
-        assert profiles_by_name["test_xclip"]["type"] == "video"
+        assert profiles_by_name["test_embeddinggemma2"]["type"] == "video"
 
     def test_list_profiles_tenant_scoping(self, search_client):
         """GET /search/profiles?tenant_id=tenant_b advertises what tenant_b seeded.
@@ -232,7 +235,7 @@ class TestListProfilesIntegration:
 
         profile_names = {p["name"] for p in data["profiles"]}
         assert profile_names == {TENANT_B_PROFILE.profile_name}
-        assert profile_names.isdisjoint({"test_colpali", "test_xclip"})
+        assert profile_names.isdisjoint({"test_colpali", "test_embeddinggemma2"})
 
 
 @pytest.mark.integration

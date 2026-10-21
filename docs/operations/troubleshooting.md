@@ -137,7 +137,7 @@ model_name = "TomoroAI/tomoro-colqwen3-embed-4b"
 
 - ColPali: `TomoroAI/tomoro-colqwen3-embed-4b` (recommended)
 
-- X-CLIP: `microsoft/xclip-large-patch14`
+- EmbeddingGemma 2: `google/embeddinggemma-2`
 
 - ColQwen: `TomoroAI/tomoro-colqwen3-embed-4b`
 
@@ -257,7 +257,7 @@ First-time model downloads from HuggingFace can be large (several GB).
 - `TomoroAI/tomoro-colqwen3-embed-4b` (shared visual encoder): ~8GB of
   bfloat16 weights plus runtime/KV-cache overhead
 
-- `microsoft/xclip-large-patch14`: ~3GB
+- `google/embeddinggemma-2`: ~1.4 GiB of weights
 
 **Prevention:**
 

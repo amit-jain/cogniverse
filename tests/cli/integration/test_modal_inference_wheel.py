@@ -36,7 +36,6 @@ _INSTALLED_WHEEL_PROBE = textwrap.dedent(
         "cogniverse_cli.modal_inference.servers.face",
         "cogniverse_cli.modal_inference.servers.gliner",
         "cogniverse_cli.modal_inference.servers.pylate",
-        "cogniverse_cli.modal_inference.servers.video_embed",
     )
     foundation_modules = (
         "cogniverse_foundation.config.inference_auth",

@@ -86,7 +86,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
     def _segment_embedder(self):
         """Loader that embeds a whole video segment in one remote call.
 
-        X-CLIP and EmbeddingGemma 2 return ``{"embeddings_np": ...}`` from
+        EmbeddingGemma 2 returns ``{"embeddings_np": ...}`` from
         ``process_video_segment``.
         """
         return self.segment_loader
@@ -129,7 +129,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         """Check if model should be loaded during initialization.
 
         ColPali/ColQwen models are loaded lazily when the first frame/chunk
-        is processed. All other models (ColBERT, X-CLIP) load at init.
+        is processed. All other models (ColBERT, EmbeddingGemma 2) load at init.
         """
         model_loader = self.profile_config.get("model_loader")
         if not model_loader:
@@ -156,7 +156,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 self.colbert_model, _ = get_or_load_model(
                     model_name, self.profile_config, self.logger
                 )
-            elif model_loader in ("xclip", "embeddinggemma2"):
+            elif model_loader == "embeddinggemma2":
                 self.segment_loader, _ = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )

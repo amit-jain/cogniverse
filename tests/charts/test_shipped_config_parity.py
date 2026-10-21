@@ -518,74 +518,121 @@ def test_schema_config_names_the_schema_and_model_the_profile_uses(path: Path):
     }
 
 
-def _leaf_paths(value: Any, prefix: str = "") -> dict[str, Any]:
-    if isinstance(value, dict):
-        leaves: dict[str, Any] = {}
-        for key, item in value.items():
-            leaves.update(_leaf_paths(item, f"{prefix}.{key}" if prefix else key))
-        return leaves
-    return {prefix: value}
-
-
 @pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.parent.name)
-def test_the_omni_video_profile_differs_from_xclip_only_in_its_model(path: Path):
-    """The EmbeddingGemma 2 chunk profile is compared against X-CLIP, so every
-    segmentation, transcription and schema setting must be X-CLIP's own."""
-    profiles = load_shipped_config(path)["backend"]["profiles"]
-    xclip = _leaf_paths(profiles["video_xclip_sv_chunk_6s"])
-    omni = _leaf_paths(profiles["video_embeddinggemma2_sv_chunk_6s"])
+def test_the_omni_video_profile_is_pinned_whole(path: Path):
+    """The EmbeddingGemma 2 chunk profile is the single-vector 6 s video
+    profile: segmentation, transcription, service routing and schema settings
+    are pinned together so a drift in any one of them is visible here."""
+    profile = load_shipped_config(path)["backend"]["profiles"][
+        "video_embeddinggemma2_sv_chunk_6s"
+    ]
 
-    differing = {
-        key: (xclip.get(key), omni.get(key))
-        for key in xclip.keys() | omni.keys()
-        if xclip.get(key) != omni.get(key)
-    }
-
-    assert differing == {
+    assert profile == {
+        "type": "video",
         "description": (
-            profiles["video_xclip_sv_chunk_6s"]["description"],
             "EmbeddingGemma 2 6-second chunk single-vector embeddings, 768-dim. "
             "Each chunk's frames (1 fps) and audio track are embedded together "
             "into one space with text, so a text query retrieves clips directly. "
-            "Served by the vllm_omni_embed service.",
+            "Served by the vllm_omni_embed service."
         ),
-        "schema_name": (
-            "video_xclip_sv_chunk_6s",
-            "video_embeddinggemma2_sv_chunk_6s",
-        ),
-        "embedding_model": (
-            "microsoft/xclip-large-patch14",
-            "google/embeddinggemma-2",
-        ),
-        "model_loader": ("xclip", "embeddinggemma2"),
-        "modalities": (None, ["video", "audio"]),
-        "inference_services.embedding": ("video_embed", "vllm_omni_embed"),
-        "inference_config.model_type": ("xclip", "embeddinggemma2"),
-        "inference_config.query_encoder": (
-            "microsoft/xclip-large-patch14",
-            "google/embeddinggemma-2",
-        ),
-        "model_specific.sampling_fps": (2.0, None),
-        "model_specific.max_frames_per_chunk": (8, None),
-        "model_specific.min_frames": (8, None),
-        "schema_config.schema_name": (
-            "video_xclip_sv_chunk_6s",
-            "video_embeddinggemma2_sv_chunk_6s",
-        ),
-        "schema_config.model_name": ("X-CLIP-Large", "EmbeddingGemma-2"),
+        "schema_name": "video_embeddinggemma2_sv_chunk_6s",
+        "result_granularity": "source",
+        "embedding_model": "google/embeddinggemma-2",
+        "pipeline_config": {
+            "extract_keyframes": False,
+            "transcribe_audio": True,
+            "generate_descriptions": False,
+            "generate_embeddings": True,
+        },
+        "strategies": {
+            "segmentation": {
+                "class": "SingleVectorSegmentationStrategy",
+                "params": {
+                    "strategy": "chunks",
+                    "segment_duration": 6.0,
+                    "segment_overlap": 1.0,
+                    "sampling_fps": 2.0,
+                    "max_frames_per_segment": 8,
+                    "store_as_single_doc": True,
+                },
+            },
+            "transcription": {
+                "class": "AudioTranscriptionStrategy",
+                "params": {"model": "openai/whisper-large-v3-turbo"},
+            },
+            "description": {"class": "NoDescriptionStrategy", "params": {}},
+            "embedding": {"class": "SingleVectorEmbeddingStrategy", "params": {}},
+        },
+        "embedding_type": "single_vector",
+        "model_loader": "embeddinggemma2",
+        "modalities": ["video", "audio"],
+        "inference_services": {
+            "embedding": "vllm_omni_embed",
+            "transcription": "vllm_asr",
+        },
+        "model_specific": {"chunk_duration": 6.0, "chunk_overlap": 1.0},
+        "inference_config": {
+            "model_type": "embeddinggemma2",
+            "backend": "remote",
+            "query_encoder": "google/embeddinggemma-2",
+        },
+        "schema_config": {
+            "schema_name": "video_embeddinggemma2_sv_chunk_6s",
+            "model_name": "EmbeddingGemma-2",
+            "embedding_dim": 768,
+            "binary_dim": 96,
+            "chunk_based": True,
+        },
     }
 
 
-def test_the_omni_video_schema_is_the_xclip_schema_renamed():
-    xclip = (
-        REPO_ROOT / "configs/schemas/video_xclip_sv_chunk_6s_schema.json"
-    ).read_text()
-    omni = json.loads(
+def test_the_omni_video_schema_indexes_the_profile_dims():
+    """The schema stores the float and binary vectors at the widths the
+    profile's ``schema_config`` declares, and maps the chunk fields the
+    ingestion pipeline feeds."""
+    dims = load_shipped_config(SHIPPED)["backend"]["profiles"][
+        "video_embeddinggemma2_sv_chunk_6s"
+    ]["schema_config"]
+    schema = json.loads(
         (
             REPO_ROOT / "configs/schemas/video_embeddinggemma2_sv_chunk_6s_schema.json"
         ).read_text()
     )
 
-    assert omni == json.loads(
-        xclip.replace("video_xclip_sv_chunk_6s", "video_embeddinggemma2_sv_chunk_6s")
-    )
+    assert schema["name"] == dims["schema_name"]
+    assert {f["name"]: f["type"] for f in schema["document"]["fields"]} == {
+        "video_id": "string",
+        "video_title": "string",
+        "source_url": "string",
+        "creation_timestamp": "long",
+        "segment_id": "int",
+        "start_time": "float",
+        "end_time": "float",
+        "embedding": f"tensor<float>(v[{dims['embedding_dim']}])",
+        "embedding_binary": f"tensor<int8>(v[{dims['binary_dim']}])",
+        "audio_transcript": "string",
+        "entity_ids": "array<string>",
+        "relation_ids": "array<string>",
+        "claim_ids": "array<string>",
+    }
+    assert [profile["name"] for profile in schema["rank_profiles"]] == [
+        "default",
+        "bm25_only",
+        "binary_binary",
+        "float_float",
+        "float_binary",
+        "phased",
+        "hybrid_float_bm25",
+        "hybrid_binary_bm25",
+        "hybrid_bm25_binary",
+        "hybrid_bm25_float",
+    ]
+    assert schema["document_mapping"] == {
+        "id": "video_id",
+        "title": "video_title",
+        "text_content": "audio_transcript",
+        "created_at": "creation_timestamp",
+        "created_at_format": "epoch",
+        "embeddings": {"embedding": "embedding"},
+        "metadata_fields": {"segment_index": "segment_id"},
+    }

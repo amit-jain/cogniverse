@@ -2084,12 +2084,12 @@ class TestSharedClusterOwnership:
         }
 
     def test_cluster_missing_a_published_sidecar_port_is_not_reused(self, monkeypatch):
-        """A cluster created before video_embed's 33912:29012 mapping existed
+        """A cluster whose loadbalancer lacks one sidecar's 33911:29011 mapping
         serves every other port, so only the port check can tell."""
         published = {
             host: node
             for host, node in e2e_conftest.E2E_HOST_PORTS.items()
-            if host != 33912
+            if host != 33911
         }
         commands = self._reusable_cluster_up_to_ports(
             monkeypatch, self._bindings(published)
@@ -2097,9 +2097,9 @@ class TestSharedClusterOwnership:
 
         assert e2e_conftest._e2e_cluster_state() == (
             "unhealthy",
-            "the loadbalancer does not publish 33912:29012; publish them with "
+            "the loadbalancer does not publish 33911:29011; publish them with "
             "`k3d cluster edit cogniverse-e2e --port-add "
-            "33912:29012@loadbalancer`, which recreates only the loadbalancer",
+            "33911:29011@loadbalancer`, which recreates only the loadbalancer",
         )
         assert commands == [
             [
@@ -2122,14 +2122,14 @@ class TestSharedClusterOwnership:
         self, monkeypatch
     ):
         published = dict(e2e_conftest.E2E_HOST_PORTS)
-        del published[33912]
-        published[29012] = 29012
+        del published[33911]
+        published[29011] = 29011
         self._reusable_cluster_up_to_ports(monkeypatch, self._bindings(published))
 
         state, detail = e2e_conftest._e2e_cluster_state()
 
         assert state == "unhealthy"
-        assert "does not publish 33912:29012;" in detail, detail
+        assert "does not publish 33911:29011;" in detail, detail
 
     def test_loadbalancer_inspection_failure_is_unhealthy(self, monkeypatch):
         self._reusable_cluster_up_to_ports(monkeypatch, {})

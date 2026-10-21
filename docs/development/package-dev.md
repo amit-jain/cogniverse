@@ -147,7 +147,7 @@ cogniverse/
 │   │       ├── deploy.py       # Schema/chart deployment commands
 │   │       ├── cluster.py      # Cluster management commands
 │   │       └── modal_inference/ # Installed Modal app definitions
-│   │           └── servers/    # CLAP, face, GLiNER, X-CLIP HTTP servers
+│   │           └── servers/    # CLAP, face, GLiNER, PyLate HTTP servers
 │   └── messaging/         # cogniverse_messaging (standalone, no cogniverse deps)
 │       ├── pyproject.toml
 │       └── cogniverse_messaging/
@@ -1289,7 +1289,7 @@ asyncio.run(main())
 ## Features
 
 - Intelligent query routing with GLiNER and LLM strategies
-- Video search with ColPali and X-CLIP
+- Video search with ColPali and EmbeddingGemma 2
 - Multi-tenant support with schema isolation
 - Phoenix telemetry integration
 

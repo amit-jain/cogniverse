@@ -191,7 +191,9 @@ class TestSchemaNameAuthority:
 
     def test_sv_schema_returns_flat_list(self):
         profile = shipped_profile(
-            profile_type="video", embedding_type="single_vector", model_loader="xclip"
+            profile_type="video",
+            embedding_type="single_vector",
+            model_loader="embeddinggemma2",
         )
         schema = load_raw_schema_json(profile.schema_name)
         fields = {

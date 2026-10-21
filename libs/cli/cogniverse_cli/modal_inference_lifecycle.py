@@ -38,7 +38,6 @@ _DEPLOYMENT_MODULES = {
     "vllm_asr": "cogniverse_cli.modal_inference.whisper",
     "clap_embed": "cogniverse_cli.modal_inference.clap",
     "face_embed": "cogniverse_cli.modal_inference.face",
-    "video_embed": "cogniverse_cli.modal_inference.video_embed",
 }
 # 303 is Modal's answer to a web request that waited its 150-second limit on
 # a container still starting; the next probe waits on the same container.

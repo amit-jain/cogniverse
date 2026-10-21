@@ -249,7 +249,7 @@ sequenceDiagram
 
     activate SearchAgent
     Note over SearchAgent: VespaSchemaManager.get_tenant_schema_name()<br/>called internally
-    SearchAgent->>SearchAgent: Encode query<br/>(ColPali/X-CLIP/ColQwen)
+    SearchAgent->>SearchAgent: Encode query<br/>(ColPali/ColQwen/EmbeddingGemma 2)
     SearchAgent->>Vespa: query with tenant schema<br/>(tenant_id="acme")
     Note over Vespa: Searches tenant-specific schema<br/>(e.g., video_colpali_smol500_mv_frame_acme)
     Vespa-->>SearchAgent: Top results (tenant-isolated)
@@ -946,11 +946,11 @@ flowchart TB
     Strategy --> Profile{<span style='color:#000'>Select Profile</span>}
     Profile -->|Frame-Based| FrameProc[<span style='color:#000'>Frame Processor<br/>ColPali</span>]
     Profile -->|Chunk-Based| ChunkProc[<span style='color:#000'>Chunk Processor<br/>ColQwen</span>]
-    Profile -->|Global| GlobalProc[<span style='color:#000'>Global Processor<br/>X-CLIP</span>]
+    Profile -->|Single-Vector Chunk| SVProc[<span style='color:#000'>Single-Vector Chunk Processor<br/>EmbeddingGemma 2</span>]
 
     FrameProc --> Embed[<span style='color:#000'>Generate Embeddings<br/>cogniverse_runtime</span>]
     ChunkProc --> Embed
-    GlobalProc --> Embed
+    SVProc --> Embed
 
     Embed --> Format[<span style='color:#000'>Format Conversion<br/>cogniverse_vespa</span>]
 
@@ -967,7 +967,7 @@ flowchart TB
     style Profile fill:#ffcc80,stroke:#ef6c00,color:#000
     style FrameProc fill:#ffcc80,stroke:#ef6c00,color:#000
     style ChunkProc fill:#ffcc80,stroke:#ef6c00,color:#000
-    style GlobalProc fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SVProc fill:#ffcc80,stroke:#ef6c00,color:#000
     style Embed fill:#81d4fa,stroke:#0288d1,color:#000
     style Format fill:#a5d6a7,stroke:#388e3c,color:#000
     style SchemaMgr fill:#a5d6a7,stroke:#388e3c,color:#000

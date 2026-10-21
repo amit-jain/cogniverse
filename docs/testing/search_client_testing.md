@@ -139,10 +139,10 @@ for result in results:
 `VespaSearchBackend` formats query embeddings for Vespa via `_format_query_vector_param`
 (defined in `cogniverse_vespa/search_backend.py`):
 
-- **Single-vector schemas** (LVT sv_chunk): numpy array flattened to a dense list —
+- **Single-vector schemas** (EmbeddingGemma 2 sv_chunk): numpy array flattened to a dense list —
   `tensor(v[dim])` binding (e.g. `tensor<float>(v[768])`). A `(1, dim)` array is
   flattened before serialisation.
-- **Multi-vector schemas** (ColPali, X-CLIP mv_chunk): numpy array converted to a
+- **Multi-vector schemas** (ColPali/ColQwen): numpy array converted to a
   `{str(token_index): vector_list}` dict — `tensor<float>(querytoken{}, v[dim])` or
   `tensor<int8>(querytoken{}, v[dim])` binding (the query-side input tensor; the
   *stored* document embedding field uses `tensor<bfloat16>(patch{}, v[dim])`,
@@ -157,8 +157,8 @@ The bound input name depends on the rank profile's declared inputs (see
 
 | Input name | Type | Used by |
 |---|---|---|
-| `qt` | float | ColPali/X-CLIP `float_float`, `float_binary`, `phased`, `hybrid_*float*` strategies |
-| `qtb` | int8 (binary) | ColPali/X-CLIP `binary_binary`, `float_binary`, `phased`, `hybrid_*binary*` strategies |
+| `qt` | float | ColPali/EmbeddingGemma 2 `float_float`, `float_binary`, `phased`, `hybrid_*float*` strategies |
+| `qtb` | int8 (binary) | ColPali/EmbeddingGemma 2 `binary_binary`, `float_binary`, `phased`, `hybrid_*binary*` strategies |
 | `acoustic_query` | float | audio schema strategies only (e.g. `audio_content`); same code branch as `qt` |
 | `q` | generic | schemas whose rank profiles declare a bare `q` input (e.g. `wiki_pages`, `agent_memories`) |
 

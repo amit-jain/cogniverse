@@ -202,7 +202,7 @@ k3d fixes the loadbalancer's published ports when the cluster is created, so a
 cluster created before a host-port mapping was added is unhealthy until it
 publishes it. The failure names the command that adds the missing mappings,
 for example
-`k3d cluster edit cogniverse-e2e --port-add 33912:29012@loadbalancer`; it
+`k3d cluster edit cogniverse-e2e --port-add 33903:29003@loadbalancer`; it
 recreates only the loadbalancer.
 
 Do not stop the cluster after an individual pytest command. Once every
@@ -299,10 +299,11 @@ rejects any unregistered marker) plus a per-package override in
   `requires_gliner`, `requires_models`, `requires_cv2`, `requires_ffmpeg` —
   infrastructure/model dependencies
 - `requires_inference("vllm_colpali")` — exact ColPali/ColQwen HTTP embedding
-  service; `requires_inference("video_embed")` — exact X-CLIP service.
+  service; `requires_inference("vllm_omni_embed")` — exact EmbeddingGemma 2
+  service.
   Collection also requests every service a shipped profile using the named
   embedding service resolves at pipeline init, derived from
-  `configs/config.json` (`vllm_asr` for `vllm_colpali`, `video_embed` and
+  `configs/config.json` (`vllm_asr` for `vllm_colpali`, `vllm_omni_embed` and
   `colbert_pylate`). Cluster
   discovery reads `--revision` from rendered workload args: a pinned workload
   is tagged `identity_evidence=DEPLOYMENT`, and an unpinned one stays
@@ -801,7 +802,7 @@ model copy holds gigabytes of it. Every model a test uses is served remotely:
   ``ModalLlmNotDeployedError`` or ``LlmEndpointMismatchError`` naming the
   deploy command; the test fails, never skips or falls back.
 - **Every other model** (ColPali/Tomoro, DenseOn, PyLate LateOn and the code
-  encoder, GLiNER, ASR, CLAP, video-embed, face-embed) is served by the
+  encoder, GLiNER, ASR, CLAP, EmbeddingGemma 2, face-embed) is served by the
   ``cogniverse-e2e`` cluster on GPU. ``remote_inference``
   (``tests/fixtures/inference.py``) and the ``requires_inference`` marker
   resolve a service from an explicit ``INFERENCE_SERVICE_URLS`` entry, else

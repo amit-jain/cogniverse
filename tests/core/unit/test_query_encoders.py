@@ -572,7 +572,9 @@ class TestSharedQueryEncoder:
 
     def test_a_rejected_query_is_a_configuration_gap(self):
         def encode(query):
-            raise ValueError("video_embed returned a 512-dim text vector")
+            raise ValueError(
+                "vllm_omni_embed serves 768-dim vectors but the profile indexes 512"
+            )
 
         shared = SharedQueryEncoder(
             "p", lambda: type("E", (), {"encode": staticmethod(encode)})()
@@ -584,7 +586,7 @@ class TestSharedQueryEncoder:
         assert caught.value.profile == "p"
         assert str(caught.value) == (
             "Profile 'p' query encoder rejected the query: ValueError: "
-            "video_embed returned a 512-dim text vector"
+            "vllm_omni_embed serves 768-dim vectors but the profile indexes 512"
         )
 
     def test_a_build_fault_reaches_every_search(self):

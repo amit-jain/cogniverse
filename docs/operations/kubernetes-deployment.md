@@ -22,8 +22,8 @@ Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
   `colbert_pylate`, `code_colbert_pylate`, `denseon` (dense
   single-vector embeddings), `gliner` (zero-shot NER), `clap_embed`
   (audio embeddings), `face_embed`, `vllm_asr` (transcription),
-  `vllm_llm_student`, `vllm_llm_teacher`, and `video_embed` (remote
-  sidecar)
+  `vllm_omni_embed` (EmbeddingGemma 2 text/video/audio embeddings),
+  `vllm_llm_student`, and `vllm_llm_teacher`
 
 - **LLM serving**: `llm.engine: ollama` is the chart default (deploys
   `Ollama` as a StatefulSet). Set `llm.engine: vllm` to deploy a

@@ -40,7 +40,6 @@ DEV_VERSIONS = {
     "gliner": "0.1.dev14+gddd444ddd",
     "clap_embed": "0.1.dev15+geee555eee",
     "face_embed": "0.1.dev16+gfff666fff",
-    "video_embed": "0.1.dev17+gggg777ggg",
     "vllm_audio": "0.1.dev18+ghhh888hhh",
 }
 DEV_TAGS = {image: version.replace("+", "-") for image, version in DEV_VERSIONS.items()}
@@ -116,7 +115,6 @@ class TestPerImageDevVersion:
         "gliner",
         "clap_embed",
         "face_embed",
-        "video_embed",
         "vllm_audio",
     }
     INPUT_CASES = [
@@ -284,24 +282,6 @@ class TestPerImageDevVersion:
             "VALUE = 'changed'\n",
             {"face_embed"},
         ),
-        (
-            "deploy/video_embed/Dockerfile",
-            "deploy/video_embed/Dockerfile",
-            "FROM busybox\n",
-            {"video_embed"},
-        ),
-        (
-            "deploy/video_embed/requirements.txt",
-            "deploy/video_embed/requirements.txt",
-            "package==1\n",
-            {"video_embed"},
-        ),
-        (
-            "libs/cli/cogniverse_cli/modal_inference/servers/video_embed.py",
-            "libs/cli/cogniverse_cli/modal_inference/servers/video_embed.py",
-            "VALUE = 'changed'\n",
-            {"video_embed"},
-        ),
     ]
 
     @staticmethod
@@ -332,7 +312,6 @@ class TestPerImageDevVersion:
             "deploy/gliner/Dockerfile": "FROM scratch\n",
             "deploy/clap_embed/Dockerfile": "FROM scratch\n",
             "deploy/face_embed/Dockerfile": "FROM scratch\n",
-            "deploy/video_embed/Dockerfile": "FROM scratch\n",
             "tests/test_only.py": "VALUE = 'base'\n",
         }
         for relative_path, content in files.items():
@@ -1064,17 +1043,17 @@ class TestBuildImages:
         assert not any(a.startswith("TORCH_BACKEND=") for a in face_cmd)
 
     @patch("cogniverse_cli.images.subprocess.run")
-    def test_overlay_enabling_video_embed_adds_its_build(
+    def test_overlay_enabling_clap_embed_adds_its_build(
         self, mock_run: object, tmp_path: Path
     ) -> None:
-        """video-embed COPYs its server from libs/ and its requirements from
+        """clap-embed COPYs its server from libs/ and its requirements from
         deploy/, so it builds from the repo root with no TORCH_BACKEND arg and
         is tagged with its own image family's version."""
         _completed(mock_run)
         root = _make_project_root(tmp_path)
         overlay = tmp_path / "values.dev.yaml"
         overlay.write_text(
-            yaml.safe_dump({"inference": {"video_embed": {"enabled": True}}})
+            yaml.safe_dump({"inference": {"clap_embed": {"enabled": True}}})
         )
 
         built = build_images(
@@ -1088,16 +1067,16 @@ class TestBuildImages:
             f"cogniverse/runtime-cpu:{DEV_TAGS['runtime']}",
             f"cogniverse/web:{DEV_TAGS['web']}",
             f"cogniverse/gliner:{DEV_TAGS['gliner']}",
-            f"cogniverse/video-embed:{DEV_TAGS['video_embed']}",
+            f"cogniverse/clap-embed:{DEV_TAGS['clap_embed']}",
         ]
-        video_cmd = next(
+        clap_cmd = next(
             call[0][0]
             for call in mock_run.call_args_list  # type: ignore[attr-defined]
-            if f"cogniverse/video-embed:{DEV_TAGS['video_embed']}" in call[0][0]
+            if f"cogniverse/clap-embed:{DEV_TAGS['clap_embed']}" in call[0][0]
         )
-        assert video_cmd[video_cmd.index("-f") + 1] == "deploy/video_embed/Dockerfile"
-        assert video_cmd[-1] == "."
-        assert not any(a.startswith("TORCH_BACKEND=") for a in video_cmd)
+        assert clap_cmd[clap_cmd.index("-f") + 1] == "deploy/clap_embed/Dockerfile"
+        assert clap_cmd[-1] == "."
+        assert not any(a.startswith("TORCH_BACKEND=") for a in clap_cmd)
 
 
 def test_release_gliner_build_includes_canonical_server() -> None:
@@ -2161,8 +2140,8 @@ class TestDeviceOverlaySidecarTags:
         assert "inference.colbert_pylate.image.tag" in overrides
         assert "inference.code_colbert_pylate.image.tag" not in overrides
 
-    def test_k3s_overlay_enables_the_video_embed_build(self) -> None:
-        """The local stack's text-to-video retrieval runs through the X-CLIP
+    def test_k3s_overlay_enables_the_clap_embed_build(self) -> None:
+        """The local stack's acoustic audio search runs through the CLAP
         sidecar, so the overlay `cogniverse up` deploys must put its image in
         the build set, tagged with the image family's own version, on the
         repository the chart renders."""
@@ -2172,7 +2151,6 @@ class TestDeviceOverlaySidecarTags:
 
         assert enabled_sidecars(self.REPO_ROOT, k3s) == [
             "clap_embed",
-            "video_embed",
             "colbert_pylate",
         ]
         overrides = dev_image_set_values(
@@ -2181,10 +2159,10 @@ class TestDeviceOverlaySidecarTags:
             values_files=k3s,
             versions=DEV_VERSIONS,
         )
-        assert overrides["inference.video_embed.image.tag"] == DEV_TAGS["video_embed"]
+        assert overrides["inference.clap_embed.image.tag"] == DEV_TAGS["clap_embed"]
         assert (
-            first_party_services(self.REPO_ROOT, k3s)["video_embed"]
-            == LOCAL_IMAGE_BUILDS["video_embed"][0]
+            first_party_services(self.REPO_ROOT, k3s)["clap_embed"]
+            == LOCAL_IMAGE_BUILDS["clap_embed"][0]
         )
 
 

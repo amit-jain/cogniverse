@@ -84,11 +84,11 @@ Central A2A orchestration entry point with DSPy-based multi-agent planning:
 
 ### Video Search (see `cogniverse-vespa`)
 
-Multi-modal video search with ColPali and X-CLIP is implemented in the `cogniverse-vespa` package. From `cogniverse-agents` the following applies:
+Multi-modal video search with ColPali and EmbeddingGemma 2 is implemented in the `cogniverse-vespa` package. From `cogniverse-agents` the following applies:
 
 **Embedding Models:**
 - **ColPali**: Document and video frame embeddings
-- **X-CLIP**: Temporal video embeddings
+- **EmbeddingGemma 2**: 6-second chunk embeddings of frames and audio
 - **Smolv500-MV**: Lightweight multi-view embeddings
 
 **Features:**
@@ -100,8 +100,7 @@ Multi-modal video search with ColPali and X-CLIP is implemented in the `cogniver
 
 **Profiles:**
 - `video_colpali_smol500_mv_frame`: Frame-level search
-- `video_xclip_sv_chunk_6s`: Temporal video embeddings
-- `video_hybrid`: Combined approach
+- `video_embeddinggemma2_sv_chunk_6s`: 6-second chunk search over frames and audio
 
 ### Image Search Agent (`cogniverse_agents.image_search_agent`)
 

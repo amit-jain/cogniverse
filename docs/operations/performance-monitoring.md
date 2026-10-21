@@ -92,7 +92,7 @@ flowchart TB
 | **Frame Extraction** | Variable | Depends on video length, resolution, and keyframe extraction strategy |
 | **Transcription** | Variable | Depends on audio length and Whisper model size |
 | **ColPali Embedding** | Variable | Depends on number of frames/chunks and GPU availability |
-| **X-CLIP Embedding** | Variable | Depends on number of chunks and GPU/TPU availability |
+| **EmbeddingGemma 2 Embedding** | Variable | Depends on number of chunks and GPU availability |
 | **Vespa Ingestion** | Variable | Depends on batch size, document size, and network latency |
 
 ### Embedding Model Performance
@@ -101,9 +101,9 @@ flowchart TB
 |---------|-----------------|------------|----------------|--------|
 | **video_colpali_smol500_mv_frame** | `TomoroAI/tomoro-colqwen3-embed-4b` | up to 1024 patches × 320-dim (float) / 40-dim (binary) | Variable | 4GB |
 | **video_colqwen_omni_mv_chunk_30s** | `TomoroAI/tomoro-colqwen3-embed-4b` | up to 1024 patches × 320-dim (float) / 40-dim (binary) | Variable | 4GB |
-| **video_xclip_sv_chunk_6s** | `microsoft/xclip-large-patch14` | 768 (single-vector) | Variable | 3GB |
+| **video_embeddinggemma2_sv_chunk_6s** | `google/embeddinggemma-2` | 768 (single-vector) / 96-byte binary | Variable | 8Gi (pod limit) |
 
-> **Note**: Inference times are hardware-dependent and vary based on input size. Both ColPali/ColQwen profiles share the same `TomoroAI/tomoro-colqwen3-embed-4b` model (patch-based multi-vector embeddings, `tensor<bfloat16>(patch{}, v[320])` float / `tensor<int8>(patch{}, v[40])` binary in the Vespa schema); they differ in keyframe-extraction vs 30-second-chunk sampling, not in model architecture. X-CLIP (`microsoft/xclip-large-patch14`) produces a 768-dim single-vector embedding per 6-second chunk, encoding video and text into one space so a text query retrieves clips directly.
+> **Note**: Inference times are hardware-dependent and vary based on input size. Both ColPali/ColQwen profiles share the same `TomoroAI/tomoro-colqwen3-embed-4b` model (patch-based multi-vector embeddings, `tensor<bfloat16>(patch{}, v[320])` float / `tensor<int8>(patch{}, v[40])` binary in the Vespa schema); they differ in keyframe-extraction vs 30-second-chunk sampling, not in model architecture. EmbeddingGemma 2 (`google/embeddinggemma-2`, served by `vllm_omni_embed`) produces one 768-dim vector per 6-second chunk from the chunk's frames (1 fps) and audio, in the same space as text, so a text query retrieves clips directly.
 
 ---
 
@@ -312,7 +312,7 @@ agent dispatcher — there is no per-agent container or replica count.
 | **ingestor** | 1 core | 2GB | 4 cores | 8GB | 2 (static) |
 | **phoenix** | 1 core | 2GB | 2 cores | 4GB | 1 (static) |
 
-> **Note**: Mem0 uses the same Vespa backend, so no separate deployment is needed. Model-inference sidecars (ColPali/ColQwen/X-CLIP/LLM) are configured separately under the `inference` and `llm` chart values and are not shown here.
+> **Note**: Mem0 uses the same Vespa backend, so no separate deployment is needed. Model-inference sidecars (ColPali/ColQwen/EmbeddingGemma 2/LLM) are configured separately under the `inference` and `llm` chart values and are not shown here.
 
 ---
 

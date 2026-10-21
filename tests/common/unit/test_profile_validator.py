@@ -308,7 +308,7 @@ class TestModelLoaderValidation:
         shipped = {
             p["model_loader"] for p in profiles.values() if p.get("model_loader")
         }
-        assert shipped == {"colbert", "colpali", "colqwen", "embeddinggemma2", "xclip"}
+        assert shipped == {"colbert", "colpali", "colqwen", "embeddinggemma2"}
         assert shipped == EMBEDDING_MODEL_LOADERS
         assert EMBEDDING_MODEL_LOADERS <= set(ModelLoaderFactory.REMOTE_LOADERS)
 
@@ -343,7 +343,7 @@ class TestModelLoaderValidation:
         valid_profile.model_loader = ""
         assert validator._validate_model_loader(valid_profile) == [
             "Profile type 'video' requires a model_loader, one of: "
-            "['colbert', 'colpali', 'colqwen', 'embeddinggemma2', 'xclip']"
+            "['colbert', 'colpali', 'colqwen', 'embeddinggemma2']"
         ]
 
     def test_missing_loader_on_a_loaderless_type_passes(
@@ -359,7 +359,7 @@ class TestModelLoaderValidation:
         valid_profile.model_loader = "whisper"
         assert validator._validate_model_loader(valid_profile) == [
             "Invalid model_loader 'whisper'. Must be one of: "
-            "['colbert', 'colpali', 'colqwen', 'embeddinggemma2', 'xclip']"
+            "['colbert', 'colpali', 'colqwen', 'embeddinggemma2']"
         ]
 
     @pytest.mark.parametrize("process_type", [None, "direct_video", "video_chunks"])
@@ -393,7 +393,7 @@ class TestModelLoaderValidation:
             errors = validator.validate_profile(valid_profile, tenant_id="t")
         assert errors == [
             "Invalid model_loader 'nope'. Must be one of: "
-            "['colbert', 'colpali', 'colqwen', 'embeddinggemma2', 'xclip']",
+            "['colbert', 'colpali', 'colqwen', 'embeddinggemma2']",
             "Invalid process_type 'nope'. Must be one of: "
             "['direct_video', 'frame_based', 'video_chunks']",
             "extra_config keys ['strategies'] are profile fields; "

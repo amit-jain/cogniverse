@@ -112,7 +112,7 @@ class FrameSegmentationStrategy(BaseStrategy):
 
 
 class ChunkSegmentationStrategy(BaseStrategy):
-    """Extract video chunks (e.g., for ColQwen, X-CLIP)."""
+    """Extract video chunks (e.g., for ColQwen, EmbeddingGemma 2)."""
 
     def __init__(
         self,
@@ -136,7 +136,7 @@ class ChunkSegmentationStrategy(BaseStrategy):
 
 
 class SingleVectorSegmentationStrategy(BaseStrategy):
-    """Process video for single-vector embeddings (e.g., X-CLIP)."""
+    """Process video for single-vector embeddings (e.g., EmbeddingGemma 2)."""
 
     def __init__(
         self,
@@ -751,7 +751,7 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
 
     def __init__(
         self,
-        model_name: str = "microsoft/xclip-large-patch14",
+        model_name: str = "google/embeddinggemma-2",
         inference_service: str | None = None,
     ):
         self.model_name = model_name

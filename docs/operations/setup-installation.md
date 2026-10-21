@@ -440,9 +440,6 @@ TELEMETRY_OTLP_ENDPOINT=localhost:4317
 # advertises the exact production primary model, otherwise they provision one
 TEST_LLM_API_BASE=http://localhost:29110/v1
 TEST_LLM_MODEL=google/gemma-4-e4b-it
-
-# JAX (for X-CLIP)
-JAX_PLATFORM_NAME=cpu
 EOF
 ```
 
@@ -450,7 +447,7 @@ EOF
 
 **Multi-Modal Support:** Cogniverse supports six content types:
 
-- **VIDEO**: Frame-based (ColPali) and chunk-based (X-CLIP) processing
+- **VIDEO**: Frame-based (ColPali) and chunk-based (ColQwen, EmbeddingGemma 2) processing
 
 - **AUDIO**: Speech and audio analysis extracted from video
 
@@ -496,7 +493,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
 
 # Deploy additional schemas
 JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
-  configs/schemas/video_xclip_sv_chunk_6s_schema.json
+  configs/schemas/video_embeddinggemma2_sv_chunk_6s_schema.json
 ```
 
 ### 3. Download Test Dataset

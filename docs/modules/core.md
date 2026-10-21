@@ -964,7 +964,6 @@ QueryEncoderFactory.get_supported_profiles(config=system_config)
 | `ColBERTQueryEncoder` | ColBERT / LateOn | Per-token multi-vector; `embedding_dim` is required (read from `schema_config.embedding_dim`); supports joint query+CoT-trace encoding |
 | `ColPaliFamilyQueryEncoder` | ColPali, ColQwen, ColSmol | 320-d patch multi-vector; local or remote (`inference_service_url`) |
 | `ColPaliQueryEncoder(...)` / `ColQwenQueryEncoder(...)` | — | Thin factory functions over `ColPaliFamilyQueryEncoder` with `model_loader="colpali"`/`"colqwen"` |
-| `XClipQueryEncoder` | X-CLIP | Single-vector 768-d; remote via the `video_embed` sidecar; encodes video and text into one space |
 | `ClapTextQueryEncoder` | CLAP | Single-vector 512-d; remote via the `clap_embed` sidecar's `/embed/text`; text in the space of the stored acoustic embeddings |
 | `EmbeddingGemma2QueryEncoder` | EmbeddingGemma 2 | Single-vector 768-d; remote via `vllm_omni_embed` with the `task: search result | query: ` prompt; built for `model_loader: embeddinggemma2` profiles and as the service text encoder for fields `vllm_omni_embed` embeds |
 
@@ -1032,7 +1031,7 @@ profile when the raiser knows it.
 Every remote query encoder bounds its POST with
 `model_loaders.QUERY_ENCODE_TIMEOUT_S` (30s): the ColPali family through
 `RemoteInferenceClient.query_encode_timeout_s`, ColBERT on the `is_query`
-direction of `/pooling`, X-CLIP through `embed_text`, and DenseOn through
+direction of `/pooling`, EmbeddingGemma 2 through `embed_text`, and DenseOn through
 `RemoteOpenAIEmbedder.encode(is_query=True)`. The document directions keep
 their own budgets, `DOCUMENT_ENCODE_TIMEOUT_S` (120s) for a text batch and
 `SEGMENT_EMBED_TIMEOUT_S` (600s) for a video segment.
@@ -2198,7 +2197,6 @@ is_remote_only_model("TomoroAI/tomoro-colqwen3-embed-4b")  # True
 |---------------------|--------------|---------------|
 | `colpali` | `ColPaliModelLoader` | `RemoteColPaliLoader` |
 | `colqwen` | `ColQwenModelLoader` | `RemoteColPaliLoader` |
-| `xclip` | — (remote only) | `RemoteXClipLoader` |
 | `embeddinggemma2` | — (remote only) | `RemoteEmbeddingGemma2Loader` |
 | `colbert` | `ColBERTModelLoader` | `RemoteColBERTLoader` |
 | `whisper` | — | `RemoteWhisperLoader` |
@@ -2206,9 +2204,7 @@ is_remote_only_model("TomoroAI/tomoro-colqwen3-embed-4b")  # True
 Remote loaders are selected when `remote_inference_url` is set in config.
 `RemoteWhisperLoader`'s wrapper transcribes through the chunked client below and
 returns `text`, `language`, `duration` and `segments`.
-`RemoteXClipLoader` forwards its exact configured model name on every
-video-segment request, so the remote service can reject requests for any other
-checkpoint instead of silently selecting a default. Remote loader cache keys
+Remote loader cache keys
 include a one-way fingerprint of the exact credential snapshot used to
 construct the client. A custom endpoint key or rotated Modal environment key
 therefore cannot reuse a client authenticated with another key. A config's
@@ -2519,7 +2515,7 @@ errors = validator.validate_profile(profile, tenant_id="acme", is_update=False)
 embedding types. Profile types are the types of the shipped profiles in
 `configs/config.json` `backend.profiles`. `model_loader` must be one of
 `model_loaders.EMBEDDING_MODEL_LOADERS` (`colbert`, `colpali`, `colqwen`,
-`xclip`), and is required for every type whose shipped profiles all name one,
+`embeddinggemma2`), and is required for every type whose shipped profiles all name one,
 so a profile ingestion cannot embed with is refused at creation.
 `process_type`, when set, must be one of `unified_config.PROCESS_TYPES`
 (`direct_video`, `frame_based`, `video_chunks`), and `extra_config` keys may

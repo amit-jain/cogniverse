@@ -1287,6 +1287,5 @@ class TestDeclaredSchemaMappings:
             "video_colpali_smol500_mv_frame_schema.json",
             "video_colqwen_omni_mv_chunk_30s_schema.json",
             "video_embeddinggemma2_sv_chunk_6s_schema.json",
-            "video_xclip_sv_chunk_6s_schema.json",
             "wiki_pages_schema.json",
         ]

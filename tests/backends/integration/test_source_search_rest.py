@@ -1,11 +1,11 @@
 """POST /search reports an incomplete source search, against real Vespa.
 
-The search router runs over the real SearchService, VespaSearchBackend, X-CLIP
-text encoder (the video_embed sidecar) and Vespa. A dominant source whose
-segments fill the nearest-neighbor candidate budget answers one source with
-``source_search_incomplete`` true in the response body and on the request,
-search and backend spans; a top_k whose budget covers the corpus answers
-false.
+The search router runs over the real SearchService, VespaSearchBackend,
+EmbeddingGemma 2 text encoder (the vllm_omni_embed service) and Vespa. A
+dominant source whose segments fill the nearest-neighbor candidate budget
+answers one source with ``source_search_incomplete`` true in the response
+body and on the request, search and backend spans; a top_k whose budget
+covers the corpus answers false.
 """
 
 import json
@@ -50,7 +50,7 @@ from tests.utils.vespa_test_helpers import deploy_tenant_schema, make_config_man
 
 pytestmark = [pytest.mark.integration]
 
-PROFILE = "video_xclip_sv_chunk_6s"
+PROFILE = "video_embeddinggemma2_sv_chunk_6s"
 TENANT = f"srcrest{uuid.uuid4().hex[:8]}:rest"
 QUERY = "a harbour ferry docking at the pier"
 DOMINANT_SEGMENTS = 60
@@ -58,19 +58,19 @@ MINORITY = [f"restminor{j}" for j in range(5)]
 
 
 @pytest.fixture(scope="module")
-def video_embed_url(remote_inference):
-    return remote_inference.resolve("video_embed").base_url
+def omni_embed_url(remote_inference):
+    return remote_inference.resolve("vllm_omni_embed").base_url
 
 
 @pytest.fixture(scope="module")
-def rest_corpus(vespa_instance, video_embed_url):
+def rest_corpus(vespa_instance, omni_embed_url):
     """Segments placed around the served query embedding.
 
     Every dominant segment lies nearer the query than any minority source, so
     the 40 nearest candidates of a top_k=10 search all belong to one source.
     """
     config_manager = make_config_manager(
-        vespa_instance, inference_service_urls={"video_embed": video_embed_url}
+        vespa_instance, inference_service_urls={"vllm_omni_embed": omni_embed_url}
     )
     schema = deploy_tenant_schema(
         vespa_instance,

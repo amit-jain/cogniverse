@@ -667,13 +667,13 @@ tracker = ExperimentTracker(tenant_id="your_org:production")
 
 # Get configurations for specific profiles
 configs = tracker.get_experiment_configurations(
-    profiles=["frame_based_colpali", "chunk_based_xclip"],
+    profiles=["video_colpali_smol500_mv_frame", "video_embeddinggemma2_sv_chunk_6s"],
     strategies=["binary_binary", "hybrid_float_bm25"]
 )
 
 # configs = [
 #     {
-#         "profile": "frame_based_colpali",
+#         "profile": "video_colpali_smol500_mv_frame",
 #         "strategies": [
 #             ("binary_binary", "Binary"),
 #             ("hybrid_float_bm25", "Hybrid Float + Text")
@@ -2216,7 +2216,7 @@ tracker = ExperimentTracker(
 
 # Get experiment configurations
 configs = tracker.get_experiment_configurations(
-    profiles=["frame_based_colpali", "chunk_based_xclip"],
+    profiles=["video_colpali_smol500_mv_frame", "video_embeddinggemma2_sv_chunk_6s"],
     strategies=["binary_binary", "hybrid_float_bm25"]
 )
 

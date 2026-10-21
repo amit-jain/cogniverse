@@ -22,7 +22,7 @@ flowchart TB
 
     subgraph Ensemble["<span style='color:#000'><b>Ensemble Mode</b></span>"]
         P1["<span style='color:#000'>Profile 1<br/>ColPali</span>"]
-        P2["<span style='color:#000'>Profile 2<br/>X-CLIP</span>"]
+        P2["<span style='color:#000'>Profile 2<br/>EmbeddingGemma 2</span>"]
         P3["<span style='color:#000'>Profile 3<br/>Qwen</span>"]
     end
 
@@ -78,7 +78,7 @@ Where:
 Given 3 profiles ranking a document differently (0-indexed):
 
 - Profile 1 (ColPali): rank = 1 (2nd position)
-- Profile 2 (X-CLIP): rank = 4 (5th position)
+- Profile 2 (EmbeddingGemma 2): rank = 4 (5th position)
 - Profile 3 (Qwen): rank = 0 (1st position)
 
 RRF score = 1/(60+1) + 1/(60+4) + 1/(60+0)
@@ -327,11 +327,11 @@ Profiles are defined in `config.json`:
           "embedding_dim": 320
         }
       },
-      "video_xclip_sv_chunk_6s": {
+      "video_embeddinggemma2_sv_chunk_6s": {
         "type": "video",
-        "description": "X-CLIP base model for 30-second chunk embeddings with 768-dim global representations",
-        "embedding_model": "microsoft/xclip-large-patch14",
-        "embedding_type": "multi_vector",
+        "description": "EmbeddingGemma 2 6-second chunk single-vector embeddings, 768-dim. Each chunk's frames (1 fps) and audio track are embedded together into one space with text, so a text query retrieves clips directly. Served by the vllm_omni_embed service.",
+        "embedding_model": "google/embeddinggemma-2",
+        "embedding_type": "single_vector",
         "schema_config": {
           "embedding_dim": 768
         }
@@ -362,7 +362,7 @@ search_input = SearchInput(
     query="robots playing soccer",
     tenant_id="acme_corp",
     modality="video",
-    profiles=["video_colpali_smol500_mv_frame", "video_xclip_sv_chunk_6s"],
+    profiles=["video_colpali_smol500_mv_frame", "video_embeddinggemma2_sv_chunk_6s"],
     top_k=10,
     rrf_k=60,  # RRF constant for fusion
 )
@@ -374,7 +374,7 @@ search_input = SearchInput(
 
 **Choose profiles with complementary strengths**:
 
-- ✅ Good: ColPali (visual) + X-CLIP (temporal) + Qwen (cross-modal)
+- ✅ Good: ColPali (visual frames) + EmbeddingGemma 2 (video and audio chunks) + Qwen (cross-modal)
 - ❌ Poor: ColPali + ColPali-Large + ColPali-XL (redundant)
 
 ### 2. Limit Ensemble Size
@@ -390,7 +390,7 @@ search_input = SearchInput(
 **Order profiles by expected relevance** (for early stopping):
 ```python
 # ProfileSelectionAgent should rank profiles
-selected_profiles = ["colpali", "xclip", "qwen"]  # Best first
+selected_profiles = ["colpali", "embeddinggemma2", "qwen"]  # Best first
 ```
 
 ### 4. Conditional Ensemble

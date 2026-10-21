@@ -38,6 +38,7 @@ from cogniverse_cli.config import (
 )
 from cogniverse_cli.deploy import helm_install
 from cogniverse_cli.images import SIDECAR_BUILDS
+from cogniverse_cli.modal_inference.servers.clap import ClapEmbedConfig
 from fastapi import Body, FastAPI, HTTPException
 
 from cogniverse_core.registries.schema_deploy_lease import DEFAULT_WAIT_SECONDS
@@ -186,27 +187,30 @@ def test_default_gliner_deployment_uses_the_pinned_production_model():
     assert _inference_env(deps, "gliner")["MODEL_NAME"] == ("urchade/gliner_large-v2.1")
 
 
-def test_video_embed_sidecar_env_matches_the_shipped_spec():
-    """The chart must serve the checkpoint the spec declares.
+def test_clap_embed_sidecar_env_matches_the_shipped_spec():
+    """The chart must serve the checkpoint the spec declares, at the sample
+    rate the server decodes audio at.
 
-    The sidecar asserts its embedding width on every response, so a chart
-    that ships a different model or width fails each request instead of
-    writing a mis-shaped vector. Compared against the production constant,
-    not restated literals, so a spec change cannot pass unnoticed.
+    Compared against the production constants, not restated literals, so a
+    spec or server change cannot pass unnoticed.
     """
-    spec = INFERENCE_SERVICE_SPECS["video_embed"]
-    deps = _inference_deployments(_render("inference.video_embed.enabled=true"))
-    env = _inference_env(deps, "video_embed")
+    spec = INFERENCE_SERVICE_SPECS["clap_embed"]
+    sidecar = ClapEmbedConfig()
+    deps = _inference_deployments(_render("inference.clap_embed.enabled=true"))
+    env = _inference_env(deps, "clap_embed")
 
-    assert env["VIDEO_EMBED_MODEL"] == spec.model_id
-    assert env["VIDEO_EMBED_MODEL_REVISION"] == spec.model_revision
-    assert env["VIDEO_EMBED_DIM"] == str(spec.output_dimension)
-    assert env["VIDEO_EMBED_NUM_FRAMES"] == "8"
+    assert env["CLAP_EMBED_MODEL"] == spec.model_id
+    assert env["CLAP_EMBED_MODEL_REVISION"] == spec.model_revision
+    assert env["CLAP_EMBED_SAMPLE_RATE"] == str(sidecar.sample_rate)
+    assert (sidecar.model_name, sidecar.model_revision) == (
+        spec.model_id,
+        spec.model_revision,
+    )
 
-    container = deps["video_embed"]["spec"]["template"]["spec"]["containers"][0]
-    base = _values("values.yaml")["inference"]["video_embed"]
+    container = deps["clap_embed"]["spec"]["template"]["spec"]["containers"][0]
+    base = _values("values.yaml")["inference"]["clap_embed"]
     assert container["image"] == (
-        f"{SIDECAR_BUILDS['video_embed'][0]}:{base['image']['tag']}"
+        f"{SIDECAR_BUILDS['clap_embed'][0]}:{base['image']['tag']}"
     )
     # Model weights live in RAM for the pod's life; a request below the limit
     # makes the pod Burstable and evictable out of the shared pool.
@@ -216,36 +220,36 @@ def test_video_embed_sidecar_env_matches_the_shipped_spec():
     )
 
 
-def test_k3s_overlay_serves_video_embed_from_the_locally_built_image():
-    """The local stack's text-to-video retrieval runs through the X-CLIP
-    sidecar the deploy builds itself: the overlay enables the pod on the image
-    family ``cogniverse up`` produces, serves the spec's checkpoint at the
-    spec's width, exposes the fixed NodePort, and hands the runtime the
-    in-cluster URL. Memory request equals the limit so the pod holding the
+def test_k3s_overlay_serves_clap_embed_from_the_locally_built_image():
+    """The local stack's acoustic audio search runs through the CLAP sidecar
+    the deploy builds itself: the overlay enables the pod on the image family
+    ``cogniverse up`` produces, serves the spec's checkpoint offline at the
+    server's sample rate, exposes the fixed NodePort, and hands the runtime
+    the in-cluster URL. Memory request equals the limit so the pod holding the
     weights cannot be evicted out of the shared pool."""
-    spec = get_inference_service_spec("video_embed")
-    base = _values("values.yaml")["inference"]["video_embed"]
-    overlay = _values("values.k3s.yaml")["inference"]["video_embed"]
+    spec = get_inference_service_spec("clap_embed")
+    base = _values("values.yaml")["inference"]["clap_embed"]
+    overlay = _values("values.k3s.yaml")["inference"]["clap_embed"]
     docs = _render(values="values.k3s.yaml")
     deps = _inference_deployments(docs)
-    container = deps["video_embed"]["spec"]["template"]["spec"]["containers"][0]
+    container = deps["clap_embed"]["spec"]["template"]["spec"]["containers"][0]
 
     assert container["image"] == (
-        f"{SIDECAR_BUILDS['video_embed'][0]}:{overlay['image']['tag']}"
+        f"{SIDECAR_BUILDS['clap_embed'][0]}:{overlay['image']['tag']}"
     )
     assert container["imagePullPolicy"] == "Never"
 
-    env = _inference_env(deps, "video_embed")
-    assert env["VIDEO_EMBED_MODEL"] == spec.model_id
-    assert env["VIDEO_EMBED_MODEL_REVISION"] == spec.model_revision
-    assert env["VIDEO_EMBED_DIM"] == str(spec.output_dimension)
-    assert env["VIDEO_EMBED_DIM"] == base["env"]["VIDEO_EMBED_DIM"]
-    assert env["VIDEO_EMBED_NUM_FRAMES"] == base["env"]["VIDEO_EMBED_NUM_FRAMES"]
+    env = _inference_env(deps, "clap_embed")
+    assert env["CLAP_EMBED_MODEL"] == spec.model_id
+    assert env["CLAP_EMBED_MODEL_REVISION"] == spec.model_revision
+    assert env["CLAP_EMBED_SAMPLE_RATE"] == str(ClapEmbedConfig().sample_rate)
+    assert env["CLAP_EMBED_SAMPLE_RATE"] == base["env"]["CLAP_EMBED_SAMPLE_RATE"]
+    assert env["HF_HUB_OFFLINE"] == "1"
     assert env["PORT"] == str(base["service"]["port"])
 
     services = _inference_services(docs)
-    assert services["video_embed"]["spec"]["type"] == "NodePort"
-    assert services["video_embed"]["spec"]["ports"] == [
+    assert services["clap_embed"]["spec"]["type"] == "NodePort"
+    assert services["clap_embed"]["spec"]["ports"] == [
         {
             "name": "http",
             "nodePort": base["service"]["nodePort"],
@@ -259,11 +263,11 @@ def test_k3s_overlay_serves_video_embed_from_the_locally_built_image():
         for key, service in services.items()
         if service["spec"]["type"] == "NodePort"
     }
-    assert node_ports["video_embed"] == base["service"]["nodePort"]
+    assert node_ports["clap_embed"] == base["service"]["nodePort"]
     assert len(set(node_ports.values())) == len(node_ports)
 
-    assert _service_urls(docs)["video_embed"] == (
-        f"http://cogniverse-video-embed:{base['service']['port']}"
+    assert _service_urls(docs)["clap_embed"] == (
+        f"http://cogniverse-clap-embed:{base['service']['port']}"
     )
 
     resources = container["resources"]
@@ -349,22 +353,6 @@ def test_gliner_and_face_nodeports_are_distinct_when_both_are_exposed():
                 "timeoutSeconds": 5,
             },
         ),
-        (
-            "video_embed",
-            8000,
-            {
-                "failureThreshold": 5,
-                "initialDelaySeconds": 0,
-                "periodSeconds": 10,
-                "timeoutSeconds": 5,
-            },
-            {
-                "failureThreshold": 5,
-                "initialDelaySeconds": 30,
-                "periodSeconds": 30,
-                "timeoutSeconds": 5,
-            },
-        ),
     ],
 )
 def test_model_sidecars_separate_model_readiness_from_process_liveness(
@@ -377,7 +365,6 @@ def test_model_sidecars_separate_model_readiness_from_process_liveness(
         _render(
             "inference.clap_embed.enabled=true",
             "inference.face_embed.enabled=true",
-            "inference.video_embed.enabled=true",
         )
     )
     container = deps[service]["spec"]["template"]["spec"]["containers"][0]
@@ -2397,7 +2384,6 @@ def test_every_engine_the_shipped_values_select_is_one_the_chart_implements():
         "denseon": "vllm_embed",
         "face_embed": "fastapi",
         "gliner": "gliner",
-        "video_embed": "fastapi",
         "vllm_asr": "vllm_transcription",
         "vllm_colpali": "vllm_token_embed",
         "vllm_llm_student": "vllm_chat",
@@ -2468,7 +2454,6 @@ def test_shipped_profiles_render_exactly_these_inference_containers():
             "colbert_pylate": "pylate",
             "denseon": "vllm-embed",
             "gliner": "gliner",
-            "video_embed": "video-embed",
             "vllm_asr": "vllm-transcription",
             "vllm_llm_teacher": "vllm-chat",
         },

@@ -44,7 +44,6 @@ GLINER_REPO = "cogniverse/gliner"
 SIDECAR_BUILDS = {
     "clap_embed": ("cogniverse/clap-embed", "deploy/clap_embed/Dockerfile", "."),
     "face_embed": ("cogniverse/face-embed", "deploy/face_embed/Dockerfile", "."),
-    "video_embed": ("cogniverse/video-embed", "deploy/video_embed/Dockerfile", "."),
     # Both LateOn services run the same PyLate image — LateOn retrieval
     # needs PyLate's exact encode (query expansion over masked padding),
     # which stock vLLM cannot reproduce. build_images dedupes the shared
@@ -104,7 +103,6 @@ IMAGE_DOCKERFILES = {
     "gliner": "deploy/gliner/Dockerfile",
     "clap_embed": "deploy/clap_embed/Dockerfile",
     "face_embed": "deploy/face_embed/Dockerfile",
-    "video_embed": "deploy/video_embed/Dockerfile",
     "vllm_audio": "deploy/vllm_audio/Dockerfile",
 }
 
@@ -150,12 +148,6 @@ IMAGE_INPUT_PATHS = {
         IMAGE_DOCKERFILES["face_embed"],
         "deploy/face_embed/requirements.txt",
         "libs/cli/cogniverse_cli/modal_inference/servers/face.py",
-        ".dockerignore",
-    ),
-    "video_embed": (
-        IMAGE_DOCKERFILES["video_embed"],
-        "deploy/video_embed/requirements.txt",
-        "libs/cli/cogniverse_cli/modal_inference/servers/video_embed.py",
         ".dockerignore",
     ),
     "vllm_audio": (

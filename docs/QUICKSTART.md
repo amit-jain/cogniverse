@@ -134,7 +134,7 @@ uv run python scripts/run_ingestion.py \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame \
-           video_xclip_sv_chunk_6s
+           video_embeddinggemma2_sv_chunk_6s
 
 # Test mode — limited frames for faster iteration
 uv run python scripts/run_ingestion.py \
