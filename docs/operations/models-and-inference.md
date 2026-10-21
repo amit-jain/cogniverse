@@ -666,6 +666,10 @@ The results file lives in the persistent `model-cache` volume, so tuning
 survives pod restarts and rollouts — a shape is benchmarked once over the
 file's lifetime. The first request hitting a not-yet-tuned shape pays a
 one-time tuning latency; the persisted file means later pods skip it.
+PyTorch loads a results file only when its validator lines (`PT_VERSION`,
+HIP, hipBLASLt, rocBLAS, GPU arch) match the running build, so after an image
+moves PyTorch, a service with `tunableOpTuning: false` runs untuned until a
+pass with tuning on writes a new file.
 
 `inference.<service>.tunableOpTuning: false` renders
 `PYTORCH_TUNABLEOP_TUNING=0`: tuned shapes from the results file still apply,

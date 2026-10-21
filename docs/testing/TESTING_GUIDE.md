@@ -864,6 +864,14 @@ run the recorder; re-record after a pinned revision changes:
 uv run python scripts/record_model_references.py
 ```
 
+The Whisper replay tests serve raw transcription answers recorded from real
+servers, each under a `servers` entry naming its image and model
+(`tests/core/unit/fixtures/vllm_whisper_chunk_answers.json`,
+`tests/ingestion/integration/fixtures/vllm_asr_cluster_speech_answers.json`).
+`scripts/record_whisper_answers.py` adds a server's answers to the same
+requests; earlier servers' answers stay, since they hold failures a later
+server may no longer give.
+
 Every pytest session prints a ``test sidecars`` section in its terminal summary,
 captured output or not: each model resolution (``resolved-remote`` with its
 endpoint and provider, or ``refused`` with the reason) and the dead-owner
