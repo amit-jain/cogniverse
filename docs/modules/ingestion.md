@@ -1146,6 +1146,13 @@ The embedding service samples each segment's frames (the omni server's
 one-vector schema stores one document per chunk, and only a `global`
 segmentation stores one document per video.
 
+Chunks advance by `segment_duration - segment_overlap`; the last chunk runs
+to the end of the video, and a remainder shorter than `min_segment_duration`
+(default 2.0) joins the chunk before it. A non-positive `segment_duration`,
+an overlap outside `[0, segment_duration)` or a negative
+`min_segment_duration` is refused when `SingleVectorVideoProcessor` is constructed, and a video whose header
+reports no duration raises `ValueError` naming the file.
+
 **Usage**:
 ```python
 strategy = SingleVectorSegmentationStrategy(

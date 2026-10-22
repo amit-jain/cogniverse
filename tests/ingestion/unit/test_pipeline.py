@@ -543,10 +543,22 @@ class TestVideoIngestionPipelineUtilityMethods:
 
         video_data = mock_pipeline._prepare_video_data(results)
 
-        assert video_data["video_id"] == "test_video"
         assert (
-            "segments" in video_data
-        )  # _process_single_vector_data adds segments directly
+            video_data["video_id"],
+            video_data["video_path"],
+            video_data["duration"],
+        ) == ("test_video", "/test/path.mp4", 120.0)
+        assert (
+            video_data["processing_type"],
+            video_data["storage_mode"],
+            video_data["schema_name"],
+        ) == ("frame", "vector", "test_schema")
+        assert video_data["segments"] == [
+            {"start_time": 0.0, "end_time": 60.0, "text": "Test segment"}
+        ]
+        assert video_data["processing_metadata"] == {"test": "data"}
+        assert video_data["full_transcript"] == "Test transcript"
+        assert "chunks" not in video_data and "keyframes" not in video_data
 
 
 @pytest.mark.unit

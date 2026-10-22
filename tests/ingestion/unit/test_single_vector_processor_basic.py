@@ -500,3 +500,419 @@ class TestSegmentationCache:
         assert fp_a != fp_b
         assert fp_a != "none"
         assert fp_b != "none"
+
+
+def _clip(tmp_path, frames: int, fps: float = 10.0) -> Path:
+    import cv2
+
+    mp4 = tmp_path / "clip.mp4"
+    writer = cv2.VideoWriter(str(mp4), cv2.VideoWriter_fourcc(*"mp4v"), fps, (64, 64))
+    try:
+        for _ in range(frames):
+            writer.write(np.zeros((64, 64, 3), dtype=np.uint8))
+    finally:
+        writer.release()
+    return mp4
+
+
+@pytest.mark.unit
+@pytest.mark.ci_safe
+class TestSegmentationParameters:
+    """Parameters that would loop forever or cut nothing are refused."""
+
+    def test_a_non_positive_segment_duration_is_refused(self):
+        with pytest.raises(ValueError) as zero:
+            SingleVectorVideoProcessor(Mock(), segment_duration=0.0)
+        with pytest.raises(ValueError) as negative:
+            SingleVectorVideoProcessor(Mock(), segment_duration=-6.0)
+
+        assert str(zero.value) == "segment_duration must be positive, got 0.0"
+        assert str(negative.value) == "segment_duration must be positive, got -6.0"
+
+    def test_an_overlap_that_would_not_advance_is_refused(self):
+        """An overlap at least as long as the segment never moves the next
+        segment's start, so the cut would never end."""
+        with pytest.raises(ValueError) as equal:
+            SingleVectorVideoProcessor(
+                Mock(), segment_duration=6.0, segment_overlap=6.0
+            )
+        with pytest.raises(ValueError) as longer:
+            SingleVectorVideoProcessor(
+                Mock(), segment_duration=6.0, segment_overlap=9.0
+            )
+        with pytest.raises(ValueError) as negative:
+            SingleVectorVideoProcessor(
+                Mock(), segment_duration=6.0, segment_overlap=-1.0
+            )
+
+        assert str(equal.value) == (
+            "segment_overlap must be at least 0 and less than segment_duration "
+            "(6.0), got 6.0"
+        )
+        assert str(longer.value) == (
+            "segment_overlap must be at least 0 and less than segment_duration "
+            "(6.0), got 9.0"
+        )
+        assert str(negative.value) == (
+            "segment_overlap must be at least 0 and less than segment_duration "
+            "(6.0), got -1.0"
+        )
+
+    def test_global_segmentation_ignores_the_overlap(self):
+        processor = SingleVectorVideoProcessor(
+            Mock(), strategy="global", segment_duration=6.0, segment_overlap=9.0
+        )
+
+        assert processor.segment_overlap == 0
+        assert processor._calculate_segment_boundaries(95.0) == [(0.0, 95.0)]
+
+    def test_a_negative_minimum_segment_is_refused(self):
+        with pytest.raises(ValueError) as caught:
+            SingleVectorVideoProcessor(Mock(), min_segment_duration=-1.0)
+
+        assert (
+            str(caught.value) == "min_segment_duration must not be negative, got -1.0"
+        )
+
+    def test_a_video_with_no_readable_duration_is_refused(self, tmp_path):
+        """A header that reports no frames would otherwise cut zero segments
+        and ingest nothing, reported as a video with no content."""
+        empty = tmp_path / "empty.mp4"
+        empty.write_bytes(b"not a video")
+        processor = SingleVectorVideoProcessor(Mock())
+
+        with pytest.raises(ValueError) as caught:
+            processor.process_video(video_path=empty)
+
+        assert str(caught.value) == (
+            "empty.mp4 has no readable duration (fps 0.0, 0 frames)"
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.ci_safe
+class TestSegmentationContracts:
+    def test_windows_cut_thirty_second_windows_overlapping_by_five(self):
+        processor = SingleVectorVideoProcessor(
+            Mock(), strategy="windows", segment_duration=30.0, segment_overlap=5.0
+        )
+
+        assert processor._calculate_segment_boundaries(95.0) == [
+            (0.0, 30.0),
+            (25.0, 55.0),
+            (50.0, 80.0),
+            (75.0, 95.0),
+        ]
+        assert processor._calculate_segment_boundaries(81.0) == [
+            (0.0, 30.0),
+            (25.0, 55.0),
+            (50.0, 80.0),
+            (75.0, 81.0),
+        ]
+        assert processor._calculate_segment_boundaries(76.0) == [
+            (0.0, 30.0),
+            (25.0, 55.0),
+            (50.0, 76.0),
+        ]
+
+    def test_transcript_alignment_excludes_segments_touching_only_an_edge(self):
+        processor = SingleVectorVideoProcessor(Mock())
+        transcript = [
+            {"start": 0.0, "end": 10.0, "text": "ends at the start"},
+            {"start": 20.0, "end": 25.0, "text": "starts at the end"},
+            {"start": 19.5, "end": 20.5, "text": "straddles the end"},
+        ]
+
+        aligned = processor._align_transcript_segments(transcript, 10.0, 20.0)
+
+        assert aligned == [
+            {
+                "start": 19.5,
+                "end": 20.5,
+                "text": "straddles the end",
+                "relative_start": 9.5,
+                "relative_end": 10.0,
+            }
+        ]
+        assert transcript[2] == {
+            "start": 19.5,
+            "end": 20.5,
+            "text": "straddles the end",
+        }
+
+    def test_overlapping_chunks_join_their_transcript_once_in_time_order(
+        self, tmp_path
+    ):
+        mp4 = _clip(tmp_path, frames=120)
+        processor = SingleVectorVideoProcessor(
+            Mock(), strategy="chunks", segment_duration=6.0, segment_overlap=1.0
+        )
+        transcript = {
+            "segments": [
+                {"start": 8.0, "end": 9.0, "text": " third "},
+                {"start": 0.5, "end": 1.5, "text": "first"},
+                {"start": 5.2, "end": 5.8, "text": "second"},
+                {"start": 9.5, "end": 9.9, "text": "   "},
+            ]
+        }
+
+        result = processor.process_video(video_path=mp4, transcript_data=transcript)
+
+        assert [
+            (seg.start_time, seg.end_time, seg.transcript_text)
+            for seg in result["segments"]
+        ] == [
+            (0.0, 6.0, "first second"),
+            (5.0, 11.0, "second third"),
+            (10.0, 12.0, ""),
+        ]
+        assert result["full_transcript"] == "first second third"
+        assert [seg.metadata for seg in result["segments"]] == [
+            {"duration": 6.0, "has_transcript": True},
+            {"duration": 6.0, "has_transcript": True},
+            {"duration": 2.0, "has_transcript": False},
+        ]
+
+    def test_to_dict_of_a_segment_without_metadata(self):
+        segment = VideoSegment(
+            segment_id=0, start_time=0.0, end_time=6.0, transcript_segments=[]
+        )
+
+        assert segment.to_dict() == {
+            "segment_id": 0,
+            "start_time": 0.0,
+            "end_time": 6.0,
+            "transcript_text": "",
+            "metadata": {},
+        }
+
+    def test_a_cached_segment_round_trips_and_owns_its_data(self):
+        from cogniverse_runtime.ingestion.processors.single_vector_processor import (
+            _segment_cache_payload,
+            _segment_from_cache,
+        )
+
+        segment = VideoSegment(
+            segment_id=3,
+            start_time=15.0,
+            end_time=21.0,
+            transcript_segments=[{"start": 16.0, "text": "kick"}],
+            transcript_text="kick",
+            metadata={"duration": 6.0, "has_transcript": True},
+        )
+
+        payload = _segment_cache_payload(segment)
+        segment.transcript_segments[0]["text"] = "changed"
+        segment.metadata["duration"] = 0.0
+        restored = _segment_from_cache(payload)
+        restored.transcript_segments.append({"start": 20.0, "text": "late"})
+
+        assert payload == {
+            "segment_id": 3,
+            "start_time": 15.0,
+            "end_time": 21.0,
+            "transcript_segments": [{"start": 16.0, "text": "kick"}],
+            "transcript_text": "kick",
+            "metadata": {"duration": 6.0, "has_transcript": True},
+        }
+        assert restored == VideoSegment(
+            segment_id=3,
+            start_time=15.0,
+            end_time=21.0,
+            transcript_segments=[
+                {"start": 16.0, "text": "kick"},
+                {"start": 20.0, "text": "late"},
+            ],
+            transcript_text="kick",
+            metadata={"duration": 6.0, "has_transcript": True},
+        )
+
+    def test_the_transcript_fingerprint_ignores_key_order(self):
+        from cogniverse_runtime.ingestion.processors.single_vector_processor import (
+            _transcript_fingerprint,
+        )
+
+        one = {"segments": [{"start": 0.0, "text": "a"}], "language": "en"}
+        same = {"language": "en", "segments": [{"text": "a", "start": 0.0}]}
+        other = {"language": "en", "segments": [{"text": "b", "start": 0.0}]}
+
+        assert _transcript_fingerprint(None) == "none"
+        assert _transcript_fingerprint({}) == "none"
+        assert _transcript_fingerprint(one) == _transcript_fingerprint(same)
+        assert _transcript_fingerprint(one) != _transcript_fingerprint(other)
+        assert _transcript_fingerprint(one) == "47e8a14c060e7dac"
+
+
+@pytest.mark.unit
+@pytest.mark.ci_safe
+class TestSegmentationStrategyDrivesTheProcessor:
+    """The strategy's processor config builds the processor the pipeline
+    runs, and its segment() hands back serializable segments."""
+
+    def _strategy(self):
+        from cogniverse_runtime.ingestion.strategies import (
+            SingleVectorSegmentationStrategy,
+        )
+
+        return SingleVectorSegmentationStrategy(
+            strategy="chunks", segment_duration=6.0, segment_overlap=1.0
+        )
+
+    def test_the_required_processor_config_builds_the_processor(self):
+        config = self._strategy().get_required_processors()
+        processor = SingleVectorVideoProcessor.from_config(
+            config["single_vector"], Mock()
+        )
+
+        assert config == {
+            "single_vector": {
+                "strategy": "chunks",
+                "segment_duration": 6.0,
+                "segment_overlap": 1.0,
+            }
+        }
+        assert (
+            processor.strategy,
+            processor.segment_duration,
+            processor.segment_overlap,
+            processor.min_segment_duration,
+        ) == ("chunks", 6.0, 1.0, 2.0)
+
+    def test_segment_refuses_a_context_without_the_processor(self, tmp_path):
+        import asyncio
+        from types import SimpleNamespace
+
+        strategy = self._strategy()
+        with pytest.raises(ValueError) as no_manager:
+            asyncio.run(strategy.segment(tmp_path / "v.mp4", SimpleNamespace()))
+        empty = SimpleNamespace(
+            processor_manager=SimpleNamespace(get_processor=lambda name: None)
+        )
+        with pytest.raises(ValueError) as no_processor:
+            asyncio.run(strategy.segment(tmp_path / "v.mp4", empty))
+
+        assert str(no_manager.value) == "Pipeline context missing processor_manager"
+        assert str(no_processor.value) == (
+            "No single-vector processor available in processor_manager"
+        )
+
+    def test_segment_returns_the_processor_output_with_segments_as_dicts(
+        self, tmp_path
+    ):
+        import asyncio
+        from types import SimpleNamespace
+
+        mp4 = _clip(tmp_path, frames=100)
+        strategy = self._strategy()
+        processor = SingleVectorVideoProcessor.from_config(
+            strategy.get_required_processors()["single_vector"], Mock()
+        )
+        context = SimpleNamespace(
+            processor_manager=SimpleNamespace(
+                get_processor=lambda name: {"single_vector": processor}.get(name)
+            ),
+            cache=None,
+        )
+
+        out = asyncio.run(
+            strategy.segment(
+                mp4,
+                context,
+                transcript_data={
+                    "segments": [{"start": 4.0, "end": 7.0, "text": "goal"}]
+                },
+            )
+        )
+        result = out["single_vector_processing"]
+
+        assert sorted(out) == ["single_vector_processing"]
+        assert result["segments"] == [
+            {
+                "segment_id": 0,
+                "start_time": 0.0,
+                "end_time": 6.0,
+                "transcript_text": "goal",
+                "metadata": {"duration": 6.0, "has_transcript": True},
+            },
+            {
+                "segment_id": 1,
+                "start_time": 5.0,
+                "end_time": 10.0,
+                "transcript_text": "goal",
+                "metadata": {"duration": 5.0, "has_transcript": True},
+            },
+        ]
+        assert result["full_transcript"] == "goal"
+        assert result["metadata"]["num_segments"] == 2
+
+    def test_process_forwards_the_transcript_and_metadata(self, tmp_path):
+        mp4 = _clip(tmp_path, frames=30)
+        processor = SingleVectorVideoProcessor(Mock(), strategy="global")
+        transcript = {"segments": [{"start": 0.0, "end": 1.0, "text": "hello"}]}
+
+        result = processor.process(
+            mp4, transcript_data=transcript, metadata={"tenant": "acme:acme"}
+        )
+
+        assert result["full_transcript"] == "hello"
+        assert result["metadata"]["tenant"] == "acme:acme"
+        assert result["segments"][0].transcript_segments == [
+            {
+                "start": 0.0,
+                "end": 1.0,
+                "text": "hello",
+                "relative_start": 0.0,
+                "relative_end": 1.0,
+            }
+        ]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_safe
+class TestVideoHeaderAndCachedCopies:
+    def test_an_unreadable_file_reports_an_empty_header(self, tmp_path):
+        junk = tmp_path / "junk.mp4"
+        junk.write_bytes(b"\x00" * 64)
+
+        assert SingleVectorVideoProcessor(Mock())._get_video_info(junk) == {
+            "fps": 0.0,
+            "total_frames": 0,
+            "width": 0,
+            "height": 0,
+            "duration": 0,
+        }
+
+    def test_a_cache_hit_hands_out_segments_it_does_not_share(self, tmp_path):
+        mp4 = _clip(tmp_path, frames=30)
+        transcript = {"segments": [{"start": 0.0, "end": 1.0, "text": "kickoff"}]}
+        recording = TestSegmentationCache._RecordingCache()
+        processor = SingleVectorVideoProcessor(
+            Mock(), strategy="global", cache=recording
+        )
+        processor.process_video(video_path=mp4, transcript_data=transcript)
+        payload = recording.set_calls[0]["result"]
+        cached = SingleVectorVideoProcessor(
+            Mock(),
+            strategy="global",
+            cache=TestSegmentationCache._RecordingCache(payload),
+        )
+
+        first = cached.process_video(video_path=mp4, transcript_data=transcript)
+        first["segments"][0].transcript_segments[0]["text"] = "changed"
+        first["segments"][0].metadata["duration"] = 0.0
+        second = cached.process_video(video_path=mp4, transcript_data=transcript)
+
+        assert second["segments"][0].transcript_segments == [
+            {
+                "start": 0.0,
+                "end": 1.0,
+                "text": "kickoff",
+                "relative_start": 0.0,
+                "relative_end": 1.0,
+            }
+        ]
+        assert second["segments"][0].metadata == {
+            "duration": 3.0,
+            "has_transcript": True,
+        }
+        assert payload["segments"][0]["transcript_segments"][0]["text"] == "kickoff"

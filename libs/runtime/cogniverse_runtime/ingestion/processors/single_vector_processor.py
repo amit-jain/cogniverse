@@ -129,6 +129,19 @@ class SingleVectorVideoProcessor(BaseProcessor):
         self.strategy = strategy
         self.segment_duration = segment_duration
         self.segment_overlap = segment_overlap if strategy != "global" else 0
+        if segment_duration <= 0:
+            raise ValueError(
+                f"segment_duration must be positive, got {segment_duration}"
+            )
+        if not 0 <= self.segment_overlap < segment_duration:
+            raise ValueError(
+                "segment_overlap must be at least 0 and less than segment_duration "
+                f"({segment_duration}), got {segment_overlap}"
+            )
+        if min_segment_duration < 0:
+            raise ValueError(
+                f"min_segment_duration must not be negative, got {min_segment_duration}"
+            )
         self.min_segment_duration = min_segment_duration
         self.cache = cache
 
@@ -176,6 +189,11 @@ class SingleVectorVideoProcessor(BaseProcessor):
         # Get video info
         video_info = self._get_video_info(video_path)
         duration = video_info["duration"]
+        if duration <= 0:
+            raise ValueError(
+                f"{video_path.name} has no readable duration "
+                f"(fps {video_info['fps']}, {video_info['total_frames']} frames)"
+            )
 
         # Calculate segment boundaries
         segment_boundaries = self._calculate_segment_boundaries(duration)
@@ -295,7 +313,9 @@ class SingleVectorVideoProcessor(BaseProcessor):
                 transcript_data["segments"], start_time, end_time
             )
             transcript_text = " ".join(
-                [seg["text"].strip() for seg in transcript_segments]
+                text
+                for seg in sorted(transcript_segments, key=lambda s: s.get("start", 0))
+                if (text := seg.get("text", "").strip())
             )
 
         # Create segment
