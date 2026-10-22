@@ -112,7 +112,8 @@ class TestSingleVectorVideoProcessor:
         assert boundaries[0] == (0.0, 120.0)
 
     def test_calculate_segment_boundaries_chunks(self, mock_logger):
-        """Test segment boundary calculation for chunks strategy."""
+        """Overlapping chunks run to the end; the last one is a full chunk
+        whenever it is at least min_segment_duration long."""
         processor = SingleVectorVideoProcessor(
             mock_logger,
             strategy="chunks",
@@ -121,16 +122,14 @@ class TestSingleVectorVideoProcessor:
             min_segment_duration=2.0,
         )
 
-        boundaries = processor._calculate_segment_boundaries(30.0)
-
-        # Should have segments: [0-10], [8-18], [16-30] (last extended)
-        assert len(boundaries) == 3
-        assert boundaries[0] == (0.0, 10.0)
-        assert boundaries[1] == (8.0, 18.0)  # 10 - 2 overlap
-        assert boundaries[2] == (16.0, 30.0)  # Extended to avoid tiny segment
+        assert processor._calculate_segment_boundaries(30.0) == [
+            (0.0, 10.0),
+            (8.0, 18.0),
+            (16.0, 26.0),
+            (24.0, 30.0),
+        ]
 
     def test_calculate_segment_boundaries_no_overlap(self, mock_logger):
-        """Test segment boundary calculation without overlap."""
         processor = SingleVectorVideoProcessor(
             mock_logger,
             strategy="chunks",
@@ -139,15 +138,15 @@ class TestSingleVectorVideoProcessor:
             min_segment_duration=2.0,
         )
 
-        boundaries = processor._calculate_segment_boundaries(25.0)
-
-        # Should have segments: [0-10], [10-25] (second extended since 25-20=5 >= min_duration)
-        assert len(boundaries) == 2
-        assert boundaries[0] == (0.0, 10.0)
-        assert boundaries[1] == (10.0, 25.0)  # Extended to avoid tiny segment
+        assert processor._calculate_segment_boundaries(25.0) == [
+            (0.0, 10.0),
+            (10.0, 20.0),
+            (20.0, 25.0),
+        ]
 
     def test_calculate_segment_boundaries_extend_last(self, mock_logger):
-        """Test that small remaining duration extends last segment."""
+        """A remainder shorter than min_segment_duration joins the chunk
+        before it instead of standing alone."""
         processor = SingleVectorVideoProcessor(
             mock_logger,
             strategy="chunks",
@@ -156,12 +155,56 @@ class TestSingleVectorVideoProcessor:
             min_segment_duration=3.0,
         )
 
-        boundaries = processor._calculate_segment_boundaries(21.0)
+        assert processor._calculate_segment_boundaries(21.0) == [
+            (0.0, 10.0),
+            (10.0, 21.0),
+        ]
 
-        # Should have one segment [0-21] since 21-10=11 > 10, but then 21-20=1 < 3
-        # So the algorithm extends the first segment to cover everything
-        assert len(boundaries) == 1
-        assert boundaries[0] == (0.0, 21.0)  # Extended to cover entire duration
+    @pytest.mark.parametrize(
+        ("duration", "boundaries"),
+        [
+            (1.5, [(0.0, 1.5)]),
+            (6.0, [(0.0, 6.0)]),
+            (10.0, [(0.0, 6.0), (5.0, 10.0)]),
+            (
+                26.5,
+                [(0.0, 6.0), (5.0, 11.0), (10.0, 16.0), (15.0, 21.0), (20.0, 26.5)],
+            ),
+            (
+                30.0,
+                [
+                    (0.0, 6.0),
+                    (5.0, 11.0),
+                    (10.0, 16.0),
+                    (15.0, 21.0),
+                    (20.0, 26.0),
+                    (25.0, 30.0),
+                ],
+            ),
+            (
+                31.0,
+                [
+                    (0.0, 6.0),
+                    (5.0, 11.0),
+                    (10.0, 16.0),
+                    (15.0, 21.0),
+                    (20.0, 26.0),
+                    (25.0, 31.0),
+                ],
+            ),
+        ],
+    )
+    def test_the_shipped_chunk_profile_cuts_six_second_chunks(
+        self, mock_logger, duration, boundaries
+    ):
+        """6 s chunks overlapping by 1 s, as video_embeddinggemma2_sv_chunk_6s
+        ships them: a chunk ending exactly at the end of the video is kept,
+        never merged into the one before."""
+        processor = SingleVectorVideoProcessor(
+            mock_logger, strategy="chunks", segment_duration=6.0, segment_overlap=1.0
+        )
+
+        assert processor._calculate_segment_boundaries(duration) == boundaries
 
     def test_align_transcript_segments(self, mock_logger):
         """Test transcript segment alignment."""

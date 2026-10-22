@@ -259,13 +259,14 @@ class SingleVectorVideoProcessor(BaseProcessor):
         while start < duration:
             end = min(start + self.segment_duration, duration)
 
-            # Check if remaining duration is too small
-            if duration - end < self.min_segment_duration and segments:
-                # Extend last segment instead of creating tiny one
+            # A remainder too short to stand alone joins the chunk before it.
+            if end - start < self.min_segment_duration and segments:
                 segments[-1] = (segments[-1][0], duration)
                 break
 
             segments.append((start, end))
+            if end >= duration:
+                break
 
             # Move to next segment
             if self.segment_overlap > 0:

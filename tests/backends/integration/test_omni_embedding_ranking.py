@@ -589,8 +589,8 @@ def test_served_search_returns_the_recorded_top_video_for_every_query(
 # Measured from the committed recording (see the module docstring).
 VIDEO_METRICS = {
     "omni_video": {
-        "recall_at_1": 48,
-        "mrr": 0.5183,
+        "recall_at_1": 47,
+        "mrr": 0.5181,
         "correct_at_1": [
             1,
             2,
@@ -623,7 +623,6 @@ VIDEO_METRICS = {
             73,
             74,
             76,
-            79,
             80,
             85,
             86,
@@ -644,7 +643,7 @@ VIDEO_METRICS = {
     },
     "omni_video_audio": {
         "recall_at_1": 50,
-        "mrr": 0.5301,
+        "mrr": 0.5341,
         "correct_at_1": [
             1,
             2,
