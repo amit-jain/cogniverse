@@ -4,7 +4,8 @@ Runs the real sidecar app over HTTP (uvicorn thread) with a deterministic
 CLAP stand-in, and drives the real client serialisation: file-path bytes,
 in-memory array → WAV, and text queries. The boundary under test is the
 HTTP contract — request shapes, audio decode/resample, exact 512-dim
-responses — which the in-process unit tests cannot prove.
+responses (audio unit-norm, text as the model emits it) — which the
+in-process unit tests cannot prove.
 """
 
 import socket
@@ -57,6 +58,11 @@ class _FakeClapProcessor:
         if text is not None:
             self.text_calls.append(text)
         return {}
+
+
+# The stand-in's constant 0.25 audio vector, as the sidecar returns it:
+# scaled to unit norm, then received as float32.
+_UNIT_AUDIO_VECTOR = [np.float32(1 / np.sqrt(512)).item()] * 512
 
 
 def _free_port() -> int:
@@ -125,7 +131,7 @@ def test_remote_audio_path_round_trip(clap_sidecar, tmp_path):
 
     gen = AudioEmbeddingGenerator(clap_endpoint_url=clap_sidecar["url"])
     vec = gen.generate_acoustic_embedding(audio_path=wav)
-    assert vec.tolist() == [0.25] * 512
+    assert vec.tolist() == _UNIT_AUDIO_VECTOR
 
     # The sidecar must have resampled the 0.5 s 16 kHz file to 48 kHz mono.
     audio_arr, sampling_rate = clap_sidecar["module"]._PROCESSOR.audio_calls[-1]
@@ -141,7 +147,7 @@ def test_remote_audio_array_round_trip(clap_sidecar):
 
     gen = AudioEmbeddingGenerator(clap_endpoint_url=clap_sidecar["url"])
     vec = gen.generate_acoustic_embedding(audio_array=tone, sample_rate=sr)
-    assert vec.tolist() == [0.25] * 512
+    assert vec.tolist() == _UNIT_AUDIO_VECTOR
 
     audio_arr, sampling_rate = clap_sidecar["module"]._PROCESSOR.audio_calls[-1]
     assert sampling_rate == 48000
