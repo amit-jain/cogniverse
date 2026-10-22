@@ -1220,7 +1220,6 @@
           "extract_audio": true,
           "transcribe_audio": true,
           "whisper_model": "base",
-          "store_as_single_doc": true,
           "adaptive_segmentation": false,
           "max_pixels": 16777216,
           "sampling_fps": 1.0
@@ -1251,10 +1250,7 @@
             "params": {
               "strategy": "chunks",
               "segment_duration": 6.0,
-              "segment_overlap": 1.0,
-              "sampling_fps": 2.0,
-              "max_frames_per_segment": 8,
-              "store_as_single_doc": true
+              "segment_overlap": 1.0
             }
           },
           "transcription": {

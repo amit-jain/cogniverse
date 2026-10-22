@@ -551,9 +551,6 @@ def test_the_omni_video_profile_is_pinned_whole(path: Path):
                     "strategy": "chunks",
                     "segment_duration": 6.0,
                     "segment_overlap": 1.0,
-                    "sampling_fps": 2.0,
-                    "max_frames_per_segment": 8,
-                    "store_as_single_doc": True,
                 },
             },
             "transcription": {

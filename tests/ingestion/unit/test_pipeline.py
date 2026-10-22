@@ -456,19 +456,18 @@ class TestVideoIngestionPipelineUtilityMethods:
                     ],
                     "metadata": {"test": "data"},
                     "full_transcript": "Test transcript",
-                    "document_structure": {"sections": ["intro"]},
                 }
             }
         }
 
         result_data = mock_pipeline._process_single_vector_data(video_data, results)
 
-        # The method returns video_data with single vector processing data added
-        assert result_data["video_id"] == "test_video"
-        assert "segments" in result_data
-        assert "processing_metadata" in result_data
-        assert "full_transcript" in result_data
-        assert "document_structure" in result_data
+        assert result_data == {
+            "video_id": "test_video",
+            "segments": [{"start_time": 0.0, "end_time": 60.0, "text": "Test segment"}],
+            "processing_metadata": {"test": "data"},
+            "full_transcript": "Test transcript",
+        }
 
     @pytest.mark.asyncio
     async def test_process_video_async(self, mock_pipeline):
@@ -538,7 +537,6 @@ class TestVideoIngestionPipelineUtilityMethods:
                     ],
                     "metadata": {"test": "data"},
                     "full_transcript": "Test transcript",
-                    "document_structure": {"sections": ["intro"]},
                 }
             },
         }

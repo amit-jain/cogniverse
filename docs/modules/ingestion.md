@@ -1137,21 +1137,21 @@ requirements = strategy.get_required_processors()
 
 **Parameters**:
 
-- `strategy`: Segmentation strategy ("sliding_window", "uniform")
+- `strategy`: Segmentation strategy (`"chunks"`, `"windows"` or `"global"`)
 - `segment_duration`: Segment duration in seconds (default 6.0)
 - `segment_overlap`: Overlap between segments in seconds (default 1.0)
-- `sampling_fps`: FPS for frame sampling within segments (default 2.0)
-- `max_frames_per_segment`: Max frames per segment (default 12)
-- `store_as_single_doc`: Store all segments in one document (default False)
+
+The embedding service samples each segment's frames (the omni server's
+`--media-io-kwargs` sets 1 fps), and storage follows the schema: a
+one-vector schema stores one document per chunk, and only a `global`
+segmentation stores one document per video.
 
 **Usage**:
 ```python
 strategy = SingleVectorSegmentationStrategy(
-    strategy="sliding_window",
+    strategy="chunks",
     segment_duration=6.0,
     segment_overlap=1.0,
-    sampling_fps=2.0,
-    max_frames_per_segment=12
 )
 ```
 
@@ -1602,10 +1602,9 @@ Process video into segments with transcript alignment.
 ```python
 processor = SingleVectorVideoProcessor(
     logger,
-    strategy="sliding_window",
+    strategy="chunks",
     segment_duration=6.0,
     segment_overlap=1.0,
-    sampling_fps=2.0
 )
 result = processor.process_video(
     video_path=Path("video.mp4"),
@@ -1616,7 +1615,6 @@ result = processor.process_video(
 #   "segments": [VideoSegment(...), VideoSegment(...), ...],
 #   "metadata": {...},
 #   "full_transcript": "...",
-#   "document_structure": {"type": "multi_document"}
 # }
 ```
 
@@ -1627,8 +1625,6 @@ class VideoSegment:
     segment_id: int
     start_time: float
     end_time: float
-    frames: list[np.ndarray]         # Actual frame data
-    frame_timestamps: list[float]    # Timestamps for each frame
     transcript_segments: list[dict[str, Any]]  # Transcript segments
     transcript_text: str = ""        # Combined transcript text
     metadata: dict[str, Any] = None  # Additional metadata
@@ -1890,9 +1886,6 @@ video_embeddinggemma2_sv_chunk_6s:
         strategy: "chunks"
         segment_duration: 6.0
         segment_overlap: 1.0
-        sampling_fps: 2.0
-        max_frames_per_segment: 8
-        store_as_single_doc: true
     transcription:
       class: "AudioTranscriptionStrategy"
       params:

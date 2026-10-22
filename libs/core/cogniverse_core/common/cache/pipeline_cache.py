@@ -233,8 +233,6 @@ class PipelineArtifactCache:
         strategy: str,
         segment_duration: float,
         segment_overlap: float,
-        sampling_fps: float,
-        max_frames: int,
         transcript_fingerprint: str,
     ) -> str:
         video_key = self._generate_video_key(video_path)
@@ -244,8 +242,6 @@ class PipelineArtifactCache:
             strategy=strategy,
             seg=segment_duration,
             overlap=segment_overlap,
-            fps=sampling_fps,
-            max_frames=max_frames,
             transcript=transcript_fingerprint,
         )
 
@@ -256,8 +252,6 @@ class PipelineArtifactCache:
         strategy: str,
         segment_duration: float,
         segment_overlap: float,
-        sampling_fps: float,
-        max_frames: int,
         transcript_fingerprint: str,
     ) -> Optional[Dict[str, Any]]:
         """Get a cached single-vector segmentation result (boundary math +
@@ -267,8 +261,6 @@ class PipelineArtifactCache:
             strategy,
             segment_duration,
             segment_overlap,
-            sampling_fps,
-            max_frames,
             transcript_fingerprint,
         )
 
@@ -288,8 +280,6 @@ class PipelineArtifactCache:
         strategy: str,
         segment_duration: float,
         segment_overlap: float,
-        sampling_fps: float,
-        max_frames: int,
         transcript_fingerprint: str,
     ) -> bool:
         """Cache a single-vector segmentation result."""
@@ -298,8 +288,6 @@ class PipelineArtifactCache:
             strategy,
             segment_duration,
             segment_overlap,
-            sampling_fps,
-            max_frames,
             transcript_fingerprint,
         )
 

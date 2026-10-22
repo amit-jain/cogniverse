@@ -912,7 +912,6 @@
           "extract_audio": true,
           "transcribe_audio": true,
           "whisper_model": "base",
-          "store_as_single_doc": true,
           "adaptive_segmentation": false,
           "max_pixels": 16777216,
           "sampling_fps": 1.0

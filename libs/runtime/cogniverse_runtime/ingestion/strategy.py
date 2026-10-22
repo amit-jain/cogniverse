@@ -239,14 +239,6 @@ class StrategyConfig:
         if profile.get("schema_config", {}).get("num_patches", 1) > 1:
             return "multi_doc"
 
-        # Explicit in model config
-        if "store_as_single_doc" in profile.get("model_specific", {}):
-            return (
-                "single_doc"
-                if profile["model_specific"]["store_as_single_doc"]
-                else "multi_doc"
-            )
-
         # A single-vector schema holds one vector per document, so only a
         # whole-video embedding fits in one; chunks and windows are a
         # document each.

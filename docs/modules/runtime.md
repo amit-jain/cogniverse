@@ -637,11 +637,9 @@ strategy = ChunkSegmentationStrategy(
 from cogniverse_runtime.ingestion.strategies import SingleVectorSegmentationStrategy
 
 strategy = SingleVectorSegmentationStrategy(
-    strategy="sliding_window",
+    strategy="chunks",
     segment_duration=6.0,
     segment_overlap=1.0,
-    sampling_fps=2.0,
-    max_frames_per_segment=12
 )
 ```
 
@@ -1910,9 +1908,6 @@ backend:
             strategy: chunks
             segment_duration: 6.0
             segment_overlap: 1.0
-            sampling_fps: 2.0
-            max_frames_per_segment: 8
-            store_as_single_doc: true
         transcription:
           class: AudioTranscriptionStrategy
           params:

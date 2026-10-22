@@ -66,3 +66,17 @@ def test_a_global_single_vector_profile_stores_one_document(strategy_config):
         strategy_config._resolve_storage_mode({}, "single_vector", segmentation)
         for segmentation in ("global", "chunks", "windows")
     ] == ["single_doc", "multi_doc", "multi_doc"]
+
+
+def test_storage_mode_follows_the_schema_shape_alone(strategy_config):
+    """A one-vector chunk schema cannot hold a video's chunks in one
+    document, and a patch schema holds one frame or chunk per document,
+    whatever else the profile carries."""
+    stale = {"model_specific": {"store_as_single_doc": True}}
+    patches = {"schema_config": {"num_patches": 1024}, **stale}
+    assert [
+        strategy_config._resolve_storage_mode(stale, "single_vector", "chunks"),
+        strategy_config._resolve_storage_mode(patches, "single_vector", "chunks"),
+        strategy_config._resolve_storage_mode(patches, "frame_based", "frames"),
+        strategy_config._resolve_storage_mode(stale, "single_vector", "global"),
+    ] == ["multi_doc", "multi_doc", "multi_doc", "single_doc"]
