@@ -77,7 +77,7 @@ curl -X POST http://localhost:8000/ingestion/start \
   -H "Content-Type: application/json" \
   -d '{
     "video_dir": "/data/videos/ml_tutorials",
-    "profile": "frame_based_colpali",
+    "profile": "video_colpali_smol500_mv_frame",
     "backend": "vespa",
     "tenant_id": "acme_corp",
     "batch_size": 10
@@ -96,7 +96,7 @@ curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
   -d '{
     "query": "machine learning tutorial",
-    "profile": "frame_based_colpali",
+    "profile": "video_colpali_smol500_mv_frame",
     "top_k": 10,
     "tenant_id": "acme_corp"
   }'
@@ -336,7 +336,7 @@ tenant_utils.require_tenant_id` rejects a missing value with HTTP 400, and
 ```bash
 curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
-  -d '{"query": "...", "profile": "frame_based_colpali", "tenant_id": "acme_corp"}'
+  -d '{"query": "...", "profile": "video_colpali_smol500_mv_frame", "tenant_id": "acme_corp"}'
 ```
 
 ### 2. Automatic Schema Suffixing
@@ -600,7 +600,7 @@ uv run python -c "import cogniverse_runtime; print('OK')"
 # tenant has been registered via POST /admin/tenants first
 curl -X POST http://localhost:8000/search/ \
   -H "Content-Type: application/json" \
-  -d '{"query": "...", "profile": "frame_based_colpali", "tenant_id": "acme_corp"}'
+  -d '{"query": "...", "profile": "video_colpali_smol500_mv_frame", "tenant_id": "acme_corp"}'
 ```
 
 **3. Vespa Connection Failed**

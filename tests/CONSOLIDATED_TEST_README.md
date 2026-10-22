@@ -19,22 +19,20 @@ This is a comprehensive test suite for the Cogniverse multi-modal content intell
 ### Core Test Commands
 ```bash
 # Run all tests with UV workspace (recommended)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v --tb=long 2>&1 > /tmp/cogniverse-tests.log
+uv run pytest tests/ -v --tb=long 2>&1 > /tmp/cogniverse-tests.log
 
 # Run layer-by-layer tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/foundation/ -v --tb=long 2>&1 > /tmp/foundation-tests.log  # Foundation layer
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ tests/evaluation/ -v --tb=long 2>&1 > /tmp/core-tests.log  # Core layer
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/routing/ -v --tb=long 2>&1 > /tmp/implementation-tests.log  # Implementation layer
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/ -v --tb=long 2>&1 > /tmp/application-tests.log  # Application layer
+uv run pytest tests/foundation/ -v --tb=long 2>&1 > /tmp/foundation-tests.log  # Foundation layer
+uv run pytest tests/common/ tests/evaluation/ -v --tb=long 2>&1 > /tmp/core-tests.log  # Core layer
+uv run pytest tests/agents/ tests/routing/ -v --tb=long 2>&1 > /tmp/implementation-tests.log  # Implementation layer
+uv run pytest tests/ingestion/ -v --tb=long 2>&1 > /tmp/application-tests.log  # Application layer
 
 # Run comprehensive routing tests
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py 2>&1 > /tmp/routing-tests.log
+uv run python tests/test_comprehensive_routing.py 2>&1 > /tmp/routing-tests.log
 
 # Run ingestion tests with environment detection
 uv run python scripts/test_ingestion.py --integration 2>&1 > /tmp/ingestion-integration.log
 ```
-
-**Note:** Use `JAX_PLATFORM_NAME=cpu` for DSPy tests to avoid GPU initialization overhead.
 
 ## Test Organization
 
@@ -144,14 +142,14 @@ The test suite validates processing across **all content modalities**:
 
 #### Comprehensive Testing
 ```bash
-# Test all routing models and strategies (DSPy requires CPU-only JAX)
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py 2>&1 > /tmp/routing-tests.log
+# Test all routing models and strategies
+uv run python tests/test_comprehensive_routing.py 2>&1 > /tmp/routing-tests.log
 
 # Test specific components
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py llm-only 2>&1 > /tmp/routing-llm-tests.log      # LLM models only
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py gliner-only 2>&1 > /tmp/routing-gliner-tests.log  # GLiNER models only
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py hybrid-only 2>&1 > /tmp/routing-hybrid-tests.log  # Combined approaches
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py quick 2>&1 > /tmp/routing-quick-tests.log        # Fast subset
+uv run python tests/test_comprehensive_routing.py llm-only 2>&1 > /tmp/routing-llm-tests.log      # LLM models only
+uv run python tests/test_comprehensive_routing.py gliner-only 2>&1 > /tmp/routing-gliner-tests.log  # GLiNER models only
+uv run python tests/test_comprehensive_routing.py hybrid-only 2>&1 > /tmp/routing-hybrid-tests.log  # Combined approaches
+uv run python tests/test_comprehensive_routing.py quick 2>&1 > /tmp/routing-quick-tests.log        # Fast subset
 ```
 
 **Models Tested:**
@@ -226,22 +224,22 @@ All tests run via `uv run pytest` to use the 10-package workspace:
 
 ```bash
 # Full test suite (30 min timeout for integration tests)
-JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest -v --tb=long 2>&1 > /tmp/cogniverse-tests.log
+timeout 1800 uv run pytest -v --tb=long 2>&1 > /tmp/cogniverse-tests.log
 
 # Foundation layer tests
 uv run pytest tests/sdk/ tests/foundation/ -v --tb=long 2>&1 > /tmp/foundation-tests.log
 
-# Core layer tests (requires JAX_PLATFORM_NAME=cpu for DSPy)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ tests/evaluation/ tests/telemetry/ -v --tb=long 2>&1 > /tmp/core-tests.log
+# Core layer tests
+uv run pytest tests/common/ tests/evaluation/ tests/telemetry/ -v --tb=long 2>&1 > /tmp/core-tests.log
 
 # Implementation layer tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/routing/ tests/backends/ -v --tb=long 2>&1 > /tmp/implementation-tests.log
+uv run pytest tests/agents/ tests/routing/ tests/backends/ -v --tb=long 2>&1 > /tmp/implementation-tests.log
 
 # Application layer tests
 uv run pytest tests/ingestion/ tests/system/ -v --tb=long 2>&1 > /tmp/application-tests.log
 
 # With coverage reporting across workspace
-JAX_PLATFORM_NAME=cpu uv run pytest -v --tb=long --cov=libs/ --cov-report=html --cov-report=term-missing 2>&1 > /tmp/cogniverse-coverage.log
+uv run pytest -v --tb=long --cov=libs/ --cov-report=html --cov-report=term-missing 2>&1 > /tmp/cogniverse-coverage.log
 ```
 
 ### Layer-Specific Testing
@@ -258,8 +256,8 @@ uv run pytest tests/foundation/test_config_base.py -v --tb=long
 
 **Core Layer:**
 ```bash
-# Core functionality (DSPy integration requires CPU)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ -v --tb=long --cov=libs/core/cogniverse_core 2>&1 > /tmp/common-tests.log
+# Core functionality
+uv run pytest tests/common/ -v --tb=long --cov=libs/core/cogniverse_core 2>&1 > /tmp/common-tests.log
 
 # Evaluation framework
 uv run pytest tests/evaluation/ -v --tb=long --cov=libs/evaluation/cogniverse_evaluation 2>&1 > /tmp/evaluation-tests.log
@@ -271,11 +269,11 @@ uv run pytest tests/telemetry/test_phoenix_provider.py -v --tb=long
 **Implementation Layer:**
 ```bash
 # Agents with DSPy optimization
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m "unit and ci_fast" -v --tb=long 2>&1 > /tmp/agent-unit-tests.log
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -v --tb=long 2>&1 > /tmp/agent-integration-tests.log
+uv run pytest tests/agents/unit/ -m "unit and ci_fast" -v --tb=long 2>&1 > /tmp/agent-unit-tests.log
+uv run pytest tests/agents/integration/ -v --tb=long 2>&1 > /tmp/agent-integration-tests.log
 
 # Routing system
-JAX_PLATFORM_NAME=cpu uv run pytest tests/routing/unit/ tests/routing/integration/ -v --tb=long 2>&1 > /tmp/routing-pytest.log
+uv run pytest tests/routing/unit/ tests/routing/integration/ -v --tb=long 2>&1 > /tmp/routing-pytest.log
 
 # Vespa backend
 uv run pytest tests/backends/ -v --tb=long --cov=libs/vespa/cogniverse_vespa 2>&1 > /tmp/backend-tests.log
@@ -306,7 +304,7 @@ uv run python scripts/test_ingestion.py --requires-vespa 2>&1 > /tmp/ingestion-v
 uv run python scripts/test_ingestion.py --integration --local-only 2>&1 > /tmp/ingestion-local-models.log
 
 # E2E tests with real Ollama
-JAX_PLATFORM_NAME=cpu timeout 600 uv run pytest tests/agents/e2e/ -v --tb=long 2>&1 > /tmp/agent-e2e-tests.log
+timeout 600 uv run pytest tests/agents/e2e/ -v --tb=long 2>&1 > /tmp/agent-e2e-tests.log
 ```
 
 ### Specific Test Scenarios
@@ -356,13 +354,13 @@ The test system automatically detects:
    - Zero external dependencies
 
 2. **Core Layer CI** (`test-core.yml`)
-   - Core functionality tests with `JAX_PLATFORM_NAME=cpu`
+   - Core functionality tests
    - Evaluation framework tests
    - Phoenix telemetry provider tests
    - 80%+ coverage requirement
 
 3. **Implementation Layer CI** (`test-implementation.yml`)
-   - Agent tests: `JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m "unit and ci_fast" -v --tb=long 2>&1 > /tmp/agent-unit-tests.log`
+   - Agent tests: `uv run pytest tests/agents/unit/ -m "unit and ci_fast" -v --tb=long 2>&1 > /tmp/agent-unit-tests.log`
    - Routing tests with mocked LLMs
    - Vespa backend tests with lightweight Docker container
    - Synthetic data generation tests
@@ -382,7 +380,6 @@ The test system automatically detects:
 
 ### Environment Variables
 - `CI=true`: Automatically detected, excludes `local_only` tests
-- `JAX_PLATFORM_NAME=cpu`: Required for DSPy tests in CI (avoids GPU initialization)
 - `RUN_HEAVY_TESTS=1`: Override to include heavy models in CI
 - `PYTEST_TIMEOUT=1800`: 30-minute timeout for integration tests
 

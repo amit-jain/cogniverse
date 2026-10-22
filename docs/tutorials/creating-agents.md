@@ -672,7 +672,7 @@ class TestSummarizationAgent:
 Run the tests:
 
 ```bash
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/test_summarization_agent.py -v
+uv run pytest tests/agents/unit/test_summarization_agent.py -v
 ```
 
 ---

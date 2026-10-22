@@ -134,7 +134,7 @@ jobs:
       env:
         ASSERTION_GUARD_BASE: ${{ steps.guard_base.outputs.sha }}
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/common/unit -m "unit or not integration" \
+        uv run --no-sync python -m pytest tests/common/unit -m "unit or not integration" \
           -v --tb=short \
           --cov=libs/core/cogniverse_core \
           --cov=libs/foundation/cogniverse_foundation \
@@ -143,7 +143,7 @@ jobs:
 
     - name: Run core unit tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/core/unit tests/memory/unit \
           tests/utils/test_kg_lookup.py tests/utils/test_memory_store.py \
           -m unit \
@@ -154,7 +154,7 @@ jobs:
 
     - name: Run memory unit fast subset
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/memory/unit -m "unit and ci_fast" \
+        uv run --no-sync python -m pytest tests/memory/unit -m "unit and ci_fast" \
           -v --tb=short \
           --cov=libs/core/cogniverse_core \
           --cov-append \
@@ -264,7 +264,7 @@ jobs:
     - name: Run integration tests
       timeout-minutes: 25
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/common/integration/ \
           tests/core/integration/test_schema_intent_recovery.py \
           tests/memory/integration/test_dispatcher_conversation_history_real_mem0.py \

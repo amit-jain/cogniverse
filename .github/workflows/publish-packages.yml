@@ -152,12 +152,11 @@ jobs:
 
       - name: Run package tests
         env:
-          JAX_PLATFORM_NAME: cpu
           VESPA_URL: http://localhost:8080
           VESPA_CONFIG_PORT: 19071
         run: |
           # Run critical tests
-          JAX_PLATFORM_NAME=cpu timeout 1800 uv run --no-sync pytest tests/common/ tests/routing/unit/ -v --tb=short
+          timeout 1800 uv run --no-sync pytest tests/common/ tests/routing/unit/ -v --tb=short
 
   # Publish to TestPyPI
   publish-testpypi:

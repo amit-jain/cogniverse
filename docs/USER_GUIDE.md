@@ -95,7 +95,7 @@ curl http://localhost:11434/api/tags
 
 ```bash
 # Ingest videos with ColPali frame-level embeddings
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/testset/evaluation/sample_videos \
   --profile video_colpali_smol500_mv_frame \
   --tenant-id default
@@ -105,7 +105,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 
 ```bash
 # Test multi-agent search
-JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
+uv run python tests/comprehensive_video_query_test_v2.py \
   --profiles video_colpali_smol500_mv_frame \
   --test-multiple-strategies
 ```
@@ -385,7 +385,7 @@ Ingest videos with one embedding model:
 
 ```bash
 # Ingest with ColPali (frame-based)
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_colpali_smol500_mv_frame \
   --tenant-id default
@@ -536,7 +536,7 @@ Evaluate search quality on a dataset:
 
 ```bash
 # Run evaluation with Phoenix tracking
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
+uv run python scripts/run_experiments_with_visualization.py \
   --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame \
@@ -564,7 +564,7 @@ Python tutorial for beginners,video_789,general
 
 ```bash
 # Run evaluation on custom dataset
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
+uv run python scripts/run_experiments_with_visualization.py \
   --tenant-id acme:acme \
   --csv-path evaluation_dataset.csv \
   --profiles video_colpali_smol500_mv_frame
@@ -576,7 +576,7 @@ Compare different embedding models:
 
 ```bash
 # Run experiments with multiple profiles
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_experiments_with_visualization.py \
+uv run python scripts/run_experiments_with_visualization.py \
   --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --profiles video_colpali_smol500_mv_frame \
@@ -624,7 +624,7 @@ results_startup = agent.search_by_text(query="tutorial", tenant_id="startup_inc"
 
 ```bash
 # Ingest data for tenant (tenant is implicitly created on first use)
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/new_customer_videos \
   --profile video_colpali_smol500_mv_frame \
   --tenant-id new_customer
@@ -680,11 +680,11 @@ Create custom profiles for specific use cases:
 
 ```bash
 # Deploy custom profile schema
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
+uv run python scripts/deploy_json_schema.py \
   configs/schemas/video_custom_highres_frame.json
 
 # Ingest with custom profile
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_custom_highres_frame \
   --tenant-id default
@@ -740,7 +740,7 @@ Process large video libraries efficiently using the CLI:
 
 ```bash
 # Process videos in batches using the ingestion script
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/batch1 \
   --profile video_colpali_smol500_mv_frame \
   --tenant-id default
@@ -1463,7 +1463,7 @@ curl http://localhost:26006/health
 **Solution:**
 ```bash
 # Reduce concurrent processing
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_colpali_smol500_mv_frame \
   --max-concurrent 1  # Reduce from default 3
@@ -1484,7 +1484,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 ```bash
 # Binary embeddings are configured per-profile in schema_config.binary_dim
 # Use standard profiles - they support both float and binary embeddings
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_colpali_smol500_mv_frame \
   --tenant-id default
@@ -1496,7 +1496,7 @@ Enable debug logging by configuring the logging level in your Python script or u
 
 ```bash
 # Run ingestion with verbose output
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/videos \
   --profile video_colpali_smol500_mv_frame \
   --tenant-id default

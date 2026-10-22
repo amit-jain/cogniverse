@@ -403,7 +403,7 @@ def main():
     parser.add_argument("--filter-value", help="Filter field value")
     parser.add_argument(
         "--profile",
-        help="Strategy profile used for encoding (e.g., frame_based_colpali, direct_video_frame)",
+        help="Strategy profile used for encoding (e.g., video_colpali_smol500_mv_frame)",
     )
     parser.add_argument(
         "--reduction-method",

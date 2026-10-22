@@ -435,7 +435,7 @@ uv run pytest tests/telemetry/ tests/common/ -v
 uv run pytest tests/evaluation/ tests/memory/ -v
 
 # Implementation layer tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/synthetic/ -v
+uv run pytest tests/agents/ tests/synthetic/ -v
 
 # Application layer tests
 uv run pytest tests/runtime/ -v
@@ -446,7 +446,7 @@ uv run pytest tests/runtime/ -v
 **Using uv run for Scripts:**
 ```bash
 # Run ingestion script
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa \
   --tenant-id acme_corp
@@ -458,7 +458,7 @@ open http://localhost:28400
 uv run python scripts/run_experiments_with_visualization.py \
   --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
-  --profiles frame_based_colpali
+  --profiles video_colpali_smol500_mv_frame
 ```
 
 **Direct Python Imports (in Scripts):**
@@ -815,7 +815,7 @@ open htmlcov/index.html
 **Test Agents Package:**
 ```bash
 # Run agents tests
-JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest tests/agents/ -v --tb=line
+timeout 1800 uv run pytest tests/agents/ -v --tb=line
 
 # Run specific test file
 uv run pytest tests/agents/unit/ -v
@@ -827,7 +827,7 @@ uv run pytest tests/agents/ -m "not slow" -v
 **Test Integration:**
 ```bash
 # Run integration tests (multiple packages)
-JAX_PLATFORM_NAME=cpu timeout 7200 uv run pytest \
+timeout 7200 uv run pytest \
   tests/memory/ \
   tests/ingestion/integration/ \
   tests/evaluation/ \
@@ -1367,7 +1367,7 @@ jobs:
 
       - name: Run tests
         run: |
-          JAX_PLATFORM_NAME=cpu timeout 7200 uv run pytest \
+          timeout 7200 uv run pytest \
             tests/ -v --tb=line --cov=libs --cov-report=xml
 
       - name: Upload coverage

@@ -57,7 +57,7 @@ If you still see segfaults:
 
 **Prevention:**
 
-- Always run tests with: `JAX_PLATFORM_NAME=cpu uv run pytest`
+- Always run tests with: `uv run pytest`
 
 - Don't override threading environment variables
 
@@ -285,7 +285,7 @@ Clear the HuggingFace cache:
 rm -rf ~/.cache/huggingface/hub/models--TomoroAI--tomoro-colqwen3-embed-4b
 
 # Re-run ingestion or tests to re-download
-JAX_PLATFORM_NAME=cpu uv run pytest
+uv run pytest
 ```
 
 **Prevention:**
@@ -316,14 +316,9 @@ MemoryError: Unable to allocate array
 batch_size = 8  # Instead of 32
 ```
 
-2. **Use CPU instead of GPU**:
-```bash
-JAX_PLATFORM_NAME=cpu uv run python script.py
-```
-
-3. **Enable gradient checkpointing** (for PyTorch model training only):
+2. **Enable gradient checkpointing** (for PyTorch model training only):
 ```python
-model.gradient_checkpointing_enable()  # PyTorch models only; not applicable to JAX models
+model.gradient_checkpointing_enable()
 ```
 
 **Prevention:**
@@ -838,10 +833,10 @@ docker restart <container-name>
 
 ```bash
 # Run all tests
-JAX_PLATFORM_NAME=cpu uv run pytest
+uv run pytest
 
 # Run with debugging
-JAX_PLATFORM_NAME=cpu uv run pytest -xvs --pdb
+uv run pytest -xvs --pdb
 
 # Check test collection
 pytest --collect-only

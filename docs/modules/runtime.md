@@ -2202,10 +2202,10 @@ flowchart TB
 
 ```bash
 # Run ingestion pipeline tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/ -v
+uv run pytest tests/ingestion/ -v
 
 # Run integration tests (requires services)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/integration/ -v
+uv run pytest tests/ingestion/integration/ -v
 
 # Run specific tests
 uv run pytest tests/ingestion/unit/ -v

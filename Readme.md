@@ -448,16 +448,16 @@ See [docs/modules/web-client.md](docs/modules/web-client.md).
 
 ```bash
 # Run full test suite
-JAX_PLATFORM_NAME=cpu uv run pytest
+uv run pytest
 
 # Unit tests only (per package: tests/<package>/unit/)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/
+uv run pytest tests/agents/unit/
 
 # Integration tests (per package: tests/<package>/integration/)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/
+uv run pytest tests/agents/integration/
 
 # Specific component
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
+uv run pytest tests/agents/ -v
 ```
 
 ## Documentation

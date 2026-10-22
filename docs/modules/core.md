@@ -950,7 +950,7 @@ from cogniverse_core.query.encoders import QueryEncoderFactory
 # already-loaded encoder, and two configs pointing the same service name at
 # different endpoints get one encoder each.
 encoder = QueryEncoderFactory.create_encoder(
-    profile="frame_based_colpali",
+    profile="video_colpali_smol500_mv_frame",
     config=system_config,  # SystemConfig instance, required
 )
 embedding = encoder.encode("find manufacturing defects")
@@ -1932,7 +1932,7 @@ flowchart TB
 
 ```bash
 # Run all core tests (agents and common utilities)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/common/ -v
+uv run pytest tests/agents/ tests/common/ -v
 
 # Run specific test categories
 uv run pytest tests/agents/unit/ -v

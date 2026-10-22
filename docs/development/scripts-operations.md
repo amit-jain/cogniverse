@@ -761,7 +761,7 @@ python scripts/run_experiments_with_visualization.py \
   --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --dataset-path data/testset/evaluation/video_search_queries.csv \
-  --profiles frame_based_colpali \
+  --profiles video_colpali_smol500_mv_frame \
   --quality-evaluators \
   --llm-evaluators \
   --evaluator visual_judge \
@@ -991,7 +991,7 @@ flowchart TB
 
 ```bash
 # Process videos with default profile
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa
 
@@ -1017,7 +1017,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 
 ```bash
 # Process with multiple profiles simultaneously
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame \
@@ -1112,7 +1112,7 @@ uv run python scripts/run_experiments_with_visualization.py \
   --tenant-id acme:acme \
   --dataset-name golden_eval_v1 \
   --dataset-path data/testset/evaluation/video_search_queries.csv \
-  --profiles frame_based_colpali \
+  --profiles video_colpali_smol500_mv_frame \
   --quality-evaluators
 
 # Output:
@@ -1129,7 +1129,7 @@ uv run python scripts/run_experiments_with_visualization.py \
 # ✅ Dataset ready: http://localhost:6006/datasets/ds_abc123
 #
 # ============================================================
-# Profile: frame_based_colpali
+# Profile: video_colpali_smol500_mv_frame
 # ============================================================
 #
 # [1/6] Frame Based Colpali - Binary
@@ -1155,13 +1155,13 @@ uv run python scripts/run_experiments_with_visualization.py \
 # +---------------------+-------+---------+--------+---------------+
 # | Profile             | Total | Success | Failed | Success Rate  |
 # +=====================+=======+=========+========+===============+
-# | frame_based_colpali |     6 |       6 |      0 | 100.0%        |
+# | video_colpali_smol500_mv_frame |     6 |       6 |      0 | 100.0%        |
 # +---------------------+-------+---------+--------+---------------+
 #
 # 🔍 STRATEGY COMPARISON BY PROFILE
 # ------------------------------------------------------------
 #
-# frame_based_colpali:
+# video_colpali_smol500_mv_frame:
 # Strategy              Description         Status
 # --------------------  ------------------  -------------
 # binary_binary         Binary              ✅ Success
@@ -1321,7 +1321,7 @@ result = {
 }
 
 # Overall statistics still reported:
-# ⚠️ Profile frame_based_colpali partially completed!
+# ⚠️ Profile video_colpali_smol500_mv_frame partially completed!
 #    Time: 52.7 seconds
 #    Videos: 2/3 successful
 #    Failed: 1 videos

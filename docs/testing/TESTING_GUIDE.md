@@ -162,10 +162,10 @@ class TestSearchAgent:
 
 ```bash
 # Run all tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
+uv run pytest tests/ -v
 
 # Run specific package tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
+uv run pytest tests/agents/ -v
 
 # Run specific test file
 uv run pytest tests/agents/unit/test_search_agent.py -v
@@ -333,7 +333,7 @@ uv run pytest -m local_only \
 
 ```bash
 # Run only the fast CI subset
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -m ci_fast -v
+uv run pytest tests/agents/integration/ -m ci_fast -v
 
 # Run integration tests but skip anything needing Ollama
 uv run pytest tests/agents/integration/ -m "integration and not requires_ollama" -v
@@ -343,7 +343,7 @@ uv run pytest tests/agents/integration/ -m "integration and not requires_ollama"
 
 ```bash
 # 30-minute timeout for long tests (using system timeout command)
-JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest tests/ -v
+timeout 1800 uv run pytest tests/ -v
 
 # For per-test timeout, install pytest-timeout first:
 # uv pip install pytest-timeout
@@ -360,10 +360,10 @@ Note: pytest-xdist is not currently installed. For parallel execution, install i
 uv pip install pytest-xdist
 
 # Run with 4 workers
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v -n 4
+uv run pytest tests/ -v -n 4
 
 # Auto-detect workers
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v -n auto
+uv run pytest tests/ -v -n auto
 ```
 
 ### With Output
@@ -373,7 +373,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v -n auto
 uv run pytest tests/ -v -s
 
 # Log to file
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v 2>&1 | tee /tmp/test_output.log
+uv run pytest tests/ -v 2>&1 | tee /tmp/test_output.log
 ```
 
 ### Finding Affected Tests
@@ -1094,7 +1094,7 @@ integration-tests:
 
   - name: Run integration tests (CI Fast subset)
     run: |
-      JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+      uv run python -m pytest \
         tests/module/integration/ \
         -m ci_fast \
         -v --tb=long \
@@ -1189,7 +1189,7 @@ Before every commit:
 grep -r "def test_" --include="*.py" tests/ | grep -i "<module>"
 
 # 2. Run tests
-JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest tests/ -v 2>&1 | tee /tmp/test_output.log
+timeout 1800 uv run pytest tests/ -v 2>&1 | tee /tmp/test_output.log
 
 # 3. Verify 100% pass
 grep -E "passed|failed" /tmp/test_output.log
@@ -1201,17 +1201,6 @@ uv run make lint-all
 ---
 
 ## Troubleshooting
-
-### JAX Platform Errors
-
-```bash
-# Always set JAX platform for CPU
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
-
-# Or in conftest.py
-import os
-os.environ["JAX_PLATFORM_NAME"] = "cpu"
-```
 
 ### Async Test Not Running
 
@@ -1309,8 +1298,7 @@ scenarios and fixtures:
 
 1. **Organize tests** by package (agents, system, ingestion, evaluation, etc.)
 2. **Use fixtures** for common setup
-3. **Run with JAX_PLATFORM_NAME=cpu** to avoid GPU issues
-4. **100% pass rate required** before commit
-5. **Find affected tests** with grep before committing
-6. **Use mocks** for external services in unit tests
-7. **Mark integration tests** that require real services
+3. **100% pass rate required** before commit
+4. **Find affected tests** with grep before committing
+5. **Use mocks** for external services in unit tests
+6. **Mark integration tests** that require real services

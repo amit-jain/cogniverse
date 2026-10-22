@@ -122,7 +122,7 @@ jobs:
     - name: Run unit tests
       timeout-minutes: 35
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/unit/ \
           tests/admin/unit/ \
           tests/foundation/unit/ \
@@ -254,7 +254,7 @@ jobs:
       run: |
         # The suites named by integration-tests-b, -c and -d and the browser
         # suites of the web-ops-integration-tests-* jobs run there.
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/integration/ \
           --ignore=tests/runtime/integration/test_acp_process.py \
           --ignore=tests/runtime/integration/test_admin_harness_keys.py \
@@ -339,7 +339,7 @@ jobs:
       env:
         TEST_LLM_MODEL: "qwen2.5:0.5b"
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/integration/test_admin_harness_keys.py \
           tests/runtime/integration/test_admin_organization_listing.py \
           tests/runtime/integration/test_embedding_atlas_umap_routes.py \
@@ -393,7 +393,7 @@ jobs:
       env:
         TEST_LLM_MODEL: "qwen2.5:0.5b"
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/integration/test_acp_process.py \
           tests/runtime/integration/test_approval_routes.py \
           tests/runtime/integration/test_entity_self_consistency_review_queue.py \
@@ -452,7 +452,7 @@ jobs:
       env:
         TEST_LLM_MODEL: "qwen2.5:0.5b"
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/integration/test_reconcile_tenant_orphans.py \
           tests/runtime/integration/test_tenant_delete_memory_schema.py \
           -m "integration and ci_fast and not requires_lm" \
@@ -506,7 +506,7 @@ jobs:
       env:
         TEST_LLM_MODEL: "qwen2.5:0.5b"
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/admin/ \
           -m "integration" \
           -v --tb=short
@@ -516,7 +516,7 @@ jobs:
       run: |
         # Small self-contained suites (no heavy model sidecars); memory
         # integration needs the vLLM DenseOn sidecar and stays local-tier.
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/events/integration/ \
           tests/foundation/integration/ \
           -v --tb=short
@@ -575,7 +575,7 @@ jobs:
     - name: Run web client integration tests (agent workspace, AG-UI and Analytics)
       timeout-minutes: 20
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/integration/test_ag_ui_threads.py \
           tests/runtime/integration/test_web_agent_workspace.py \
           tests/runtime/integration/test_web_client_ag_ui.py \
@@ -635,7 +635,7 @@ jobs:
     - name: Run web client integration tests (configuration, profiles and optimization runs)
       timeout-minutes: 20
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/integration/test_web_ops_config.py \
           tests/runtime/integration/test_web_ops_optimization.py \
           tests/runtime/integration/test_web_ops_profiles.py \
@@ -693,7 +693,7 @@ jobs:
     - name: Run web client integration tests (tenants, memory, annotations and search session)
       timeout-minutes: 20
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/integration/test_web_ops_annotations.py \
           tests/runtime/integration/test_web_ops_memory.py \
           tests/runtime/integration/test_web_ops_tenants.py \
@@ -752,7 +752,7 @@ jobs:
     - name: Run web client integration tests (ingestion, atlas and workflow reviews)
       timeout-minutes: 20
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/integration/test_web_ops_atlas.py \
           tests/runtime/integration/test_web_ops_ingestion.py \
           tests/runtime/integration/test_web_ops_workflows.py \
@@ -810,7 +810,7 @@ jobs:
     - name: Run web client integration tests (approvals, evaluation, telemetry and relevance)
       timeout-minutes: 20
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/integration/test_web_ops_approvals.py \
           tests/runtime/integration/test_web_ops_eval_metrics.py \
           tests/runtime/integration/test_web_ops_telemetry_metrics.py \
@@ -864,7 +864,7 @@ jobs:
     - name: Run optimization framework web tests
       timeout-minutes: 15
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/runtime/integration/test_web_ops_optimization_framework.py \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short

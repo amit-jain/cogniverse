@@ -64,7 +64,7 @@ jobs:
 
     - name: Run unit tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/telemetry/unit -m "unit or not integration" \
+        uv run --no-sync python -m pytest tests/telemetry/unit -m "unit or not integration" \
           -v --tb=short \
           --cov=libs/telemetry-phoenix/cogniverse_telemetry_phoenix \
           --cov-report=term-missing \

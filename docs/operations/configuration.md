@@ -894,12 +894,12 @@ manager = create_default_config_manager()
 
 ```bash
 # Run all configuration tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/unit/test_agent_config.py -v
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/unit/test_config_api_mixin.py -v
+uv run pytest tests/common/unit/test_agent_config.py -v
+uv run pytest tests/common/unit/test_config_api_mixin.py -v
 
 # Test Vespa backend (real Vespa instance)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/backends/integration/test_config_store.py -v
-JAX_PLATFORM_NAME=cpu uv run pytest tests/backends/unit/test_config_store_yql_escape.py -v
+uv run pytest tests/backends/integration/test_config_store.py -v
+uv run pytest tests/backends/unit/test_config_store_yql_escape.py -v
 ```
 
 ### Integration Tests
@@ -909,7 +909,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/backends/unit/test_config_store_yql_es
 cogniverse up  # Starts all services including Vespa
 
 # Run integration tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/integration/ -v
+uv run pytest tests/common/integration/ -v
 ```
 
 ---

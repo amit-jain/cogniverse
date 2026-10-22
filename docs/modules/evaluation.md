@@ -720,7 +720,7 @@ tracker = ExperimentTracker(tenant_id="your_org:production")
 
 # Synchronous — do NOT use await or asyncio.run()
 result = tracker.run_experiment(
-    profile="frame_based_colpali",
+    profile="video_colpali_smol500_mv_frame",
     strategy="binary_binary",
     dataset_name="golden_eval_v1",
     description="Frame Based ColPali - Binary"
@@ -728,10 +728,10 @@ result = tracker.run_experiment(
 
 # result = {
 #     "status": "success",
-#     "profile": "frame_based_colpali",
+#     "profile": "video_colpali_smol500_mv_frame",
 #     "strategy": "binary_binary",
 #     "description": "Frame Based ColPali - Binary",
-#     "experiment_name": "frame_based_colpali_binary_binary_20251007_143022",
+#     "experiment_name": "video_colpali_smol500_mv_frame_binary_binary_20251007_143022",
 #     "metrics": {
 #         "mrr": 0.85,
 #         "recall": 0.92,
@@ -790,7 +790,7 @@ Run all configured experiments.
 tracker = ExperimentTracker(tenant_id="your_org:production")
 
 # Configure experiments
-tracker.get_experiment_configurations(profiles=["frame_based_colpali"])
+tracker.get_experiment_configurations(profiles=["video_colpali_smol500_mv_frame"])
 
 # Create dataset
 dataset_name = tracker.create_or_get_dataset(csv_path="data/queries.csv")
@@ -832,7 +832,7 @@ tables = tracker.create_visualization_tables()
 print(tables["profile_summary"])
 # | Profile              | Total | Success | Failed | Success Rate |
 # |----------------------|-------|---------|--------|--------------|
-# | frame_based_colpali  |   5   |    5    |   0    |   100.0%     |
+# | video_colpali_smol500_mv_frame  |   5   |    5    |   0    |   100.0%     |
 ```
 
 ---
@@ -2097,7 +2097,7 @@ Every command reads the deployment's Phoenix from `TELEMETRY_HTTP_ENDPOINT` and 
 ```bash
 # Run an experiment-mode evaluation
 cogniverse-eval evaluate --mode experiment --dataset test_dataset \
-    -p frame_based_colpali -s binary_binary
+    -p video_colpali_smol500_mv_frame -s binary_binary
 
 # Evaluate existing traces (batch mode)
 cogniverse-eval evaluate --mode batch --dataset test_dataset \
@@ -2259,7 +2259,7 @@ Quality Evaluators: ✅ ENABLED
 LLM Evaluators: ❌ DISABLED
 
 ============================================================
-Profile: frame_based_colpali
+Profile: video_colpali_smol500_mv_frame
 ============================================================
 
 [1/4] Frame Based ColPali - Binary

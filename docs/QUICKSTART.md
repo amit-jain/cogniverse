@@ -317,7 +317,7 @@ cogniverse/
 
 ```bash
 # Run tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
+uv run pytest tests/ -v
 
 # Lint code
 make lint-all

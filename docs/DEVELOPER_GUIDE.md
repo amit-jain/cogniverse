@@ -364,10 +364,7 @@ Create `.vscode/launch.json`:
       "args": [
         "cogniverse_runtime.main:app",
         "--reload"
-      ],
-      "env": {
-        "JAX_PLATFORM_NAME": "cpu"
-      }
+      ]
     }
   ]
 }

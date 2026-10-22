@@ -97,7 +97,7 @@ mkdir -p /tmp/test_video
 # For testing: use any short video file
 
 # Run ingestion for single profile
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
     --video_dir /tmp/test_video \
     --backend vespa \
     --profile video_colpali_smol500_mv_frame \
@@ -212,7 +212,7 @@ for project in projects:
 **Generate telemetry by running a search:**
 ```bash
 # Run comprehensive test (generates spans)
-JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
+uv run python tests/comprehensive_video_query_test_v2.py \
     --profiles video_colpali_smol500_mv_frame \
     --test-multiple-strategies \
     --max-queries 3
@@ -1088,7 +1088,7 @@ curl -X POST http://localhost:8000/agents/search_agent/process \
 **Start runtime server:**
 ```bash
 # Start server (application layer)
-JAX_PLATFORM_NAME=cpu uv run python -m cogniverse_runtime.main
+uv run python -m cogniverse_runtime.main
 
 # Verify startup in logs
 # Expected: "Uvicorn running on http://0.0.0.0:8000"
@@ -1278,14 +1278,14 @@ curl -X POST http://localhost:8000/admin/tenants \
 **Test full search pipeline:**
 ```bash
 # 1. Ingest test video
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
     --video_dir /tmp/test_video \
     --backend vespa \
     --profile video_colpali_smol500_mv_frame \
     --tenant-id e2e_test
 
 # 2. Run comprehensive search test
-JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
+uv run python tests/comprehensive_video_query_test_v2.py \
     --profiles video_colpali_smol500_mv_frame \
     --test-multiple-strategies \
     --max-queries 5
@@ -1361,7 +1361,7 @@ if decision.routed_to == "search_agent":
 # This is typically done programmatically, see Layer 6 examples above
 
 # 2. Run profile optimization
-JAX_PLATFORM_NAME=cpu uv run python -m cogniverse_runtime.optimization_cli \
+uv run python -m cogniverse_runtime.optimization_cli \
   --mode profile --tenant-id default
 
 # 3. Check results in Phoenix — the optimization run creates a new
@@ -1394,7 +1394,7 @@ curl -X POST http://localhost:8000/admin/tenants \
   -d '{"tenant_id": "test_org:dev", "org_id": "test_org", "created_by": "admin"}'
 
 # 3. Ingest video for tenant
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
     --video_dir /tmp/test_video \
     --backend vespa \
     --profile video_colpali_smol500_mv_frame \
@@ -1600,7 +1600,7 @@ After completing this testing plan, you will understand:
 
 After completing all layers:
 
-1. **Run full test suite:** `JAX_PLATFORM_NAME=cpu timeout 7200 uv run pytest`
+1. **Run full test suite:** `timeout 7200 uv run pytest`
 2. **Deploy to staging:** Test with real workloads
 3. **Performance testing:** Benchmark search latency, optimization throughput
 4. **Security audit:** Verify tenant isolation, auth mechanisms

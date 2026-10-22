@@ -55,13 +55,13 @@ def generate_html_report(test_results_file: str = None):
 
     # Define profiles with display names
     profiles = [
-        ("frame_based_colpali", "ColPali"),
-        ("colqwen_chunks", "ColQwen Chunks"),
+        ("video_colpali_smol500_mv_frame", "ColPali"),
+        ("video_colqwen_omni_mv_chunk_30s", "ColQwen Omni Chunks"),
     ]
 
     # Define strategies for each profile
     profile_strategies = {
-        "frame_based_colpali": [
+        "video_colpali_smol500_mv_frame": [
             ("binary_binary", "Visual Only"),
             ("hybrid_binary_bm25_no_description", "Hybrid (No Desc)"),
             ("hybrid_binary_bm25", "Hybrid + Desc"),
@@ -69,7 +69,7 @@ def generate_html_report(test_results_file: str = None):
             ("float_float", "Float"),
             ("phased", "Phased"),
         ],
-        "colqwen_chunks": [
+        "video_colqwen_omni_mv_chunk_30s": [
             ("float_float", "Float"),
             ("binary_binary", "Binary"),
             ("hybrid_binary_bm25", "Hybrid"),

@@ -76,14 +76,14 @@ This directory contains **real** end-to-end integration tests for **cogniverse-a
 
 ### Run All E2E Tests
 
-**Critical**: Always use `JAX_PLATFORM_NAME=cpu` for DSPy tests and UV workspace:
+**Critical**: Always run through the UV workspace:
 
 ```bash
 # Run all end-to-end tests with UV workspace (will skip if services unavailable)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/e2e/ -v
+uv run pytest tests/agents/e2e/ -v
 
 # Run with specific timeout
-JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/e2e/ -v --timeout=600
+uv run python -m pytest tests/agents/e2e/ -v --timeout=600
 ```
 
 ### Run Specific Test Categories

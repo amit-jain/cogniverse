@@ -100,7 +100,7 @@ jobs:
       env:
         COVERAGE_FILE: .coverage
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/agents/unit -m unit \
+        uv run --no-sync python -m pytest tests/agents/unit -m unit \
           --cov=libs/agents/cogniverse_agents \
           --cov-report=term-missing \
           --cov-report=xml:coverage_agents.xml
@@ -247,9 +247,9 @@ jobs:
         echo "ℹ️ Running CI Fast integration tests (17/116 tests)"
         echo "⚡ These tests provide quick feedback without external dependencies"
         echo "📊 To run all integration tests locally:"
-        echo "   JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/agents/integration/ -v"
+        echo "   uv run --no-sync python -m pytest tests/agents/integration/ -v"
         echo "🔧 To run with external services:"
-        echo "   JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/agents/integration/ -m 'integration and not requires_ollama' -v"
+        echo "   uv run --no-sync python -m pytest tests/agents/integration/ -m 'integration and not requires_ollama' -v"
     
     - name: Pre-pull Vespa Docker image
       run: |
@@ -273,7 +273,7 @@ jobs:
         # pytest exit 5 = no tests collected; ``ci_fast`` markers may be
         # absent after test restructures, so treat that as success rather
         # than a red build. Real failures still fail.
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/agents/integration/ \
+        uv run --no-sync python -m pytest tests/agents/integration/ \
           -m ci_fast \
           -v \
           --tb=short \

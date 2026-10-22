@@ -85,7 +85,7 @@ jobs:
 
     - name: Tests that read a tree outside their own package
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/backends/unit/test_docv1_confined_to_vespa.py \
           tests/backends/unit/test_ranking_strategy_extractor.py \
           tests/cli/unit/test_dockerfile_network_fetches.py \

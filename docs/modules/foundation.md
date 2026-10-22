@@ -1534,7 +1534,7 @@ This keeps the Core → Foundation dependency direction one-way: `cogniverse-fou
 
 ```bash
 # Run foundation tests (confidence, caching, dspy adapters, semantic router, telemetry, config)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/foundation/ tests/telemetry/ tests/common/unit/ tests/common/integration/ -v
+uv run pytest tests/foundation/ tests/telemetry/ tests/common/unit/ tests/common/integration/ -v
 
 # Test confidence parsing, TenantLRUCache, dspy model-format, semantic router, entry-point registry
 uv run pytest tests/foundation/unit/ -v

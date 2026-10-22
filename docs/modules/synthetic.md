@@ -708,10 +708,10 @@ ordering in Vespa.
 
 ```bash
 # Run synthetic tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/routing/unit/synthetic/ tests/synthetic/ -v --tb=long
+uv run pytest tests/routing/unit/synthetic/ tests/synthetic/ -v --tb=long
 
 # Run the storage-boundary coverage
-JAX_PLATFORM_NAME=cpu uv run pytest \
+uv run pytest \
     tests/agents/integration/test_replacement_record_store_real_redis.py \
     tests/runtime/integration/test_backend_querier_real_vespa.py \
     -v --tb=long

@@ -499,7 +499,7 @@ for tenant in acme:production globex:staging; do
 done
 
 # Dev: single-schema JSON deploy from the filesystem
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
+uv run python scripts/deploy_json_schema.py \
   configs/schemas/video_colpali_smol500_mv_frame_schema.json
 ```
 

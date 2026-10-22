@@ -128,7 +128,7 @@ system_config = SystemConfig(
 config_manager.set_system_config(system_config)
 
 # 2. Deploy schemas using script (from project root)
-# JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py configs/schemas/video_colpali_smol500_mv_frame_schema.json
+# uv run python scripts/deploy_json_schema.py configs/schemas/video_colpali_smol500_mv_frame_schema.json
 
 # 3. Initialize tenant memory
 from cogniverse_core.memory.manager import Mem0MemoryManager  # Core layer
@@ -279,7 +279,7 @@ commands) — it avoids the bare-id doubling entirely.
 
 ```bash
 # Deploy ColPali schema
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
+uv run python scripts/deploy_json_schema.py \
   configs/schemas/video_colpali_smol500_mv_frame_schema.json
 
 # Verify schema deployed
@@ -570,7 +570,7 @@ operator has a single, reviewable record of what was removed.
 # Using explicit org:tenant form here (not a bare "acme_corp") so the
 # resulting schema name below has a single, predictable suffix — see
 # "Schema Naming Convention" above for what a bare tenant_id would do.
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/videos/acme_production/ \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame \

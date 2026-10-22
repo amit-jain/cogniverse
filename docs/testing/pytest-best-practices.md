@@ -96,13 +96,13 @@ def cleanup_background_threads():
 
 ```bash
 # Run all tests
-JAX_PLATFORM_NAME=cpu uv run pytest
+uv run pytest
 
 # Run specific test file with 30-minute timeout
-JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest tests/agents/test_routing.py
+timeout 1800 uv run pytest tests/agents/test_routing.py
 
 # Run with verbose output
-JAX_PLATFORM_NAME=cpu uv run pytest -xvs
+uv run pytest -xvs
 ```
 
 ### Test Markers
@@ -856,7 +856,6 @@ def debug_logging():
 ```yaml
 - name: Run Tests
   env:
-    JAX_PLATFORM_NAME: cpu
     TOKENIZERS_PARALLELISM: false
     OMP_NUM_THREADS: 1
   run: |

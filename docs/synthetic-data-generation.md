@@ -1077,7 +1077,7 @@ service = SyntheticDataService(
 
 ```bash
 # Run all synthetic data tests
-JAX_PLATFORM_NAME=cpu uv run pytest \
+uv run pytest \
     tests/routing/unit/synthetic/ tests/synthetic/ \
     tests/agents/integration/test_replacement_record_store_real_redis.py \
     tests/runtime/integration/test_backend_querier_real_vespa.py \

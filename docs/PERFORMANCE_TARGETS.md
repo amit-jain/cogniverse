@@ -304,10 +304,10 @@ Load testing suite: `tests/routing/integration/` — covers integration scenario
 
 ```bash
 # Video ingestion - use integration test with timing
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/integration/ -v -k "ingestion" --durations=0
+uv run pytest tests/ingestion/integration/ -v -k "ingestion" --durations=0
 
 # Query latency - use search tests with timing
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -v -k "search" --durations=0
+uv run pytest tests/agents/integration/ -v -k "search" --durations=0
 ```
 
 ### Continuous Performance Monitoring
