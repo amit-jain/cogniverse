@@ -233,6 +233,24 @@ def search_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(sa_module, "search_agent", None)
 
 
+def _serve_tenant_agents(monkeypatch: pytest.MonkeyPatch, agents: dict):
+    """Start the search app with a system agent and these tenants' agents.
+
+    Returns the system agent and the tenant ids built, in build order.
+    """
+    system = MagicMock(name="system tenant agent")
+    monkeypatch.setattr(sa_module, "search_agent", system)
+    monkeypatch.setattr(sa_module, "_tenant_agents", {})
+    builds = []
+
+    def build(tenant_id):
+        builds.append(tenant_id)
+        return agents[tenant_id]
+
+    monkeypatch.setattr(sa_module, "_build_tenant_agent", build)
+    return system, builds
+
+
 def test_search_health_initializing_when_no_singleton(
     search_client: TestClient,
 ) -> None:
@@ -389,7 +407,7 @@ def test_search_upload_video_happy_path_envelope(
 ) -> None:
     fake = MagicMock()
     fake._search_by_video = MagicMock(return_value=[{"id": "v1"}, {"id": "v2"}])
-    monkeypatch.setattr(sa_module, "search_agent", fake)
+    system, builds = _serve_tenant_agents(monkeypatch, {"acme:acme": fake})
     r = search_client.post(
         "/upload/video",
         params={"tenant_id": "acme", "top_k": 5},
@@ -402,6 +420,8 @@ def test_search_upload_video_happy_path_envelope(
     assert body["filename"] == "clip.mp4"
     assert body["total_results"] == 2
     assert body["results"] == [{"id": "v1"}, {"id": "v2"}]
+    assert builds == ["acme:acme"]
+    assert system._search_by_video.call_args_list == []
 
 
 def test_search_upload_image_happy_path_envelope(
@@ -409,7 +429,7 @@ def test_search_upload_image_happy_path_envelope(
 ) -> None:
     fake = MagicMock()
     fake._search_by_image = MagicMock(return_value=[{"id": "i1"}])
-    monkeypatch.setattr(sa_module, "search_agent", fake)
+    system, builds = _serve_tenant_agents(monkeypatch, {"acme:acme": fake})
     r = search_client.post(
         "/upload/image",
         params={"tenant_id": "acme"},
@@ -421,6 +441,8 @@ def test_search_upload_image_happy_path_envelope(
     assert body["search_type"] == "image"
     assert body["filename"] == "pic.png"
     assert body["total_results"] == 1
+    assert builds == ["acme:acme"]
+    assert system._search_by_image.call_args_list == []
 
 
 def test_search_enhanced_happy_path_returns_backend_result(
@@ -430,7 +452,7 @@ def test_search_enhanced_happy_path_returns_backend_result(
     fake.search_with_relationship_context = MagicMock(
         return_value={"hits": [{"id": "h1"}], "total": 1}
     )
-    monkeypatch.setattr(sa_module, "search_agent", fake)
+    system, builds = _serve_tenant_agents(monkeypatch, {"acme:acme": fake})
     r = search_client.post(
         "/search/enhanced",
         json={"query": "graphs of revenue", "tenant_id": "acme"},
@@ -442,6 +464,113 @@ def test_search_enhanced_happy_path_returns_backend_result(
     assert kwargs["tenant_id"] == "acme"
     ctx = fake.search_with_relationship_context.call_args[0][0]
     assert ctx.original_query == "graphs of revenue"
+    assert builds == ["acme:acme"]
+    assert system.search_with_relationship_context.call_args_list == []
+
+
+def test_search_process_400_when_the_task_names_no_tenant(
+    search_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    system, builds = _serve_tenant_agents(monkeypatch, {})
+    r = search_client.post("/process", json={"query": "x"})
+    assert r.status_code == 400
+    assert r.json() == {"detail": "Task must include tenant_id"}
+    assert builds == []
+    assert system.process_enhanced_task.call_args_list == []
+
+
+def test_search_requests_run_on_their_own_tenants_agent(
+    search_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each tenant's request reaches the agent built from that tenant's
+    config, never the system tenant's or another tenant's."""
+    acme, globex = MagicMock(name="acme"), MagicMock(name="globex")
+    acme.process_enhanced_task = MagicMock(return_value={"served_by": "acme"})
+    globex.process_enhanced_task = MagicMock(return_value={"served_by": "globex"})
+    system, builds = _serve_tenant_agents(
+        monkeypatch, {"acme:acme": acme, "globex:prod": globex}
+    )
+
+    answers = [
+        search_client.post("/process", json={"query": "q", "tenant_id": t}).json()
+        for t in ("acme", "globex:prod", "acme:acme")
+    ]
+
+    assert answers == [
+        {"served_by": "acme"},
+        {"served_by": "globex"},
+        {"served_by": "acme"},
+    ]
+    assert builds == ["acme:acme", "globex:prod"]
+    assert [
+        c.args[0]["tenant_id"] for c in acme.process_enhanced_task.call_args_list
+    ] == [
+        "acme",
+        "acme:acme",
+    ]
+    assert system.process_enhanced_task.call_args_list == []
+
+
+def test_concurrent_first_requests_build_one_agent_per_tenant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+    import time
+
+    acme = MagicMock(name="acme")
+    system, builds = _serve_tenant_agents(monkeypatch, {"acme:acme": acme})
+    slow_build = sa_module._build_tenant_agent
+
+    def build(tenant_id):
+        time.sleep(0.05)
+        return slow_build(tenant_id)
+
+    monkeypatch.setattr(sa_module, "_build_tenant_agent", build)
+    barrier = threading.Barrier(8)
+    served = []
+
+    def first_request():
+        barrier.wait()
+        served.append(sa_module.tenant_search_agent("acme"))
+
+    threads = [threading.Thread(target=first_request) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert builds == ["acme:acme"]
+    assert [agent is acme for agent in served] == [True] * 8
+
+
+def test_a_failed_tenant_build_fails_the_request_and_is_not_cached(
+    search_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    acme = MagicMock(name="acme")
+    acme.search_with_relationship_context = MagicMock(return_value={"hits": []})
+    system, builds = _serve_tenant_agents(monkeypatch, {"acme:acme": acme})
+    working_build = sa_module._build_tenant_agent
+    attempts = []
+
+    def build(tenant_id):
+        attempts.append(tenant_id)
+        if len(attempts) == 1:
+            raise RuntimeError("config store unreachable building acme:acme")
+        return working_build(tenant_id)
+
+    monkeypatch.setattr(sa_module, "_build_tenant_agent", build)
+    body = {"query": "revenue", "tenant_id": "acme"}
+
+    failed = search_client.post("/search/enhanced", json=body)
+    retried = search_client.post("/search/enhanced", json=body)
+
+    assert (failed.status_code, failed.json()) == (
+        500,
+        {"detail": "config store unreachable building acme:acme"},
+    )
+    assert (retried.status_code, retried.json()) == (200, {"hits": []})
+    assert attempts == ["acme:acme", "acme:acme"]
+    assert sa_module._tenant_agents == {"acme:acme": acme}
 
 
 # --- Real-lifespan / real-agent coverage (the MagicMock fixtures above never
@@ -542,10 +671,22 @@ def test_search_lifespan_builds_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     try:
         with TestClient(sa_module.app):
             assert type(sa_module.search_agent) is sa_module.SearchAgent
+            assert sa_module.search_agent.search_config.tenant_id == "__system__"
             # The encoder resolved the sidecar URL (remote mode) instead of
             # crashing on the missing-URL fail-loud or loading a local model.
             encoder = sa_module.search_agent.query_encoder
             assert encoder._remote_client.endpoint_url == "http://127.0.0.1:9"
+
+            acme = sa_module.tenant_search_agent("acme")
+            assert type(acme) is sa_module.SearchAgent
+            assert acme.search_config.tenant_id == "acme:acme"
+            assert sa_module.tenant_search_agent("acme:acme") is acme
+            assert sa_module._tenant_agents == {
+                "__system__": sa_module.search_agent,
+                "acme:acme": acme,
+            }
+        assert sa_module._tenant_agents == {}
+        assert sa_module.search_agent is None
     finally:
         # Don't leak the loopback-URL encoder to later tests via the
         # process-wide factory cache.
