@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -13,8 +14,11 @@ import pytest
 
 from cogniverse_agents.graph.graph_schema import Mention
 from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_runtime.ingestion_worker import queue, worker
 from cogniverse_runtime.ingestion_worker.worker import _build_worker_graph_factory
+from tests.utils.memory_store import InMemoryConfigStore
 
 
 @pytest.fixture(autouse=True)
@@ -162,6 +166,174 @@ def test_concurrent_worker_graph_extraction_uses_each_captured_real_http_endpoin
         assert expected_url.startswith("http://127.0.0.1:")
 
 
+def _job_config_manager(gliner_url: str | None) -> ConfigManager:
+    urls = {"colbert_pylate": "http://colbert.invalid:9000"}
+    if gliner_url is not None:
+        urls["gliner"] = gliner_url
+    manager = ConfigManager(store=InMemoryConfigStore())
+    manager.set_system_config(
+        SystemConfig(
+            telemetry_url="",
+            telemetry_collector_endpoint="",
+            inference_service_urls=urls,
+        )
+    )
+    return manager
+
+
+class _NoClaims:
+    def __init__(self, **kwargs):
+        pass
+
+    def extract(self, **kwargs):
+        return []
+
+
+@pytest.fixture
+def ingest_graph_stage(monkeypatch):
+    """The ingest path's KG stage with a recording graph store: runs the real
+    ``_extract_graph_per_segment_inner`` with the real DocExtractor and
+    CrossModalLinker for one transcript segment, and returns the extraction
+    each tenant's GraphManager was asked to upsert."""
+    from cogniverse_agents.graph.cross_modal_linker import CrossModalLinker
+    from cogniverse_agents.graph.doc_extractor import DocExtractor
+    from cogniverse_agents.graph.graph_manager import GraphManager
+    from cogniverse_agents.graph.graph_schema import ExtractionResult
+    from cogniverse_runtime.routers import ingestion
+
+    async def _no_backrefs(**kwargs):
+        return None
+
+    monkeypatch.setattr(ingestion, "_write_backrefs_to_content", _no_backrefs)
+    upserted: dict[str, list] = {}
+
+    def _manager_for(tenant_id: str):
+        mgr = MagicMock(spec=GraphManager)
+        type(mgr).backend_resolver = property(lambda self: SimpleNamespace)
+        mgr.upsert.side_effect = lambda linked: (
+            upserted.setdefault(tenant_id, []).append(linked)
+            or {
+                "nodes_upserted": len(linked.nodes),
+                "edges_upserted": len(linked.edges),
+                "failed_ids": [],
+            }
+        )
+        return mgr
+
+    graph_router = SimpleNamespace(_graph_manager_factory=_manager_for)
+
+    async def _run(tenant_id: str, config_manager, text: str) -> dict:
+        return await ingestion._extract_graph_per_segment_inner(
+            processing_results={
+                "transcript": {"segments": [{"start": 0.0, "end": 2.0, "text": text}]}
+            },
+            source_doc_id=f"video-{tenant_id}",
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+            DocExtractor=DocExtractor,
+            ClaimExtractor=_NoClaims,
+            CrossModalLinker=CrossModalLinker,
+            ExtractionResult=ExtractionResult,
+            graph_router=graph_router,
+        )
+
+    return SimpleNamespace(run=_run, upserted=upserted)
+
+
+@pytest.fixture
+def process_config_names_another_gliner(monkeypatch):
+    """Bind the process-wide ConfigManager singleton to a GLiNER service no
+    job names: anything that reads it instead of the job's config lands here."""
+    import cogniverse_foundation.config.utils as config_utils
+
+    server, url, requests = _gliner_server("process singleton", "Organization")
+    monkeypatch.setattr(
+        config_utils, "_config_manager_singleton", _job_config_manager(url)
+    )
+    yield requests
+    server.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_ingest_graph_stage_extracts_entities_with_the_jobs_gliner(
+    ingest_graph_stage, process_config_names_another_gliner
+):
+    server, url, requests = _gliner_server("Marie Curie", "Person")
+    try:
+        result = await ingest_graph_stage.run(
+            "acme:curie",
+            _job_config_manager(url),
+            "Marie Curie discovered radium.",
+        )
+    finally:
+        server.shutdown()
+
+    assert [(path, payload["text"]) for path, payload in requests] == [
+        ("/predict_entities", "Marie Curie discovered radium.")
+    ]
+    assert process_config_names_another_gliner == []
+    (linked,) = ingest_graph_stage.upserted["acme:curie"]
+    assert [(node.name, node.label) for node in linked.nodes] == [
+        ("Marie Curie", "Person")
+    ]
+    assert result["nodes_upserted"] == 1
+    assert result["backrefs_by_segment"] == {
+        "seg_0": {
+            "entity_ids": [linked.nodes[0].node_id],
+            "relation_ids": [],
+            "claim_ids": [],
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_concurrent_ingest_graph_stages_each_reach_their_own_gliner(
+    ingest_graph_stage, process_config_names_another_gliner
+):
+    first_server, first_url, first_requests = _gliner_server("Marie Curie", "Person")
+    second_server, second_url, second_requests = _gliner_server("radium", "Substance")
+    try:
+        await asyncio.gather(
+            ingest_graph_stage.run(
+                "acme:first", _job_config_manager(first_url), "Marie Curie spoke."
+            ),
+            ingest_graph_stage.run(
+                "acme:second", _job_config_manager(second_url), "Radium glowed."
+            ),
+        )
+    finally:
+        first_server.shutdown()
+        second_server.shutdown()
+
+    assert [payload["text"] for _, payload in first_requests] == ["Marie Curie spoke."]
+    assert [payload["text"] for _, payload in second_requests] == ["Radium glowed."]
+    assert process_config_names_another_gliner == []
+    assert {
+        tenant: [(node.name, node.label) for linked in batches for node in linked.nodes]
+        for tenant, batches in ingest_graph_stage.upserted.items()
+    } == {
+        "acme:first": [("Marie Curie", "Person")],
+        "acme:second": [("radium", "Substance")],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ingest_graph_stage_without_a_configured_gliner_fails_the_stage(
+    ingest_graph_stage, process_config_names_another_gliner
+):
+    with pytest.raises(RuntimeError) as exc_info:
+        await ingest_graph_stage.run(
+            "acme:nogliner", _job_config_manager(None), "Marie Curie spoke."
+        )
+
+    assert str(exc_info.value) == (
+        "knowledge_graph requires gliner in INFERENCE_SERVICE_URLS. "
+        "Available: ['colbert_pylate']"
+    )
+    assert process_config_names_another_gliner == []
+    assert ingest_graph_stage.upserted == {}
+
+
 @pytest.mark.asyncio
 async def test_worker_marks_graph_stage_retryable_when_boundary_fails(
     monkeypatch,
@@ -233,6 +405,10 @@ async def test_worker_marks_graph_stage_retryable_when_boundary_fails(
     # The keyframe files stay for the graph stage and go when it ends, even
     # when it fails.
     assert scratch == [("retain", True), ("release", None)]
+    assert str(exc_info.value) == (
+        "graph extraction failed for ingest ing-graph-fault: "
+        "ConnectionError: GLiNER sidecar reset the connection"
+    )
     assert isinstance(exc_info.value.__cause__, ConnectionError)
     assert str(exc_info.value.__cause__) == "GLiNER sidecar reset the connection"
 
@@ -457,3 +633,6 @@ async def test_a_deploy_lease_wait_in_the_graph_stage_is_not_read_as_its_deadlin
     assert isinstance(cause, TimeoutError)
     assert type(cause).__name__ == "LeaseWaitTimeout"
     assert "Vespa deployment lease still held by" in str(cause)
+    assert str(exc_info.value) == (
+        f"graph extraction failed for ingest ing-graph-lease: LeaseWaitTimeout: {cause}"
+    )

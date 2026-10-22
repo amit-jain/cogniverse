@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import os
 import platform
 import socket
@@ -1811,6 +1812,7 @@ class TestGraphStageDurability:
         redis_container,
         telemetry_manager_without_phoenix,
         monkeypatch,
+        caplog,
     ):
         from cogniverse_foundation.telemetry.config import TelemetryLevel
         from cogniverse_runtime.ingestion_worker import worker
@@ -1860,14 +1862,27 @@ class TestGraphStageDurability:
                 f"graph boundary unavailable for {job.ingest_id}"
             )
 
-        await asyncio.gather(
-            *[
-                worker._process_job(redis, job, config, processor=graph_failed)
-                for job in jobs
-            ]
-        )
+        with caplog.at_level(logging.WARNING, logger=worker.logger.name):
+            await asyncio.gather(
+                *[
+                    worker._process_job(redis, job, config, processor=graph_failed)
+                    for job in jobs
+                ]
+            )
 
         assert peak_simultaneous == 2
+        assert sorted(
+            (record.getMessage(), str(record.exc_info[1]))
+            for record in caplog.records
+            if record.name == worker.logger.name
+        ) == [
+            (
+                f"Ingest job {ingest_id} left its graph stage incomplete; it "
+                "stays pending for retry",
+                f"graph boundary unavailable for {ingest_id}",
+            )
+            for ingest_id in ("ing-alpha", "ing-beta")
+        ]
         pending = await redis.xpending(queue.QUEUE_STREAM, config.consumer_group)
         assert pending["pending"] == 2
         for job in jobs:

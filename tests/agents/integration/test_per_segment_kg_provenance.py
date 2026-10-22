@@ -324,18 +324,6 @@ def graph_manager(graph_vespa, pylate_server, gliner_url):
     )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-    # DocExtractor resolves the GLiNER endpoint via the ConfigManager
-    # singleton. A k3d-backed singleton returns the in-cluster service URL
-    # (``http://cogniverse-gliner:8080``, unresolvable from the host), GLiNER
-    # prediction fails and entity extraction degrades to a capitalized-phrase
-    # heuristic that diverges from the goldens. Point the singleton at this
-    # fixture's config_manager, which names the cluster's GLiNER service as
-    # seen from the host.
-    import cogniverse_foundation.config.utils as _cfg_utils
-
-    _prev_singleton = _cfg_utils._config_manager_singleton
-    _cfg_utils._config_manager_singleton = config_manager
-
     def resolve_backend():
         return BackendRegistry.get_instance().get_ingestion_backend(
             name="vespa",
@@ -360,7 +348,6 @@ def graph_manager(graph_vespa, pylate_server, gliner_url):
     try:
         yield manager, http_port, config_manager
     finally:
-        _cfg_utils._config_manager_singleton = _prev_singleton
         BackendRegistry._backend_instances.clear()
 
 

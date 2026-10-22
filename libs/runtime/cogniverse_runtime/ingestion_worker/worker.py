@@ -680,7 +680,8 @@ async def _run_pipeline_and_graph(
         # A nested schema deploy waited out a peer's deploy lease; that is a
         # failed attempt, not this stage's deadline.
         raise GraphStageIncomplete(
-            f"graph extraction failed for ingest {job.ingest_id}"
+            f"graph extraction failed for ingest {job.ingest_id}: "
+            f"{type(exc).__name__}: {exc}"
         ) from exc
     except TimeoutError:
         raise GraphStageIncomplete(
@@ -693,7 +694,8 @@ async def _run_pipeline_and_graph(
         ) from exc
     except Exception as exc:
         raise GraphStageIncomplete(
-            f"graph extraction failed for ingest {job.ingest_id}"
+            f"graph extraction failed for ingest {job.ingest_id}: "
+            f"{type(exc).__name__}: {exc}"
         ) from exc
 
     processing_results["graph_nodes"] = graph_counts.get("nodes_upserted", 0)
@@ -928,6 +930,12 @@ async def _run_job(
                 }
                 job_span.set_attribute("job.outcome", "success")
             except GraphStageIncomplete as exc:
+                logger.warning(
+                    "Ingest job %s left its graph stage incomplete; it stays "
+                    "pending for retry",
+                    job.ingest_id,
+                    exc_info=True,
+                )
                 retrying = True
                 terminal_event = {
                     "state": "retrying",

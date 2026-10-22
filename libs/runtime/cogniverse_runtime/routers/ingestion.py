@@ -1117,7 +1117,10 @@ async def _extract_graph_per_segment_inner(
         llm_config=_resolve_tenant_llm_config(tenant_id, config_manager),
         config_manager=config_manager,
     )
-    doc_ext = DocExtractor(claim_extractor=claim_extractor)
+    doc_ext = DocExtractor(
+        claim_extractor=claim_extractor,
+        gliner_inference_url=_lookup_gliner_endpoint(config_manager),
+    )
 
     accumulated_nodes = []
     accumulated_edges = []
@@ -1407,6 +1410,22 @@ def _lookup_artifact_manager(tenant_id: str, config_manager: ConfigManager):
         }
     )
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
+
+
+def _lookup_gliner_endpoint(config_manager: ConfigManager) -> str:
+    """Return the ``gliner`` service URL from the job's SystemConfig.
+
+    Entity extraction is part of the knowledge-graph stage, so a missing
+    endpoint fails the stage instead of loading a local model.
+    """
+    sys_cfg = config_manager.get_system_config()
+    url = (sys_cfg.inference_service_urls or {}).get("gliner")
+    if not url:
+        raise RuntimeError(
+            "knowledge_graph requires gliner in INFERENCE_SERVICE_URLS. "
+            f"Available: {sorted(sys_cfg.inference_service_urls or {})}"
+        )
+    return url
 
 
 def _lookup_face_embed_endpoint(config_manager: ConfigManager) -> Optional[str]:
