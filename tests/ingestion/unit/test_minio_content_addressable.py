@@ -190,3 +190,28 @@ def test_delete_tenant_objects_refuses_an_id_that_names_no_tenant_prefix(
         minio_client.delete_tenant_objects(tenant_id)
 
     assert str(refused.value) == f"{tenant_id!r} names no tenant prefix"
+
+
+def test_building_a_client_leaves_the_removal_timeouts_as_written(monkeypatch):
+    """boto3 rewrites the retries dict a Config is given; the shared
+    removal timeouts must reach every client unchanged."""
+    monkeypatch.setenv("MINIO_ENDPOINT", "http://minio.invalid:9000")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "key")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "secret")
+
+    first = minio_client._client(**minio_client._REMOVAL_TIMEOUTS)
+    second = minio_client._client(**minio_client._REMOVAL_TIMEOUTS)
+
+    assert minio_client._REMOVAL_TIMEOUTS == {
+        "connect_timeout": 5,
+        "read_timeout": 30,
+        "retries": {"max_attempts": 2, "mode": "standard"},
+    }
+    assert [
+        (
+            c.meta.config.connect_timeout,
+            c.meta.config.read_timeout,
+            c.meta.config.retries,
+        )
+        for c in (first, second)
+    ] == [(5, 30, {"mode": "standard", "total_max_attempts": 3})] * 2
