@@ -31,3 +31,19 @@ def test_config_import_does_not_pull_in_dspy():
         "importing cogniverse_foundation.config eagerly loaded heavy modules: "
         f"{result.stderr or result.stdout}"
     )
+
+
+def test_the_ingestion_routes_and_routed_lm_import_without_litellm():
+    """litellm holds ~130 MiB resident once imported; the ingestion worker
+    imports these modules for every job and must not carry it before an LM
+    call needs it."""
+    code = (
+        "import sys\n"
+        "import cogniverse_foundation.config.routed_lm\n"
+        "import cogniverse_runtime.routers.ingestion\n"
+        "print(sorted(m for m in sys.modules if m.split('.')[0] == 'litellm'))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.splitlines()[-1] == "[]"
