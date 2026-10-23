@@ -3841,11 +3841,15 @@ class AgentDispatcher:
             )
             or context.get("synthesis_depth")
         )
+        # The planner reads the history, but the agents it runs get only the
+        # query, so a follow-up is resolved before it reaches them.
+        conversation_history = context.get("conversation_history")
+        resolved_query = await self._resolve_history_query(query, conversation_history)
         input_data = OrchestratorInput(
-            query=query,
+            query=resolved_query,
             tenant_id=tenant_id,
             session_id=context.get("session_id"),
-            conversation_history=context.get("conversation_history"),
+            conversation_history=conversation_history,
             modality=gateway_ctx.get("modality"),
             detected_modalities=context.get("detected_modalities"),
             generation_type=gateway_ctx.get("generation_type"),
@@ -3880,10 +3884,13 @@ class AgentDispatcher:
                     "status": orchestration_status(final_output),
                     "agent": "orchestrator_agent",
                     "message": final_output.get("message")
-                    or f"Orchestrated '{query[:50]}' via A2A pipeline",
+                    or f"Orchestrated '{resolved_query[:50]}' via A2A pipeline",
                     "orchestration_result": orchestration_result,
                     "gateway_context": gateway_context,
                 }
+                if conversation_history:
+                    envelope["original_query"] = query
+                    envelope["rewritten_query"] = resolved_query
                 if run is not None:
                     run.result = {"status": envelope["status"]}
                     run.summary = envelope["message"]

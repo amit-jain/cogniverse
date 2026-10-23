@@ -25,7 +25,7 @@ from cogniverse_foundation.config.semantic_router import (
     pro_tier_endpoint,
 )
 from cogniverse_foundation.config.token_budget import (
-    ContextWindowUnavailableError,
+    ContextWindowEndpointUnreachableError,
     TokenBudget,
     TokenCountUnavailableError,
     clear_context_window_memo,
@@ -293,11 +293,11 @@ class TestRoutedPromptAllowance:
         endpoint = LLMEndpointConfig(model=STUDENT, api_base=dead, max_tokens=1000)
         lm = _routed_lm("http://127.0.0.1:10/v1", endpoint, "orchestrator_agent")
 
-        with pytest.raises(ContextWindowUnavailableError) as raised:
+        with pytest.raises(ContextWindowEndpointUnreachableError) as raised:
             lm.prompt_allowance()
         assert str(raised.value) == (
-            f"{STUDENT} at {dead} publishes no context window and declares "
-            "none, so no request budget can be derived"
+            f"{STUDENT} at {dead} is unreachable and declares no context "
+            "window, so no request budget can be derived"
         )
 
 

@@ -26,7 +26,12 @@ from cogniverse_runtime.agent_dispatcher import (
     AnswerGroundingUnavailable,
 )
 from tests.e2e.cluster import TENANT_DEPLOY_TIMEOUT_S
-from tests.e2e.conftest import SAMPLE_DOCUMENT_TITLES, _ingest_sample_documents
+from tests.e2e.conftest import (
+    SAMPLE_DOCUMENT_TITLES,
+    SAMPLE_VIDEO_CONTENT_ID,
+    SAMPLE_VIDEO_PATH,
+    _ingest_sample_documents,
+)
 from tests.e2e.tenants import register_tenant_and_wait, unique_id
 from tests.e2e.test_api_e2e import DOCUMENT_PROFILE, _deploy_profile_for_tenant
 
@@ -138,6 +143,67 @@ class TestRESTMultiTurn:
                 "Orchestrator should produce a plan"
             )
         # Conversation history was passed — the gateway/orchestrator handles rewrite internally
+
+
+@pytest.fixture(scope="module")
+def web_corpus() -> str:
+    from tests.e2e.web_client import ensure_web_tenant_corpus
+
+    return ensure_web_tenant_corpus()
+
+
+@pytest.mark.e2e
+class TestOrchestratedFollowUp:
+    """A follow-up the orchestrator answers is resolved against the turn
+    before it, so the agents it runs know what "the first one" is."""
+
+    def test_a_follow_up_is_answered_about_the_video_the_first_turn_found(
+        self, web_corpus
+    ):
+        from tests.e2e.web_client import WEB_TENANT
+
+        follow_up = "Tell me more about the first one"
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+            first = client.post(
+                "/agents/search_agent/process",
+                json={
+                    "agent_name": "search_agent",
+                    "query": "search for sports clips",
+                    "context": {"tenant_id": WEB_TENANT},
+                    "top_k": 1,
+                },
+            )
+            assert first.status_code == 200, first.text
+            found = first.json()
+            assert [r["metadata"]["video_id"] for r in found["results"]] == [
+                SAMPLE_VIDEO_CONTENT_ID
+            ], found
+            assert SAMPLE_VIDEO_PATH.name in found["answer"], found["answer"]
+
+            second = client.post(
+                "/agents/orchestrator_agent/process",
+                json={
+                    "agent_name": "orchestrator_agent",
+                    "query": follow_up,
+                    "context": {"tenant_id": WEB_TENANT},
+                    "conversation_history": [
+                        {"role": "user", "content": "search for sports clips"},
+                        {"role": "assistant", "content": found["answer"]},
+                    ],
+                },
+            )
+
+        assert second.status_code == 200, second.text
+        answered = second.json()
+        assert answered["status"] == "success", answered
+        assert SAMPLE_VIDEO_PATH.stem in answered["orchestration_result"]["query"], (
+            answered["orchestration_result"]["query"]
+        )
+        assert answered["original_query"] == follow_up
+        assert SAMPLE_VIDEO_PATH.stem in answered["rewritten_query"], answered[
+            "rewritten_query"
+        ]
+        assert answered["orchestration_result"]["query"] == answered["rewritten_query"]
 
 
 @pytest.mark.e2e

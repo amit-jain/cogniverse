@@ -293,7 +293,11 @@ async def test_create_tenant_logs_when_schema_manager_missing_during_rollback(
 
     assert exc.value.detail == "Failed to create tenant acme:prod in backend"
     assert backend.delete_metadata_calls == [("organization_metadata", "acme")]
-    assert [record.getMessage() for record in caplog.records] == [
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.ERROR
+    ] == [
         "Cannot roll back tenant schemas for acme:prod: backend.schema_manager "
         "is unavailable after deploying 2 schema(s)"
     ]

@@ -356,10 +356,23 @@ class TestVespaConfigStoreListAllConfigs:
                 if method in ("POST", "PUT")
             ]
 
-            # The write's first read is the version counter document.
+            counter_reads = [
+                path
+                for method, path, _ in proxy.requests
+                if method == "GET"
+                and path.startswith("/document/v1/config_version_counter/")
+            ]
+
+            # The write's first read is the version counter document; an
+            # overloaded backend's 503 is retried to the read's attempt limit.
             assert str(raised.value) == (
                 "Failed to read the version counter of config "
-                f"{tenant}:backend:{service}:{key}: VespaError: document reads refused"
+                f"{tenant}:backend:{service}:{key} after "
+                f"{config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS} attempts: "
+                "HTTP 503: {'message': 'document reads refused'}"
+            )
+            assert len(counter_reads) == (
+                config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS
             )
             assert fed == []
             # v1 untouched, latest unchanged, no spurious/rewritten row.

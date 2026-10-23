@@ -40,6 +40,13 @@ TokenCounter = Callable[[Messages], int]
 CONTEXT_WINDOW_TIMEOUT_SECONDS = 5.0
 TOKENIZE_TIMEOUT_SECONDS = 30.0
 
+# How long a counter keeps an idle connection for its next count. httpx's 5 s
+# default drops it between the counts of ordinary traffic, and every count
+# then pays a TLS handshake. From the runtime pod to the Modal student, a count
+# took 0.49 s on a kept connection and 0.98-1.00 s after 10 s idle; the student
+# kept an idle connection for 120 s and closes one at 300 s.
+TOKENIZE_KEEPALIVE_SECONDS = 240.0
+
 # A window is a property of a deployment, so it is read once per
 # (endpoint, model) and held for the process. Ingestion builds a fresh LM per
 # segment; without this every segment would pay a listing round-trip.
@@ -66,6 +73,10 @@ def clear_context_window_memo() -> None:
 
 class ContextWindowUnavailableError(RuntimeError):
     """The endpoint does not report a context window for the model it serves."""
+
+
+class ContextWindowEndpointUnreachableError(ContextWindowUnavailableError):
+    """The endpoint did not answer the request for its context window."""
 
 
 class TokenCountUnavailableError(RuntimeError):
@@ -254,7 +265,15 @@ def served_message_counter(
     unavailable = (
         f"so the request cannot be counted with the tokenizer {model} is served with"
     )
-    http = httpx.Client(headers=dict(inference_headers(root)), timeout=timeout_seconds)
+    http = httpx.Client(
+        headers=dict(inference_headers(root)),
+        timeout=timeout_seconds,
+        limits=httpx.Limits(
+            max_connections=100,
+            max_keepalive_connections=20,
+            keepalive_expiry=TOKENIZE_KEEPALIVE_SECONDS,
+        ),
+    )
 
     def ask(messages: Messages) -> httpx.Response:
         attempt = 0
@@ -579,9 +598,10 @@ def fetch_context_window(
 ) -> int:
     """The context window the endpoint at ``api_base`` serves.
 
-    Raises ``ContextWindowUnavailableError`` when the endpoint is unreachable
-    or answers without ``max_model_len``: a budget guessed for an endpoint
-    that never declared its window is the defect this module exists to close.
+    Raises ``ContextWindowEndpointUnreachableError`` when the endpoint does
+    not answer and ``ContextWindowUnavailableError`` when it answers without
+    ``max_model_len``: a budget guessed for an endpoint that never declared its
+    window is the defect this module exists to close.
     """
 
     url = f"{api_base.rstrip('/')}/models"
@@ -591,7 +611,7 @@ def fetch_context_window(
     try:
         response = http.get(url, headers=headers, timeout=timeout_seconds)
     except httpx.HTTPError as exc:
-        raise ContextWindowUnavailableError(
+        raise ContextWindowEndpointUnreachableError(
             f"{url} is unreachable, so the served context window is unknown and "
             f"no request budget can be derived"
         ) from exc
@@ -672,6 +692,11 @@ def _read_context_window(
         served = fetch_context_window(api_base, timeout_seconds=timeout_seconds)
     except ContextWindowUnavailableError as exc:
         if declared is None:
+            if isinstance(exc, ContextWindowEndpointUnreachableError):
+                raise ContextWindowEndpointUnreachableError(
+                    f"{model} at {api_base} is unreachable and declares no "
+                    f"context window, so no request budget can be derived"
+                ) from exc
             raise ContextWindowUnavailableError(
                 f"{model} at {api_base} publishes no context window and declares "
                 f"none, so no request budget can be derived"

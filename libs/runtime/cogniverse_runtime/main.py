@@ -39,7 +39,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Callable, Mapping, TypeVar
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Mapping, TypeVar
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,6 +101,9 @@ from cogniverse_runtime.routers import (
 )
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
 from cogniverse_synthetic.api import router as synthetic_router
+
+if TYPE_CHECKING:
+    from cogniverse_foundation.config.unified_config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -1095,6 +1098,44 @@ def preload_lm_client_modules() -> None:
     importlib.import_module("openai.resources")
 
 
+def preload_served_context_windows(
+    llm_config: "LLMConfig", inference_service_urls: Mapping[str, str]
+) -> None:
+    """Read the context window of each endpoint the chat LM is served from.
+
+    A window is read once per process, by the first call that budgets a prompt
+    against it, and that call pays the round trip inside its own deadline: a
+    worker's first query rewrite would spend about a second of its budget on
+    it. An endpoint that cannot answer here is left to that first call, which
+    reads it again and raises if it still cannot.
+    """
+    from cogniverse_foundation.config.semantic_router import pro_tier_endpoint
+    from cogniverse_foundation.config.token_budget import resolve_context_window
+
+    student = llm_config.primary
+    teacher = pro_tier_endpoint(llm_config, inference_service_urls, student)
+    endpoints = {}
+    for endpoint in (student, teacher):
+        if endpoint is not None and endpoint.api_base:
+            endpoints.setdefault((endpoint.api_base, endpoint.model), endpoint)
+    for endpoint in endpoints.values():
+        try:
+            resolve_context_window(
+                endpoint.api_base,
+                declared=endpoint.context_window,
+                model=endpoint.model,
+                timeout_seconds=endpoint.request_timeout,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Context window of %s at %s was not read at startup; the first "
+                "call that needs it reads it: %s",
+                endpoint.model,
+                endpoint.api_base,
+                exc,
+            )
+
+
 def freeze_startup_heap() -> None:
     """Exclude the objects startup created from every later collection.
 
@@ -1632,6 +1673,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         logger.info("DSPy ambient LM already configured for this process")
     await asyncio.to_thread(preload_lm_client_modules)
+    # Not awaited: a scaled-to-zero endpoint takes minutes to list its window
+    # and the worker serves meanwhile. A request needing a window before the
+    # read finishes waits on that same read.
+    app.state.context_window_preload = asyncio.get_running_loop().create_task(
+        asyncio.to_thread(
+            preload_served_context_windows,
+            llm_config,
+            system_config.inference_service_urls,
+        )
+    )
     await asyncio.to_thread(get_telemetry_manager().preload_span_export)
     synthetic_runtime_config = parse_synthetic_runtime_config(
         config,
