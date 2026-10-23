@@ -75,7 +75,9 @@ jobs:
         python-version: '3.12'
     
     - name: Install system dependencies
+      timeout-minutes: 12
       run: |
+        printf 'Acquire::Retries \"5\";\nAcquire::http::Timeout \"20\";\nAcquire::https::Timeout \"20\";\n' | sudo tee /etc/apt/apt.conf.d/80-ci-timeouts
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
     
@@ -170,7 +172,9 @@ jobs:
         python-version: '3.12'
     
     - name: Install system dependencies
+      timeout-minutes: 12
       run: |
+        printf 'Acquire::Retries \"5\";\nAcquire::http::Timeout \"20\";\nAcquire::https::Timeout \"20\";\n' | sudo tee /etc/apt/apt.conf.d/80-ci-timeouts
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
     
@@ -218,7 +222,9 @@ jobs:
         python-version: '3.12'
     
     - name: Install system dependencies
+      timeout-minutes: 12
       run: |
+        printf 'Acquire::Retries \"5\";\nAcquire::http::Timeout \"20\";\nAcquire::https::Timeout \"20\";\n' | sudo tee /etc/apt/apt.conf.d/80-ci-timeouts
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
     
