@@ -307,7 +307,10 @@ spec:
           }
           printf 'PGHOST=%s\nPGPORT=%s\nPGDATABASE=%s\nPGUSER=%s\n' \
             "$PGHOST" "$PGPORT" "$PGDATABASE" "$PGUSER" > "$WORK/restore.env"
-          tar -cf "$WORK/working-assets.tar" -C /source .
+          # Phoenix serves from Postgres in this mode and never reads a SQLite
+          # store a former deployment left in its working directory.
+          tar -cf "$WORK/working-assets.tar" --exclude=./phoenix.db \
+            --exclude=./phoenix.db-wal --exclude=./phoenix.db-shm -C /source .
           tar -cf "$WORK/archive.tar" -C "$WORK" \
             database.dump database.list restore.env working-assets.tar
           # The upload step globs this name, so it appears only once every
