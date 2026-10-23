@@ -30,11 +30,11 @@ pytestmark = pytest.mark.skipif(
 _ALL_SERVICES_ON = (
     "inference.clap_embed.enabled=true",
     "inference.face_embed.enabled=true",
-    "inference.video_embed.enabled=true",
     "inference.code_colbert_pylate.enabled=true",
     "inference.vllm_llm_student.enabled=true",
     "inference.vllm_llm_teacher.enabled=true",
     "inference.vllm_colpali.enabled=true",
+    "inference.vllm_omni_embed.enabled=true",
 )
 
 # Every way the chart backs the model cache, on every device overlay.
@@ -95,11 +95,11 @@ def test_every_inference_pod_starts_without_network(scenario: str) -> None:
         "denseon",
         "face_embed",
         "gliner",
-        "video_embed",
         "vllm_asr",
         "vllm_colpali",
         "vllm_llm_student",
         "vllm_llm_teacher",
+        "vllm_omni_embed",
     }
     violations = {
         svc: problems
@@ -130,7 +130,7 @@ def test_hub_weights_are_warmed_at_the_revision_the_server_loads() -> None:
         elif "MODEL_NAME" in env:
             loaded = (env["MODEL_NAME"], env["MODEL_REVISION"])
         else:
-            prefix = {"clap_embed": "CLAP_EMBED", "video_embed": "VIDEO_EMBED"}[svc]
+            prefix = {"clap_embed": "CLAP_EMBED"}[svc]
             loaded = (env[f"{prefix}_MODEL"], env[f"{prefix}_MODEL_REVISION"])
         assert (warm_env["MODEL"], warm_env["REVISION"]) == loaded, svc
 

@@ -103,17 +103,17 @@ class TestDSPyAgentIntegration:
 
 ### Running Unit Tests
 
-**All agent tests require UV workspace and JAX_PLATFORM_NAME=cpu:**
+**All agent tests require the UV workspace:**
 
 ```bash
 # Run all unit tests with UV workspace
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m unit -v
+uv run pytest tests/agents/unit/ -m unit -v
 
 # Run specific test file
-JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit/test_gateway_agent.py -v
+uv run python -m pytest tests/agents/unit/test_gateway_agent.py -v
 
 # Run with coverage (UV workspace packages)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -v --cov=libs/agents/cogniverse_agents --cov-report=term-missing --cov-report=html
+uv run pytest tests/agents/unit/ -v --cov=libs/agents/cogniverse_agents --cov-report=term-missing --cov-report=html
 ```
 
 ## Integration Tests (`tests/agents/integration/`)
@@ -164,13 +164,13 @@ class TestDSPyOptimizerIntegration:
 ### Running Integration Tests
 ```bash
 # Run all integration tests
-JAX_PLATFORM_NAME=cpu timeout 300 uv run python -m pytest tests/agents/integration/ -v
+timeout 300 uv run python -m pytest tests/agents/integration/ -v
 
 # Run specific integration test
-JAX_PLATFORM_NAME=cpu timeout 120 uv run python -m pytest tests/agents/integration/test_gateway_agent_integration.py -v
+timeout 120 uv run python -m pytest tests/agents/integration/test_gateway_agent_integration.py -v
 
 # Run with markers
-JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ -m integration -v
+uv run python -m pytest tests/agents/integration/ -m integration -v
 ```
 
 ## End-to-End Tests (`tests/agents/e2e/`)
@@ -274,7 +274,7 @@ class TestRealPerformanceAndReliability:
 #### Prerequisites Check
 ```bash
 # Check service availability
-JAX_PLATFORM_NAME=cpu uv run python -c "
+uv run python -c "
 from tests.agents.e2e.test_config import is_service_available
 print('LLM:', is_service_available('llm'))
 print('Vespa:', is_service_available('vespa'))
@@ -285,20 +285,20 @@ print('Phoenix:', is_service_available('phoenix'))
 #### Basic E2E Tests
 ```bash
 # Run all E2E tests (skips unavailable services)
-JAX_PLATFORM_NAME=cpu timeout 600 uv run python -m pytest tests/agents/e2e/ -v
+timeout 600 uv run python -m pytest tests/agents/e2e/ -v
 
 # Run only LLM availability tests
-JAX_PLATFORM_NAME=cpu timeout 300 uv run python -m pytest tests/agents/e2e/test_real_multi_agent_integration.py::TestLLMAvailability -v
+timeout 300 uv run python -m pytest tests/agents/e2e/test_real_multi_agent_integration.py::TestLLMAvailability -v
 
 # Run with specific timeout
-JAX_PLATFORM_NAME=cpu timeout 900 uv run python -m pytest tests/agents/e2e/ -v --tb=short
+timeout 900 uv run python -m pytest tests/agents/e2e/ -v --tb=short
 ```
 
 #### Full System Tests (requires all services)
 ```bash
 # Enable all services and run complete tests
 ENABLE_VESPA_TESTS=true ENABLE_PHOENIX_TESTS=true \
-JAX_PLATFORM_NAME=cpu timeout 1800 uv run python -m pytest tests/agents/e2e/ -v
+timeout 1800 uv run python -m pytest tests/agents/e2e/ -v
 ```
 
 ## Test Markers and Configuration
@@ -335,7 +335,7 @@ The tests are integrated into CI with different strategies:
 ```yaml
 - name: Run Unit Tests
   run: |
-    JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit/ \
+    uv run python -m pytest tests/agents/unit/ \
       --cov=src/app/agents --cov-report=xml -v
 ```
 
@@ -343,7 +343,7 @@ The tests are integrated into CI with different strategies:
 ```yaml
 - name: Run Integration Tests
   run: |
-    JAX_PLATFORM_NAME=cpu timeout 600 uv run python -m pytest tests/agents/integration/ -v
+    timeout 600 uv run python -m pytest tests/agents/integration/ -v
 ```
 
 #### E2E Tests (Optional/Manual)
@@ -351,7 +351,7 @@ The tests are integrated into CI with different strategies:
 - name: Run E2E Tests
   if: env.RUN_E2E_TESTS == 'true'
   run: |
-    JAX_PLATFORM_NAME=cpu timeout 1800 uv run python -m pytest tests/agents/e2e/ -v
+    timeout 1800 uv run python -m pytest tests/agents/e2e/ -v
 ```
 
 ## Performance Benchmarks
@@ -416,7 +416,7 @@ logging.basicConfig(level=logging.DEBUG)
 "
 
 # Run single test with full output
-JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/e2e/test_real_multi_agent_integration.py::TestLLMAvailability::test_llm_model_available -v -s --tb=long
+uv run python -m pytest tests/agents/e2e/test_real_multi_agent_integration.py::TestLLMAvailability::test_llm_model_available -v -s --tb=long
 ```
 
 ## Best Practices

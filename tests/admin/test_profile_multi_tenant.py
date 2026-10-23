@@ -128,7 +128,7 @@ class TestProfileMultiTenantIsolation:
             "schema_name": "video_test",
             "embedding_model": "model_b",
             "embedding_type": "single_vector",
-            "model_loader": "xclip",
+            "model_loader": "embeddinggemma2",
             "description": "Tenant B's profile",
         }
 

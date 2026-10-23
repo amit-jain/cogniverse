@@ -16,7 +16,7 @@ Cogniverse runs five classes of inference services:
 | Class | Purpose |
 |---|---|
 | **LLMs** (chat / generation) | Agent reasoning, query enhancement, distillation. Two tiers: a small **student** model used at runtime, and a larger **teacher** model used only during DSPy optimization (`BootstrapFewShot`'s `teacher_settings`). |
-| **Visual / multimodal embeddings** | ColPali/ColQwen (one pod, one model, shared by both retrieval families) for video/image patch embeddings, X-CLIP for chunk embeddings. |
+| **Visual / multimodal embeddings** | ColPali/ColQwen (one pod, one model, shared by both retrieval families) for video/image patch embeddings, EmbeddingGemma 2 for single-vector video-chunk and audio embeddings. |
 | **Text embeddings** | ColBERT-style late-interaction (LateOn, served by the PyLate sidecar) for documents/code, DenseOn (ModernBERT, served by vLLM) for query/single-vector text. |
 | **Audio (ASR + acoustic embeddings)** | Whisper transcription of audio files; CLAP for a joint audio/text acoustic embedding space. |
 | **Vision/NLP sidecars** | GLiNER zero-shot entity extraction (gateway routing + entity extraction agents), InsightFace face embeddings (knowledge-graph face clustering). |
@@ -27,6 +27,18 @@ path). The chart renders one Deployment + Service per enabled service.
 
 ---
 
+## vLLM build
+
+Every vLLM service runs the same vLLM build: the official `vllm/vllm-openai`,
+`vllm/vllm-openai-cpu` and `vllm/vllm-openai-rocm` images tagged
+`nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (vLLM
+`0.32.0rc1.dev190+g3f1bcfd82`, transformers 5.19.0; the CPU and CUDA tags are
+multi-arch), and `deploy/vllm_audio` builds on the same tags. `VLLM_IMAGE_TAG`
+in `libs/foundation/cogniverse_foundation/inference_specs.py` is the tag the
+Modal apps use; the chart values files and the audio Dockerfile pin the same
+literal, and `tests/charts/test_inference_chart.py` fails when any of them
+diverge.
+
 ## LLM serving
 
 ### Student (vLLM chat / generation LLM)
@@ -35,11 +47,11 @@ path). The chart renders one Deployment + Service per enabled service.
 |---|---|
 | Chart key | `inference.vllm_llm_student` |
 | Model | `google/gemma-4-e4b-it`, pinned revision `ee0ef602…` passed to `vllm serve --revision` |
-| Image (CPU / CUDA) | `vllm/vllm-openai-cpu:v0.23.0` / `vllm/vllm-openai:v0.23.0` (official) |
-| Image (ROCm) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
+| Image (CPU / CUDA) | `vllm/vllm-openai-cpu:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` / `vllm/vllm-openai:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official) |
+| Image (ROCm) | `vllm/vllm-openai-rocm:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official) |
 | NodePort | 29010 |
 | Default state | **`enabled: false`** in base `values.yaml` — turned on by the ROCm overlay (`values.rocm.yaml` sets `enabled: true`, `llm.engine: vllm`, `llm.builtin.enabled: false`) |
-| ROCm GPU memory | `--gpu-memory-utilization 0.30` (≈19 GiB on 62 GiB unified memory) |
+| ROCm GPU memory | `--gpu-memory-utilization 0.22` (≈21 GiB of the 96 GiB unified pool) |
 
 The **base default LLM engine is Ollama**, not the vLLM student (see
 [Optional: Ollama instead of vLLM](#optional-ollama-instead-of-vllm) below —
@@ -59,8 +71,8 @@ is determined by `api_base`, not the prefix.
 |---|---|
 | Chart key | `inference.vllm_llm_teacher` |
 | Model | `cyankiwi/Qwen3.6-27B-AWQ-INT4` (AWQ-INT4, ~14 GiB) |
-| Image (CPU) | `vllm/vllm-openai-cpu:v0.23.0` (official) |
-| Image (ROCm) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
+| Image (CPU) | `vllm/vllm-openai-cpu:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official) |
+| Image (ROCm) | `vllm/vllm-openai-rocm:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official) |
 | NodePort | 29011 |
 | Default state | **`enabled: false`, `replicaCount: 0`** — scale-to-zero |
 | `--max-model-len` | 262144 |
@@ -219,10 +231,10 @@ chart key.
 |---|---|
 | Chart key | `inference.vllm_colpali` |
 | Model | `TomoroAI/tomoro-colqwen3-embed-4b`, pinned revision `bf790bd8…` passed to `vllm serve --revision` |
-| Image (base `values.yaml`, no device overlay) | `vllm/vllm-openai-cpu:v0.23.0` (official), `engine: vllm_token_embed`, `enabled: false` |
+| Image (base `values.yaml`, no device overlay) | `vllm/vllm-openai-cpu:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official), `engine: vllm_token_embed`, `enabled: false` |
 | Image (k3d local dev, `values.k3s.yaml`) | No override: inherits the disabled official CPU vLLM definition from `values.yaml` |
-| Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:v0.23.0` (official), `engine: vllm_token_embed` |
-| Image (CUDA) | `vllm/vllm-openai:v0.23.0` (official), `engine: vllm_token_embed`, `replicaCount: 3` |
+| Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official), `engine: vllm_token_embed` |
+| Image (CUDA) | `vllm/vllm-openai:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` (official), `engine: vllm_token_embed`, `replicaCount: 3` |
 | NodePort | 29001 |
 | Default state | Disabled in base and k3d-only composition; the ROCm and CUDA overlays enable it |
 | Batching (ROCm) | `--max-num-seqs 16`: up to sixteen concurrent queries share one forward pass. `--max-num-batched-tokens 1536` and `--max-model-len 1536` keep the vision encoder at one 1024-patch image per step |
@@ -233,27 +245,26 @@ a CPU-only `cogniverse up` does not allocate a ColPali/ColQwen pod. On ROCm
 official vLLM pooling runner serves the `vllm_token_embed` multi-vector
 contract.
 
-### X-CLIP (chunk-level video embeddings, `video_embed` sidecar)
+### EmbeddingGemma 2 (text, video and audio in one space, `vllm_omni_embed`)
 
 | Field | Value |
 |---|---|
-| Chart key | `inference.video_embed` |
-| Model | `microsoft/xclip-large-patch14` (~1.7 GiB, 768-dim) |
-| Revision | `a9dd1429a16cf305df2aaea232d5e8dceba1c675` |
-| Image | `cogniverse/video-embed` (CUSTOM, `deploy/video_embed/Dockerfile`, module `cogniverse_cli.modal_inference.servers.video_embed`) |
-| Engine | `fastapi` (CPU only) |
-| Endpoints | `POST /embed/video`, `POST /embed/text` (one joint space) |
-| Health | `GET /health` loads the pinned model, then returns `{"status": "ready", "model": "microsoft/xclip-large-patch14", "model_revision": "a9dd1429a16cf305df2aaea232d5e8dceba1c675"}`; a load failure returns HTTP 503 |
-| Kubernetes probes | HTTP `GET /health` readiness on port 8000; TCP liveness on port 8000 |
-| NodePort | 29012 |
-| Default state | disabled in `values.yaml`; enabled in the local k3d overlay (`values.k3s.yaml`) |
+| Chart key | `inference.vllm_omni_embed` |
+| Model | `google/embeddinggemma-2` (740M, 768-dim, pinned revision `914f7f89…` passed to `vllm serve --revision`) |
+| Image | `cogniverse/vllm-audio-{cpu,cuda,rocm}`, the image `vllm_asr` runs: vLLM serves `input_audio` parts only with the audio packages installed |
+| Engine | `vllm_embed`, plus `--runner pooling --max-model-len 8192 --limit-mm-per-prompt '{"image":1,"video":1,"audio":1}' --media-io-kwargs '{"video":{"fps":1}}'` |
+| Endpoint | `POST /v1/embeddings` with one chat message whose content is a text part (queries) or `video_url` and `input_audio` parts (documents), and `add_special_tokens: true` |
+| NodePort | 29003 |
+| ROCm GPU memory | `--gpu-memory-utilization 0.08`; TunableOp replays tuned shapes without tuning new ones |
+| Default state | disabled in `values.yaml`; enabled by `values.rocm.yaml` and `values.cuda.yaml`. Served only by the cluster: `InferenceServiceSpec.modal_deployable` is false and the Modal lifecycle refuses it |
 
-Used by the `video_xclip_sv_chunk_6s` profile, which embeds 6-second clips
-and text queries into the same space so a text query retrieves clips
-directly. The runtime image ships no torch, so text-to-video search works
-only through this sidecar (`inference_service_urls["video_embed"]`).
-`cogniverse up` builds and imports the image from the repository root like
-the other custom sidecars (see the image table below).
+Video is sampled at one frame per second. Queries carry the prompt
+`task: search result | query: `; video and audio documents carry no prompt,
+since the model takes task prefixes on text only. Without `add_special_tokens` vLLM's chat path drops BOS and EOS and the
+vectors drift from the model's own encoding. Used by the
+`video_embeddinggemma2_sv_chunk_6s` profile (each 6 s chunk's frames and audio
+in one input) and the `audio_embeddinggemma2` profile (one vector per audio
+window of at most 10 s).
 
 ---
 
@@ -317,7 +328,7 @@ reshape), matching DenseOn's dense-retrieval semantics.
 |---|---|
 | Chart key | `inference.vllm_asr` |
 | Model | `openai/whisper-large-v3-turbo` on ROCm/CUDA, pinned revision `41f01f3f…` passed to `vllm serve --revision`; `openai/whisper-tiny` unpinned in the CPU overlay |
-| Image | `cogniverse/vllm-audio-{cpu,cuda,rocm}` (CUSTOM, `deploy/vllm_audio/Dockerfile`: the device's `vllm/vllm-openai*:v0.23.0` image plus `soundfile` and `librosa`) |
+| Image | `cogniverse/vllm-audio-{cpu,cuda,rocm}` (CUSTOM, `deploy/vllm_audio/Dockerfile`: the device's `vllm/vllm-openai*:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2` image plus `soundfile` and `librosa`) |
 | Engine | `vllm_transcription` |
 | NodePort | 29005 |
 | Default state | enabled |
@@ -349,10 +360,16 @@ most nine requests per phrase checked).
 | NodePort | 29008 |
 | Default state | disabled |
 
+A clip longer than CLAP's 10 s input is embedded as consecutive windows of at
+most 10 s, and `/embed/audio` returns the normalized mean of the normalized
+window vectors, so one clip always maps to one vector.
+
 When the sidecar is deployed, `AudioEmbeddingGenerator` routes acoustic
 embeddings to it via `inference_service_urls["clap_embed"]` (ingestion
-side injected by the embedding-generator factory; query side via
-`AudioAnalysisDeps.clap_endpoint` filled by the dispatcher). Without it,
+side injected by the embedding-generator factory as the profile's
+`acoustic_endpoint_url`; query side via `AudioAnalysisDeps.acoustic_endpoint`,
+which the dispatcher fills from the tenant's audio profile's
+`inference_services.acoustic_embedding`). Without it,
 CLAP loads in-process — which requires torch and therefore only works in
 dev environments, never in the deployed runtime image; in that case the
 acoustic vector is skipped (best-effort) and audio chunks carry only
@@ -480,10 +497,10 @@ keyframes`.
 | `vllm_colpali` (base and CPU/k3d dev composition; disabled) | `vllm/vllm-openai-cpu` | No |
 | `vllm_colpali` (ROCm 7.12+ / CUDA) | `vllm/vllm-openai-rocm` / `vllm/vllm-openai` | No |
 | `vllm_asr` | `cogniverse/vllm-audio-{cpu,cuda,rocm}` | **Yes** (`deploy/vllm_audio/Dockerfile`, one build per device) |
+| `vllm_omni_embed` | `cogniverse/vllm-audio-{cpu,cuda,rocm}` (shared with `vllm_asr`, built once) | **Yes** (`deploy/vllm_audio/Dockerfile`) |
 | `colbert_pylate` | `cogniverse/pylate` | **Yes** (`deploy/pylate/Dockerfile`) |
 | `code_colbert_pylate` | `cogniverse/pylate` (shared image, built once) | **Yes** (`deploy/pylate/Dockerfile`) |
 | `denseon` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
-| `video_embed` | `cogniverse/video-embed` | **Yes** (`deploy/video_embed/Dockerfile`) |
 | `clap_embed` | `cogniverse/clap-embed` | **Yes** (`deploy/clap_embed/`) |
 | `gliner` | `cogniverse/gliner` | **Yes** (`deploy/gliner/Dockerfile`) |
 | `face_embed` | `cogniverse/face-embed` | **Yes** (`deploy/face_embed/`) |
@@ -574,12 +591,17 @@ Service has that service enabled. `values.cuda.yaml` deploys no student, so a
 CUDA composition sets `runtime.primaryLLM.apiBase` or composes
 `values.modal-llm.yaml`.
 
+`config.defaultProfiles.audio` (`audio_clap_semantic` in the base values)
+names the profile `backend.default_profiles.audio` selects when an audio search
+names none; with two shipped audio profiles a type-only search has no other
+way to pick one.
+
 ---
 
 ## Device selection (`device:` per service)
 
 Each vLLM-backed `inference.<svc>` block has a `device:` key (the FastAPI
-sidecars that are always CPU-only — `clap_embed`, `face_embed`, `video_embed` — omit it
+sidecars that are always CPU-only — `clap_embed`, `face_embed` — omit it
 entirely; `gliner` sets `device: cpu` for documentation even though nothing
 reads it for GPU scheduling). Values:
 
@@ -644,6 +666,10 @@ The results file lives in the persistent `model-cache` volume, so tuning
 survives pod restarts and rollouts — a shape is benchmarked once over the
 file's lifetime. The first request hitting a not-yet-tuned shape pays a
 one-time tuning latency; the persisted file means later pods skip it.
+PyTorch loads a results file only when its validator lines (`PT_VERSION`,
+HIP, hipBLASLt, rocBLAS, GPU arch) match the running build, so after an image
+moves PyTorch, a service with `tunableOpTuning: false` runs untuned until a
+pass with tuning on writes a new file.
 
 `inference.<service>.tunableOpTuning: false` renders
 `PYTORCH_TUNABLEOP_TUNING=0`: tuned shapes from the results file still apply,

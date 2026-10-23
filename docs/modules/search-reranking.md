@@ -61,7 +61,7 @@ flowchart TB
 
     SearchService --> Backend["<span style='color:#000'>Search Backend Vespa<br/>• Vector Search binary/float<br/>• Hybrid Ranking BM25 + Neural<br/>• Multi-Schema Support</span>"]
 
-    Backend -->|strategy needs embeddings| EncoderFactory["<span style='color:#000'>Query Encoder Factory<br/>• ColPali Encoder frame-based<br/>• X-CLIP Encoder chunk/global<br/>• Strategy-Aware Encoding</span>"]
+    Backend -->|strategy needs embeddings| EncoderFactory["<span style='color:#000'>Query Encoder Factory<br/>• ColPali Encoder frame-based<br/>• EmbeddingGemma 2 Encoder chunk<br/>• Strategy-Aware Encoding</span>"]
 
     Backend --> Results["<span style='color:#000'>SearchResult List</span>"]
 

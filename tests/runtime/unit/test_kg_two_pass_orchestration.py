@@ -253,6 +253,9 @@ async def test_claims_skip_non_transcript_segments_and_keep_entities(
     monkeypatch.setattr(ingestion, "_lookup_artifact_manager", lambda t, cm: None)
     monkeypatch.setattr(ingestion, "_resolve_tenant_llm_config", lambda t, cm: None)
     monkeypatch.setattr(ingestion, "_lookup_face_embed_endpoint", lambda cm: None)
+    monkeypatch.setattr(
+        ingestion, "_lookup_gliner_endpoint", lambda cm: "http://gliner.test:8080"
+    )
     monkeypatch.setattr(ingestion, "_write_backrefs_to_content", _no_backrefs)
 
     mgr = _graph_manager_stand_in(backend_resolver=lambda: SimpleNamespace())
@@ -305,6 +308,9 @@ async def test_claim_pass_prior_pool_is_earlier_segments_entities(monkeypatch):
     monkeypatch.setattr(ingestion, "_lookup_artifact_manager", lambda t, cm: None)
     monkeypatch.setattr(ingestion, "_resolve_tenant_llm_config", lambda t, cm: None)
     monkeypatch.setattr(ingestion, "_lookup_face_embed_endpoint", lambda cm: None)
+    monkeypatch.setattr(
+        ingestion, "_lookup_gliner_endpoint", lambda cm: "http://gliner.test:8080"
+    )
 
     async def _no_backrefs(**kwargs):
         return None
@@ -392,6 +398,9 @@ async def test_claim_failure_count_surfaces_on_pipeline_result(monkeypatch):
     monkeypatch.setattr(ingestion, "_lookup_artifact_manager", lambda t, cm: None)
     monkeypatch.setattr(ingestion, "_resolve_tenant_llm_config", lambda t, cm: None)
     monkeypatch.setattr(ingestion, "_lookup_face_embed_endpoint", lambda cm: None)
+    monkeypatch.setattr(
+        ingestion, "_lookup_gliner_endpoint", lambda cm: "http://gliner.test:8080"
+    )
 
     async def _no_backrefs(**kwargs):
         return None
@@ -494,6 +503,9 @@ async def test_entity_pass_failure_settles_siblings(monkeypatch):
     monkeypatch.setattr(ingestion, "_lookup_artifact_manager", lambda t, cm: None)
     monkeypatch.setattr(ingestion, "_resolve_tenant_llm_config", lambda t, cm: None)
     monkeypatch.setattr(ingestion, "_lookup_face_embed_endpoint", lambda cm: None)
+    monkeypatch.setattr(
+        ingestion, "_lookup_gliner_endpoint", lambda cm: "http://gliner.test:8080"
+    )
 
     async def _no_backrefs(**kwargs):
         return None
@@ -568,6 +580,9 @@ async def test_all_claim_segments_failed_raise(monkeypatch):
     monkeypatch.setattr(ingestion, "_lookup_artifact_manager", lambda t, cm: None)
     monkeypatch.setattr(ingestion, "_resolve_tenant_llm_config", lambda t, cm: None)
     monkeypatch.setattr(ingestion, "_lookup_face_embed_endpoint", lambda cm: None)
+    monkeypatch.setattr(
+        ingestion, "_lookup_gliner_endpoint", lambda cm: "http://gliner.test:8080"
+    )
 
     async def _no_backrefs(**kwargs):
         return None

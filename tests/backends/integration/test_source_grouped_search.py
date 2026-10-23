@@ -39,8 +39,8 @@ SHIPPED_PROFILES = json.loads(Path("configs/config.json").read_text())["backend"
     "profiles"
 ]
 MV_PROFILE = "video_colpali_smol500_mv_frame"
-ANN_PROFILE = "video_xclip_sv_chunk_6s"
-ANN_WIDE_PROFILE = "xclip_wide_candidates"
+ANN_PROFILE = "video_embeddinggemma2_sv_chunk_6s"
+ANN_WIDE_PROFILE = "embeddinggemma2_wide_candidates"
 TEXT_PROFILE = "document_text_semantic"
 SUFFIX = uuid.uuid4().hex[:8]
 MV_TENANT = f"srcgroup{SUFFIX}:mv"
@@ -490,6 +490,7 @@ class TestSourceIdentityAttribute:
                 )
         assert identities == {
             "audio_content": "audio_id",
+            "audio_embeddinggemma2": "audio_id",
             "code_lateon_mv": "code_id",
             "document_text": "document_id",
             "document_visual": "document_id",
@@ -497,7 +498,7 @@ class TestSourceIdentityAttribute:
             "lateon_mv": "text_id",
             "video_colpali_smol500_mv_frame": "video_id",
             "video_colqwen_omni_mv_chunk_30s": "video_id",
-            "video_xclip_sv_chunk_6s": "video_id",
+            "video_embeddinggemma2_sv_chunk_6s": "video_id",
             "wiki_pages": "doc_id",
         }
 

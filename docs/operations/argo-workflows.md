@@ -203,7 +203,7 @@ argo submit workflows/video-ingestion.yaml \
   -n cogniverse \
   --parameter video-dir="/data/acme_corp/videos" \
   --parameter tenant-id="acme_corp" \
-  --parameter profiles="video_colpali_smol500_mv_frame,video_xclip_sv_chunk_6s" \
+  --parameter profiles="video_colpali_smol500_mv_frame,video_embeddinggemma2_sv_chunk_6s" \
   --parameter batch-size="20" \
   --parameter max-workers="8"
 ```

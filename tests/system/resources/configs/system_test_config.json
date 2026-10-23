@@ -56,11 +56,11 @@
           "transcription": "vllm_asr"
         }
       },
-      "video_xclip_base_mv_chunk_30s": {
+      "video_tomoro_alias_mv_chunk_30s": {
         "type": "video",
-        "description": "Test alias backed by the deployed colpali schema. Real X-CLIP inference would require the xclip sidecar; ensemble RRF tests just need three distinct profile names against the same backing schema.",
+        "description": "Test alias backed by the deployed colpali schema. Ensemble RRF tests need three distinct profile names against the same backing schema.",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "microsoft/xclip-large-patch14",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
         "schema_config": {
@@ -71,13 +71,13 @@
           "binary_dim": 40
         },
         "inference_services": {
-          "embedding": "video_embed",
+          "embedding": "vllm_colpali",
           "transcription": "vllm_asr"
         }
       },
       "video_colqwen_omni_mv_chunk_30s": {
         "type": "video",
-        "description": "Test alias backed by the deployed colpali schema. See note on video_xclip_base_mv_chunk_30s.",
+        "description": "Test alias backed by the deployed colpali schema. See note on video_tomoro_alias_mv_chunk_30s.",
         "schema_name": "video_colpali_smol500_mv_frame",
         "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "embedding_type": "multi_vector",

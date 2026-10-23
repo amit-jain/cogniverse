@@ -8,24 +8,26 @@ This replaces 10+ scattered FastAPI apps with a single, unified runtime that:
 
 import os as _bootstrap_os
 
-# OpenInference DSPy instrumentation must run BEFORE any module
-# imports dspy.Predict / dspy.ChainOfThought etc. — those classes get
-# bound to unwrapped references on import and a later instrument()
-# call can't patch already-bound names. So we run instrumentation
-# at the very top of main.py, gated on OPENINFERENCE_DSPY=1, before
-# any other imports.
+# OpenInference DSPy instrumentation runs once, before any other import,
+# and is never undone: its uninstrument() strips DSPy's own callback
+# decorators along with its wrappers. Every DSPy span is routed through
+# the tenant in scope to that tenant's tracer, resolved per span.
 if _bootstrap_os.environ.get("OPENINFERENCE_DSPY") == "1":
-    try:
-        from openinference.instrumentation.dspy import (
-            DSPyInstrumentor as _DSPyInstrumentor,
-        )
+    from openinference.instrumentation.dspy import (
+        DSPyInstrumentor as _DSPyInstrumentor,
+    )
 
-        _DSPyInstrumentor().instrument()
-        print("OpenInference DSPy instrumentation enabled at bootstrap")
-    except ImportError as _exc:
-        print(f"OpenInference DSPy not installed; skipping: {_exc}")
-    except Exception as _exc:  # noqa: BLE001
-        print(f"OpenInference DSPy instrument failed: {_exc}")
+    from cogniverse_foundation.telemetry.tenant_routing import (
+        TenantRoutingTracerProvider as _TenantRoutingTracerProvider,
+    )
+
+    _DSPyInstrumentor().instrument(
+        tracer_provider=_TenantRoutingTracerProvider(
+            resolve_tracer=lambda tenant_id: (
+                get_telemetry_manager()._get_tracer_for_project(tenant_id, None)
+            )
+        )
+    )
 
 import asyncio
 import gc
@@ -1631,45 +1633,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("DSPy ambient LM already configured for this process")
     await asyncio.to_thread(preload_lm_client_modules)
     await asyncio.to_thread(get_telemetry_manager().preload_span_export)
-    # NOTE: OpenInference DSPy instrumentation runs at module-top
-    # bootstrap (see the top of this file) so DSPy classes are
-    # wrapped BEFORE any agent imports bind references to the
-    # unwrapped originals. dspy.configure here uses the already-
-    # wrapped classes.
-
-    # Re-instrument DSPy NOW that Phoenix's tracer is up so DSPy
-    # LM spans actually flow to Phoenix. The bootstrap
-    # instrumentation at module-top wrapped dspy.LM.__call__ with
-    # the default ProxyTracerProvider (no-op). Here we create a
-    # Phoenix tracer for the orchestration project and re-bind
-    # the wrappers. All DSPy LM spans across tenants land in
-    # this single project — acceptable for the test cluster +
-    # surfaces LM input/output for byte-equal assertions.
-    if os.environ.get("OPENINFERENCE_DSPY") == "1":
-        try:
-            from openinference.instrumentation.dspy import DSPyInstrumentor
-
-            from cogniverse_foundation.telemetry.tenant_routing import (
-                TenantRoutingTracerProvider,
-            )
-
-            # Route every DSPy span to the tenant in scope, through that
-            # tenant's own provider -- the same provider that owns the
-            # request's ``.process`` span -- so the whole trace is filed in
-            # one tenant project with correct parentage. There is no shared
-            # cross-tenant project; a DSPy span with no tenant in context is
-            # dropped, not misfiled.
-            routing_provider = TenantRoutingTracerProvider(
-                resolve_tracer=lambda tenant_id: (
-                    get_telemetry_manager()._get_tracer_for_project(tenant_id, None)
-                )
-            )
-            DSPyInstrumentor().uninstrument()
-            DSPyInstrumentor().instrument(tracer_provider=routing_provider)
-            logger.info("DSPy instrumented with the tenant-routing tracer provider")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to rebind DSPy instrumentation to Phoenix: %s", exc)
-
     synthetic_runtime_config = parse_synthetic_runtime_config(
         config,
         tenant_id=SYSTEM_TENANT_ID,

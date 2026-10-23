@@ -8,7 +8,7 @@ Supports video, image, audio, document, and code content types.
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from cogniverse_core.common.media import DEFAULT_VIDEO_EXTENSIONS
 
@@ -112,7 +112,7 @@ class FrameSegmentationStrategy(BaseStrategy):
 
 
 class ChunkSegmentationStrategy(BaseStrategy):
-    """Extract video chunks (e.g., for ColQwen, X-CLIP)."""
+    """Extract video chunks (e.g., for ColQwen, EmbeddingGemma 2)."""
 
     def __init__(
         self,
@@ -136,23 +136,17 @@ class ChunkSegmentationStrategy(BaseStrategy):
 
 
 class SingleVectorSegmentationStrategy(BaseStrategy):
-    """Process video for single-vector embeddings (e.g., X-CLIP)."""
+    """Process video for single-vector embeddings (e.g., EmbeddingGemma 2)."""
 
     def __init__(
         self,
-        strategy: str = "sliding_window",
+        strategy: Literal["chunks", "windows", "global"] = "chunks",
         segment_duration: float = 6.0,
         segment_overlap: float = 1.0,
-        sampling_fps: float = 2.0,
-        max_frames_per_segment: int = 12,
-        store_as_single_doc: bool = False,
     ):
         self.strategy = strategy
         self.segment_duration = segment_duration
         self.segment_overlap = segment_overlap
-        self.sampling_fps = sampling_fps
-        self.max_frames_per_segment = max_frames_per_segment
-        self.store_as_single_doc = store_as_single_doc
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Single-vector segmentation requires single-vector processor."""
@@ -161,9 +155,6 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
                 "strategy": self.strategy,
                 "segment_duration": self.segment_duration,
                 "segment_overlap": self.segment_overlap,
-                "sampling_fps": self.sampling_fps,
-                "max_frames_per_segment": self.max_frames_per_segment,
-                "store_as_single_doc": self.store_as_single_doc,
             }
         }
 
@@ -751,7 +742,7 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
 
     def __init__(
         self,
-        model_name: str = "microsoft/xclip-large-patch14",
+        model_name: str = "google/embeddinggemma-2",
         inference_service: str | None = None,
     ):
         self.model_name = model_name

@@ -936,7 +936,7 @@ print(f"Alternatives: {[c.profile_name for c in result.alternatives]}")
 # Output:
 # Selected profile: video_colpali_smol500_mv_frame
 # Confidence: 0.79
-# Alternatives: ['video_colqwen_omni_mv_chunk_30s', 'video_xclip_sv_chunk_6s']
+# Alternatives: ['video_colqwen_omni_mv_chunk_30s', 'video_embeddinggemma2_sv_chunk_6s']
 ```
 
 ---

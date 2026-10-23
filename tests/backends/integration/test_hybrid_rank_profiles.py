@@ -141,6 +141,7 @@ FUSED_HYBRIDS = [
     ("agent_memories", "hybrid"),
     ("audio_content", "hybrid_semantic_bm25"),
     ("audio_content", "hybrid_acoustic_bm25"),
+    ("audio_embeddinggemma2", "hybrid_acoustic_bm25"),
     ("code_lateon_mv", "hybrid_float_bm25"),
     ("document_text", "hybrid_float_bm25"),
     ("document_text", "hybrid_binary_bm25"),
@@ -160,8 +161,8 @@ FUSED_HYBRIDS = [
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_binary_bm25"),
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_float_bm25_no_description"),
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_binary_bm25_no_description"),
-    ("video_xclip_sv_chunk_6s", "hybrid_float_bm25"),
-    ("video_xclip_sv_chunk_6s", "hybrid_binary_bm25"),
+    ("video_embeddinggemma2_sv_chunk_6s", "hybrid_float_bm25"),
+    ("video_embeddinggemma2_sv_chunk_6s", "hybrid_binary_bm25"),
 ]
 TEXT_FIRST_HYBRIDS = [
     ("video_colpali_smol500_mv_frame", "hybrid_bm25_binary"),
@@ -172,8 +173,8 @@ TEXT_FIRST_HYBRIDS = [
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_bm25_float"),
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_bm25_binary_no_description"),
     ("video_colqwen_omni_mv_chunk_30s", "hybrid_bm25_float_no_description"),
-    ("video_xclip_sv_chunk_6s", "hybrid_bm25_binary"),
-    ("video_xclip_sv_chunk_6s", "hybrid_bm25_float"),
+    ("video_embeddinggemma2_sv_chunk_6s", "hybrid_bm25_binary"),
+    ("video_embeddinggemma2_sv_chunk_6s", "hybrid_bm25_float"),
 ]
 
 
@@ -231,7 +232,7 @@ def test_a_text_first_hybrid_ranking_by_visual_alone_is_not_fused(tmp_path):
     the visual similarity alone."""
     mutated = _mutated_schemas(
         tmp_path,
-        "video_xclip_sv_chunk_6s",
+        "video_embeddinggemma2_sv_chunk_6s",
         "hybrid_bm25_float",
         first_phase="visual_sim",
     )
@@ -239,7 +240,7 @@ def test_a_text_first_hybrid_ranking_by_visual_alone_is_not_fused(tmp_path):
     assert _text_first_hybrids(mutated) == [
         hybrid
         for hybrid in TEXT_FIRST_HYBRIDS
-        if hybrid != ("video_xclip_sv_chunk_6s", "hybrid_bm25_float")
+        if hybrid != ("video_embeddinggemma2_sv_chunk_6s", "hybrid_bm25_float")
     ]
 
 
@@ -247,7 +248,7 @@ def test_a_text_first_hybrid_without_its_candidate_set_is_visual_first(tmp_path)
     """Without ``candidates: text_matches`` a fused profile ranks every
     document, so the derivation counts it visual-first."""
     shutil.copytree(SCHEMAS_DIR, tmp_path, dirs_exist_ok=True)
-    path = tmp_path / "video_xclip_sv_chunk_6s_schema.json"
+    path = tmp_path / "video_embeddinggemma2_sv_chunk_6s_schema.json"
     schema = json.loads(path.read_text())
     (profile,) = [
         p for p in schema["rank_profiles"] if p["name"] == "hybrid_bm25_float"
@@ -255,10 +256,9 @@ def test_a_text_first_hybrid_without_its_candidate_set_is_visual_first(tmp_path)
     del profile["candidates"]
     path.write_text(json.dumps(schema))
 
-    assert ("video_xclip_sv_chunk_6s", "hybrid_bm25_float") in _fused_hybrids(tmp_path)
-    assert ("video_xclip_sv_chunk_6s", "hybrid_bm25_float") not in (
-        _text_first_hybrids(tmp_path)
-    )
+    hybrid = ("video_embeddinggemma2_sv_chunk_6s", "hybrid_bm25_float")
+    assert hybrid in _fused_hybrids(tmp_path)
+    assert hybrid not in _text_first_hybrids(tmp_path)
 
 
 def _field_type(base: str, field: str) -> str:
@@ -292,7 +292,9 @@ def _distance_metric(base: str, field: str) -> str:
     for setting in declared.get("attribute", []):
         if setting.replace(" ", "").startswith("distance-metric:"):
             return setting.split(":", 1)[1].strip()
-    return "euclidean"
+    index = declared.get("index")
+    hnsw = index.get("hnsw", {}) if isinstance(index, dict) else {}
+    return hnsw.get("distance-metric", "euclidean")
 
 
 def _dense_closeness(base: str, field: str, query, stored) -> float:
@@ -552,7 +554,7 @@ TEXT_WITH_BOTH_TERMS = "kestrel osprey harbour notes"
 
 
 def _nearest_neighbor_hybrid_search(vespa_instance, hybrid_corpus, **request):
-    base, strategy = "video_xclip_sv_chunk_6s", "hybrid_float_bm25"
+    base, strategy = "video_embeddinggemma2_sv_chunk_6s", "hybrid_float_bm25"
     tenant, config_manager, _ = hybrid_corpus
     _, query, _, _ = _fixture_vectors(base, strategy)
     profile_name, profile = _shipped_profile(base)
@@ -591,7 +593,7 @@ def test_nearest_neighbor_hybrid_scores_every_document_as_it_scores_alone(
     the hybrid ranks, including those holding one term after the documents
     holding both filled weakAnd's target, scores exactly what it scores as
     the query's only match: its closeness plus its full nativeRank."""
-    base, strategy = "video_xclip_sv_chunk_6s", "hybrid_float_bm25"
+    base, strategy = "video_embeddinggemma2_sv_chunk_6s", "hybrid_float_bm25"
     _, _, deployed = hybrid_corpus
     schema_name = deployed[base]
     field, _, stored, visual = _fixture_vectors(base, strategy)
@@ -641,20 +643,20 @@ def test_nearest_neighbor_hybrid_scores_every_document_as_it_scores_alone(
     )
 
 
-# A seeded single-vector corpus: four X-CLIP videos of three chunks each and
+# A seeded single-vector corpus: four videos of three chunks each and
 # four audio clips of two chunks each. A title holds a query term once, first,
 # or not at all; transcripts never hold one, so each document's nativeRank for
 # a single-term query is TERM_DOC_NATIVE_RANK or 0.
-XCLIP = "video_xclip_sv_chunk_6s"
+VIDEO = "video_embeddinggemma2_sv_chunk_6s"
 AUDIO = "audio_content"
-XCLIP_TITLES = {
+VIDEO_TITLES = {
     "kestrel_cliffs": "kestrel cliffs walk",
     "harbour_nets": "harbour nets dawn",
     "kestrel_ridge": "kestrel ridge flight",
     "market_day": "market day stalls",
 }
-XCLIP_TRANSCRIPT = "gulls circle over the water"
-XCLIP_QUERIES = ("kestrel", "harbour")
+VIDEO_TRANSCRIPT = "gulls circle over the water"
+VIDEO_QUERIES = ("kestrel", "harbour")
 AUDIO_TITLES = {
     "ocean_waves": "ocean waves shore",
     "city_traffic": "city traffic noise",
@@ -662,7 +664,7 @@ AUDIO_TITLES = {
     "forest_birds": "forest birds morning",
 }
 AUDIO_QUERY = "ocean"
-XCLIP_STRATEGIES = (
+VIDEO_STRATEGIES = (
     "hybrid_float_bm25",
     "hybrid_binary_bm25",
     "hybrid_bm25_float",
@@ -677,7 +679,7 @@ def _unit(vector: np.ndarray) -> np.ndarray:
 # Each chunk's pull toward each query vector: a chunk without the query term
 # in its title (market_day_1, forest_birds_0) can outscore every chunk holding
 # it on similarity alone.
-XCLIP_PULLS = {
+VIDEO_PULLS = {
     "kestrel_cliffs": [(0.5, 0.1), (0.3, 0.0), (0.8, 0.2)],
     "harbour_nets": [(0.1, 0.6), (0.0, 0.3), (0.2, 0.9)],
     "kestrel_ridge": [(0.05, 0.0), (0.1, 0.1), (0.0, 0.05)],
@@ -694,12 +696,12 @@ AUDIO_PULLS = {
 def _single_vector_corpus() -> dict:
     """Query vectors and stored embeddings, generated from a fixed seed."""
     rng = np.random.default_rng(20261003)
-    xclip_queries = {q: _unit(rng.standard_normal(768)) for q in XCLIP_QUERIES}
-    xclip = {}
-    for video, pulls in XCLIP_PULLS.items():
+    video_queries = {q: _unit(rng.standard_normal(768)) for q in VIDEO_QUERIES}
+    videos = {}
+    for video, pulls in VIDEO_PULLS.items():
         for chunk, pull in enumerate(pulls):
-            mixed = sum(w * xclip_queries[q] for w, q in zip(pull, XCLIP_QUERIES))
-            xclip[f"{video}_{chunk}"] = _unit(mixed + _unit(rng.standard_normal(768)))
+            mixed = sum(w * video_queries[q] for w, q in zip(pull, VIDEO_QUERIES))
+            videos[f"{video}_{chunk}"] = _unit(mixed + _unit(rng.standard_normal(768)))
     audio_query = _unit(rng.standard_normal(512))
     audio = {}
     for clip, pulls in AUDIO_PULLS.items():
@@ -708,18 +710,18 @@ def _single_vector_corpus() -> dict:
                 pull * audio_query + _unit(rng.standard_normal(512))
             )
     return {
-        "xclip_queries": xclip_queries,
-        "xclip": xclip,
+        "video_queries": video_queries,
+        "videos": videos,
         "audio_query": audio_query,
         "audio": audio,
     }
 
 
-def _xclip_visual(strategy: str, query: np.ndarray, stored: np.ndarray) -> float:
+def _video_visual(strategy: str, query: np.ndarray, stored: np.ndarray) -> float:
     if "binary" in strategy:
         h = _hamming(_bits(query), _bits(stored))
         return 1.0 / (1.0 + math.pi * h / len(query))
-    return _dense_closeness(XCLIP, "embedding", query, stored)
+    return _dense_closeness(VIDEO, "embedding", query, stored)
 
 
 def _expected_ranking(scores: dict[str, float], source_of) -> list[tuple]:
@@ -735,16 +737,16 @@ def _expected_ranking(scores: dict[str, float], source_of) -> list[tuple]:
     ]
 
 
-def _expected_xclip(corpus: dict, strategy: str, query: str) -> list[tuple]:
+def _expected_video(corpus: dict, strategy: str, query: str) -> list[tuple]:
     """Every chunk is a candidate of a visual-first hybrid; a text-first one
     keeps the chunks whose title holds the query term."""
     scores = {}
-    for doc_id, stored in corpus["xclip"].items():
-        holds_term = XCLIP_TITLES[doc_id.rsplit("_", 1)[0]].split()[0] == query
+    for doc_id, stored in corpus["videos"].items():
+        holds_term = VIDEO_TITLES[doc_id.rsplit("_", 1)[0]].split()[0] == query
         if strategy.startswith("hybrid_bm25") and not holds_term:
             continue
-        scores[doc_id] = _xclip_visual(
-            strategy, corpus["xclip_queries"][query], stored
+        scores[doc_id] = _video_visual(
+            strategy, corpus["video_queries"][query], stored
         ) + (TERM_DOC_NATIVE_RANK if holds_term else 0.0)
     return _expected_ranking(scores, lambda doc_id: doc_id.rsplit("_", 1)[0])
 
@@ -779,8 +781,8 @@ def single_vector_corpus(vespa_instance):
         config_manager=config_manager,
         schema_loader=FilesystemSchemaLoader(SCHEMAS_DIR),
     )
-    xclip_docs = []
-    for doc_id, embedding in corpus["xclip"].items():
+    video_docs = []
+    for doc_id, embedding in corpus["videos"].items():
         video, chunk = doc_id.rsplit("_", 1)
         document = Document(
             id=doc_id,
@@ -790,12 +792,12 @@ def single_vector_corpus(vespa_instance):
         )
         document.add_embedding("embedding", embedding, {"type": "float", "raw": True})
         document.add_metadata("video_id", video)
-        document.add_metadata("video_title", XCLIP_TITLES[video])
+        document.add_metadata("video_title", VIDEO_TITLES[video])
         document.add_metadata("segment_index", int(chunk))
         document.add_metadata("start_time", 5.0 * int(chunk))
         document.add_metadata("end_time", 5.0 * int(chunk) + 6.0)
-        document.add_metadata("audio_transcript", XCLIP_TRANSCRIPT)
-        xclip_docs.append(document)
+        document.add_metadata("audio_transcript", VIDEO_TRANSCRIPT)
+        video_docs.append(document)
     audio_docs = []
     for doc_id, embedding in corpus["audio"].items():
         clip, chunk = doc_id.rsplit("_", 1)
@@ -811,7 +813,7 @@ def single_vector_corpus(vespa_instance):
         document.add_metadata("chunk_index", int(chunk))
         document.add_metadata("acoustic_embedding", embedding.tolist())
         audio_docs.append(document)
-    for base, documents in ((XCLIP, xclip_docs), (AUDIO, audio_docs)):
+    for base, documents in ((VIDEO, video_docs), (AUDIO, audio_docs)):
         ingestion.schema_registry.deploy_schema(tenant_id=tenant, base_schema_name=base)
         result = ingestion.ingest_documents(documents, base)
         assert result["failed_count"] == 0, result["failed_documents"]
@@ -825,18 +827,18 @@ def single_vector_corpus(vespa_instance):
     yield corpus, tenant, config_manager
 
 
-def _xclip_search(vespa_instance, single_vector_corpus, strategy, query, port=None):
+def _video_search(vespa_instance, single_vector_corpus, strategy, query, port=None):
     corpus, tenant, config_manager = single_vector_corpus
     return _backend_search(
         vespa_instance,
         config_manager,
-        XCLIP,
+        VIDEO,
         {
             "query": query,
             "strategy": strategy,
             "top_k": 10,
             "tenant_id": tenant,
-            "query_embeddings": corpus["xclip_queries"][query],
+            "query_embeddings": corpus["video_queries"][query],
         },
         port=port,
     )
@@ -923,9 +925,9 @@ def _ranked(results, source_field: str) -> list[tuple]:
     ]
 
 
-# Source order, best document and its score the X-CLIP hybrids give over the
+# Source order, best document and its score the video hybrids give over the
 # seeded corpus.
-XCLIP_RANKING = {
+VIDEO_RANKING = {
     "hybrid_float_bm25": {
         "kestrel": [
             ("kestrel_cliffs", "kestrel_cliffs_2", 0.9095899256883291),
@@ -982,36 +984,36 @@ AUDIO_RANKING = [
 
 
 class TestSingleVectorHybridRanking:
-    @pytest.mark.parametrize("query", XCLIP_QUERIES)
-    @pytest.mark.parametrize("strategy", XCLIP_STRATEGIES)
-    def test_xclip_hybrid_ranks_the_recorded_order(
+    @pytest.mark.parametrize("query", VIDEO_QUERIES)
+    @pytest.mark.parametrize("strategy", VIDEO_STRATEGIES)
+    def test_video_hybrid_ranks_the_recorded_order(
         self, vespa_instance, single_vector_corpus, strategy, query
     ):
         ranked = _ranked(
-            _xclip_search(vespa_instance, single_vector_corpus, strategy, query),
+            _video_search(vespa_instance, single_vector_corpus, strategy, query),
             "video_id",
         )
 
-        expected = XCLIP_RANKING[strategy][query]
+        expected = VIDEO_RANKING[strategy][query]
         assert [row[:2] for row in ranked] == [row[:2] for row in expected]
         assert [row[2] for row in ranked] == pytest.approx(
             [row[2] for row in expected], abs=1e-6
         )
 
-    @pytest.mark.parametrize("query", XCLIP_QUERIES)
-    @pytest.mark.parametrize("strategy", XCLIP_STRATEGIES)
-    def test_xclip_scores_are_visual_similarity_plus_native_rank(
+    @pytest.mark.parametrize("query", VIDEO_QUERIES)
+    @pytest.mark.parametrize("strategy", VIDEO_STRATEGIES)
+    def test_video_scores_are_visual_similarity_plus_native_rank(
         self, vespa_instance, single_vector_corpus, strategy, query
     ):
         """Each video scores its best chunk's visual similarity, computed from
         the stored vectors, plus the chunk's nativeRank."""
         corpus = single_vector_corpus[0]
         ranked = _ranked(
-            _xclip_search(vespa_instance, single_vector_corpus, strategy, query),
+            _video_search(vespa_instance, single_vector_corpus, strategy, query),
             "video_id",
         )
 
-        expected = _expected_xclip(corpus, strategy, query)
+        expected = _expected_video(corpus, strategy, query)
         assert [row[:2] for row in ranked] == [row[:2] for row in expected]
         assert [row[2] for row in ranked] == pytest.approx(
             [row[2] for row in expected], abs=1e-6
@@ -1090,7 +1092,7 @@ class TestSingleVectorHybridRanking:
     ):
         """Hybrid searches released together each get exactly the ranking
         their strategy and query get alone."""
-        cases = [(s, q) for s in XCLIP_STRATEGIES for q in XCLIP_QUERIES] * 2
+        cases = [(s, q) for s in VIDEO_STRATEGIES for q in VIDEO_QUERIES] * 2
         barrier = threading.Barrier(len(cases) + 2)
 
         def released(case):
@@ -1100,13 +1102,13 @@ class TestSingleVectorHybridRanking:
                     _audio_search(vespa_instance, single_vector_corpus), "audio_id"
                 )
             return _ranked(
-                _xclip_search(vespa_instance, single_vector_corpus, *case), "video_id"
+                _video_search(vespa_instance, single_vector_corpus, *case), "video_id"
             )
 
         with ThreadPoolExecutor(max_workers=len(cases) + 2) as pool:
             concurrent = list(pool.map(released, [*cases, "audio", "audio"]))
 
-        expected = [XCLIP_RANKING[s][q] for s, q in cases] + [AUDIO_RANKING] * 2
+        expected = [VIDEO_RANKING[s][q] for s, q in cases] + [AUDIO_RANKING] * 2
         assert [[row[:2] for row in ranked] for ranked in concurrent] == [
             [row[:2] for row in rows] for rows in expected
         ]
@@ -1114,18 +1116,18 @@ class TestSingleVectorHybridRanking:
             [row[2] for rows in expected for row in rows], abs=1e-6
         )
 
-    @pytest.mark.parametrize("strategy", XCLIP_STRATEGIES)
+    @pytest.mark.parametrize("strategy", VIDEO_STRATEGIES)
     def test_hybrid_search_raises_when_vespa_is_unreachable(
         self, vespa_instance, single_vector_corpus, strategy
     ):
         port = _dead_port()
 
         with pytest.raises(httpr.ConnectError) as excinfo:
-            _xclip_search(
+            _video_search(
                 vespa_instance,
                 single_vector_corpus,
                 strategy,
-                XCLIP_QUERIES[0],
+                VIDEO_QUERIES[0],
                 port=port,
             )
 

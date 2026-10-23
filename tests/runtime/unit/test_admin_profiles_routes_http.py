@@ -298,7 +298,7 @@ async def _delete(app, path, **params):
 @pytest.mark.asyncio
 async def test_list_profiles_returns_exact_summaries_and_deployment_flags(env):
     env.cm.profiles["prof_a"] = _profile("prof_a", "video_colpali_sv", "colpali-v1.2")
-    env.cm.profiles["prof_b"] = _profile("prof_b", "video_prism_mv", "xclip-lvt")
+    env.cm.profiles["prof_b"] = _profile("prof_b", "video_prism_mv", "embeddinggemma-2")
     # Only prof_a's base schema is deployed, so its summary flag is True.
     env.backend.deployed_schemas = {"video_colpali_sv"}
 
@@ -326,7 +326,7 @@ async def test_list_profiles_returns_exact_summaries_and_deployment_flags(env):
             "type": "video",
             "description": "desc for prof_b",
             "schema_name": "video_prism_mv",
-            "embedding_model": "xclip-lvt",
+            "embedding_model": "embeddinggemma-2",
             "schema_deployed": False,
         },
     ]
@@ -918,7 +918,7 @@ async def test_delete_profile_whose_store_cannot_be_read_raises_500(env, caplog)
 @pytest.mark.asyncio
 async def test_deploy_decides_the_profile_on_the_store_not_the_held_copy(env):
     env.cm.profiles["video_prism"] = _profile(
-        "video_prism", "video_prism_mv", "xclip-lvt"
+        "video_prism", "video_prism_mv", "embeddinggemma-2"
     )
     env.cm.get_backend_profile = _held_copy_without_the_profile
 
@@ -991,7 +991,7 @@ async def test_delete_profile_with_schema_drops_vespa_schema(env):
 @pytest.mark.asyncio
 async def test_deploy_schema_success_invokes_deploy_primitive(env):
     env.cm.profiles["video_prism"] = _profile(
-        "video_prism", "video_prism_mv", "xclip-lvt"
+        "video_prism", "video_prism_mv", "embeddinggemma-2"
     )
     # base schema not yet deployed -> route proceeds to deploy_schema.
     env.backend.deployed_schemas = set()
@@ -1018,7 +1018,7 @@ async def test_deploy_schema_success_invokes_deploy_primitive(env):
 @pytest.mark.asyncio
 async def test_deploy_schema_lookup_failure_raises_500(env):
     env.cm.profiles["video_prism"] = _profile(
-        "video_prism", "video_prism_mv", "xclip-lvt"
+        "video_prism", "video_prism_mv", "embeddinggemma-2"
     )
     env.backend.schema_exists = MagicMock(
         side_effect=RuntimeError("registry lookup failed")
@@ -1123,7 +1123,7 @@ async def test_create_profile_adds_profile_without_deploy(env):
             "schema_name": "video_new_sv",
             "embedding_model": "colpali-v1.2",
             "embedding_type": "single_vector",
-            "model_loader": "xclip",
+            "model_loader": "embeddinggemma2",
             "pipeline_config": {"extract_keyframes": True},
             "strategies": {"embedding": {"class": "SingleVectorEmbeddingStrategy"}},
             "schema_config": {"embedding_dim": 768},
@@ -1188,7 +1188,7 @@ def merged(env, tmp_path, monkeypatch):
             "shipped_video", "shipped_video_mv", "colpali-v1.2"
         ).to_dict(),
         "video_prism": _profile(
-            "video_prism", "catalog_prism_mv", "xclip-lvt"
+            "video_prism", "catalog_prism_mv", "embeddinggemma-2"
         ).to_dict(),
     }
     config_path = tmp_path / "config.json"
@@ -1240,7 +1240,7 @@ async def test_deploy_of_a_profile_in_neither_source_is_404_without_a_deploy(
 @pytest.mark.asyncio
 async def test_deploy_prefers_the_tenant_stored_profile_over_the_catalogs(merged):
     merged.cm.add_backend_profile(
-        _profile("video_prism", "tenant_prism_mv", "xclip-lvt"), tenant_id="acme"
+        _profile("video_prism", "tenant_prism_mv", "embeddinggemma-2"), tenant_id="acme"
     )
     merged.store.backend_reads.clear()
 
@@ -1257,7 +1257,7 @@ async def test_deploy_prefers_the_tenant_stored_profile_over_the_catalogs(merged
 @pytest.mark.asyncio
 async def test_deploy_never_resolves_a_profile_another_tenant_stored(merged):
     merged.cm.add_backend_profile(
-        _profile("beta_only", "beta_only_mv", "xclip-lvt"), tenant_id="beta"
+        _profile("beta_only", "beta_only_mv", "embeddinggemma-2"), tenant_id="beta"
     )
     merged.store.backend_reads.clear()
 
@@ -1317,7 +1317,7 @@ async def test_profile_writes_losing_every_compare_and_set_answer_409(env):
             "schema_name": "video_new_sv",
             "embedding_model": "colpali-v1.2",
             "embedding_type": "single_vector",
-            "model_loader": "xclip",
+            "model_loader": "embeddinggemma2",
             "deploy_schema": False,
         },
     )
@@ -1353,7 +1353,7 @@ async def test_concurrent_creates_of_one_profile_name_store_exactly_one(env):
                 "schema_name": "video_dup_sv",
                 "embedding_model": model,
                 "embedding_type": "single_vector",
-                "model_loader": "xclip",
+                "model_loader": "embeddinggemma2",
                 "deploy_schema": False,
             },
         )
@@ -1382,7 +1382,7 @@ async def test_concurrent_creates_of_one_profile_name_store_exactly_one(env):
 @pytest.mark.asyncio
 async def test_deploy_for_a_deleted_tenant_is_410_and_deploys_nothing(env):
     env.cm.profiles["video_prism"] = _profile(
-        "video_prism", "video_prism_mv", "xclip-lvt"
+        "video_prism", "video_prism_mv", "embeddinggemma-2"
     )
     env.backend.deployed_schemas = set()
     deleted = SimpleNamespace(config_value={"deleted": True})

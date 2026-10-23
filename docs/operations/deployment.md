@@ -240,9 +240,6 @@ Create a `.env` file in the workspace root:
 BACKEND_URL=http://localhost
 BACKEND_PORT=8080
 
-# JAX (for X-CLIP models)
-JAX_PLATFORM_NAME=cpu
-
 # Config file path (optional — defaults to configs/config.json)
 # COGNIVERSE_CONFIG=/path/to/config.json
 
@@ -335,8 +332,8 @@ cluster. `modal token new` writes `~/.modal.toml`; `MODAL_TOKEN_ID` /
 
 3. Deploy and warm the Modal services (canonical names: `vllm_colpali`,
    `colbert_pylate`, `code_colbert_pylate`, `denseon`, `gliner`,
-   `video_embed`, `vllm_llm_student`, `vllm_llm_teacher`, `vllm_asr`,
-   `clap_embed`, `face_embed`):
+   `vllm_llm_student`, `vllm_llm_teacher`, `vllm_asr`, `clap_embed`,
+   `face_embed`):
 
    ```bash
    cogniverse inference modal deploy denseon colbert_pylate
@@ -502,7 +499,7 @@ for tenant in acme:production globex:staging; do
 done
 
 # Dev: single-schema JSON deploy from the filesystem
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
+uv run python scripts/deploy_json_schema.py \
   configs/schemas/video_colpali_smol500_mv_frame_schema.json
 ```
 
@@ -512,7 +509,7 @@ route that preserves peer-tenant schemas through redeploys.
 
 ### Available Schemas
 
-The `configs/schemas/` directory (21 files) breaks down into three
+The `configs/schemas/` directory (19 files) breaks down into three
 categories:
 
 - **Content/profile schemas** — one per `configs/config.json`
@@ -539,9 +536,10 @@ The schema names inside the schema JSON files do not include the
 |-------------|----------------------|---------|-----------------|------------|---------------|
 | `video_colpali_smol500_mv_frame_schema.json` | `video_colpali_smol500_mv_frame` | `video_colpali_smol500_mv_frame` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
 | `video_colqwen_omni_mv_chunk_30s_schema.json` | `video_colqwen_omni_mv_chunk_30s` | `video_colqwen_omni_mv_chunk_30s` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
-| `video_xclip_sv_chunk_6s_schema.json` | `video_xclip_sv_chunk_6s` | `video_xclip_sv_chunk_6s` | microsoft/xclip-large-patch14 | 768 | `_<tenant_id>` |
+| `video_embeddinggemma2_sv_chunk_6s_schema.json` | `video_embeddinggemma2_sv_chunk_6s` | `video_embeddinggemma2_sv_chunk_6s` | google/embeddinggemma-2 | 768 | `_<tenant_id>` |
 | `image_colpali_mv_schema.json` | `image_colpali_mv` | `image_colpali_mv` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
 | `audio_content_schema.json` | `audio_content` | `audio_clap_semantic` | laion/clap-htsat-unfused | 128 per token + 512 dense | `_<tenant_id>` |
+| `audio_embeddinggemma2_schema.json` | `audio_embeddinggemma2` | `audio_embeddinggemma2` | google/embeddinggemma-2 | 768 dense | `_<tenant_id>` |
 | `document_text_schema.json` | `document_text` | `document_text_semantic` | lightonai/LateOn | 128 per token | `_<tenant_id>` |
 | `document_visual_schema.json` | `document_visual` | `document_visual_colpali` | TomoroAI/tomoro-colqwen3-embed-4b | 320 per patch | `_<tenant_id>` |
 | `lateon_mv_schema.json` | `lateon_mv` | `lateon_mv` | lightonai/LateOn | 128 per token | `_<tenant_id>` |

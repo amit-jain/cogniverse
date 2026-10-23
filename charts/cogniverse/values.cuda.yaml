@@ -36,7 +36,7 @@ inference:
     imagesByDevice:
       cuda:
         repository: vllm/vllm-openai
-        tag: v0.23.0
+        tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
         pullPolicy: IfNotPresent
     nodeSelector: {}
     tolerations: []
@@ -44,6 +44,18 @@ inference:
       limits:
         cpu: "4"
         memory: "16Gi"
+      requests:
+        cpu: "2"
+        memory: "8Gi"
+
+  vllm_omni_embed:
+    enabled: true
+    device: cuda
+    gpuCount: 1
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
       requests:
         cpu: "2"
         memory: "8Gi"

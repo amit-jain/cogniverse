@@ -50,7 +50,7 @@ pytest_plugins = ["pytester"]
 COLPALI = get_inference_service_spec("vllm_colpali")
 DENSEON = get_inference_service_spec("denseon")
 CLAP = get_inference_service_spec("clap_embed")
-VIDEO_EMBED = get_inference_service_spec("video_embed")
+OMNI_EMBED = get_inference_service_spec("vllm_omni_embed")
 ASR = get_inference_service_spec("vllm_asr")
 FACE = get_inference_service_spec("face_embed")
 API_KEY = "shared-inference-secret"
@@ -1319,21 +1319,21 @@ def _profile(
 @pytest.mark.unit
 def test_profile_enabling_transcription_adds_dependency_to_its_embedding_service():
     enabled = _profile(
-        embedding=VIDEO_EMBED.name,
+        embedding=OMNI_EMBED.name,
         transcription=ASR.name,
         transcription_class="AudioTranscriptionStrategy",
         transcribe_audio=True,
     )
 
     assert dict(derive_service_dependencies({"enabled": enabled})) == {
-        VIDEO_EMBED.name: frozenset({ASR.name})
+        OMNI_EMBED.name: frozenset({ASR.name})
     }
 
 
 @pytest.mark.unit
 def test_profile_disabling_transcription_adds_no_dependency():
     disabled = _profile(
-        embedding=VIDEO_EMBED.name,
+        embedding=OMNI_EMBED.name,
         transcription=None,
         transcription_class="NoTranscriptionStrategy",
         transcribe_audio=False,
@@ -1347,7 +1347,7 @@ def test_declared_transcription_service_without_a_strategy_that_uses_it_is_not_a
     """Only services the strategy set resolves at init count; a binding left
     in inference_services that no strategy consumes is never provisioned."""
     unused_binding = _profile(
-        embedding=VIDEO_EMBED.name,
+        embedding=OMNI_EMBED.name,
         transcription=ASR.name,
         transcription_class="NoTranscriptionStrategy",
         transcribe_audio=False,
@@ -1362,14 +1362,14 @@ def test_dependency_follows_pipeline_init_not_the_runtime_toggle():
     any video is processed, so the dependency holds with transcribe_audio
     off."""
     profile = _profile(
-        embedding=VIDEO_EMBED.name,
+        embedding=OMNI_EMBED.name,
         transcription=ASR.name,
         transcription_class="AudioTranscriptionStrategy",
         transcribe_audio=False,
     )
 
     assert dict(derive_service_dependencies({"toggled_off": profile})) == {
-        VIDEO_EMBED.name: frozenset({ASR.name})
+        OMNI_EMBED.name: frozenset({ASR.name})
     }
 
     manager = ProcessorManager(
@@ -1791,9 +1791,9 @@ def test_unresolvable_service_errors_only_the_tests_that_declared_it(
     assert not (pytester.path / "module_fixture.log").exists()
 
 
-E2E_VIDEO_EMBED_REASON = (
-    "video_embed: no remote endpoint serves microsoft/xclip-large-patch14 in "
-    "provider order e2e: video_embed: e2e publishes no endpoint for it. Tests "
+E2E_FACE_EMBED_REASON = (
+    "face_embed: no remote endpoint serves buffalo_l in "
+    "provider order e2e: face_embed: e2e publishes no endpoint for it. Tests "
     "never start a model on this host; deploy the cogniverse-e2e cluster with "
     "this service enabled (see docs/testing/TESTING_GUIDE.md)."
 )
@@ -1830,7 +1830,7 @@ def test_concurrent_failed_resolution_consults_the_provider_once():
     def attempt() -> str:
         simultaneous.wait(timeout=3)
         with pytest.raises(ProviderUnavailable) as caught:
-            resolver.resolve("video_embed")
+            resolver.resolve("face_embed")
         return str(caught.value)
 
     with ThreadPoolExecutor(max_workers=12) as pool:
@@ -1844,13 +1844,13 @@ def test_concurrent_failed_resolution_consults_the_provider_once():
         messages = [attempt.result(timeout=3) for attempt in attempts]
 
     assert not simultaneous.broken
-    assert messages == [E2E_VIDEO_EMBED_REASON] * 12
-    assert provider.calls == ["video_embed"]
+    assert messages == [E2E_FACE_EMBED_REASON] * 12
+    assert provider.calls == ["face_embed"]
 
     with pytest.raises(ProviderUnavailable) as later:
-        resolver.resolve("video_embed")
-    assert str(later.value) == E2E_VIDEO_EMBED_REASON
-    assert provider.calls == ["video_embed"]
+        resolver.resolve("face_embed")
+    assert str(later.value) == E2E_FACE_EMBED_REASON
+    assert provider.calls == ["face_embed"]
     resolver.close()
     assert provider.close_calls == 1
 
@@ -1863,10 +1863,10 @@ def test_cached_failure_is_reraised_without_growing_its_traceback():
     depths: list[int] = []
     for _ in range(3):
         with pytest.raises(ProviderUnavailable) as caught:
-            resolver.resolve("video_embed")
+            resolver.resolve("face_embed")
         depths.append(len(traceback.extract_tb(caught.value.__traceback__)))
 
-    assert provider.calls == ["video_embed"]
+    assert provider.calls == ["face_embed"]
     assert depths[1] == depths[2]
 
 
@@ -1940,30 +1940,30 @@ def test_session_endpoints_scope_each_outcome_to_the_service_that_asked(
     provider = _ServiceProvider("e2e", {"clap_embed": clap})
     provider.release.set()
     builds: list[int] = []
-    endpoints = _session_endpoints(provider, {"clap_embed", "video_embed"}, builds)
-    assert endpoints.required == frozenset({"clap_embed", "video_embed"})
+    endpoints = _session_endpoints(provider, {"clap_embed", "face_embed"}, builds)
+    assert endpoints.required == frozenset({"clap_embed", "face_embed"})
     assert builds == []
 
     assert dict(endpoints.require(())) == {}
     assert builds == []
     assert dict(endpoints.require({"clap_embed"})) == {"clap_embed": clap}
     with pytest.raises(ProviderUnavailable) as first:
-        endpoints.require({"video_embed"})
-    assert str(first.value) == E2E_VIDEO_EMBED_REASON
+        endpoints.require({"face_embed"})
+    assert str(first.value) == E2E_FACE_EMBED_REASON
     with pytest.raises(ProviderUnavailable) as both:
-        endpoints.require({"video_embed", "clap_embed"})
-    assert str(both.value) == E2E_VIDEO_EMBED_REASON
+        endpoints.require({"face_embed", "clap_embed"})
+    assert str(both.value) == E2E_FACE_EMBED_REASON
     assert endpoints.get("clap_embed") is clap
     with pytest.raises(ProviderUnavailable) as via_get:
-        endpoints.get("video_embed")
-    assert str(via_get.value) == E2E_VIDEO_EMBED_REASON
+        endpoints.get("face_embed")
+    assert str(via_get.value) == E2E_FACE_EMBED_REASON
     with pytest.raises(KeyError, match="'gliner'"):
         endpoints["gliner"]
     assert endpoints.get("gliner") is None
     assert endpoints.get("gliner", clap) is clap
 
     assert builds == [1]
-    assert provider.calls == ["clap_embed", "video_embed"]
+    assert provider.calls == ["clap_embed", "face_embed"]
     assert json.loads(os.environ["INFERENCE_SERVICE_URLS"]) == {
         "clap_embed": "http://127.0.0.1:34141"
     }

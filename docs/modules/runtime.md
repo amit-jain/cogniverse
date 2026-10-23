@@ -150,7 +150,8 @@ LateOn (ColBERT) text embeddings are served by the PyLate sidecar
 `cogniverse_cli/modal_inference/servers/pylate.py`) because LateOn needs
 PyLate's exact query expansion, which stock vLLM's `/pooling` cannot
 reproduce (no attention-mask input). DenseOn dense embeddings stay on
-stock vLLM (`vllm_embed` engine). See
+stock vLLM (`vllm_embed` engine); EmbeddingGemma 2 (`vllm_omni_embed`) runs the
+same engine from the vLLM audio image. See
 `docs/operations/models-and-inference.md` for the serving details.
 
 The face-embed sidecar runs as its own container: `FaceEmbedConfig` is plain
@@ -189,24 +190,8 @@ whose `detail` matches
 Run the sidecar locally with
 `uv run python -m cogniverse_cli.modal_inference.servers.clap`.
 
-Temporal video embeddings come from the video-embed sidecar at
-`cogniverse_cli.modal_inference.servers.video_embed`. It serves one joint
-video-text space: `POST /embed/video` takes `{"video_b64": "..."}` (a segment's
-raw bytes), samples `VIDEO_EMBED_NUM_FRAMES` frames evenly across the clip and
-encodes them with cross-frame attention, so the vector describes motion rather
-than a single frame; `POST /embed/text` returns a directly comparable vector
-for the same space, which is what makes text-to-video search possible. The
-model is named only in configuration: `VIDEO_EMBED_MODEL` and
-`VIDEO_EMBED_MODEL_REVISION` pin it, `VIDEO_EMBED_DIM` states the width every
-response is checked against, and `VIDEO_EMBED_DEVICE` selects the device. The
-defaults pin `microsoft/xclip-large-patch14` at revision
-`a9dd1429a16cf305df2aaea232d5e8dceba1c675` on `cpu`, 8 frames, 768 dims. A
-response of any other width returns HTTP 500 rather than reaching Vespa, whose
-own rejection would name neither the model nor the endpoint. Run it locally
-with `uv run python -m cogniverse_cli.modal_inference.servers.video_embed`.
-
-For both sidecars, the Helm readiness probe calls the model-backed `/health`
-route. Their liveness probe checks only the TCP serving socket, so a model load
+For the face-embed and CLAP sidecars, the Helm readiness probe calls the
+model-backed `/health` route. Their liveness probe checks only the TCP serving socket, so a model load
 failure removes the pod from service without creating a restart loop.
 
 ### Modal inference serving
@@ -636,7 +621,7 @@ strategy.get_required_processors()
 # -> {"keyframe": {"fps": 0.5, "threshold": 0.999, "max_frames": 3000}}
 ```
 
-**ChunkSegmentationStrategy** - Extract video chunks (for ColQwen, X-CLIP):
+**ChunkSegmentationStrategy** - Extract video chunks (for ColQwen):
 ```python
 from cogniverse_runtime.ingestion.strategies import ChunkSegmentationStrategy
 
@@ -647,16 +632,14 @@ strategy = ChunkSegmentationStrategy(
 )
 ```
 
-**SingleVectorSegmentationStrategy** - Single-vector embeddings (for X-CLIP):
+**SingleVectorSegmentationStrategy** - Single-vector embeddings (for EmbeddingGemma 2):
 ```python
 from cogniverse_runtime.ingestion.strategies import SingleVectorSegmentationStrategy
 
 strategy = SingleVectorSegmentationStrategy(
-    strategy="sliding_window",
+    strategy="chunks",
     segment_duration=6.0,
     segment_overlap=1.0,
-    sampling_fps=2.0,
-    max_frames_per_segment=12
 )
 ```
 
@@ -670,8 +653,8 @@ from cogniverse_runtime.ingestion.strategies import (
 # Multi-vector (ColPali, ColQwen)
 mv_strategy = MultiVectorEmbeddingStrategy(model_name="TomoroAI/tomoro-colqwen3-embed-4b")
 
-# Single-vector (X-CLIP)
-sv_strategy = SingleVectorEmbeddingStrategy(model_name="microsoft/xclip-large-patch14")
+# Single-vector (EmbeddingGemma 2)
+sv_strategy = SingleVectorEmbeddingStrategy(model_name="google/embeddinggemma-2")
 ```
 
 ### Processor Architecture
@@ -1915,27 +1898,27 @@ backend:
           params:
             model_name: TomoroAI/tomoro-colqwen3-embed-4b
 
-    video_xclip_sv_chunk:
+    video_embeddinggemma2_sv_chunk_6s:
       type: single_vector
-      embedding_model: microsoft/xclip-large-patch14
+      embedding_model: google/embeddinggemma-2
       strategies:
         segmentation:
           class: SingleVectorSegmentationStrategy
           params:
+            strategy: chunks
             segment_duration: 6.0
             segment_overlap: 1.0
-            sampling_fps: 2.0
         transcription:
           class: AudioTranscriptionStrategy
           params:
-            model: whisper-large-v3
+            model: openai/whisper-large-v3-turbo
         description:
           class: NoDescriptionStrategy
           params: {}
         embedding:
           class: SingleVectorEmbeddingStrategy
           params:
-            model_name: microsoft/xclip-large-patch14
+            model_name: google/embeddinggemma-2
 ```
 
 ### Agent Configuration
@@ -2214,10 +2197,10 @@ flowchart TB
 
 ```bash
 # Run ingestion pipeline tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/ -v
+uv run pytest tests/ingestion/ -v
 
 # Run integration tests (requires services)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/integration/ -v
+uv run pytest tests/ingestion/integration/ -v
 
 # Run specific tests
 uv run pytest tests/ingestion/unit/ -v

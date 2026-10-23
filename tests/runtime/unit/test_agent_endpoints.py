@@ -762,7 +762,8 @@ class TestModalitySearchDispatchSerialization:
         result = await dispatcher._execute_audio_search_task("speech", "acme:prod", 5)
 
         assert backend.schema_exists.call_args_list == [
-            call("audio_content", "acme:prod")
+            call("audio_content", "acme:prod"),
+            call("audio_embeddinggemma2", "acme:prod"),
         ]
         deps = captured["deps"]
         assert isinstance(deps, AudioAnalysisDeps)
@@ -779,6 +780,55 @@ class TestModalitySearchDispatchSerialization:
         assert result["results_count"] == 1
         assert result["results"][0]["audio_id"] == "aud1"
         assert result["results"][0]["audio_url"] == "http://x/1.mp3"
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_audio_search_dispatch_searches_the_only_deployed_audio_profile(
+        self, dispatcher, monkeypatch
+    ):
+        """A tenant that ingested audio only through the omni profile is
+        searched there, though the shipped default names the CLAP profile."""
+        from cogniverse_agents.audio_analysis_agent import AudioResult
+
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        backend = MagicMock()
+        backend.schema_exists = MagicMock(
+            side_effect=lambda schema, tenant: schema == "audio_embeddinggemma2"
+        )
+        monkeypatch.setattr(
+            "cogniverse_runtime.admin.tenant_manager.get_backend", lambda: backend
+        )
+        stub = MagicMock()
+        stub.search_audio = AsyncMock(
+            return_value=[AudioResult(audio_id="rain", audio_url="s3://b/rain.wav")]
+        )
+        captured = {}
+
+        def build_agent(*, deps, **kwargs):
+            captured["deps"] = deps
+            return stub
+
+        monkeypatch.setattr(
+            "cogniverse_agents.audio_analysis_agent.AudioAnalysisAgent",
+            build_agent,
+        )
+
+        result = await dispatcher._execute_audio_search_task("rain", "acme:prod", 5)
+
+        deps = captured["deps"]
+        assert (
+            deps.audio_profile,
+            deps.audio_schema,
+            deps.acoustic_service,
+            deps.backend_config["schema_name"],
+        ) == (
+            "audio_embeddinggemma2",
+            "audio_embeddinggemma2",
+            "vllm_omni_embed",
+            "audio_embeddinggemma2",
+        )
+        assert stub.search_audio.call_args_list == [call(query="rain", limit=5)]
+        assert [r["audio_id"] for r in result["results"]] == ["rain"]
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
@@ -806,7 +856,8 @@ class TestModalitySearchDispatchSerialization:
         result = await dispatcher._execute_audio_search_task("speech", "acme:prod", 5)
 
         assert backend.schema_exists.call_args_list == [
-            call("audio_content", "acme:prod")
+            call("audio_content", "acme:prod"),
+            call("audio_embeddinggemma2", "acme:prod"),
         ]
         assert result == {
             "status": "success",
@@ -1688,6 +1739,16 @@ class TestAudioTextSearchBackendContract:
         assert (
             dispatcher._config_manager.get_system_config().inference_service_urls or {}
         ).get("clap_embed") is None
+        # The agent picks the default mode from the profile's shipped schema.
+        from pathlib import Path
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        monkeypatch.setattr(
+            dispatcher,
+            "_schema_loader",
+            FilesystemSchemaLoader(Path("configs/schemas")),
+        )
 
         import asyncio as _asyncio
 
@@ -1708,6 +1769,7 @@ class TestAudioTextSearchBackendContract:
             {
                 "query": "listen to podcasts about deep learning run 4",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "phased_semantic",
                 "tenant_id": "acme:prod",
                 "top_k": 3,

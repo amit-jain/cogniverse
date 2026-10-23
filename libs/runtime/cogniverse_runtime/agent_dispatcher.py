@@ -23,6 +23,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Callable,
     Dict,
     List,
     Optional,
@@ -716,6 +717,41 @@ class GroundingPlan:
     profiles: Tuple[str, ...]
     state: str
     undeployed_profiles: Tuple[str, ...] = ()
+
+
+def audio_search_target(
+    backend_config: Dict[str, Any],
+    service_urls: Dict[str, str],
+    is_deployed: Callable[[str], bool],
+) -> Optional[Dict[str, Any]]:
+    """The audio profile an audio search runs on, with its schema and the
+    service and URL that embed its acoustic field.
+
+    The tenant's only deployed audio profile, else
+    ``backend.default_profiles.audio`` among several (``select_type_profile``);
+    None when the tenant has deployed no audio profile.
+    """
+    from cogniverse_foundation.config.utils import select_type_profile
+
+    deployed = {
+        name: config
+        for name, config in (backend_config.get("profiles") or {}).items()
+        if config.get("type") == "audio"
+        and is_deployed(config.get("schema_name", name))
+    }
+    if not deployed:
+        return None
+    profile = select_type_profile(
+        deployed, backend_config.get("default_profiles") or {}, "audio"
+    )
+    config = deployed[profile]
+    service = (config.get("inference_services") or {}).get("acoustic_embedding")
+    return {
+        "audio_profile": profile,
+        "audio_schema": config.get("schema_name", profile),
+        "acoustic_service": service,
+        "acoustic_endpoint": service_urls.get(service),
+    }
 
 
 class AgentDispatcher:
@@ -4243,13 +4279,23 @@ class AgentDispatcher:
         from cogniverse_runtime.admin.tenant_manager import get_backend
         from cogniverse_vespa.config_utils import calculate_config_port
 
+        backend_config = (
+            await asyncio.to_thread(
+                get_config, tenant_id=tenant_id, config_manager=self._config_manager
+            )
+        ).get("backend", {})
+        sys_cfg = await asyncio.to_thread(self._config_manager.get_system_config)
         # Tenant schemas deploy on first ingest, so a tenant that never
-        # ingested audio has no audio_content schema. That is a no-content
-        # answer; a registry lookup failure raises and is not read as one.
+        # ingested audio has no audio schema. That is a no-content answer; a
+        # registry lookup failure raises and is not read as one.
         backend = await asyncio.to_thread(get_backend)
-        if not await asyncio.to_thread(
-            backend.schema_exists, "audio_content", tenant_id
-        ):
+        target = await asyncio.to_thread(
+            audio_search_target,
+            backend_config,
+            sys_cfg.inference_service_urls or {},
+            lambda schema: backend.schema_exists(schema, tenant_id),
+        )
+        if target is None:
             return {
                 "status": "success",
                 "agent": "audio_analysis_agent",
@@ -4259,27 +4305,21 @@ class AgentDispatcher:
             }
 
         vespa_endpoint = await asyncio.to_thread(self._get_vespa_endpoint, tenant_id)
-        sys_cfg = await asyncio.to_thread(self._config_manager.get_system_config)
-        backend_config = (
-            await asyncio.to_thread(
-                get_config, tenant_id=tenant_id, config_manager=self._config_manager
-            )
-        ).get("backend", {})
         deps = AudioAnalysisDeps(
             backend_type=sys_cfg.search_backend,
             backend_config={
                 "url": sys_cfg.backend_url,
                 "port": sys_cfg.backend_port,
                 "config_port": calculate_config_port(sys_cfg.backend_port),
-                "schema_name": "audio_content",
+                "schema_name": target["audio_schema"],
                 "backend": backend_config,
             },
             config_manager=self._config_manager,
             schema_loader=self._schema_loader,
             vespa_endpoint=vespa_endpoint,
             tenant_id=tenant_id,
-            clap_endpoint=(sys_cfg.inference_service_urls or {}).get("clap_embed"),
             deployed_audio_schema=True,
+            **target,
         )
         agent = AudioAnalysisAgent(deps=deps)
 

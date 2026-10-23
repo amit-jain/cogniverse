@@ -298,21 +298,22 @@ class TestProfileSelectionAndMetrics:
         _open(page, _web().WEB_TENANT, "Profile selection")
         analyze = page.get_by_role("form", name="Analyze search spans")
         analyze.get_by_label("Lookback days").fill("1")
-        analyze.get_by_role("button", name="Analyze search spans").click()
+        # The window ends at the request, and the shared tenant's spans keep
+        # landing, so the page is held to the answer it was given.
+        with page.expect_response(
+            lambda response: response.url.endswith(
+                "/profile-selection/analysis?lookback_days=1"
+            ),
+            timeout=_web().RUN_TIMEOUT_MS,
+        ) as answered:
+            analyze.get_by_role("button", name="Analyze search spans").click()
+        assert answered.value.status == 200, answered.value.text()
+        analysis = answered.value.json()
+        assert analysis["lookback_days"] == 1
         expect(page.get_by_role("status").filter(has_text="search spans")).to_have_text(
-            re.compile(r"^Found \d+ search spans\.$"), timeout=_web().RUN_TIMEOUT_MS
+            f"Found {analysis['search_spans']} search spans.",
+            timeout=_web().RUN_TIMEOUT_MS,
         )
-        shown = int(
-            re.search(
-                r"\d+",
-                page.get_by_role("status").filter(has_text="search spans").inner_text(),
-            ).group()
-        )
-        analysis = _runtime(
-            "GET",
-            f"/admin/tenant/{_web().WEB_TENANT}/profile-selection/analysis?lookback_days=1",
-        )
-        assert shown == analysis["search_spans"]
 
         training = page.get_by_role("region", name="Train profile selector")
         training.get_by_role("button", name="Train profile selector model").click()

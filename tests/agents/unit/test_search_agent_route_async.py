@@ -33,7 +33,9 @@ async def test_process_route_offloads_blocking_call(monkeypatch):
             assert release.wait(timeout=5), "event loop blocked by sync call"
             return {"ok": True, "task_id": task.get("id")}
 
-    monkeypatch.setattr(sa, "search_agent", _Stub())
+    monkeypatch.setattr(sa, "search_agent", object())
+    monkeypatch.setattr(sa, "_tenant_agents", {"acme:acme": _Stub()})
+    monkeypatch.setattr(sa, "_build_tenant_agent", lambda tenant_id: None)
 
     async def releaser():
         await asyncio.sleep(0.05)
@@ -42,7 +44,10 @@ async def test_process_route_offloads_blocking_call(monkeypatch):
     transport = ASGITransport(app=sa.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
         resp, _ = await asyncio.wait_for(
-            asyncio.gather(client.post("/process", json={"id": "abc"}), releaser()),
+            asyncio.gather(
+                client.post("/process", json={"id": "abc", "tenant_id": "acme"}),
+                releaser(),
+            ),
             timeout=5,
         )
 
@@ -59,7 +64,9 @@ async def test_enhanced_search_route_offloads_blocking_call(monkeypatch):
             assert release.wait(timeout=5), "event loop blocked by sync call"
             return {"results": [], "tenant_id": kwargs.get("tenant_id")}
 
-    monkeypatch.setattr(sa, "search_agent", _Stub())
+    monkeypatch.setattr(sa, "search_agent", object())
+    monkeypatch.setattr(sa, "_tenant_agents", {"acme:acme": _Stub()})
+    monkeypatch.setattr(sa, "_build_tenant_agent", lambda tenant_id: None)
 
     async def releaser():
         await asyncio.sleep(0.05)

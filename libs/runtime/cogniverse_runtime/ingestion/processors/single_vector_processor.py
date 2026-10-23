@@ -4,12 +4,10 @@ Single Vector Video Processor - Generic processor for single-vector embedding ap
 
 This processor is model-agnostic and strategy-flexible. It handles:
 - Segmentation strategies (chunks, windows, global)
-- Frame extraction
 - Transcript alignment
-- Document preparation
 
 The same processor can be used for:
-- video_xclip_sv_chunk_6s (6-second chunks)
+- video_embeddinggemma2_sv_chunk_6s (6-second chunks)
 - single__video_anymodel_anystrategy (any future approach)
 """
 
@@ -22,7 +20,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import cv2
-import numpy as np
 
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
 
@@ -38,19 +35,16 @@ class VideoSegment:
     segment_id: int
     start_time: float
     end_time: float
-    frames: list[np.ndarray]
-    frame_timestamps: list[float]
     transcript_segments: list[dict[str, Any]]
     transcript_text: str = ""
     metadata: dict[str, Any] = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary (without frame data)"""
+        """Convert to a dictionary without the aligned transcript segments."""
         return {
             "segment_id": self.segment_id,
             "start_time": self.start_time,
             "end_time": self.end_time,
-            "frame_count": len(self.frames),
             "transcript_text": self.transcript_text,
             "metadata": self.metadata or {},
         }
@@ -69,14 +63,13 @@ def _transcript_fingerprint(transcript_data: dict[str, Any] | None) -> str:
 
 def _segment_cache_payload(segment: VideoSegment) -> dict[str, Any]:
     """Full-fidelity serialization for the segmentation cache — unlike
-    ``to_dict``, keeps frame_timestamps and transcript_segments so a cache
+    ``to_dict``, keeps transcript_segments so a cache
     hit reconstructs the exact VideoSegment. Copies every mutable field so
     later caller mutation can't reach the stored entry."""
     return {
         "segment_id": segment.segment_id,
         "start_time": segment.start_time,
         "end_time": segment.end_time,
-        "frame_timestamps": list(segment.frame_timestamps),
         "transcript_segments": [dict(s) for s in segment.transcript_segments],
         "transcript_text": segment.transcript_text,
         "metadata": dict(segment.metadata or {}),
@@ -88,8 +81,6 @@ def _segment_from_cache(data: dict[str, Any]) -> VideoSegment:
         segment_id=data["segment_id"],
         start_time=data["start_time"],
         end_time=data["end_time"],
-        frames=[],
-        frame_timestamps=list(data["frame_timestamps"]),
         transcript_segments=[dict(s) for s in data["transcript_segments"]],
         transcript_text=data["transcript_text"],
         metadata=dict(data["metadata"]),
@@ -110,10 +101,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
         strategy: Literal["chunks", "windows", "global"] = "chunks",
         segment_duration: float = 6.0,
         segment_overlap: float = 1.0,
-        sampling_fps: float = 2.0,
-        max_frames_per_segment: int = 12,
         min_segment_duration: float = 2.0,
-        store_as_single_doc: bool = True,
         cache: Any | None = None,
         **kwargs,
     ):
@@ -127,10 +115,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
                 - "global": Entire video as one segment
             segment_duration: Duration of each segment in seconds
             segment_overlap: Overlap between segments (ignored for global)
-            sampling_fps: Frame sampling rate within segments
-            max_frames_per_segment: Maximum frames to extract per segment
             min_segment_duration: Minimum duration for last segment
-            store_as_single_doc: If True, store all segments in one document
         """
         # Pass all parameters to parent using locals() to avoid hardcoding
         params = locals().copy()
@@ -144,10 +129,20 @@ class SingleVectorVideoProcessor(BaseProcessor):
         self.strategy = strategy
         self.segment_duration = segment_duration
         self.segment_overlap = segment_overlap if strategy != "global" else 0
-        self.sampling_fps = sampling_fps
-        self.max_frames_per_segment = max_frames_per_segment
+        if segment_duration <= 0:
+            raise ValueError(
+                f"segment_duration must be positive, got {segment_duration}"
+            )
+        if not 0 <= self.segment_overlap < segment_duration:
+            raise ValueError(
+                "segment_overlap must be at least 0 and less than segment_duration "
+                f"({segment_duration}), got {segment_overlap}"
+            )
+        if min_segment_duration < 0:
+            raise ValueError(
+                f"min_segment_duration must not be negative, got {min_segment_duration}"
+            )
         self.min_segment_duration = min_segment_duration
-        self.store_as_single_doc = store_as_single_doc
         self.cache = cache
 
     def process_video(
@@ -164,7 +159,6 @@ class SingleVectorVideoProcessor(BaseProcessor):
             - segments: List of VideoSegment objects
             - metadata: Processing metadata
             - full_transcript: Combined transcript
-            - document_structure: How to structure for storage
         """
         self.logger.info(
             f"Processing video: {video_path.name} with strategy: {self.strategy}"
@@ -174,8 +168,6 @@ class SingleVectorVideoProcessor(BaseProcessor):
             "strategy": self.strategy,
             "segment_duration": self.segment_duration,
             "segment_overlap": self.segment_overlap,
-            "sampling_fps": self.sampling_fps,
-            "max_frames": self.max_frames_per_segment,
             "transcript_fingerprint": _transcript_fingerprint(transcript_data),
         }
         if self.cache is not None:
@@ -189,7 +181,6 @@ class SingleVectorVideoProcessor(BaseProcessor):
                     # the cached payload for later hits.
                     "metadata": dict(cached["metadata"]),
                     "full_transcript": cached["full_transcript"],
-                    "document_structure": cached["document_structure"],
                 }
                 if metadata:
                     result["metadata"].update(metadata)
@@ -198,6 +189,11 @@ class SingleVectorVideoProcessor(BaseProcessor):
         # Get video info
         video_info = self._get_video_info(video_path)
         duration = video_info["duration"]
+        if duration <= 0:
+            raise ValueError(
+                f"{video_path.name} has no readable duration "
+                f"(fps {video_info['fps']}, {video_info['total_frames']} frames)"
+            )
 
         # Calculate segment boundaries
         segment_boundaries = self._calculate_segment_boundaries(duration)
@@ -213,7 +209,6 @@ class SingleVectorVideoProcessor(BaseProcessor):
                 segment_id=i,
                 start_time=start_time,
                 end_time=end_time,
-                video_info=video_info,
                 transcript_data=transcript_data,
             )
             segments.append(segment)
@@ -233,11 +228,9 @@ class SingleVectorVideoProcessor(BaseProcessor):
                 "strategy": self.strategy,
                 "segment_duration": self.segment_duration,
                 "segment_overlap": self.segment_overlap,
-                "store_as_single_doc": self.store_as_single_doc,
                 "processed_at": time.time(),
             },
             "full_transcript": full_transcript,
-            "document_structure": self._get_document_structure(),
         }
 
         if self.cache is not None:
@@ -247,7 +240,6 @@ class SingleVectorVideoProcessor(BaseProcessor):
                 "segments": [_segment_cache_payload(s) for s in segments],
                 "metadata": dict(result["metadata"]),
                 "full_transcript": full_transcript,
-                "document_structure": dict(result["document_structure"]),
             }
             run_coro_blocking(
                 self.cache.set_segmentation(str(video_path), payload, **cache_params)
@@ -285,13 +277,14 @@ class SingleVectorVideoProcessor(BaseProcessor):
         while start < duration:
             end = min(start + self.segment_duration, duration)
 
-            # Check if remaining duration is too small
-            if duration - end < self.min_segment_duration and segments:
-                # Extend last segment instead of creating tiny one
+            # A remainder too short to stand alone joins the chunk before it.
+            if end - start < self.min_segment_duration and segments:
                 segments[-1] = (segments[-1][0], duration)
                 break
 
             segments.append((start, end))
+            if end >= duration:
+                break
 
             # Move to next segment
             if self.segment_overlap > 0:
@@ -307,20 +300,10 @@ class SingleVectorVideoProcessor(BaseProcessor):
         segment_id: int,
         start_time: float,
         end_time: float,
-        video_info: dict[str, Any],
         transcript_data: dict[str, Any] | None = None,
     ) -> VideoSegment:
-        """Process one segment: boundary math + transcript alignment only.
-
-        Frames are NOT decoded here. The embedding stage re-decodes each time
-        range on demand, so retaining decoded frames per segment wasted memory
-        (tens of GB on a long video) for data that ``to_dict`` immediately
-        discarded. We carry only the planned sample timestamps and count.
-        """
-        timestamps = self._planned_frame_timestamps(
-            start_time, end_time, video_info["fps"]
-        )
-
+        """Process one segment: its boundaries and the transcript aligned
+        to them. The embedding stage reads the time range from the video."""
         # Align transcripts
         transcript_segments = []
         transcript_text = ""
@@ -330,7 +313,9 @@ class SingleVectorVideoProcessor(BaseProcessor):
                 transcript_data["segments"], start_time, end_time
             )
             transcript_text = " ".join(
-                [seg["text"].strip() for seg in transcript_segments]
+                text
+                for seg in sorted(transcript_segments, key=lambda s: s.get("start", 0))
+                if (text := seg.get("text", "").strip())
             )
 
         # Create segment
@@ -338,42 +323,13 @@ class SingleVectorVideoProcessor(BaseProcessor):
             segment_id=segment_id,
             start_time=start_time,
             end_time=end_time,
-            frames=[],
-            frame_timestamps=timestamps,
             transcript_segments=transcript_segments,
             transcript_text=transcript_text,
             metadata={
                 "duration": end_time - start_time,
-                "frame_count": len(timestamps),
                 "has_transcript": bool(transcript_text),
             },
         )
-
-    def _planned_frame_timestamps(
-        self, start_time: float, end_time: float, video_fps: float
-    ) -> list[float]:
-        """Sample timestamps this segment WOULD produce, from the boundaries
-        alone — no decode. Mirrors the old frame-index math so ``frame_count``
-        stays the planned sample count; the embedding stage decodes these
-        ranges itself."""
-        if video_fps <= 0:
-            return []
-        segment_duration = end_time - start_time
-        desired_frames = int(segment_duration * self.sampling_fps)
-        frames_to_extract = min(desired_frames, self.max_frames_per_segment)
-        if frames_to_extract <= 0:
-            return []
-        start_frame = int(start_time * video_fps)
-        end_frame = int(end_time * video_fps)
-        total_frames = end_frame - start_frame
-        if total_frames <= frames_to_extract:
-            frame_indices = list(range(start_frame, end_frame))
-        else:
-            step = total_frames / frames_to_extract
-            frame_indices = [
-                int(start_frame + i * step) for i in range(frames_to_extract)
-            ]
-        return [idx / video_fps for idx in frame_indices]
 
     def _align_transcript_segments(
         self, segments: list[dict[str, Any]], start_time: float, end_time: float
@@ -417,45 +373,6 @@ class SingleVectorVideoProcessor(BaseProcessor):
         # Sort by timestamp and combine
         transcript_parts.sort(key=lambda x: x[0])
         return " ".join([text for _, text in transcript_parts if text])
-
-    def _get_document_structure(self) -> dict[str, Any]:
-        """Define how documents should be structured for this strategy"""
-        if self.store_as_single_doc:
-            return {
-                "type": "single_document",
-                "description": "All segments stored in one document with tensor arrays",
-            }
-        else:
-            return {
-                "type": "multiple_documents",
-                "description": "Each segment stored as separate document",
-            }
-
-    def prepare_for_embedding_generation(
-        self, segments: list[VideoSegment], model_type: str = "xclip"
-    ) -> list[dict[str, Any]]:
-        """
-        Prepare segments for embedding generation.
-        Model-agnostic preparation.
-        """
-        prepared = []
-
-        for segment in segments:
-            prepared.append(
-                {
-                    "segment_id": segment.segment_id,
-                    "frames": segment.frames,
-                    "frame_timestamps": segment.frame_timestamps,
-                    "metadata": {
-                        "start_time": segment.start_time,
-                        "end_time": segment.end_time,
-                        "transcript": segment.transcript_text,
-                        "model_type": model_type,
-                    },
-                }
-            )
-
-        return prepared
 
     def process(
         self, video_path: Path, output_dir: Path = None, **kwargs

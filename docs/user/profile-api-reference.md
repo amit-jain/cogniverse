@@ -116,7 +116,7 @@ Create a new backend profile for a tenant.
     "embedding_dim": 128,
     "num_patches": 1024
   },
-  "model_loader": "string (required for embedded types, enum: colbert|colpali|colqwen|xclip)",
+  "model_loader": "string (required for embedded types, enum: colbert|colpali|colqwen|embeddinggemma2)",
   "process_type": "string (optional, enum: direct_video|frame_based|video_chunks)",
   "extra_config": {
     "inference_services": {"embedding": "vllm_colpali"}
@@ -189,7 +189,7 @@ schema and the failure, for a deploy from the profile.
 - `pipeline_config`: Optional (defaults to empty dict), must be valid JSON object
 - `model_specific`: Optional (defaults to null), must be valid JSON object
 - `schema_config`: Optional (defaults to empty dict); if it includes `embedding_dim`, the value must be an integer between 1 and 100000
-- `model_loader`: The loader ingestion embeds with: `colbert`, `colpali`, `colqwen` or `xclip` (`EMBEDDING_MODEL_LOADERS`). Required when every shipped profile of the profile's `type` names one (today every type but `wiki`); a profile without it could be deployed but not ingested into
+- `model_loader`: The loader ingestion embeds with: `colbert`, `colpali`, `colqwen` or `embeddinggemma2` (`EMBEDDING_MODEL_LOADERS`). Required when every shipped profile of the profile's `type` names one (today every type but `wiki`); a profile without it could be deployed but not ingested into
 - `process_type`: Optional (defaults to null, inferred by ingestion); one of `direct_video`, `frame_based`, `video_chunks` (`PROCESS_TYPES`)
 - `extra_config`: Optional (defaults to empty dict); further profile keys stored beside the named fields, such as `inference_services`, `model_config`, `result_granularity` or `semantic_model`. A key named like a profile field is refused
 - `deploy_schema`: Optional (defaults to false), boolean flag
@@ -230,7 +230,7 @@ own profile under is left out.
   ],
   "profile_types": ["video", "image", "audio", "document", "code", "wiki"],
   "embedding_types": ["multi_vector", "single_vector"],
-  "model_loaders": ["colbert", "colpali", "colqwen", "xclip"],
+  "model_loaders": ["colbert", "colpali", "colqwen", "embeddinggemma2"],
   "process_types": ["direct_video", "frame_based", "video_chunks"]
 }
 ```
@@ -277,11 +277,11 @@ curl "http://localhost:8000/admin/profiles?tenant_id=acme_corp"
       "created_at": "2024-01-15T10:00:00.000Z"
     },
     {
-      "profile_name": "video_xclip_global",
+      "profile_name": "video_embeddinggemma2_sv_chunk_6s",
       "type": "video",
-      "schema_name": "video_xclip_sv_chunk_6s",
-      "embedding_model": "microsoft/xclip-large-patch14",
-      "description": "X-CLIP global embeddings",
+      "schema_name": "video_embeddinggemma2_sv_chunk_6s",
+      "embedding_model": "google/embeddinggemma-2",
+      "description": "EmbeddingGemma 2 6-second chunk single-vector embeddings",
       "schema_deployed": false,
       "created_at": "2024-01-15T10:00:00.000Z"
     }
@@ -638,7 +638,7 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
   pipeline_config?: object,    // Optional (default: {}, Dict[str, Any])
   model_specific?: object,     // Optional (default: null, Dict[str, Any])
   schema_config?: object,      // Optional (default: {}, Dict[str, Any])
-  model_loader?: string,       // colbert | colpali | colqwen | xclip; required for embedded types
+  model_loader?: string,       // colbert | colpali | colqwen | embeddinggemma2; required for embedded types
   process_type?: string | null, // direct_video | frame_based | video_chunks (default: null)
   extra_config?: object,       // Optional (default: {}), keys stored beside the fields
   deploy_schema?: boolean      // Optional (default: false)

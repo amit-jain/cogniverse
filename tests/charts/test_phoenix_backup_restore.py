@@ -212,6 +212,10 @@ class BackupServices:
         self.stage.mkdir(mode=0o777)
         self.source.mkdir(mode=0o777)
         (self.source / "export.json").write_text('{"tenant":"prodfixclients:backup"}\n')
+        # A SQLite store a former deployment left behind, which Phoenix does
+        # not read while it serves from Postgres.
+        for stale in ("phoenix.db", "phoenix.db-wal", "phoenix.db-shm"):
+            (self.source / stale).write_bytes(b"stale sqlite store")
 
     @staticmethod
     def image(config):
@@ -458,6 +462,7 @@ class BackupServices:
             "PGDATABASE=phoenix\nPGUSER=phoenix\n"
         )
         with tarfile.open(self.stage / "restore/working-assets.tar") as assets:
+            assert sorted(assets.getnames()) == [".", "./export.json"]
             assert assets.extractfile("./export.json").read() == (
                 b'{"tenant":"prodfixclients:backup"}\n'
             )

@@ -176,7 +176,7 @@ async def test_cli_ground_truth_read_failure_is_terminal(
             (
                 f"dataset store at {proxy.url} could not answer for blob "
                 f"{dataset_name!r}: HTTPStatusError: Server error '503 Service Unavailable' "
-                f"for url '{proxy.url}/v1/datasets?{urlencode({'name': slot})}'\n"
+                f"for url '{proxy.url}/v1/datasets?{urlencode({'limit': 100, 'name': slot})}'\n"
                 "For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
             )
             for slot in (

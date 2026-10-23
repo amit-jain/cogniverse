@@ -394,7 +394,7 @@ class TestAdapterEvaluatorAgentTypes:
             (
                 "profile_selection",
                 '{"selected_profile":"video_colpali"}',
-                '{"selected_profile":"video_xclip"}',
+                '{"selected_profile":"video_embeddinggemma2"}',
             ),
         ],
     )

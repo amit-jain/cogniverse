@@ -4,9 +4,9 @@
 # depend on PyPI. Baking them here lets the transcription pod start with no
 # network access. TORCH_BACKEND selects the upstream image for the device.
 ARG TORCH_BACKEND=cpu
-ARG CPU_BASE=vllm/vllm-openai-cpu:v0.23.0
-ARG CUDA_BASE=vllm/vllm-openai:v0.23.0
-ARG ROCM_BASE=vllm/vllm-openai-rocm:v0.23.0
+ARG CPU_BASE=vllm/vllm-openai-cpu:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
+ARG CUDA_BASE=vllm/vllm-openai:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
+ARG ROCM_BASE=vllm/vllm-openai-rocm:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
 
 FROM ${CPU_BASE} AS cpu-base
 FROM ${CUDA_BASE} AS cuda-base

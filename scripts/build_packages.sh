@@ -111,7 +111,7 @@ build_package() {
     if [ "$RUN_TESTS" = true ]; then
         log_info "  Running tests for $package..."
         local test_log="$TEST_LOG_DIR/${package}.log"
-        if (cd "$PROJECT_ROOT" && JAX_PLATFORM_NAME=cpu timeout 300 uv run pytest "tests/${package}/" -v 2>&1 | tee "$test_log"); then
+        if (cd "$PROJECT_ROOT" && timeout 300 uv run pytest "tests/${package}/" -v 2>&1 | tee "$test_log"); then
             log_success "  Tests passed for $package"
         else
             log_warning "  Some tests failed for $package (see $test_log)"

@@ -246,7 +246,7 @@ def _populated_traces_df():
                 "attributes.output.value": json.dumps(
                     [{"source_id": "v3", "score": 0.7, "content": "entangled"}]
                 ),
-                "attributes.metadata.profile": "xclip_global",
+                "attributes.metadata.profile": "video_embeddinggemma2_sv_chunk_6s",
                 "attributes.metadata.strategy": "float_float",
             },
         ]
@@ -443,7 +443,10 @@ class TestBatchSolver:
         assert packed["search_configs"]["trace-b"]["results"] == [
             {"source_id": "v3", "score": 0.7, "content": "entangled"}
         ]
-        assert packed["search_configs"]["trace-b"]["profile"] == "xclip_global"
+        assert (
+            packed["search_configs"]["trace-b"]["profile"]
+            == "video_embeddinggemma2_sv_chunk_6s"
+        )
         assert packed["search_configs"]["trace-b"]["strategy"] == "float_float"
         assert "loaded_traces" not in result.metadata
 

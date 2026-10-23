@@ -36,7 +36,6 @@ _INSTALLED_WHEEL_PROBE = textwrap.dedent(
         "cogniverse_cli.modal_inference.servers.face",
         "cogniverse_cli.modal_inference.servers.gliner",
         "cogniverse_cli.modal_inference.servers.pylate",
-        "cogniverse_cli.modal_inference.servers.video_embed",
     )
     foundation_modules = (
         "cogniverse_foundation.config.inference_auth",
@@ -82,10 +81,13 @@ _INSTALLED_WHEEL_PROBE = textwrap.dedent(
         def get_current_stats(self):
             return SimpleNamespace(num_total_runners=self.active)
 
-    services = tuple(INFERENCE_SERVICE_SPECS)
-    functions = {
-        contract.modal_app: Function(name)
+    services = tuple(
+        name
         for name, contract in INFERENCE_SERVICE_SPECS.items()
+        if contract.modal_deployable
+    )
+    functions = {
+        INFERENCE_SERVICE_SPECS[name].modal_app: Function(name) for name in services
     }
 
     def load(contract):

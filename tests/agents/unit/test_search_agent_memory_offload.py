@@ -41,7 +41,7 @@ class _FakeSearchResult:
 async def test_ensemble_remember_success_runs_off_the_event_loop():
     agent = object.__new__(SearchAgent)
     agent._backend_type = "vespa"
-    agent.search_config = {"backend": {"profiles": {}}}
+    agent.search_config = {"backend": {"profiles": {"p1": {}}}}
     agent.active_profile = "p1"
     agent.query_encoder = SimpleNamespace(
         encode=lambda q: np.zeros((1, 4), dtype=np.float32)
@@ -82,7 +82,7 @@ async def test_ensemble_remember_success_runs_off_the_event_loop():
 def _single_modality_agent(**overrides):
     agent = object.__new__(SearchAgent)
     agent._backend_type = "vespa"
-    agent.search_config = {"backend": {"profiles": {}}}
+    agent.search_config = {"backend": {"profiles": {"p1": {}}}}
     agent.active_profile = "p1"
     agent.is_memory_enabled = lambda: True
     agent._memory_agent_name = "search_agent"
@@ -107,7 +107,7 @@ async def test_ensemble_answers_while_its_memory_write_is_held():
         landed.append(kwargs["query"])
 
     agent = _single_modality_agent(
-        search_config={"backend": {"profiles": {}}},
+        search_config={"backend": {"profiles": {"p1": {}}}},
         remember_success=remember_success,
         _get_backend=lambda: SimpleNamespace(
             search=lambda query_dict: [_FakeSearchResult("d1", 0.9)]

@@ -225,7 +225,9 @@ class TestSearchAnnotationsAndGoldenDataset:
         tenant = _tenant("webannotate")
         record_search(tenant, SUNSET, "video_colpali", "hybrid", SUNSET_TITLES)
         time.sleep(0.01)
-        record_search(tenant, HARBOUR, "video_xclip", "bm25", ["Harbour Tour", "Ferry"])
+        record_search(
+            tenant, HARBOUR, "video_embeddinggemma2", "bm25", ["Harbour Tour", "Ferry"]
+        )
         telemetry.force_flush(timeout_millis=10000)
 
         _open(page, web_url, tenant, "Search annotations")
@@ -784,7 +786,11 @@ class TestProfileSelection:
                 tenant, _temporal(index), "video_colpali_temporal", "hybrid", ["A"]
             )
             record_search(
-                tenant, f"red car {index}", "video_xclip_plain", "hybrid", ["B"]
+                tenant,
+                f"red car {index}",
+                "video_embeddinggemma2_plain",
+                "hybrid",
+                ["B"],
             )
         telemetry.force_flush(timeout_millis=10000)
 
@@ -807,23 +813,26 @@ class TestProfileSelection:
                 usage.locator(".bar-value").all_inner_texts(),
                 strict=True,
             )
-        ) == [("video_colpali_temporal", "20"), ("video_xclip_plain", "20")]
+        ) == [("video_colpali_temporal", "20"), ("video_embeddinggemma2_plain", "20")]
         assert _cells(
             page.get_by_role("table", name="attributes.profile by attributes.top_score")
-        ) == [["video_colpali_temporal", "1", "20"], ["video_xclip_plain", "1", "20"]]
+        ) == [
+            ["video_colpali_temporal", "1", "20"],
+            ["video_embeddinggemma2_plain", "1", "20"],
+        ]
 
         training = page.get_by_role("region", name="Train profile selector")
         training.get_by_role("button", name="Train profile selector model").click()
         expect(training.get_by_role("status").last).to_have_text(
             "Model trained and stored: 40 samples, 6 features, 2 profiles "
-            "(video_colpali_temporal, video_xclip_plain).",
+            "(video_colpali_temporal, video_embeddinggemma2_plain).",
             timeout=POLL_TIMEOUT_MS,
         )
         expect(_fact(training, "Training accuracy")).to_have_text("100.0%")
         expect(_fact(training, "Test accuracy")).to_have_text("100.0%")
         expect(_fact(training, "Samples")).to_have_text("40")
         expect(training.get_by_role("status").first).to_have_text(
-            f"A trained model is stored for {tenant}: video_colpali_temporal, video_xclip_plain."
+            f"A trained model is stored for {tenant}: video_colpali_temporal, video_embeddinggemma2_plain."
         )
 
         query = _temporal(99)

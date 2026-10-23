@@ -572,7 +572,7 @@ manager = create_default_config_manager()
 video_agent_config = AgentConfig(
     agent_name="search_agent",
     agent_version="1.0.0",
-    agent_description="Video/image search and analysis agent (ColPali/X-CLIP via Vespa)",
+    agent_description="Video/image search and analysis agent (ColPali/EmbeddingGemma 2 via Vespa)",
     agent_url="http://localhost:8002",
     capabilities=["search", "video_search", "retrieval"],
     skills=[],
@@ -933,7 +933,7 @@ print(f"Configs by scope: {stats['configs_per_scope']}")
 
 ```bash
 # Run configuration unit tests (spread across each package's own test tree)
-JAX_PLATFORM_NAME=cpu uv run pytest \
+uv run pytest \
   tests/common/unit/test_agent_config.py \
   tests/common/unit/test_config_api_mixin.py \
   tests/foundation/unit/test_config_utils.py \
@@ -941,7 +941,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest \
   -v
 
 # Test the Vespa config store backend (YQL escaping, selection quoting)
-JAX_PLATFORM_NAME=cpu uv run pytest \
+uv run pytest \
   tests/backends/unit/test_config_store_yql_escape.py \
   tests/backends/unit/test_list_all_configs_selection_quoting.py \
   -v
@@ -954,7 +954,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest \
 cogniverse up  # Starts all services including Vespa
 
 # Run integration tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/integration/ -v
+uv run pytest tests/common/integration/ -v
 ```
 
 ### Load Testing

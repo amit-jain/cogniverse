@@ -221,7 +221,7 @@ def test_embed_text_passes_query_to_processor(client, server_module):
 def test_embed_audio_decodes_resamples_and_returns_512(client, server_module):
     resp = client.post("/embed/audio", json={"audio_b64": _wav_b64()})
     assert resp.status_code == 200
-    assert resp.json()["vec"] == [0.25] * 512
+    assert resp.json()["vec"] == pytest.approx([1 / np.sqrt(512)] * 512)
 
     # The 0.5 s 16 kHz tone must reach the processor as a mono float
     # array resampled to the configured 48 kHz: exactly 24000 samples.
@@ -246,3 +246,69 @@ def test_embed_audio_rejects_undecodable_bytes(client):
     resp = client.post("/embed/audio", json={"audio_b64": junk})
     assert resp.status_code == 400
     assert "audio decode failed" in resp.json()["detail"]
+
+
+class _LengthKeyedProcessor:
+    """Passes each window's sample count through to the model."""
+
+    def __init__(self) -> None:
+        self.audio_lengths: list[int] = []
+
+    def __call__(self, audios=None, sampling_rate=None, **_kw):
+        self.audio_lengths.append(len(audios))
+        return {"samples": len(audios)}
+
+
+class _LengthKeyedModel:
+    """A distinct direction per window length, with magnitude 3."""
+
+    def get_audio_features(self, samples):
+        vec = np.zeros((1, 512), dtype=np.float32)
+        vec[0, (samples // 48000) % 512] = 3.0
+        return _FakeTensor(vec)
+
+
+@pytest.fixture
+def windowed_server(server_module):
+    server_module._MODEL = _LengthKeyedModel()
+    server_module._PROCESSOR = _LengthKeyedProcessor()
+    return server_module
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_a_long_clip_is_the_mean_of_its_ten_second_windows(windowed_server):
+    resp = TestClient(windowed_server.app).post(
+        "/embed/audio", json={"audio_b64": _wav_b64(25.0)}
+    )
+
+    assert resp.status_code == 200
+    assert windowed_server._PROCESSOR.audio_lengths == [480000, 480000, 240000]
+    expected = np.zeros(512)
+    expected[10] = 2.0
+    expected[5] = 1.0
+    expected /= np.linalg.norm(expected)
+    assert resp.json()["vec"] == pytest.approx(expected.tolist())
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_a_clip_shorter_than_a_window_is_one_window(windowed_server):
+    resp = TestClient(windowed_server.app).post(
+        "/embed/audio", json={"audio_b64": _wav_b64(4.0)}
+    )
+
+    assert resp.status_code == 200
+    assert windowed_server._PROCESSOR.audio_lengths == [192000]
+    expected = np.zeros(512)
+    expected[4] = 1.0
+    assert resp.json()["vec"] == pytest.approx(expected.tolist())
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+def test_clap_windows_match_the_client_windows():
+    from cogniverse_core.common.models.model_loaders import audio_windows
+
+    for duration in (0.4, 4.0, 10.0, 18.065125, 25.0, 653.791667):
+        assert clap_embed_server.audio_windows(duration) == audio_windows(duration)

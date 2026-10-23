@@ -14,7 +14,6 @@ import pytest
 from cogniverse_cli.modal_inference.serving import build_authenticated_asgi_app
 from cogniverse_cli.modal_inference.vllm import (
     _VLLM_PORT,
-    _VLLM_VERSION,
     _build_process_proxy_app,
     _launch_process,
     _ServingProcess,
@@ -27,7 +26,10 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from cogniverse_foundation.config.token_budget import extract_context_window
-from cogniverse_foundation.inference_specs import get_inference_service_spec
+from cogniverse_foundation.inference_specs import (
+    VLLM_IMAGE_TAG,
+    get_inference_service_spec,
+)
 
 API_KEY = "vllm-serving-key"
 
@@ -704,7 +706,7 @@ class TestVllmImagePythonShim:
         _vllm_image(get_inference_service_spec("vllm_llm_student"))
 
         assert recorded["add_python"] is None
-        assert recorded["tag"] == f"vllm/vllm-openai:v{_VLLM_VERSION}"
+        assert recorded["tag"] == f"vllm/vllm-openai:{VLLM_IMAGE_TAG}"
 
     def test_every_vllm_service_gets_the_same_shim(self, monkeypatch):
         for service in ("vllm_llm_student", "vllm_llm_teacher", "vllm_asr"):

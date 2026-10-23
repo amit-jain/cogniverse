@@ -440,9 +440,6 @@ TELEMETRY_OTLP_ENDPOINT=localhost:4317
 # advertises the exact production primary model, otherwise they provision one
 TEST_LLM_API_BASE=http://localhost:29110/v1
 TEST_LLM_MODEL=google/gemma-4-e4b-it
-
-# JAX (for X-CLIP)
-JAX_PLATFORM_NAME=cpu
 EOF
 ```
 
@@ -450,7 +447,7 @@ EOF
 
 **Multi-Modal Support:** Cogniverse supports six content types:
 
-- **VIDEO**: Frame-based (ColPali) and chunk-based (X-CLIP) processing
+- **VIDEO**: Frame-based (ColPali) and chunk-based (ColQwen, EmbeddingGemma 2) processing
 
 - **AUDIO**: Speech and audio analysis extracted from video
 
@@ -491,12 +488,12 @@ uv pip list | grep cogniverse
 
 ```bash
 # Deploy ColPali frame-based schema
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
+uv run python scripts/deploy_json_schema.py \
   configs/schemas/video_colpali_smol500_mv_frame_schema.json
 
 # Deploy additional schemas
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
-  configs/schemas/video_xclip_sv_chunk_6s_schema.json
+uv run python scripts/deploy_json_schema.py \
+  configs/schemas/video_embeddinggemma2_sv_chunk_6s_schema.json
 ```
 
 ### 3. Download Test Dataset
@@ -533,7 +530,7 @@ first:
 
 ```bash
 # Start the FastAPI runtime (foreground; use --reload during development)
-JAX_PLATFORM_NAME=cpu uv run uvicorn cogniverse_runtime.main:app --port 8000 &
+uv run uvicorn cogniverse_runtime.main:app --port 8000 &
 
 # Register the "default" tenant used by the ingestion command below
 curl -X POST http://localhost:8000/admin/tenants \
@@ -545,7 +542,7 @@ curl -X POST http://localhost:8000/admin/tenants \
 
 ```bash
 # Ingest sample videos into the tenant registered above
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame \
@@ -556,7 +553,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 
 ```bash
 # Run comprehensive test suite
-JAX_PLATFORM_NAME=cpu timeout 7200 uv run pytest \
+timeout 7200 uv run pytest \
   tests/memory/ \
   tests/ingestion/ \
   tests/evaluation/ \

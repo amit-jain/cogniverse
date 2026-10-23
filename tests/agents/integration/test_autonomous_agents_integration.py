@@ -40,7 +40,7 @@ PROFILE_TENANT = "test:unit"
 PROFILE_TYPES = {
     "video_colpali_base": "video",
     "video_colpali_large": "video",
-    "video_xclip_base": "video",
+    "video_embeddinggemma2_base": "video",
     "image_colpali_base": "image",
     "text_bge_base": "text",
 }

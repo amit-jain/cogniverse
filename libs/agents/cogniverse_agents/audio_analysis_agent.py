@@ -8,7 +8,6 @@ for real audio search. Supports transcript, semantic, and acoustic search.
 import asyncio
 import logging
 import math
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -44,6 +43,7 @@ from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
 from cogniverse_runtime.ingestion.processors.audio_transcriber import AudioTranscriber
+from cogniverse_vespa._yql import nearest_neighbor
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +77,12 @@ class AudioSearchInput(AgentInput):
     """Type-safe input for audio search"""
 
     query: str = PydanticField(..., description="Search query")
-    search_mode: str = PydanticField(
-        "semantic", description="Search mode: transcript, semantic, acoustic, hybrid"
+    search_mode: Optional[str] = PydanticField(
+        None,
+        description=(
+            "Search mode: transcript, semantic, acoustic, hybrid; unset takes "
+            "the profile's default"
+        ),
     )
     limit: int = PydanticField(20, description="Number of results")
 
@@ -92,6 +96,20 @@ class AudioSearchOutput(AgentOutput):
     count: int = PydanticField(0, description="Number of results")
 
 
+# Services that embed an audio profile's acoustic_embedding field.
+ACOUSTIC_SERVICES = frozenset({"clap_embed", "vllm_omni_embed"})
+
+# The rank profile each search mode ranks with.
+SEARCH_MODE_STRATEGIES = {
+    "semantic": "phased_semantic",
+    "transcript": "transcript_search",
+    "hybrid": "hybrid_semantic_bm25",
+    "acoustic": "acoustic_similarity",
+}
+# A search naming no mode takes the first of these its profile's schema has.
+DEFAULT_SEARCH_MODES = ("semantic", "acoustic")
+
+
 class AudioAnalysisDeps(AgentDeps):
     """Dependencies for audio analysis agent"""
 
@@ -99,10 +117,10 @@ class AudioAnalysisDeps(AgentDeps):
         default_factory=lambda: MappingProxyType({})
     )
     _whisper_auth_resolved: bool = PrivateAttr(default=False)
-    _resolved_clap_headers: Mapping[str, str] = PrivateAttr(
+    _resolved_acoustic_headers: Mapping[str, str] = PrivateAttr(
         default_factory=lambda: MappingProxyType({})
     )
-    _clap_auth_resolved: bool = PrivateAttr(default=False)
+    _acoustic_auth_resolved: bool = PrivateAttr(default=False)
 
     vespa_endpoint: str = PydanticField(
         "http://localhost:8080", description="Vespa endpoint"
@@ -141,19 +159,34 @@ class AudioAnalysisDeps(AgentDeps):
             "default is openai/whisper-large-v3-turbo."
         ),
     )
-    clap_endpoint: Optional[str] = PydanticField(
-        None,
+    audio_profile: str = PydanticField(
+        "audio_clap_semantic",
+        description="The tenant's audio profile, which every search names.",
+    )
+    audio_schema: str = PydanticField(
+        "audio_content",
+        description="Base schema of audio_profile, deployed per tenant.",
+    )
+    acoustic_service: str = PydanticField(
+        "clap_embed",
         description=(
-            "URL of the clap_embed sidecar for acoustic-mode query "
-            "encoding. When unset, CLAP loads in-process (requires torch "
-            "— unavailable in the deployed runtime image)."
+            "Inference service that embeds audio_profile's acoustic_embedding "
+            "field: clap_embed or vllm_omni_embed."
         ),
     )
-    clap_headers: Dict[str, str] = PydanticField(
+    acoustic_endpoint: Optional[str] = PydanticField(
+        None,
+        description=(
+            "URL of acoustic_service for acoustic-mode encoding. When unset, "
+            "CLAP loads in-process (requires torch — unavailable in the "
+            "deployed runtime image)."
+        ),
+    )
+    acoustic_headers: Dict[str, str] = PydanticField(
         default_factory=dict,
         repr=False,
         description=(
-            "Validated request headers from the resolved CLAP endpoint. "
+            "Validated request headers for acoustic_endpoint. "
             "Authenticated endpoints accept only an Authorization bearer value."
         ),
     )
@@ -196,18 +229,28 @@ class AudioAnalysisDeps(AgentDeps):
             )
         return dict(value)
 
-    @field_validator("clap_headers")
+    @field_validator("acoustic_service")
     @classmethod
-    def validate_clap_headers(cls, value: Dict[str, str]) -> Dict[str, str]:
+    def validate_acoustic_service(cls, value: str) -> str:
+        if value not in ACOUSTIC_SERVICES:
+            raise ValueError(
+                f"acoustic_service must be one of {sorted(ACOUSTIC_SERVICES)}, "
+                f"got {value!r}"
+            )
+        return value
+
+    @field_validator("acoustic_headers")
+    @classmethod
+    def validate_acoustic_headers(cls, value: Dict[str, str]) -> Dict[str, str]:
         if not value:
             return {}
         if set(value) != {"Authorization"}:
-            raise ValueError("clap_headers must contain only Authorization")
+            raise ValueError("acoustic_headers must contain only Authorization")
         authorization = value["Authorization"]
         scheme, separator, token = authorization.partition(" ")
         if scheme != "Bearer" or not separator or not token or token != token.strip():
             raise ValueError(
-                "clap_headers Authorization must be a canonical bearer value"
+                "acoustic_headers Authorization must be a canonical bearer value"
             )
         return dict(value)
 
@@ -229,20 +272,22 @@ class AudioAnalysisDeps(AgentDeps):
                 dict(configured_headers or self.whisper_headers)
             )
             self._whisper_auth_resolved = True
-        if not self._clap_auth_resolved:
-            if self.clap_headers and not self.clap_endpoint:
-                raise ValueError("clap_headers requires clap_endpoint")
+        if not self._acoustic_auth_resolved:
+            if self.acoustic_headers and not self.acoustic_endpoint:
+                raise ValueError("acoustic_headers requires acoustic_endpoint")
             configured_headers = (
-                inference_headers(self.clap_endpoint) if self.clap_endpoint else {}
+                inference_headers(self.acoustic_endpoint)
+                if self.acoustic_endpoint
+                else {}
             )
-            if configured_headers and "clap_headers" in self.model_fields_set:
+            if configured_headers and "acoustic_headers" in self.model_fields_set:
                 raise ValueError(
-                    "clap_headers must not be supplied for a Modal endpoint"
+                    "acoustic_headers must not be supplied for a Modal endpoint"
                 )
-            self._resolved_clap_headers = MappingProxyType(
-                dict(configured_headers or self.clap_headers)
+            self._resolved_acoustic_headers = MappingProxyType(
+                dict(configured_headers or self.acoustic_headers)
             )
-            self._clap_auth_resolved = True
+            self._acoustic_auth_resolved = True
         return self
 
 
@@ -288,23 +333,7 @@ def _remote_non_negative_number(value: Any, url: str, path: str) -> float:
 
 
 def _remote_duration_seconds(value: Any, url: str) -> float:
-    if (
-        not isinstance(value, str)
-        or re.fullmatch(r"(?:0|[1-9]\d*)(?:\.\d+)?", value) is None
-    ):
-        raise _remote_contract_error(
-            url,
-            "$.duration",
-            "expected a finite non-negative decimal string",
-        )
-    duration = float(value)
-    if not math.isfinite(duration):
-        raise _remote_contract_error(
-            url,
-            "$.duration",
-            "expected a finite non-negative decimal string",
-        )
-    return duration
+    return _remote_non_negative_number(value, url, "$.duration")
 
 
 def _parse_remote_transcription(body: Any, url: str) -> Dict[str, Any]:
@@ -443,7 +472,13 @@ class AudioAnalysisAgent(
         self._whisper_endpoint = deps.whisper_endpoint
         self._whisper_headers = deps._resolved_whisper_headers
         self._whisper_model = deps.whisper_model
-        self._clap_headers = deps._resolved_clap_headers
+        self._acoustic_headers = deps._resolved_acoustic_headers
+        self._audio_profile = deps.audio_profile
+        self._audio_schema = deps.audio_schema
+        self._acoustic_service = deps.acoustic_service
+        self._acoustic_endpoint = deps.acoustic_endpoint
+        self._omni_embedder = None
+        self._omni_embedder_lock = Lock()
         self._deployed_audio_schema = deps.deployed_audio_schema
         self._backend_type = deps.backend_type
         self._backend_config = dict(deps.backend_config or {})
@@ -471,7 +506,7 @@ class AudioAnalysisAgent(
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
         safe_tenant = canonical_tenant_id(self._tenant_id).replace(":", "_")
-        return f"audio_content_{safe_tenant}"
+        return f"{self._audio_schema}_{safe_tenant}"
 
     @property
     def audio_transcriber(self):
@@ -493,20 +528,57 @@ class AudioAnalysisAgent(
             with self._embedding_generator_lock:
                 if self._embedding_generator is None:
                     logger.info("Loading audio embedding models...")
-                    if self.deps.clap_endpoint is None:
+                    if self._acoustic_endpoint is None:
                         self._embedding_generator = AudioEmbeddingGenerator()
                     else:
                         self._embedding_generator = AudioEmbeddingGenerator(
-                            clap_endpoint_url=self.deps.clap_endpoint,
-                            _resolved_headers=self._clap_headers,
+                            clap_endpoint_url=self._acoustic_endpoint,
+                            _resolved_headers=self._acoustic_headers,
                         )
                     logger.info("✅ AudioEmbeddingGenerator loaded")
         return self._embedding_generator
 
+    @property
+    def omni_embedder(self):
+        """The EmbeddingGemma 2 client for a vllm_omni_embed audio profile."""
+        if self._omni_embedder is None:
+            with self._omni_embedder_lock:
+                if self._omni_embedder is None:
+                    from cogniverse_core.common.models.model_loaders import (
+                        RemoteEmbeddingGemma2Loader,
+                    )
+
+                    if self._acoustic_endpoint is None:
+                        raise ValueError(
+                            f"audio profile {self._audio_profile!r} embeds with "
+                            "vllm_omni_embed, which has no configured endpoint"
+                        )
+                    loader = RemoteEmbeddingGemma2Loader(
+                        "google/embeddinggemma-2",
+                        {
+                            "remote_inference_url": self._acoustic_endpoint,
+                            "modalities": ["audio"],
+                        },
+                        logger,
+                        _resolved_headers=self._acoustic_headers or None,
+                    )
+                    self._omni_embedder, _ = loader.load_model()
+        return self._omni_embedder
+
+    def _acoustic_text_embedding(self, query: str):
+        if self._acoustic_service == "vllm_omni_embed":
+            return self.omni_embedder.embed_text(query)
+        return self.embedding_generator.generate_acoustic_text_embedding(query)
+
+    def _acoustic_audio_embedding(self, audio_path):
+        if self._acoustic_service == "vllm_omni_embed":
+            return self.omni_embedder.embed_audio_clip(audio_path)
+        return self.embedding_generator.generate_acoustic_embedding(audio_path)
+
     async def search_audio(
         self,
         query: str,
-        search_mode: str = "semantic",
+        search_mode: Optional[str] = None,
         limit: int = 20,
     ) -> List[AudioResult]:
         """
@@ -514,15 +586,18 @@ class AudioAnalysisAgent(
 
         Args:
             query: Text query
-            search_mode: "acoustic", "transcript", "semantic", or "hybrid"
+            search_mode: "acoustic", "transcript", "semantic", or "hybrid";
+                None takes the first of ``DEFAULT_SEARCH_MODES`` the profile's
+                schema ranks with
             limit: Number of results
 
         Returns:
             List of AudioResult with relevance scores
         """
-        logger.info(f"🔍 Searching audio: query='{query}', mode={search_mode}")
-
         try:
+            if search_mode is None:
+                search_mode = await asyncio.to_thread(self._default_search_mode)
+            logger.info(f"🔍 Searching audio: query='{query}', mode={search_mode}")
             if search_mode == "acoustic":
                 results = await self._search_acoustic(query, limit)
             elif search_mode == "transcript":
@@ -695,15 +770,33 @@ class AudioAnalysisAgent(
         from cogniverse_runtime.admin.tenant_manager import get_backend
 
         backend = get_backend()
-        return backend.schema_exists("audio_content", tenant_id=self._tenant_id)
+        return backend.schema_exists(self._audio_schema, tenant_id=self._tenant_id)
+
+    def _default_search_mode(self) -> str:
+        if self.schema_loader is None:
+            raise ValueError(
+                f"Audio search on profile {self._audio_profile!r} names no mode "
+                "and the agent has no schema loader to choose one"
+            )
+        schema = self.schema_loader.load_schema(self._audio_schema)
+        rank_profiles = {profile["name"] for profile in schema["rank_profiles"]}
+        for mode in DEFAULT_SEARCH_MODES:
+            if SEARCH_MODE_STRATEGIES[mode] in rank_profiles:
+                return mode
+        raise ValueError(
+            f"Audio profile {self._audio_profile!r} (schema {self._audio_schema!r}) "
+            "ranks with none of "
+            f"{[SEARCH_MODE_STRATEGIES[mode] for mode in DEFAULT_SEARCH_MODES]}; "
+            "name a search mode"
+        )
 
     def _build_backend_query(
         self, query: str, strategy: str, limit: int
     ) -> Dict[str, Any]:
-        # No profile: the backend selects the tenant's audio profile by type.
         return {
             "query": query,
             "type": "audio",
+            "profile": self._audio_profile,
             "strategy": strategy,
             "tenant_id": self._tenant_id,
             "top_k": limit,
@@ -737,7 +830,9 @@ class AudioAnalysisAgent(
     async def _search_transcript(self, query: str, limit: int) -> List[AudioResult]:
         """Search by transcript text using backend BM25."""
         try:
-            return await self._search_backend_mode(query, "transcript_search", limit)
+            return await self._search_backend_mode(
+                query, SEARCH_MODE_STRATEGIES["transcript"], limit
+            )
         except Exception as e:
             logger.error(f"❌ Transcript search failed: {e}")
             raise
@@ -745,33 +840,35 @@ class AudioAnalysisAgent(
     async def _search_semantic(self, query: str, limit: int) -> List[AudioResult]:
         """Search by ColBERT semantic similarity through the backend."""
         try:
-            return await self._search_backend_mode(query, "phased_semantic", limit)
+            return await self._search_backend_mode(
+                query, SEARCH_MODE_STRATEGIES["semantic"], limit
+            )
         except Exception as e:
             logger.error(f"❌ Semantic search failed: {e}")
             raise
 
     async def _search_acoustic(self, query: str, limit: int) -> List[AudioResult]:
-        """Search by acoustic similarity from a TEXT query via CLAP."""
-        # CLAP text features land in the same 512-dim space as the stored audio
-        # acoustic_embedding, so a text query is directly comparable to it.
+        """Search by acoustic similarity from a TEXT query.
+
+        The acoustic service embeds text into the same space as the stored
+        acoustic_embedding, so a text query is directly comparable to it.
+        """
         if not await asyncio.to_thread(self._audio_schema_exists):
             return []
 
         logger.info("Generating query embedding for acoustic search...")
         # Blocking CLAP HTTP call — off the loop, lazy generator build included.
-        query_embedding = await asyncio.to_thread(
-            lambda: self.embedding_generator.generate_acoustic_text_embedding(query)
-        )
+        query_embedding = await asyncio.to_thread(self._acoustic_text_embedding, query)
         return await self._search_by_acoustic_embedding(query_embedding, limit)
 
     async def _search_by_acoustic_embedding(
         self, query_embedding, limit: int
     ) -> List[AudioResult]:
-        """Run an acoustic nearestNeighbor search from a 512-dim embedding.
+        """Run an acoustic nearestNeighbor search from an acoustic embedding.
 
         Shared by text-query acoustic search and reference-audio similarity —
-        both compare a 512-dim CLAP vector against the stored
-        ``acoustic_embedding`` field.
+        both compare a vector from the profile's acoustic service against the
+        stored ``acoustic_embedding`` field.
         """
         if not await asyncio.to_thread(self._audio_schema_exists):
             return []
@@ -779,15 +876,14 @@ class AudioAnalysisAgent(
         # acoustic_similarity ranks via closeness(field, acoustic_embedding),
         # which binds to a nearestNeighbor operator over the HNSW field; the
         # query tensor is the profile input query(acoustic_query).
-        yql = (
-            f"select * from {self._schema_name} where "
-            f"{{targetHits:{limit}}}nearestNeighbor(acoustic_embedding, acoustic_query)"
+        yql = f"select * from {self._schema_name} where " + nearest_neighbor(
+            "acoustic_embedding", "acoustic_query", limit
         )
 
         params = {
             "yql": yql,
             "hits": limit,
-            "ranking.profile": "acoustic_similarity",
+            "ranking.profile": SEARCH_MODE_STRATEGIES["acoustic"],
             "input.query(acoustic_query)": query_embedding.tolist(),
         }
 
@@ -834,7 +930,9 @@ class AudioAnalysisAgent(
     async def _search_hybrid(self, query: str, limit: int) -> List[AudioResult]:
         """Search by semantic+BM25 hybrid text retrieval through the backend."""
         try:
-            return await self._search_backend_mode(query, "hybrid_semantic_bm25", limit)
+            return await self._search_backend_mode(
+                query, SEARCH_MODE_STRATEGIES["hybrid"], limit
+            )
         except Exception as e:
             logger.error(f"❌ Hybrid search failed: {e}")
             raise
@@ -866,14 +964,13 @@ class AudioAnalysisAgent(
             else:
                 if not await asyncio.to_thread(self._audio_schema_exists):
                     return []
-                # Acoustic similarity: encode the reference audio's CLAP
-                # embedding and search the same acoustic_embedding space.
+                # Acoustic similarity: embed the reference audio with the
+                # profile's acoustic service and search the same space.
                 from pathlib import Path as _Path
 
                 audio_path = self._get_audio_path(reference_audio_url)
                 reference_embedding = await asyncio.to_thread(
-                    self.embedding_generator.generate_acoustic_embedding,
-                    _Path(audio_path),
+                    self._acoustic_audio_embedding, _Path(audio_path)
                 )
                 results = await self._search_by_acoustic_embedding(
                     reference_embedding, limit

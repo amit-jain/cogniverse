@@ -432,7 +432,7 @@ def collect_marker_map(paths: Sequence[str], cwd: Path = REPO_ROOT) -> dict[str,
                 "--continue-on-collection-errors",
             ],
             cwd=cwd,
-            env={**os.environ, DUMP_PATH_ENV: str(dump), "JAX_PLATFORM_NAME": "cpu"},
+            env={**os.environ, DUMP_PATH_ENV: str(dump)},
             capture_output=True,
             text=True,
             timeout=1800,
@@ -496,8 +496,7 @@ def test_parser_ignores_echoed_command_hints(workflows) -> None:
 
 def test_parser_reads_the_environment_each_selection_runs_under(workflows) -> None:
     """runtime-tests.yml's first integration shard and its admin and platform
-    job: the workflow env on every step, a step env on two, and the command's
-    own ``JAX_PLATFORM_NAME`` prefix."""
+    job: the workflow env on every step and a step env on two."""
     runtime = _workflow(workflows, "runtime-tests.yml")
     workflow_env = {"CARGO_NET_RETRY": "10", "CARGO_HTTP_MULTIPLEXING": "false"}
     assert [
@@ -511,7 +510,6 @@ def test_parser_reads_the_environment_each_selection_runs_under(workflows) -> No
             {
                 **workflow_env,
                 "TEST_LLM_MODEL": "qwen2.5:0.5b",
-                "JAX_PLATFORM_NAME": "cpu",
             },
         ),
         (
@@ -520,13 +518,12 @@ def test_parser_reads_the_environment_each_selection_runs_under(workflows) -> No
             {
                 **workflow_env,
                 "TEST_LLM_MODEL": "qwen2.5:0.5b",
-                "JAX_PLATFORM_NAME": "cpu",
             },
         ),
         (
             "admin-platform-integration-tests",
             ("tests/events/integration", "tests/foundation/integration"),
-            {**workflow_env, "JAX_PLATFORM_NAME": "cpu"},
+            workflow_env,
         ),
     ]
 

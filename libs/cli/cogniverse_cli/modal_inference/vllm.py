@@ -18,6 +18,7 @@ from cogniverse_cli.modal_inference.serving import (
     DEFAULT_API_KEY_ENV,
     build_authenticated_asgi_app,
 )
+from cogniverse_foundation.inference_specs import VLLM_IMAGE_TAG
 
 if TYPE_CHECKING:
     from cogniverse_foundation.inference_specs import InferenceServiceSpec
@@ -27,7 +28,6 @@ _HF_TOKEN_SECRET = "hf-token"
 _HF_CACHE_NAME = "cogniverse-huggingface-cache"
 _HF_CACHE_PATH = "/root/.cache/huggingface"
 _VLLM_PORT = 8001
-_VLLM_VERSION = "0.23.0"
 
 _SERVICE_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "vllm_colpali": (
@@ -344,7 +344,7 @@ def _vllm_image(spec: InferenceServiceSpec) -> modal.Image:
         packages.extend(["librosa==0.11.0", "soundfile==0.13.1"])
     return (
         modal.Image.from_registry(
-            f"vllm/vllm-openai:v{_VLLM_VERSION}",
+            f"vllm/vllm-openai:{VLLM_IMAGE_TAG}",
             setup_dockerfile_commands=[_PYTHON_SHIM_COMMAND],
         )
         .entrypoint([])

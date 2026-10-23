@@ -3,7 +3,7 @@
 _vllmRocmImage: &vllmRocmImage
   rocm:
     repository: vllm/vllm-openai-rocm
-    tag: v0.23.0
+    tag: nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2
     pullPolicy: IfNotPresent
 
 # This host shares one memory pool between CPU and GPU, and the enabled
@@ -15,6 +15,7 @@ inferenceStartup:
     - vllm_llm_teacher
     - vllm_colpali
     - vllm_llm_student
+    - vllm_omni_embed
     - vllm_asr
     - denseon
     - colbert_pylate
@@ -227,6 +228,41 @@ inference:
       requests:
         cpu: "1"
         memory: "4Gi"
+
+  # Helm replaces lists, so this repeats every base extraArg.
+  vllm_omni_embed:
+    enabled: true
+    device: rocm
+    gpuCount: 1
+    extraArgs:
+      - "--runner"
+      - "pooling"
+      - "--max-model-len"
+      - "8192"
+      - "--limit-mm-per-prompt"
+      - '{"image":1,"video":1,"audio":1}'
+      - "--media-io-kwargs"
+      - '{"video":{"fps":1}}'
+      # Every chunk is a new input, so the processor cache (4 GiB in each of
+      # the API and engine processes by default) only fills the pod's memory.
+      - "--mm-processor-cache-gb"
+      - "0"
+      # 0.08 = 7.7 GiB, the free-memory guard for the startup profile of an
+      # 8192-token multimodal step. A pooling model keeps no KV cache: measured
+      # 2.6 GiB on the GPU and a 5.3 GiB pod working set after 6 s video +
+      # 10 s audio requests (1.42 GiB of weights).
+      - "--gpu-memory-utilization"
+      - "0.08"
+    # Step lengths vary with every mix of frames, audio and text, and tuning
+    # a shape the results file lacks stalls the engine; tuned shapes still apply.
+    tunableOpTuning: false
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+      requests:
+        cpu: "4"
+        memory: "8Gi"
 
 runtime:
   backend: rocm

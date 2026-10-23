@@ -71,7 +71,7 @@ jobs:
       env:
         COVERAGE_FILE: .coverage
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/finetuning/ -m "unit or not integration" \
+        uv run --no-sync python -m pytest tests/finetuning/ -m "unit or not integration" \
           --ignore=tests/finetuning/integration \
           -v --tb=short \
           --cov=libs/finetuning/cogniverse_finetuning \
@@ -142,9 +142,9 @@ jobs:
 
     - name: Test module imports
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -c "from cogniverse_finetuning.orchestrator import FinetuningOrchestrator; print('Orchestrator import successful')"
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -c "from cogniverse_finetuning.registry import AdapterRegistry; print('Registry import successful')"
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -c "from cogniverse_finetuning.training.sft_trainer import SFTFinetuner; print('SFTFinetuner import successful')"
+        uv run --no-sync python -c "from cogniverse_finetuning.orchestrator import FinetuningOrchestrator; print('Orchestrator import successful')"
+        uv run --no-sync python -c "from cogniverse_finetuning.registry import AdapterRegistry; print('Registry import successful')"
+        uv run --no-sync python -c "from cogniverse_finetuning.training.sft_trainer import SFTFinetuner; print('SFTFinetuner import successful')"
         echo "All finetuning imports successful"
 
   integration-tests:
@@ -193,7 +193,7 @@ jobs:
     - name: Run integration tests
       timeout-minutes: 10
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/finetuning/integration/ \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short

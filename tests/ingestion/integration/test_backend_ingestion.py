@@ -4,6 +4,8 @@ Integration tests for video ingestion with different backends and models.
 Tests actual document ingestion with various video processing profiles.
 """
 
+import json
+import os
 import time
 from pathlib import Path
 
@@ -111,6 +113,30 @@ class TestRealProcessorExtraction:
         )
 
 
+def _persist_inference_services(backend_port: int, inference_endpoints) -> None:
+    """Persist the services resolved for this test in its Vespa configuration."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+
+    service_urls = json.loads(os.environ.get("INFERENCE_SERVICE_URLS", "{}"))
+    config_manager = create_default_config_manager()
+    config_manager.set_system_config(
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=backend_port,
+            inference_service_urls=service_urls,
+        )
+    )
+    stored = ConfigManager(store=config_manager.store).get_system_config()
+    assert stored.inference_service_urls == service_urls
+    assert {
+        service: stored.inference_service_urls.get(service)
+        for service in inference_endpoints
+    } == {
+        service: endpoint.base_url for service, endpoint in inference_endpoints.items()
+    }
+
+
 @pytest.mark.integration
 @pytest.mark.requires_vespa
 class TestVespaBackendIngestion:
@@ -157,31 +183,7 @@ class TestVespaBackendIngestion:
 
     @pytest.fixture(autouse=True)
     def configured_inference_services(self, vespa_backend, inference_endpoints):
-        """Persist the services resolved for this test in its Vespa configuration."""
-        import json
-        import os
-
-        from cogniverse_foundation.config.manager import ConfigManager
-        from cogniverse_foundation.config.unified_config import SystemConfig
-
-        service_urls = json.loads(os.environ.get("INFERENCE_SERVICE_URLS", "{}"))
-        config_manager = create_default_config_manager()
-        config_manager.set_system_config(
-            SystemConfig(
-                backend_url="http://localhost",
-                backend_port=vespa_backend.http_port,
-                inference_service_urls=service_urls,
-            )
-        )
-        stored = ConfigManager(store=config_manager.store).get_system_config()
-        assert stored.inference_service_urls == service_urls
-        assert {
-            service: stored.inference_service_urls.get(service)
-            for service in inference_endpoints
-        } == {
-            service: endpoint.base_url
-            for service, endpoint in inference_endpoints.items()
-        }
+        _persist_inference_services(vespa_backend.http_port, inference_endpoints)
 
     @pytest.fixture
     def vespa_test_videos(self, vespa_backend):
@@ -273,45 +275,224 @@ class TestVespaBackendIngestion:
         assert result is not None
         assert "embeddings" in result.get("results", {})
 
-    @pytest.mark.local_only
-    @pytest.mark.requires_inference("video_embed")
-    @skip_heavy_models_in_ci
-    @skip_if_low_memory
+    @pytest.mark.slow
+    @pytest.mark.requires_inference("vllm_omni_embed")
+    @pytest.mark.requires_inference("vllm_asr")
     @pytest.mark.asyncio
-    async def test_xclip_vespa_ingestion(
+    async def test_omni_video_profile_feeds_one_document_per_chunk(
+        self, vespa_backend, vespa_test_videos
+    ):
+        """Each chunk the segmenter cuts lands as its own document carrying
+        the vector EmbeddingGemma 2 serves for that chunk."""
+        import logging
+
+        import numpy as np
+        import requests
+
+        from cogniverse_core.common.models.model_loaders import ModelLoaderFactory
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_runtime.ingestion.pipeline import (
+            PipelineConfig,
+            VideoIngestionPipeline,
+        )
+        from cogniverse_runtime.ingestion.processors.single_vector_processor import (
+            SingleVectorVideoProcessor,
+        )
+
+        profile_name = "video_embeddinggemma2_sv_chunk_6s"
+        video = vespa_test_videos[0]
+        config_manager = create_default_config_manager()
+        config = PipelineConfig.from_config(
+            tenant_id="test:unit", config_manager=config_manager
+        )
+        config.video_dir = video.parent
+        config.search_backend = "vespa"
+        pipeline = VideoIngestionPipeline(
+            tenant_id="test_tenant",
+            config=config,
+            config_manager=config_manager,
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            schema_name=profile_name,
+        )
+
+        result = await pipeline.process_video_async(video)
+
+        assert "error" not in result, result
+        profile = json.loads(Path("configs/config.json").read_text())["backend"][
+            "profiles"
+        ][profile_name]
+        segmenter = SingleVectorVideoProcessor(
+            logging.getLogger("test"),
+            **profile["strategies"]["segmentation"]["params"],
+        )
+        boundaries = segmenter._calculate_segment_boundaries(
+            segmenter._get_video_info(video)["duration"]
+        )
+        hits = requests.post(
+            f"http://localhost:{vespa_backend.http_port}/search/",
+            json={
+                "yql": "select * from sources * where true",
+                "hits": 100,
+                "presentation.format.tensors": "short-value",
+            },
+            timeout=30,
+        ).json()["root"]["children"]
+        stored = sorted(
+            (
+                hit["fields"]["segment_id"],
+                round(hit["fields"]["start_time"], 3),
+                round(hit["fields"]["end_time"], 3),
+                hit["fields"]["video_id"],
+            )
+            for hit in hits
+            if hit["fields"]["sddocname"].startswith(profile_name)
+        )
+        assert stored == [
+            (i, round(start, 3), round(end, 3), video.stem)
+            for i, (start, end) in enumerate(boundaries)
+        ]
+
+        omni = ModelLoaderFactory.create_loader(
+            "google/embeddinggemma-2",
+            {
+                "model_loader": "embeddinggemma2",
+                "remote_inference_url": json.loads(
+                    os.environ["INFERENCE_SERVICE_URLS"]
+                )["vllm_omni_embed"],
+                "modalities": ["video", "audio"],
+            },
+        ).load_model()[0]
+        first = next(
+            hit
+            for hit in hits
+            if hit["fields"]["sddocname"].startswith(profile_name)
+            and hit["fields"]["segment_id"] == 0
+        )
+        _, namespace, doctype, _, docid = first["id"].split(":", 4)
+        stored_fields = requests.get(
+            f"http://localhost:{vespa_backend.http_port}/document/v1/"
+            f"{namespace}/{doctype}/docid/{docid}",
+            params={"format.tensors": "short-value"},
+            timeout=30,
+        ).json()["fields"]
+        served = omni.process_video_segment(video, *boundaries[0])["embeddings_np"]
+        stored_vector = np.asarray(stored_fields["embedding"], dtype=np.float32)
+        cosine = float(served @ stored_vector / np.linalg.norm(stored_vector))
+        assert cosine >= 0.99, cosine
+
+    @pytest.mark.slow
+    @pytest.mark.requires_inference("vllm_omni_embed")
+    @pytest.mark.requires_inference("vllm_asr")
+    @pytest.mark.asyncio
+    async def test_omni_audio_profile_feeds_one_document_per_window(
         self, vespa_backend, vespa_test_videos, tmp_path
     ):
-        """Test X-CLIP model ingestion to Vespa (local only)."""
+        """An uploaded audio file lands as one document per window of at most
+        10 s, each carrying the vector EmbeddingGemma 2 serves for it."""
+        import subprocess
+
+        import numpy as np
+        import requests
+
+        from cogniverse_core.common.models.model_loaders import ModelLoaderFactory
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
 
+        profile_name = "audio_embeddinggemma2"
+        source = next(v for v in vespa_test_videos if v.stem == "v_-D1gdv_gQyw")
+        audio_dir = tmp_path / "audio"
+        audio_dir.mkdir()
+        wav = audio_dir / "v_-D1gdv_gQyw.wav"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(source),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                str(wav),
+            ],
+            check=True,
+        )
         config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(
             tenant_id="test:unit", config_manager=config_manager
         )
-        config.video_dir = vespa_test_videos[0].parent
+        config.video_dir = audio_dir
         config.search_backend = "vespa"
-        config.max_frames_per_video = 1
-
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         pipeline = VideoIngestionPipeline(
             tenant_id="test_tenant",
             config=config,
             config_manager=config_manager,
-            schema_loader=schema_loader,
-            schema_name="video_xclip_sv_chunk_6s",
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            schema_name=profile_name,
         )
-        result = await pipeline.process_video_async(vespa_test_videos[0])
 
-        assert result is not None
-        assert "embeddings" in result.get("results", {})
+        result = await pipeline.process_video_async(wav)
+
+        assert "error" not in result, result
+        hits = requests.post(
+            f"http://localhost:{vespa_backend.http_port}/search/",
+            json={
+                "yql": "select * from sources * where true",
+                "hits": 100,
+                "presentation.format.tensors": "short-value",
+            },
+            timeout=30,
+        ).json()["root"]["children"]
+        stored = sorted(
+            (
+                hit["fields"]["chunk_index"],
+                round(hit["fields"]["chunk_start"], 2),
+                round(hit["fields"]["chunk_end"], 2),
+                hit["fields"]["chunk_count"],
+            )
+            for hit in hits
+            if hit["fields"]["sddocname"].startswith(profile_name)
+        )
+        assert stored == [(0, 0.0, 10.0, 2), (1, 10.0, 18.07, 2)]
+
+        omni = ModelLoaderFactory.create_loader(
+            "google/embeddinggemma-2",
+            {
+                "model_loader": "embeddinggemma2",
+                "remote_inference_url": json.loads(
+                    os.environ["INFERENCE_SERVICE_URLS"]
+                )["vllm_omni_embed"],
+                "modalities": ["audio"],
+            },
+        ).load_model()[0]
+        first = next(
+            hit
+            for hit in hits
+            if hit["fields"]["sddocname"].startswith(profile_name)
+            and hit["fields"]["chunk_index"] == 0
+        )
+        _, namespace, doctype, _, docid = first["id"].split(":", 4)
+        stored_fields = requests.get(
+            f"http://localhost:{vespa_backend.http_port}/document/v1/"
+            f"{namespace}/{doctype}/docid/{docid}",
+            params={"format.tensors": "short-value"},
+            timeout=30,
+        ).json()["fields"]
+        served = omni.embed_audio_window(wav, 0.0, 10.0)
+        stored_vector = np.asarray(
+            stored_fields["acoustic_embedding"], dtype=np.float32
+        )
+        cosine = float(served @ stored_vector / np.linalg.norm(stored_vector))
+        assert cosine >= 0.99, cosine
 
     @pytest.mark.local_only
-    @pytest.mark.requires_inference("video_embed")
+    @pytest.mark.requires_inference("vllm_omni_embed")
+    @pytest.mark.requires_inference("vllm_asr")
     @skip_heavy_models_in_ci
     @skip_if_low_memory
     @pytest.mark.asyncio
@@ -321,7 +502,7 @@ class TestVespaBackendIngestion:
         """Two videos ingested CONCURRENTLY through ONE pipeline must land in
         Vespa each carrying its OWN source_url — never cross-assigned.
 
-        Real X-CLIP embeddings, real Vespa feed, real concurrency. The
+        Real EmbeddingGemma 2 embeddings, real Vespa feed, real concurrency. The
         pipeline shares one instance across the concurrent videos; when the
         per-video identity lived on that shared instance a downstream await let
         one video overwrite another's video_path/source_url, so a video's
@@ -353,7 +534,7 @@ class TestVespaBackendIngestion:
             config=config,
             config_manager=config_manager,
             schema_loader=schema_loader,
-            schema_name="video_xclip_sv_chunk_6s",
+            schema_name="video_embeddinggemma2_sv_chunk_6s",
         )
 
         await pipeline.process_videos_concurrent([v0, v1], max_concurrent=2)
@@ -439,7 +620,7 @@ class TestVespaIngestionViaMinio:
     ``VideoIngestionPipeline.process_video_async`` end-to-end against real
     Vespa + real MinIO containers.
 
-    Heavy model invocation (ColPali / X-CLIP / ColQwen) is disabled so
+    Heavy model invocation (ColPali / EmbeddingGemma 2 / ColQwen) is disabled so
     the test is runnable without GPU/large model weights — the focus is the
     URI → locator → orchestrator → Vespa chain, not the
     embedding model itself.
@@ -544,6 +725,14 @@ class TestVespaIngestionViaMinio:
 class TestComprehensiveIngestion:
     """Comprehensive ingestion tests (local development only)."""
 
+    @pytest.fixture(autouse=True)
+    def configured_inference_services(
+        self, ingestion_vespa_backend, inference_endpoints
+    ):
+        _persist_inference_services(
+            ingestion_vespa_backend["http_port"], inference_endpoints
+        )
+
     @pytest.fixture
     def all_test_videos(self):
         """Get all committed test videos (present on every checkout)."""
@@ -555,8 +744,9 @@ class TestComprehensiveIngestion:
 
     @pytest.mark.slow
     @pytest.mark.requires_vespa
-    @pytest.mark.requires_inference("video_embed")
+    @pytest.mark.requires_inference("vllm_omni_embed")
     @pytest.mark.requires_inference("vllm_colpali")
+    @pytest.mark.requires_inference("vllm_asr")
     @pytest.mark.asyncio
     async def test_multi_profile_ingestion(
         self, ingestion_vespa_backend, all_test_videos, tmp_path
@@ -564,12 +754,12 @@ class TestComprehensiveIngestion:
         """Test ingestion with multiple profiles.
 
         Gated on both exact embedding services because ``profiles_to_test``
-        includes ColPali, X-CLIP, and ColQwen profiles. The pipeline
+        includes ColPali, EmbeddingGemma 2, and ColQwen profiles. The pipeline
         raises at initialization when either declared service URL is absent.
         """
         profiles_to_test = [
             "video_colpali_smol500_mv_frame",
-            "video_xclip_sv_chunk_6s",
+            "video_embeddinggemma2_sv_chunk_6s",
             "video_colqwen_omni_mv_chunk_30s",
         ]
 
@@ -612,6 +802,7 @@ class TestComprehensiveIngestion:
     @pytest.mark.benchmark
     @pytest.mark.requires_vespa
     @pytest.mark.requires_inference("vllm_colpali")
+    @pytest.mark.requires_inference("vllm_asr")
     @pytest.mark.asyncio
     async def test_ingestion_performance(
         self, ingestion_vespa_backend, all_test_videos, tmp_path

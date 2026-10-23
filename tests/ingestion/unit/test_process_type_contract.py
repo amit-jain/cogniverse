@@ -45,3 +45,38 @@ def test_an_unknown_process_type_falls_to_the_default(strategy_config):
         "custom_profile", {"process_type": "single_vector"}
     )
     assert resolved == ("frame_based", "frames")
+
+
+@pytest.mark.parametrize("profile", ("video_embeddinggemma2_sv_chunk_6s",))
+def test_single_vector_chunk_profiles_store_one_document_per_chunk(profile):
+    """Their schemas hold one vector per document, with the chunk's
+    segment_id and span; stacking a video's chunks into one document is
+    refused by the single-vector field."""
+    strategy = StrategyConfig(REPO_CONFIGS).get_strategy(profile)
+
+    assert (
+        strategy.processing_type,
+        strategy.segmentation,
+        strategy.storage_mode,
+    ) == ("single_vector", "chunks", "multi_doc")
+
+
+def test_a_global_single_vector_profile_stores_one_document(strategy_config):
+    assert [
+        strategy_config._resolve_storage_mode({}, "single_vector", segmentation)
+        for segmentation in ("global", "chunks", "windows")
+    ] == ["single_doc", "multi_doc", "multi_doc"]
+
+
+def test_storage_mode_follows_the_schema_shape_alone(strategy_config):
+    """A one-vector chunk schema cannot hold a video's chunks in one
+    document, and a patch schema holds one frame or chunk per document,
+    whatever else the profile carries."""
+    stale = {"model_specific": {"store_as_single_doc": True}}
+    patches = {"schema_config": {"num_patches": 1024}, **stale}
+    assert [
+        strategy_config._resolve_storage_mode(stale, "single_vector", "chunks"),
+        strategy_config._resolve_storage_mode(patches, "single_vector", "chunks"),
+        strategy_config._resolve_storage_mode(patches, "frame_based", "frames"),
+        strategy_config._resolve_storage_mode(stale, "single_vector", "global"),
+    ] == ["multi_doc", "multi_doc", "multi_doc", "single_doc"]

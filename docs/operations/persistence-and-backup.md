@@ -373,7 +373,7 @@ The dance to recover a stateful component from a MinIO/S3 backup.
 | `database.dump` | custom-format `pg_dump` of the `phoenix` database — projects, traces, spans, datasets, annotations |
 | `database.list` | that archive's table of contents |
 | `restore.env` | the `PGHOST` / `PGPORT` / `PGDATABASE` / `PGUSER` it was dumped from |
-| `working-assets.tar` | the `PHOENIX_WORKING_DIR` tree, members relative to its root |
+| `working-assets.tar` | the `PHOENIX_WORKING_DIR` tree, members relative to its root, without a SQLite store (`phoenix.db`, `-wal`, `-shm`) Phoenix does not read while it serves from Postgres |
 
 1. **Stop Phoenix** so nothing writes while the database is replaced:
    ```bash

@@ -52,7 +52,7 @@ SCHEMA_REFERENCE_FIXTURES = {
     ),
     "tests/agents/unit/test_profile_agnostic_search_service.py": (
         "Fabricated profile configuration and backend cache identities",
-        "frame_based_colpali test_schema video_colqwen_omni video_xclip_base",
+        "frame_based_colpali test_schema video_colqwen_omni",
     ),
     "tests/agents/unit/test_wiki_manager.py": (
         "Invalid colon separator is rejected at construction",
@@ -84,7 +84,7 @@ SCHEMA_REFERENCE_FIXTURES = {
     ),
     "tests/backends/unit/test_build_query_inputs.py": (
         "Injected query strategy, tenant identities and tenant schema names",
-        "agent_memories_acme_acme video_colpali video_frame video_frame_acme_acme video_xclip_acme_acme",
+        "agent_memories_acme_acme video_colpali video_embeddinggemma2_acme_acme video_frame video_frame_acme_acme",
     ),
     "tests/backends/unit/test_delete_schema_suffix_guard.py": (
         "Synthetic registry rows and deletion failures",
@@ -128,11 +128,12 @@ SCHEMA_REFERENCE_FIXTURES = {
     ),
     "tests/backends/unit/test_ranking_strategy_extractor.py": (
         "Temporary ranking definitions and missing file cases",
-        "ghost memo_bound memo_probe poison_probe s survivor video_colpali_sv_frame",
+        "ghost memo_bound memo_probe poison_probe s s00 survivor "
+        "video_colpali_sv_frame",
     ),
     "tests/backends/unit/test_schema_name_matching.py": (
         "Adversarial vector token parser inputs",
-        "agent_memories_tenant_acme anything_with_lvt_token anything_with_sv_token audio_alvtree_index sv_prefix_only_no_underscore video_VIDEOPRISM_SV_global video_xclip_large_mv_chunk_30s video_xclip_lvt_base_sv_chunk_6s video_xclip_lvt_large_sv_chunk_6s",
+        "agent_memories_tenant_acme anything_with_lvt_token anything_with_sv_token audio_alvtree_index sv_prefix_only_no_underscore video_VIDEOPRISM_SV_global video_embeddinggemma2_lvt_chunk_6s video_embeddinggemma2_mv_chunk_30s",
     ),
     "tests/backends/unit/test_schema_registry.py": (
         "Synthetic loader responses, persisted registry rows, and plain tenant IDs",

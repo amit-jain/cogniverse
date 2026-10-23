@@ -91,13 +91,12 @@ def test_the_gate_is_never_empty_for_any_backend(backend):
 
 
 def test_every_inference_sidecar_the_chart_exposes_is_port_forwarded():
-    """A new sidecar is unreachable from e2e until its host port is forwarded.
+    """A sidecar is unreachable from e2e until its host port is forwarded.
 
-    `video_embed` (X-CLIP) shipped a chart Service with nodePort 29012 while
-    E2E_HOST_PORTS stopped at 33911, so nothing in the e2e suite could reach
-    it -- silently, because no test named it yet. Deriving the requirement from
-    the chart catches the next one at commit time rather than when someone
-    first tries to gate or probe it.
+    A chart Service whose nodePort has no E2E_HOST_PORTS entry is invisible to
+    every e2e test that does not name it. Deriving the requirement from the
+    chart catches a new sidecar at commit time rather than when someone first
+    tries to gate or probe it.
     """
 
     missing = {

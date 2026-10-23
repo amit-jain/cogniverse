@@ -16,7 +16,7 @@ spec:
     - name: tenant-name
       value: ""
     - name: profiles
-      value: "video_colpali_smol500_mv_frame,video_xclip_sv_chunk_6s"
+      value: "video_colpali_smol500_mv_frame,video_embeddinggemma2_sv_chunk_6s"
     # Semantic-router tier the tenant is provisioned on (default | free | pro).
     - name: tier
       value: "default"
@@ -352,7 +352,7 @@ spec:
     - name: tenant-name
       value: "NewCorp Inc"
     - name: profiles
-      value: "video_colpali_smol500_mv_frame,video_xclip_sv_chunk_6s"
+      value: "video_colpali_smol500_mv_frame,video_embeddinggemma2_sv_chunk_6s"
     - name: storage-quota
       value: "200Gi"
     - name: cpu-quota

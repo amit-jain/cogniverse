@@ -267,7 +267,10 @@ def test_the_workflows_default_profiles_are_shipped_profiles():
         for entry in document["spec"]["arguments"]["parameters"]
     }
     defaults = parameters["profiles"].split(",")
-    assert defaults == ["video_colpali_smol500_mv_frame", "video_xclip_sv_chunk_6s"]
+    assert defaults == [
+        "video_colpali_smol500_mv_frame",
+        "video_embeddinggemma2_sv_chunk_6s",
+    ]
     assert [_shipped_schema_name(name) for name in defaults] == defaults
 
 

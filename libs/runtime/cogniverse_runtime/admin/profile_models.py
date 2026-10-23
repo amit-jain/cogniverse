@@ -61,7 +61,7 @@ class ProfileCreateRequest(BaseModel):
     model_loader: str = Field(
         default="",
         description=(
-            "Loader ingestion embeds with (colbert, colpali, colqwen, xclip); "
+            "Loader ingestion embeds with (colbert, colpali, colqwen, embeddinggemma2); "
             "required for the profile types whose content is embedded"
         ),
     )

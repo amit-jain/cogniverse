@@ -128,7 +128,7 @@ system_config = SystemConfig(
 config_manager.set_system_config(system_config)
 
 # 2. Deploy schemas using script (from project root)
-# JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py configs/schemas/video_colpali_smol500_mv_frame_schema.json
+# uv run python scripts/deploy_json_schema.py configs/schemas/video_colpali_smol500_mv_frame_schema.json
 
 # 3. Initialize tenant memory
 from cogniverse_core.memory.manager import Mem0MemoryManager  # Core layer
@@ -263,7 +263,7 @@ The colon is then replaced with `_`:
 Examples (bare tenant_id — org and tenant name are the same string,
 so the suffix repeats it):
 - video_colpali_smol500_mv_frame_acme_acme        (tenant_id="acme")
-- video_xclip_sv_chunk_6s_default_default  (tenant_id="default")
+- video_embeddinggemma2_sv_chunk_6s_default_default  (tenant_id="default")
 
 Examples (explicit org:tenant — no repetition):
 - video_colpali_smol500_mv_frame_acme_production  (tenant_id="acme:production")
@@ -279,7 +279,7 @@ commands) — it avoids the bare-id doubling entirely.
 
 ```bash
 # Deploy ColPali schema
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
+uv run python scripts/deploy_json_schema.py \
   configs/schemas/video_colpali_smol500_mv_frame_schema.json
 
 # Verify schema deployed
@@ -303,7 +303,7 @@ curl -sfX POST "$RUNTIME_URL/admin/tenants" \
 # Deploy profile schemas for this tenant
 SCHEMAS=(
   "video_colpali_smol500_mv_frame"
-  "video_xclip_sv_chunk_6s"
+  "video_embeddinggemma2_sv_chunk_6s"
 )
 
 for schema in "${SCHEMAS[@]}"; do
@@ -570,7 +570,7 @@ operator has a single, reviewable record of what was removed.
 # Using explicit org:tenant form here (not a bare "acme_corp") so the
 # resulting schema name below has a single, predictable suffix — see
 # "Schema Naming Convention" above for what a bare tenant_id would do.
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+uv run python scripts/run_ingestion.py \
   --video_dir data/videos/acme_production/ \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame \
@@ -1325,7 +1325,7 @@ echo "Backing up tenant: $TENANT_ID"
 # Configuration is already persisted in the backend config store
 
 # 2. Backup backend documents (per schema - example for Vespa)
-for schema in video_colpali_smol500_mv_frame video_xclip_sv_chunk_6s; do
+for schema in video_colpali_smol500_mv_frame video_embeddinggemma2_sv_chunk_6s; do
   schema_name="${schema}_${SCHEMA_SUFFIX}"
   # Use backend visit API to export all documents
   curl "http://localhost:8080/document/v1/${schema_name}/frame/docid" \
@@ -1406,7 +1406,7 @@ def diagnose_tenant_schemas(tenant_id: str):
     suffix = canonical_tenant_id(tenant_id).replace(":", "_")
     expected_schemas = [
         f"video_colpali_smol500_mv_frame_{suffix}",
-        f"video_xclip_sv_chunk_6s_{suffix}",
+        f"video_embeddinggemma2_sv_chunk_6s_{suffix}",
     ]
 
     print(f"Expected schemas for {tenant_id}:")

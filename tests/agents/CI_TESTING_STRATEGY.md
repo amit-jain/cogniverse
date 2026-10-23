@@ -25,7 +25,7 @@ CI testing strategy for **cogniverse-agents** package (Implementation Layer) in 
 **Purpose**: Essential coverage for every commit
 **Runtime**: ~1:48 minutes (78 tests)
 **Coverage**: 37% of cogniverse_agents package with critical paths
-**Execution**: `JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit -m "unit and ci_fast"`
+**Execution**: `uv run pytest tests/agents/unit -m "unit and ci_fast"`
 
 **What runs**:
 1. **Core Agent Tests** (39 tests)
@@ -61,7 +61,7 @@ CI testing strategy for **cogniverse-agents** package (Implementation Layer) in 
 **Purpose**: Comprehensive validation
 **Runtime**: ~6+ minutes (381 tests for unit tests)
 **Coverage**: Complete package validation
-**Execution**: `JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit -m unit`
+**Execution**: `uv run pytest tests/agents/unit -m unit`
 
 **What runs**:
 - All 78 ci_fast tests
@@ -114,25 +114,25 @@ class TestMultiModalSearch:
 ### CI (Automatic)
 ```bash
 # Runs automatically in GitHub Actions
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit -m "unit and ci_fast" -v --cov=libs/agents/cogniverse_agents
+uv run pytest tests/agents/unit -m "unit and ci_fast" -v --cov=libs/agents/cogniverse_agents
 
 # Implementation Layer CI job
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit tests/routing/unit -m "unit and ci_fast" -v
+uv run pytest tests/agents/unit tests/routing/unit -m "unit and ci_fast" -v
 ```
 
 ### Local Development
 ```bash
 # Run all unit tests (comprehensive)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit -m unit -v
+uv run pytest tests/agents/unit -m unit -v
 
 # Run only fast tests (quick validation before commit)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit -m "unit and ci_fast" -v
+uv run pytest tests/agents/unit -m "unit and ci_fast" -v
 
 # Run integration tests (requires services)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration -v
+uv run pytest tests/agents/integration -v
 
 # Run E2E tests (requires Ollama, Vespa, Phoenix)
-JAX_PLATFORM_NAME=cpu timeout 600 uv run pytest tests/agents/e2e -v
+timeout 600 uv run pytest tests/agents/e2e -v
 ```
 
 ## Marking Tests as CI Fast
@@ -168,20 +168,6 @@ class TestGatewayAgentEdgeCases:
         pass
 ```
 
-## DSPy Testing with JAX_PLATFORM_NAME=cpu
-
-**Critical**: All DSPy-based tests require `JAX_PLATFORM_NAME=cpu` to avoid GPU initialization overhead:
-
-```bash
-# ✅ Correct
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit -m "unit and ci_fast"
-
-# ❌ Incorrect - will be slow or fail
-uv run pytest tests/agents/unit -m "unit and ci_fast"
-```
-
-**Why**: DSPy uses JAX for optimization, which attempts GPU initialization by default. CI environments typically don't have GPUs, and initialization adds significant overhead.
-
 ## Current CI Fast Tests Summary
 
 ### Core Agent Tests (39 tests)
@@ -195,7 +181,7 @@ uv run pytest tests/agents/unit -m "unit and ci_fast"
 - Error handling
 
 **Video Search Agent** (10 tests):
-- Initialization with profiles (ColPali, X-CLIP, ColQwen)
+- Initialization with profiles (ColPali, EmbeddingGemma 2, ColQwen)
 - Video frame analysis
 - Multi-modal search execution
 - Reranking with relationship boosting
@@ -341,7 +327,7 @@ jobs:
       - run: uv sync
       - name: Run CI Fast Tests
         run: |
-          JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit tests/routing/unit \
+          uv run pytest tests/agents/unit tests/routing/unit \
             -m "unit and ci_fast" -v \
             --cov=libs/agents/cogniverse_agents \
             --cov-report=xml \
@@ -359,7 +345,7 @@ jobs:
       - run: uv sync
       - name: Run Full Unit Tests
         run: |
-          JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit tests/routing/unit \
+          uv run pytest tests/agents/unit tests/routing/unit \
             -m unit -v \
             --cov=libs/agents/cogniverse_agents \
             --cov-report=xml \
@@ -390,16 +376,11 @@ jobs:
    - Use small test data
    - Avoid network calls
 
-3. **Use JAX_PLATFORM_NAME=cpu for DSPy tests**:
-   ```bash
-   JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/
-   ```
-
-4. **Test multi-modality in ci_fast**:
+3. **Test multi-modality in ci_fast**:
    - Include tests for video, audio, images, documents, text
    - Mock modality-specific processors in CI
 
-5. **Validate layer dependencies**:
+4. **Validate layer dependencies**:
    - Ensure agents use cogniverse-core base classes
    - Verify proper use of cogniverse-evaluation metrics
    - Validate cogniverse-sdk interface compliance
@@ -429,10 +410,9 @@ jobs:
 **Issue**: CI fast tests taking > 2 minutes
 
 **Solutions**:
-1. Verify `JAX_PLATFORM_NAME=cpu` is set
-2. Check for unmocked heavy dependencies (LLMs, embeddings)
-3. Reduce test data size
-4. Remove network calls
+1. Check for unmocked heavy dependencies (LLMs, embeddings)
+2. Reduce test data size
+3. Remove network calls
 
 ### Coverage Drops Below Threshold
 
@@ -440,18 +420,9 @@ jobs:
 
 **Solutions**:
 1. Add more ci_fast markers to critical tests
-2. Review coverage report: `JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit -m "unit and ci_fast" --cov=libs/agents/cogniverse_agents --cov-report=html`
+2. Review coverage report: `uv run pytest tests/agents/unit -m "unit and ci_fast" --cov=libs/agents/cogniverse_agents --cov-report=html`
 3. Identify untested critical paths
 4. Add targeted tests
-
-### DSPy/JAX Errors
-
-**Issue**: JAX initialization errors in CI
-
-**Solutions**:
-1. Always use `JAX_PLATFORM_NAME=cpu`
-2. Mock DSPy teleprompters in unit tests
-3. Use real DSPy only in integration/E2E tests
 
 ## Summary
 
@@ -468,7 +439,6 @@ The agent tests CI strategy provides:
 
 **Key Principles**:
 - Mark essential tests with `@pytest.mark.ci_fast`
-- Always use `JAX_PLATFORM_NAME=cpu` for DSPy tests
 - Mock heavy dependencies in CI (LLMs, embeddings, external services)
 - Validate layer boundaries and package dependencies
 - Test all modalities with appropriate mocking strategy

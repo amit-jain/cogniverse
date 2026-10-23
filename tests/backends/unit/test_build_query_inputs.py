@@ -204,7 +204,8 @@ def test_default_nearest_neighbor_remains_approximate(
 
     assert (
         params["yql"] == "select * from agent_memories_acme_acme where "
-        "{targetHits: 1}nearestNeighbor(embedding, qt) "
+        "{targetHits: 1, hnsw.exploreAdditionalHits: 200}"
+        "nearestNeighbor(embedding, qt) "
         'AND user_id contains "scientists"'
     )
     assert "approximate: false" not in params["yql"]
@@ -376,7 +377,7 @@ def _nearest_neighbor_hybrid_query(
             "nearestneighbor_tensor": "qt",
         },
         ranking_profile="hybrid_float_bm25",
-        schema_name="video_xclip_acme_acme",
+        schema_name="video_embeddinggemma2_acme_acme",
         limit=10,
         filters=filters or {},
         correlation_id="t",
@@ -391,9 +392,10 @@ def test_nearest_neighbor_hybrid_ors_the_query_terms(
     params = _nearest_neighbor_hybrid_query(backend)
 
     assert params["yql"] == (
-        "select * from video_xclip_acme_acme where "
+        "select * from video_embeddinggemma2_acme_acme where "
         '({grammar: "any"}userInput(@userQuery)) OR '
-        "({targetHits: 10}nearestNeighbor(embedding, qt))"
+        "({targetHits: 10, hnsw.exploreAdditionalHits: 200}"
+        "nearestNeighbor(embedding, qt))"
     )
     assert params["userQuery"] == "man shoveling snow"
 
@@ -402,8 +404,9 @@ def test_nearest_neighbor_hybrid_keeps_filters(backend: VespaSearchBackend) -> N
     params = _nearest_neighbor_hybrid_query(backend, filters={"video_id": "v1"})
 
     assert params["yql"] == (
-        "select * from video_xclip_acme_acme where "
+        "select * from video_embeddinggemma2_acme_acme where "
         '(({grammar: "any"}userInput(@userQuery)) OR '
-        "({targetHits: 10}nearestNeighbor(embedding, qt))) "
+        "({targetHits: 10, hnsw.exploreAdditionalHits: 200}"
+        "nearestNeighbor(embedding, qt))) "
         'AND video_id contains "v1"'
     )

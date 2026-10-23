@@ -38,12 +38,14 @@ from cogniverse_cli.config import (
 )
 from cogniverse_cli.deploy import helm_install
 from cogniverse_cli.images import SIDECAR_BUILDS
+from cogniverse_cli.modal_inference.servers.clap import ClapEmbedConfig
 from fastapi import Body, FastAPI, HTTPException
 
 from cogniverse_core.registries.schema_deploy_lease import DEFAULT_WAIT_SECONDS
 from cogniverse_foundation.config.utils import resolve_default_profile
 from cogniverse_foundation.inference_specs import (
     INFERENCE_SERVICE_SPECS,
+    VLLM_IMAGE_TAG,
     get_inference_service_spec,
 )
 from cogniverse_runtime.admin.profile_models import SchemaDeploymentResponse
@@ -185,27 +187,30 @@ def test_default_gliner_deployment_uses_the_pinned_production_model():
     assert _inference_env(deps, "gliner")["MODEL_NAME"] == ("urchade/gliner_large-v2.1")
 
 
-def test_video_embed_sidecar_env_matches_the_shipped_spec():
-    """The chart must serve the checkpoint the spec declares.
+def test_clap_embed_sidecar_env_matches_the_shipped_spec():
+    """The chart must serve the checkpoint the spec declares, at the sample
+    rate the server decodes audio at.
 
-    The sidecar asserts its embedding width on every response, so a chart
-    that ships a different model or width fails each request instead of
-    writing a mis-shaped vector. Compared against the production constant,
-    not restated literals, so a spec change cannot pass unnoticed.
+    Compared against the production constants, not restated literals, so a
+    spec or server change cannot pass unnoticed.
     """
-    spec = INFERENCE_SERVICE_SPECS["video_embed"]
-    deps = _inference_deployments(_render("inference.video_embed.enabled=true"))
-    env = _inference_env(deps, "video_embed")
+    spec = INFERENCE_SERVICE_SPECS["clap_embed"]
+    sidecar = ClapEmbedConfig()
+    deps = _inference_deployments(_render("inference.clap_embed.enabled=true"))
+    env = _inference_env(deps, "clap_embed")
 
-    assert env["VIDEO_EMBED_MODEL"] == spec.model_id
-    assert env["VIDEO_EMBED_MODEL_REVISION"] == spec.model_revision
-    assert env["VIDEO_EMBED_DIM"] == str(spec.output_dimension)
-    assert env["VIDEO_EMBED_NUM_FRAMES"] == "8"
+    assert env["CLAP_EMBED_MODEL"] == spec.model_id
+    assert env["CLAP_EMBED_MODEL_REVISION"] == spec.model_revision
+    assert env["CLAP_EMBED_SAMPLE_RATE"] == str(sidecar.sample_rate)
+    assert (sidecar.model_name, sidecar.model_revision) == (
+        spec.model_id,
+        spec.model_revision,
+    )
 
-    container = deps["video_embed"]["spec"]["template"]["spec"]["containers"][0]
-    base = _values("values.yaml")["inference"]["video_embed"]
+    container = deps["clap_embed"]["spec"]["template"]["spec"]["containers"][0]
+    base = _values("values.yaml")["inference"]["clap_embed"]
     assert container["image"] == (
-        f"{SIDECAR_BUILDS['video_embed'][0]}:{base['image']['tag']}"
+        f"{SIDECAR_BUILDS['clap_embed'][0]}:{base['image']['tag']}"
     )
     # Model weights live in RAM for the pod's life; a request below the limit
     # makes the pod Burstable and evictable out of the shared pool.
@@ -215,36 +220,36 @@ def test_video_embed_sidecar_env_matches_the_shipped_spec():
     )
 
 
-def test_k3s_overlay_serves_video_embed_from_the_locally_built_image():
-    """The local stack's text-to-video retrieval runs through the X-CLIP
-    sidecar the deploy builds itself: the overlay enables the pod on the image
-    family ``cogniverse up`` produces, serves the spec's checkpoint at the
-    spec's width, exposes the fixed NodePort, and hands the runtime the
-    in-cluster URL. Memory request equals the limit so the pod holding the
+def test_k3s_overlay_serves_clap_embed_from_the_locally_built_image():
+    """The local stack's acoustic audio search runs through the CLAP sidecar
+    the deploy builds itself: the overlay enables the pod on the image family
+    ``cogniverse up`` produces, serves the spec's checkpoint offline at the
+    server's sample rate, exposes the fixed NodePort, and hands the runtime
+    the in-cluster URL. Memory request equals the limit so the pod holding the
     weights cannot be evicted out of the shared pool."""
-    spec = get_inference_service_spec("video_embed")
-    base = _values("values.yaml")["inference"]["video_embed"]
-    overlay = _values("values.k3s.yaml")["inference"]["video_embed"]
+    spec = get_inference_service_spec("clap_embed")
+    base = _values("values.yaml")["inference"]["clap_embed"]
+    overlay = _values("values.k3s.yaml")["inference"]["clap_embed"]
     docs = _render(values="values.k3s.yaml")
     deps = _inference_deployments(docs)
-    container = deps["video_embed"]["spec"]["template"]["spec"]["containers"][0]
+    container = deps["clap_embed"]["spec"]["template"]["spec"]["containers"][0]
 
     assert container["image"] == (
-        f"{SIDECAR_BUILDS['video_embed'][0]}:{overlay['image']['tag']}"
+        f"{SIDECAR_BUILDS['clap_embed'][0]}:{overlay['image']['tag']}"
     )
     assert container["imagePullPolicy"] == "Never"
 
-    env = _inference_env(deps, "video_embed")
-    assert env["VIDEO_EMBED_MODEL"] == spec.model_id
-    assert env["VIDEO_EMBED_MODEL_REVISION"] == spec.model_revision
-    assert env["VIDEO_EMBED_DIM"] == str(spec.output_dimension)
-    assert env["VIDEO_EMBED_DIM"] == base["env"]["VIDEO_EMBED_DIM"]
-    assert env["VIDEO_EMBED_NUM_FRAMES"] == base["env"]["VIDEO_EMBED_NUM_FRAMES"]
+    env = _inference_env(deps, "clap_embed")
+    assert env["CLAP_EMBED_MODEL"] == spec.model_id
+    assert env["CLAP_EMBED_MODEL_REVISION"] == spec.model_revision
+    assert env["CLAP_EMBED_SAMPLE_RATE"] == str(ClapEmbedConfig().sample_rate)
+    assert env["CLAP_EMBED_SAMPLE_RATE"] == base["env"]["CLAP_EMBED_SAMPLE_RATE"]
+    assert env["HF_HUB_OFFLINE"] == "1"
     assert env["PORT"] == str(base["service"]["port"])
 
     services = _inference_services(docs)
-    assert services["video_embed"]["spec"]["type"] == "NodePort"
-    assert services["video_embed"]["spec"]["ports"] == [
+    assert services["clap_embed"]["spec"]["type"] == "NodePort"
+    assert services["clap_embed"]["spec"]["ports"] == [
         {
             "name": "http",
             "nodePort": base["service"]["nodePort"],
@@ -258,11 +263,11 @@ def test_k3s_overlay_serves_video_embed_from_the_locally_built_image():
         for key, service in services.items()
         if service["spec"]["type"] == "NodePort"
     }
-    assert node_ports["video_embed"] == base["service"]["nodePort"]
+    assert node_ports["clap_embed"] == base["service"]["nodePort"]
     assert len(set(node_ports.values())) == len(node_ports)
 
-    assert _service_urls(docs)["video_embed"] == (
-        f"http://cogniverse-video-embed:{base['service']['port']}"
+    assert _service_urls(docs)["clap_embed"] == (
+        f"http://cogniverse-clap-embed:{base['service']['port']}"
     )
 
     resources = container["resources"]
@@ -348,22 +353,6 @@ def test_gliner_and_face_nodeports_are_distinct_when_both_are_exposed():
                 "timeoutSeconds": 5,
             },
         ),
-        (
-            "video_embed",
-            8000,
-            {
-                "failureThreshold": 5,
-                "initialDelaySeconds": 0,
-                "periodSeconds": 10,
-                "timeoutSeconds": 5,
-            },
-            {
-                "failureThreshold": 5,
-                "initialDelaySeconds": 30,
-                "periodSeconds": 30,
-                "timeoutSeconds": 5,
-            },
-        ),
     ],
 )
 def test_model_sidecars_separate_model_readiness_from_process_liveness(
@@ -376,7 +365,6 @@ def test_model_sidecars_separate_model_readiness_from_process_liveness(
         _render(
             "inference.clap_embed.enabled=true",
             "inference.face_embed.enabled=true",
-            "inference.video_embed.enabled=true",
         )
     )
     container = deps[service]["spec"]["template"]["spec"]["containers"][0]
@@ -509,10 +497,9 @@ def test_vllm_colpali_serves_tomoro_token_embed():
     docs = _render("inference.vllm_colpali.enabled=true")
     dep = _inference_deployments(docs)["vllm_colpali"]
     c = dep["spec"]["template"]["spec"]["containers"][0]
-    # Pinned image, not a floating ``latest``: ColQwen3 support landed in
-    # vLLM 0.21, and a stale cached ``latest`` silently serves 0.20 which
-    # fails to load the model.
-    assert c["image"] == "vllm/vllm-openai-cpu:v0.23.0"
+    # Pinned image, not a floating ``latest`` or ``nightly``: a stale cached
+    # floating tag silently serves whatever vLLM it was pulled at.
+    assert c["image"] == f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}"
     args = c["args"]
     assert "TomoroAI/tomoro-colqwen3-embed-4b" in args
     assert args[args.index("--runner") + 1] == "pooling"
@@ -520,6 +507,53 @@ def test_vllm_colpali_serves_tomoro_token_embed():
     # qwen3_vl's ViT tower OOMs vLLM's startup profiler on a worst-case
     # video buffer unless video multimodal input is disabled.
     assert args[args.index("--limit-mm-per-prompt") + 1] == '{"video":0,"image":1}'
+
+
+def _vllm_image_tags(node, found: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    if isinstance(node, dict):
+        repository = node.get("repository")
+        if isinstance(repository, str) and repository.startswith("vllm/vllm-openai"):
+            found.append((repository, node.get("tag")))
+        for value in node.values():
+            _vllm_image_tags(value, found)
+    elif isinstance(node, list):
+        for item in node:
+            _vllm_image_tags(item, found)
+    return found
+
+
+def test_every_vllm_image_in_every_values_file_runs_the_pinned_build():
+    """All vLLM services run one vLLM build. The chart pins it as a literal in
+    each values file and the audio image pins it as its base, so each literal
+    is compared against the constant the Modal apps read."""
+    images = {
+        name: sorted(
+            _vllm_image_tags(yaml.safe_load((CHART_PATH / name).read_text()), [])
+        )
+        for name in (
+            "values.yaml",
+            "values.cpu.yaml",
+            "values.cuda.yaml",
+            "values.rocm.yaml",
+        )
+    }
+    audio_bases = re.findall(
+        r"^ARG (\w+_BASE)=(\S+)$",
+        (REPO_ROOT / "deploy" / "vllm_audio" / "Dockerfile").read_text(),
+        re.MULTILINE,
+    )
+
+    assert images == {
+        "values.yaml": [("vllm/vllm-openai-cpu", VLLM_IMAGE_TAG)] * 5,
+        "values.cpu.yaml": [],
+        "values.cuda.yaml": [("vllm/vllm-openai", VLLM_IMAGE_TAG)],
+        "values.rocm.yaml": [("vllm/vllm-openai-rocm", VLLM_IMAGE_TAG)] * 5,
+    }
+    assert audio_bases == [
+        ("CPU_BASE", f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}"),
+        ("CUDA_BASE", f"vllm/vllm-openai:{VLLM_IMAGE_TAG}"),
+        ("ROCM_BASE", f"vllm/vllm-openai-rocm:{VLLM_IMAGE_TAG}"),
+    ]
 
 
 def test_inference_readiness_has_no_fixed_cold_start_delay():
@@ -622,6 +656,7 @@ def test_k3s_exposes_every_stateless_inference_service_on_a_unique_node_port():
         "inference.vllm_llm_student.enabled=true",
         "inference.clap_embed.enabled=true",
         "inference.face_embed.enabled=true",
+        "inference.vllm_omni_embed.enabled=true",
         values="values.k3s.yaml",
     )
     services = _inference_services(docs)
@@ -635,6 +670,7 @@ def test_k3s_exposes_every_stateless_inference_service_on_a_unique_node_port():
         "clap_embed": 29008,
         "face_embed": 29009,
         "vllm_llm_student": 29010,
+        "vllm_omni_embed": 29003,
     }
 
     actual_ports = {}
@@ -797,7 +833,9 @@ def test_base_values_select_no_video_profile():
     there, so they select no video profile rather than one nothing serves."""
     config = _chart_config(_render())
 
-    assert config["backend"]["default_profiles"] == {}
+    assert config["backend"]["default_profiles"] == {
+        "audio": {"profile": "audio_clap_semantic"}
+    }
     assert "active_video_profile" not in config
     assert resolve_default_profile(config) is None
 
@@ -811,7 +849,8 @@ def test_rocm_overlay_selects_the_shipped_default_video_profile():
         "video_colpali_smol500_mv_frame"
     )
     assert config["backend"]["default_profiles"] == {
-        "video": {"profile": "video_colpali_smol500_mv_frame"}
+        "video": {"profile": "video_colpali_smol500_mv_frame"},
+        "audio": {"profile": "audio_clap_semantic"},
     }
     assert config["active_video_profile"] == "video_colpali_smol500_mv_frame"
     assert resolve_default_profile(config) == "video_colpali_smol500_mv_frame"
@@ -947,7 +986,9 @@ def test_cpu_composition_omits_visual_ingestion(values: tuple[str, ...]):
     docs = _render(*_PROD_SECRETS, values=values)
     config = _chart_config(docs)
 
-    assert config["backend"]["default_profiles"] == {}
+    assert config["backend"]["default_profiles"] == {
+        "audio": {"profile": "audio_clap_semantic"}
+    }
     assert "active_video_profile" not in config
     assert resolve_default_profile(config) is None
     assert "vllm_colpali" not in _service_urls(docs)
@@ -1691,6 +1732,7 @@ def test_rocm_overlay_wires_tunableop_env_on_rocm_pods_only():
         "denseon",
         "colbert_pylate",
         "code_colbert_pylate",
+        "vllm_omni_embed",
     }, rocm_pods
     # vllm_colpali replays its results file without tuning new shapes: its
     # batched steps vary in length, and tuning an unseen one stalls the
@@ -1701,6 +1743,7 @@ def test_rocm_overlay_wires_tunableop_env_on_rocm_pods_only():
         "vllm_llm_student": "1",
         "vllm_llm_teacher": "1",
         "denseon": "1",
+        "vllm_omni_embed": "0",
     }
     for key, tuning in expected_tuning.items():
         env = _inference_env(deps, key)
@@ -1788,7 +1831,13 @@ def test_cpu_overlay_keeps_tunableop_env_off_even_when_global_toggle_is_on():
 # Helm cannot read the Python spec map, so values.yaml holds a second copy of
 # each model id and sha; test_chart_model_pins_match_inference_service_specs
 # fails as soon as the two copies disagree.
-REVISION_PINNED_SERVICES = ("vllm_colpali", "vllm_llm_student", "denseon", "vllm_asr")
+REVISION_PINNED_SERVICES = (
+    "vllm_colpali",
+    "vllm_llm_student",
+    "denseon",
+    "vllm_asr",
+    "vllm_omni_embed",
+)
 
 
 def test_chart_model_pins_match_inference_service_specs():
@@ -2050,7 +2099,7 @@ def test_external_url_skips_the_model_cache_pvc():
 def test_external_url_predecessor_is_skipped_by_its_successors_gate():
     """In the rocm startup chain denseon follows vllm_asr; a Modal-hosted
     vllm_asr deploys no local Service, so denseon waits on the nearest earlier
-    entry with a pod (vllm_llm_student) rather than on a /health that can
+    entry with a pod (vllm_omni_embed) rather than on a /health that can
     never answer, and rather than starting ungated."""
     docs = _render(
         "inference.vllm_asr.externalUrl=https://amit--cogniverse-vllm-asr.modal.run",
@@ -2062,7 +2111,7 @@ def test_external_url_predecessor_is_skipped_by_its_successors_gate():
     gates = [c for c in inits if c["name"] == "startup-gate"]
     assert [
         {e["name"]: e["value"] for e in gate["env"]}["GATE_URL"] for gate in gates
-    ] == ["http://cogniverse-vllm-llm-student:8000/health"]
+    ] == ["http://cogniverse-vllm-omni-embed:8000/health"]
 
 
 def test_external_url_on_denseon_redirects_the_semantic_embed_url():
@@ -2335,11 +2384,11 @@ def test_every_engine_the_shipped_values_select_is_one_the_chart_implements():
         "denseon": "vllm_embed",
         "face_embed": "fastapi",
         "gliner": "gliner",
-        "video_embed": "fastapi",
         "vllm_asr": "vllm_transcription",
         "vllm_colpali": "vllm_token_embed",
         "vllm_llm_student": "vllm_chat",
         "vllm_llm_teacher": "vllm_chat",
+        "vllm_omni_embed": "vllm_embed",
     }
     assert set(shipped.values()) == set(_ENGINE_CONTAINER_NAMES) - {"vllm"}
 
@@ -2405,7 +2454,6 @@ def test_shipped_profiles_render_exactly_these_inference_containers():
             "colbert_pylate": "pylate",
             "denseon": "vllm-embed",
             "gliner": "gliner",
-            "video_embed": "video-embed",
             "vllm_asr": "vllm-transcription",
             "vllm_llm_teacher": "vllm-chat",
         },
@@ -2416,6 +2464,7 @@ def test_shipped_profiles_render_exactly_these_inference_containers():
             "gliner": "gliner",
             "vllm_asr": "vllm-transcription",
             "vllm_colpali": "vllm-token-embed",
+            "vllm_omni_embed": "vllm-embed",
         },
         "rocm": {
             "code_colbert_pylate": "pylate",
@@ -2426,5 +2475,54 @@ def test_shipped_profiles_render_exactly_these_inference_containers():
             "vllm_colpali": "vllm-token-embed",
             "vllm_llm_student": "vllm-chat",
             "vllm_llm_teacher": "vllm-chat",
+            "vllm_omni_embed": "vllm-embed",
         },
     }
+
+
+def test_rocm_omni_embed_serves_the_pinned_model_at_one_frame_per_second():
+    """The ROCm overlay serves EmbeddingGemma 2 on the GPU from the audio image
+    built on the pinned nightly, sampling video at 1 fps, with memory reserved
+    as it is limited."""
+    docs = _render(values="values.rocm.yaml")
+    deployment = _inference_deployments(docs)["vllm_omni_embed"]
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+
+    assert container["image"] == "cogniverse/vllm-audio-rocm:0.1.0"
+    assert container["args"] == [
+        "serve",
+        "google/embeddinggemma-2",
+        "--revision",
+        "914f7f89142e33e77833254d9c9b90c3cef7303b",
+        "--convert",
+        "embed",
+        "--dtype",
+        "auto",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--runner",
+        "pooling",
+        "--max-model-len",
+        "8192",
+        "--limit-mm-per-prompt",
+        '{"image":1,"video":1,"audio":1}',
+        "--media-io-kwargs",
+        '{"video":{"fps":1}}',
+        "--mm-processor-cache-gb",
+        "0",
+        "--gpu-memory-utilization",
+        "0.08",
+    ]
+    assert (
+        container["resources"]["requests"]["memory"]
+        == container["resources"]["limits"]["memory"]
+    )
+    k3s_services = _inference_services(
+        _render(values=("values.k3s.yaml", "values.rocm.yaml"))
+    )
+    assert k3s_services["vllm_omni_embed"]["spec"]["ports"][0]["nodePort"] == 29003
+    assert _service_urls(docs)["vllm_omni_embed"] == (
+        "http://cogniverse-vllm-omni-embed:8000"
+    )

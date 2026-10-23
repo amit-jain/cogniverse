@@ -35,3 +35,11 @@ def reference_embedding(payload: dict, text: str, is_query: bool) -> np.ndarray:
         if case["text"] == text and case["is_query"] == is_query:
             return np.asarray(case["embedding"], dtype=np.float32)
     raise KeyError(f"no recorded case for {text!r} (is_query={is_query})")
+
+
+def reference_media_embedding(payload: dict, media: str) -> tuple[dict, np.ndarray]:
+    """The recorded ``media`` document case and its vector."""
+    for case in payload.get("media_cases", []):
+        if case["media"] == media:
+            return case, np.asarray(case["embedding"], dtype=np.float32)
+    raise KeyError(f"no recorded {media} document case")

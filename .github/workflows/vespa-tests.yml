@@ -19,6 +19,10 @@ on:
       - 'configs/config.json'
       - 'configs/examples/config.example.json'
       - 'charts/cogniverse/files/config.json'
+      # test_omni_embedding_ranking.py reads the golden queries, the corpus
+      # (re-record only) and the schemas.
+      - 'data/testset/evaluation/**'
+      - 'configs/schemas/**'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -36,6 +40,10 @@ on:
       - 'configs/config.json'
       - 'configs/examples/config.example.json'
       - 'charts/cogniverse/files/config.json'
+      # test_omni_embedding_ranking.py reads the golden queries, the corpus
+      # (re-record only) and the schemas.
+      - 'data/testset/evaluation/**'
+      - 'configs/schemas/**'
 
 env:
   CARGO_NET_RETRY: "10"
@@ -83,7 +91,7 @@ jobs:
 
     - name: Run unit tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/backends/unit -m "unit or not integration" \
+        uv run --no-sync python -m pytest tests/backends/unit -m "unit or not integration" \
           -v --tb=short \
           --cov=libs/vespa/cogniverse_vespa \
           --cov-report=term-missing \
@@ -191,6 +199,6 @@ jobs:
     - name: Run integration tests
       timeout-minutes: 35
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/backends/integration \
+        uv run --no-sync python -m pytest tests/backends/integration \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short

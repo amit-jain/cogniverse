@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -11,6 +13,7 @@ import dspy
 import pandas as pd
 import phoenix.client as phoenix_client
 import pytest
+from dspy.utils.callback import BaseCallback
 from openinference.instrumentation.dspy import DSPyInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -226,17 +229,74 @@ class _ChatCompletionsServer:
         self._server.server_close()
 
 
+def _dspy_class_attributes() -> dict[tuple[type, str], object]:
+    return {
+        (owner, name): value
+        for module_name, module in list(sys.modules.items())
+        if module_name == "dspy" or module_name.startswith("dspy.")
+        for owner in list(vars(module).values())
+        if isinstance(owner, type) and owner.__module__ == module_name
+        for name, value in list(vars(owner).items())
+    }
+
+
+@contextmanager
+def _dspy_instrumented(provider: TracerProvider):
+    """Instrument DSPy, then put back every DSPy class attribute it replaced.
+
+    ``uninstrument`` restores the innermost ``__wrapped__`` function, which
+    strips DSPy's own ``with_callbacks`` decorator from ``Module.__call__``,
+    ``BaseLM.__call__`` and the rest, so the attributes are restored from a
+    snapshot taken before instrumenting.
+    """
+    originals = _dspy_class_attributes()
+    DSPyInstrumentor().instrument(tracer_provider=provider)
+    try:
+        yield
+    finally:
+        DSPyInstrumentor().uninstrument()
+        for (owner, name), value in originals.items():
+            if vars(owner).get(name) is not value:
+                setattr(owner, name, value)
+
+
+class _ModuleStarts(BaseCallback):
+    def __init__(self):
+        self.modules = []
+
+    def on_module_start(self, call_id, instance, inputs):
+        self.modules.append((type(instance).__name__, inputs))
+
+
+class _Echo(dspy.Module):
+    def forward(self, text):
+        return text
+
+
+def test_instrumenting_dspy_leaves_module_callbacks_firing_afterwards():
+    module_call = vars(dspy.Module)["__call__"]
+
+    with _dspy_instrumented(TracerProvider()):
+        pass
+
+    starts = _ModuleStarts()
+    echo = _Echo()
+    echo.callbacks = [starts]
+    assert echo(text="red jerseys") == "red jerseys"
+    assert starts.modules == [
+        ("_Echo", {"args": (), "kwargs": {"text": "red jerseys"}})
+    ]
+    assert vars(dspy.Module)["__call__"] is module_call
+
+
 @pytest.fixture
 def exported_spans():
     """Real OpenInference DSPy instrumentation writing to a real OTel exporter."""
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    DSPyInstrumentor().instrument(tracer_provider=provider)
-    try:
+    with _dspy_instrumented(provider):
         yield exporter
-    finally:
-        DSPyInstrumentor().uninstrument()
 
 
 def test_the_routed_lm_emits_the_span_name_the_lookup_queries(exported_spans):

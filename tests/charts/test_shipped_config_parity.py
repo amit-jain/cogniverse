@@ -63,22 +63,30 @@ def test_shipped_config_passes_system_tenant_startup_parse(path: Path):
     assert parsed.backend_config.profiles
 
 
-_SELECTED = {"video": {"profile": "video_colpali_smol500_mv_frame"}}
+_SELECTED_VIDEO = {"video": {"profile": "video_colpali_smol500_mv_frame"}}
+# Two shipped audio profiles, so audio searches that name none need a default.
+_SELECTED_AUDIO = {"audio": {"profile": "audio_clap_semantic"}}
+_SELECTED = {**_SELECTED_VIDEO, **_SELECTED_AUDIO}
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    "path",
-    [SHIPPED, REPO_ROOT / "configs" / "examples" / "config.example.json"],
-    ids=lambda p: p.name,
+    ("path", "expected"),
+    [
+        (SHIPPED, _SELECTED),
+        (REPO_ROOT / "configs" / "examples" / "config.example.json", _SELECTED_VIDEO),
+    ],
+    ids=["config.json", "config.example.json"],
 )
-def test_local_configs_select_the_default_video_profile_by_name_only(path: Path):
+def test_local_configs_select_the_default_video_profile_by_name_only(
+    path: Path, expected: dict
+):
     """The Vespa search backend reads default_profiles.<type>.strategy as a
     ranking-strategy name ahead of the profile's own default_ranking, so a
     value no schema ranks with only hides that default."""
     config = json.loads(path.read_text())
 
-    assert config["backend"]["default_profiles"] == _SELECTED
+    assert config["backend"]["default_profiles"] == expected
 
 
 def _composed_chart_config(values: tuple[str, ...], *set_args: str) -> dict[str, Any]:
@@ -110,7 +118,7 @@ def _composed_chart_config(values: tuple[str, ...], *set_args: str) -> dict[str,
 @pytest.mark.parametrize(
     ("values", "set_args", "expected"),
     [
-        ((), (), {}),
+        ((), (), _SELECTED_AUDIO),
         (
             ("values.k3s.yaml", "values.rocm.yaml", "values.modal-llm.yaml"),
             (),
@@ -434,6 +442,22 @@ def test_shipped_golden_dataset_carries_no_unusable_rows():
     assert no_expected == []
 
 
+def _schema_config_identity(config: dict[str, Any]) -> dict[str, tuple[Any, Any]]:
+    """Per profile: (schema_config.schema_name, schema_name) and the label
+    schema_config gives the profile's embedding model."""
+    return {
+        name: (
+            (profile["schema_config"].get("schema_name"), profile["schema_name"]),
+            (
+                profile["schema_config"].get("model_name"),
+                profile["embedding_model"],
+            ),
+        )
+        for name, profile in config["backend"]["profiles"].items()
+        if "schema_name" in profile.get("schema_config", {})
+    }
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "path",
@@ -464,3 +488,148 @@ def test_shipped_configs_carry_the_promotion_gate(path: Path):
         triggers.optimization_gap_share,
         triggers.optimization_skip_above_score,
     ) == (0.05, 0.5, 0.95)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "path",
+    [*CONFIGS, REPO_ROOT / "configs" / "examples" / "config.example.json"],
+    ids=lambda p: f"{p.parent.name}/{p.name}",
+)
+def test_schema_config_names_the_schema_and_model_the_profile_uses(path: Path):
+    """``schema_config`` restates the profile's schema and model. A restatement
+    that names a schema no file defines, or a model family the profile does not
+    serve, misleads every reader of the profile."""
+    identity = _schema_config_identity(load_shipped_config(path))
+
+    mismatched_schemas = {
+        name: names for name, (names, _) in identity.items() if names[0] != names[1]
+    }
+    tomoro_labels = {
+        name: label
+        for name, (_, (label, model)) in identity.items()
+        if model == "TomoroAI/tomoro-colqwen3-embed-4b" and label is not None
+    }
+    assert mismatched_schemas == {}
+    assert tomoro_labels == {
+        "image_colpali_mv": "ColQwen3",
+        "video_colpali_smol500_mv_frame": "ColQwen3",
+        "video_colqwen_omni_mv_chunk_30s": "ColQwen3",
+    }
+
+
+@pytest.mark.parametrize("path", CONFIGS, ids=lambda p: p.parent.name)
+def test_the_omni_video_profile_is_pinned_whole(path: Path):
+    """The EmbeddingGemma 2 chunk profile is the single-vector 6 s video
+    profile: segmentation, transcription, service routing and schema settings
+    are pinned together so a drift in any one of them is visible here."""
+    profile = load_shipped_config(path)["backend"]["profiles"][
+        "video_embeddinggemma2_sv_chunk_6s"
+    ]
+
+    assert profile == {
+        "type": "video",
+        "description": (
+            "EmbeddingGemma 2 6-second chunk single-vector embeddings, 768-dim. "
+            "Each chunk's frames (1 fps) and audio track are embedded together "
+            "into one space with text, so a text query retrieves clips directly. "
+            "Served by the vllm_omni_embed service."
+        ),
+        "schema_name": "video_embeddinggemma2_sv_chunk_6s",
+        "result_granularity": "source",
+        "embedding_model": "google/embeddinggemma-2",
+        "pipeline_config": {
+            "extract_keyframes": False,
+            "transcribe_audio": True,
+            "generate_descriptions": False,
+            "generate_embeddings": True,
+        },
+        "strategies": {
+            "segmentation": {
+                "class": "SingleVectorSegmentationStrategy",
+                "params": {
+                    "strategy": "chunks",
+                    "segment_duration": 6.0,
+                    "segment_overlap": 1.0,
+                },
+            },
+            "transcription": {
+                "class": "AudioTranscriptionStrategy",
+                "params": {"model": "openai/whisper-large-v3-turbo"},
+            },
+            "description": {"class": "NoDescriptionStrategy", "params": {}},
+            "embedding": {"class": "SingleVectorEmbeddingStrategy", "params": {}},
+        },
+        "embedding_type": "single_vector",
+        "model_loader": "embeddinggemma2",
+        "modalities": ["video", "audio"],
+        "inference_services": {
+            "embedding": "vllm_omni_embed",
+            "transcription": "vllm_asr",
+        },
+        "model_specific": {"chunk_duration": 6.0, "chunk_overlap": 1.0},
+        "inference_config": {
+            "model_type": "embeddinggemma2",
+            "backend": "remote",
+            "query_encoder": "google/embeddinggemma-2",
+        },
+        "schema_config": {
+            "schema_name": "video_embeddinggemma2_sv_chunk_6s",
+            "model_name": "EmbeddingGemma-2",
+            "embedding_dim": 768,
+            "binary_dim": 96,
+            "chunk_based": True,
+        },
+    }
+
+
+def test_the_omni_video_schema_indexes_the_profile_dims():
+    """The schema stores the float and binary vectors at the widths the
+    profile's ``schema_config`` declares, and maps the chunk fields the
+    ingestion pipeline feeds."""
+    dims = load_shipped_config(SHIPPED)["backend"]["profiles"][
+        "video_embeddinggemma2_sv_chunk_6s"
+    ]["schema_config"]
+    schema = json.loads(
+        (
+            REPO_ROOT / "configs/schemas/video_embeddinggemma2_sv_chunk_6s_schema.json"
+        ).read_text()
+    )
+
+    assert schema["name"] == dims["schema_name"]
+    assert {f["name"]: f["type"] for f in schema["document"]["fields"]} == {
+        "video_id": "string",
+        "video_title": "string",
+        "source_url": "string",
+        "creation_timestamp": "long",
+        "segment_id": "int",
+        "start_time": "float",
+        "end_time": "float",
+        "embedding": f"tensor<float>(v[{dims['embedding_dim']}])",
+        "embedding_binary": f"tensor<int8>(v[{dims['binary_dim']}])",
+        "audio_transcript": "string",
+        "entity_ids": "array<string>",
+        "relation_ids": "array<string>",
+        "claim_ids": "array<string>",
+    }
+    assert [profile["name"] for profile in schema["rank_profiles"]] == [
+        "default",
+        "bm25_only",
+        "binary_binary",
+        "float_float",
+        "float_binary",
+        "phased",
+        "hybrid_float_bm25",
+        "hybrid_binary_bm25",
+        "hybrid_bm25_binary",
+        "hybrid_bm25_float",
+    ]
+    assert schema["document_mapping"] == {
+        "id": "video_id",
+        "title": "video_title",
+        "text_content": "audio_transcript",
+        "created_at": "creation_timestamp",
+        "created_at_format": "epoch",
+        "embeddings": {"embedding": "embedding"},
+        "metadata_fields": {"segment_index": "segment_id"},
+    }

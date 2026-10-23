@@ -268,6 +268,39 @@ def test_deploy_uses_the_canonical_app_name_without_stopping_or_warming():
     )
 
 
+@pytest.mark.parametrize(
+    "operation",
+    (
+        lambda lifecycle: lifecycle.deploy(["vllm_omni_embed"]),
+        lambda lifecycle: lifecycle.warm(["vllm_omni_embed"]),
+        lambda lifecycle: lifecycle.release(["vllm_omni_embed"]),
+        lambda lifecycle: lifecycle.status(["vllm_omni_embed"]),
+    ),
+    ids=("deploy", "warm", "release", "status"),
+)
+def test_a_cluster_only_service_never_reaches_modal(operation):
+    loaded: list[str] = []
+
+    def load(spec):
+        loaded.append(spec.name)
+        return _ModalApp()
+
+    with httpx.Client(timeout=2) as client:
+        lifecycle, lookup_calls, stop_calls = _make_lifecycle(
+            {},
+            client=client,
+            deployment_loader=load,
+        )
+        with pytest.raises(ValueError) as caught:
+            operation(lifecycle)
+
+    assert str(caught.value) == (
+        "inference service 'vllm_omni_embed' is served only by the cluster; "
+        "it has no Modal deployment"
+    )
+    assert (loaded, lookup_calls, stop_calls) == ([], [], [])
+
+
 def test_deploy_enables_modal_output_for_build_logs(monkeypatch):
     import cogniverse_cli.modal_inference_lifecycle as lifecycle_module
 

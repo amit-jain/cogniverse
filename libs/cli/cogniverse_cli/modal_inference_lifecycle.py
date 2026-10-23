@@ -38,7 +38,6 @@ _DEPLOYMENT_MODULES = {
     "vllm_asr": "cogniverse_cli.modal_inference.whisper",
     "clap_embed": "cogniverse_cli.modal_inference.clap",
     "face_embed": "cogniverse_cli.modal_inference.face",
-    "video_embed": "cogniverse_cli.modal_inference.video_embed",
 }
 # 303 is Modal's answer to a web request that waited its 150-second limit on
 # a container still starting; the next probe waits on the same container.
@@ -490,9 +489,15 @@ class ModalInferenceLifecycle:
     @staticmethod
     def _service_spec(service: str) -> InferenceServiceSpec:
         try:
-            return get_inference_service_spec(service)
+            spec = get_inference_service_spec(service)
         except KeyError:
             raise ValueError(f"unknown inference service {service!r}") from None
+        if not spec.modal_deployable:
+            raise ValueError(
+                f"inference service {service!r} is served only by the cluster; "
+                "it has no Modal deployment"
+            )
+        return spec
 
     def _redact(self, error: object) -> str:
         message = str(error)

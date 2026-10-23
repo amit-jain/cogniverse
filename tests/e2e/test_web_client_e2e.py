@@ -11,6 +11,7 @@ with the tracked sample video.
 
 from __future__ import annotations
 
+import html
 import json
 import re
 import time
@@ -19,6 +20,7 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
+from markdown_it import MarkdownIt
 from playwright.sync_api import expect
 
 from cogniverse_finetuning.dataset.embedding_extractor import TripletExtractor
@@ -335,8 +337,13 @@ class TestAgentSearch:
 class TestAgentConversation:
     @staticmethod
     def _plain_first_line(text: str) -> str:
-        first = next(line for line in text.splitlines() if line.strip())
-        return re.sub(r"[*_`#>]", "", first).strip()
+        """The first line of markdown ``text`` as the page shows it: rendered
+        as CommonMark, so markup is gone and a literal ``_`` stays."""
+        rendered = (
+            MarkdownIt("commonmark").enable(["table", "strikethrough"]).render(text)
+        )
+        plain = html.unescape(re.sub(r"<[^>]+>", "", rendered))
+        return next(line for line in plain.splitlines() if line.strip()).strip()
 
     def test_a_turn_shows_the_message_and_the_reply_the_runtime_saved(
         self, page, web_corpus

@@ -421,12 +421,6 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint, gliner_url):
     prior_factory = graph_router._graph_manager_factory
     graph_router.set_graph_manager_factory(_factory)
 
-    # DocExtractor resolves the configured GLiNER endpoint through this manager.
-    import cogniverse_foundation.config.utils as _cfg_utils
-
-    _prev_singleton = _cfg_utils._config_manager_singleton
-    _cfg_utils._config_manager_singleton = cm
-
     yield {
         "http_port": http_port,
         "base_url": base_url,
@@ -437,7 +431,6 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint, gliner_url):
         "config_port": shared_memory_vespa["config_port"],
     }
 
-    _cfg_utils._config_manager_singleton = _prev_singleton
     graph_router._graph_manager_factory = prior_factory
     if prior_vespa_url is None:
         os.environ.pop("VESPA_URL", None)
@@ -708,7 +701,9 @@ _MODALITY_FIXTURES = [
     pytest.param(
         "video_chunk",
         shipped_profile(
-            profile_type="video", embedding_type="single_vector"
+            profile_type="video",
+            embedding_type="single_vector",
+            model_loader="embeddinggemma2",
         ).schema_name,
         "content_backrefs_video_chunk.json",
         id="video_chunk",

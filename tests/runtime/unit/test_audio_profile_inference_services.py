@@ -114,7 +114,7 @@ def test_audio_profile_declares_and_resolves_clap_embed(
         assert (
             resolved_profile["remote_inference_url"] == service_urls["colbert_pylate"]
         )
-        assert resolved_profile["clap_endpoint_url"] == service_urls["clap_embed"]
+        assert resolved_profile["acoustic_endpoint_url"] == service_urls["clap_embed"]
 
 
 @pytest.mark.unit

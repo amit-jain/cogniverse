@@ -1106,7 +1106,7 @@ class TestSearchAgentEnsembleSearch:
                         "embedding_type": "video_based",
                     },
                     "profile3": {
-                        "embedding_model": "microsoft/xclip-large-patch14",
+                        "embedding_model": "google/embeddinggemma-2",
                         "embedding_type": "video_based",
                     },
                 }
@@ -1432,10 +1432,12 @@ class TestMultiQueryFusion:
         """SearchAgent with mocked backend for multi-query fusion testing."""
         mock_config = {
             "active_video_profile": "video_colpali_smol500_mv_frame",
-            "video_processing_profiles": {
-                "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
-                    "embedding_type": "multi_vector",
+            "backend": {
+                "profiles": {
+                    "video_colpali_smol500_mv_frame": {
+                        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                        "embedding_type": "multi_vector",
+                    }
                 }
             },
         }
@@ -3078,6 +3080,39 @@ class TestSearchAgentResolvesItsTenantsProfiles:
             "lightonai/LateOn",
         )
         assert built == [("lightonai/LateOn", "acme_audio")]
+
+    @pytest.mark.asyncio
+    async def test_an_ensemble_over_a_profile_the_tenant_lacks_is_refused(self):
+        """A system-tenant agent asked to search a tenant's own profile
+        refuses before any leg runs, instead of encoding that profile's query
+        with its active profile's encoder."""
+        from types import SimpleNamespace
+
+        config_manager = self._config_manager_with_tenant_profile()
+        agent = SearchAgent(
+            deps=SearchAgentDeps(profile="video_colpali_smol500_mv_frame"),
+            schema_loader=mock_schema_loader,
+            config_manager=config_manager,
+        )
+        searched = []
+        agent._get_backend = lambda: SimpleNamespace(
+            search=lambda query_dict: searched.append(query_dict["profile"]) or []
+        )
+
+        with pytest.raises(ValueError) as caught:
+            await agent._search_ensemble(
+                "robots",
+                tenant_id="acme:acme",
+                profiles=["video_colpali_smol500_mv_frame", "acme_frames"],
+                modality="video",
+                top_k=5,
+            )
+
+        assert str(caught.value) == (
+            "Profile 'acme_frames' is not configured for tenant '__system__', "
+            "the tenant this search agent was built for"
+        )
+        assert searched == []
 
     def test_without_the_tenant_the_profile_is_unknown(self):
         config_manager = self._config_manager_with_tenant_profile()

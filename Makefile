@@ -65,7 +65,7 @@ help:
 # Individual module tests (coverage configured per target)
 test-ingestion:
 	@echo "🧪 Running ingestion tests..."
-	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit \
+	uv run python -m pytest tests/ingestion/unit -m unit \
 		--cov=libs/runtime/cogniverse_runtime/ingestion \
 		--cov-report=term-missing \
 		--cov-report=html:htmlcov_ingestion \
@@ -74,7 +74,7 @@ test-ingestion:
 
 test-ingestion-integration:
 	@echo "🔗 Running ingestion integration tests..."
-	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/integration -m integration
+	uv run python -m pytest tests/ingestion/integration -m integration
 
 test-routing:
 	@echo "🧪 Running routing tests..."
@@ -90,7 +90,7 @@ test-evaluation:
 
 test-agents:
 	@echo "🧪 Running agents tests..."
-	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit -m unit \
+	uv run python -m pytest tests/agents/unit -m unit \
 		--cov=libs/agents/cogniverse_agents \
 		--cov-report=term-missing \
 		--cov-report=html:htmlcov_agents \
@@ -99,7 +99,7 @@ test-agents:
 
 test-agents-integration:
 	@echo "🔗 Running agents integration tests..."
-	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration -m integration
+	uv run python -m pytest tests/agents/integration -m integration
 
 # Run all modules separately (recommended approach)
 test-all-modules: test-ingestion test-routing test-evaluation test-agents
@@ -239,7 +239,7 @@ dev-ingestion: clean-coverage test-ingestion
 
 # CI-friendly targets (quiet mode, coverage from pytest.ini)
 ci-test-ingestion:
-	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit --quiet
+	uv run python -m pytest tests/ingestion/unit -m unit --quiet
 
 ci-test-routing:
 	uv run python -m pytest tests/routing/unit -m unit --quiet

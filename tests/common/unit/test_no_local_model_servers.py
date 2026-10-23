@@ -314,6 +314,7 @@ def test_the_allowlisted_recording_script_is_the_one_in_process_loader() -> None
     assert [load.split(": ", 1)[1] for load in in_process_model_loads(script)] == [
         "ColBERT(...)",
         "SentenceTransformer(...)",
+        "SentenceTransformer(...)",
         "FaceAnalysis(...)",
     ]
     assert set(offenders(allowlist=frozenset())) == {RECORDING_SCRIPT}
@@ -328,12 +329,10 @@ def test_model_image_markers_cover_every_model_service() -> None:
         "cogniverse/gliner",
         "cogniverse/clap-embed",
         "cogniverse/face-embed",
-        "cogniverse/video-embed",
         "deploy/pylate/Dockerfile",
         "deploy/gliner/Dockerfile",
         "deploy/clap_embed/Dockerfile",
         "deploy/face_embed/Dockerfile",
-        "deploy/video_embed/Dockerfile",
         "cogniverse/vllm-audio",
         "deploy/vllm_audio/Dockerfile",
     } == markers

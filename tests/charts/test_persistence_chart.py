@@ -398,7 +398,10 @@ def test_phoenix_backup_dumps_the_database_and_mounts_assets_read_only():
     (script,) = dump["container"]["args"]
     assert "pg_dump --format=custom --no-owner --no-privileges" in script
     assert 'pg_restore --list "$WORK/database.dump" > "$WORK/database.list"' in script
-    assert 'tar -cf "$WORK/working-assets.tar" -C /source .' in script
+    assert (
+        'tar -cf "$WORK/working-assets.tar" --exclude=./phoenix.db \\\n'
+        "  --exclude=./phoenix.db-wal --exclude=./phoenix.db-shm -C /source .\n"
+    ) in script
     assert 'mv "$WORK/archive.tar" "/stage/phoenix-$STAMP.tar"' in script
 
     upload = next(

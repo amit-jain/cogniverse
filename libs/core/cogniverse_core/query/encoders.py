@@ -205,49 +205,51 @@ def ColQwenQueryEncoder(  # noqa: N802 — factory exposed under a class-style n
     )
 
 
-class XClipQueryEncoder(QueryEncoder):
-    """Encode a query into the joint video-text space X-CLIP was trained on.
+class EmbeddingGemma2QueryEncoder(QueryEncoder):
+    """Encode a query into EmbeddingGemma 2's text-image-video-audio space.
 
-    Ingestion and query hit the SAME ``video_embed`` sidecar, so a text
-    vector is directly comparable to the stored clip vectors. Remote only:
-    the sidecar owns the checkpoint, and a local fallback would silently
-    answer from a different space.
+    The ``vllm_omni_embed`` service that embeds the indexed chunks and audio
+    windows answers the query with the retrieval query prompt, so the vector
+    is directly comparable to the stored ones. Remote only.
     """
+
+    multi_vector = False
 
     def __init__(
         self,
-        model_name: str,
-        inference_service_url: Optional[str] = None,
+        inference_service_url: str,
+        model_name: str = "google/embeddinggemma-2",
         embedding_dim: int = 768,
     ):
-        if not inference_service_url:
+        from cogniverse_core.common.models.model_loaders import (
+            OMNI_EMBED_SERVICE,
+            get_or_load_model,
+        )
+        from cogniverse_foundation.inference_specs import get_inference_service_spec
+
+        served = get_inference_service_spec(OMNI_EMBED_SERVICE).output_dimension
+        if embedding_dim != served:
             raise ValueError(
-                f"XClipQueryEncoder requires an inference service URL for "
-                f"{model_name!r}. Set inference_services.embedding on the "
-                f"profile and enable that service in the Helm values."
+                f"{OMNI_EMBED_SERVICE} serves {served}-dim vectors but the "
+                f"profile indexes {embedding_dim}"
             )
-
-        from cogniverse_core.common.models.model_loaders import get_or_load_model
-
         self.model_name = model_name
         self.embedding_dim = embedding_dim
-        config = {
-            "model_name": model_name,
-            "embedding_type": "single_vector",
-            "model_loader": "xclip",
-            "remote_inference_url": inference_service_url,
-        }
-        self.xclip_loader, _ = get_or_load_model(model_name, config, logger)
+        self.inference_service_url = inference_service_url
+        self._loader, _ = get_or_load_model(
+            model_name,
+            {
+                "model_name": model_name,
+                "embedding_type": "single_vector",
+                "model_loader": "embeddinggemma2",
+                "modalities": ["video", "audio"],
+                "remote_inference_url": inference_service_url,
+            },
+            logger,
+        )
 
     def encode(self, query: str) -> np.ndarray:
-        embeddings_np = np.asarray(self.xclip_loader.embed_text(query)).flatten()
-        if embeddings_np.shape[0] != self.embedding_dim:
-            raise ValueError(
-                f"video_embed returned a {embeddings_np.shape[0]}-dim text vector "
-                f"but the profile indexes {self.embedding_dim} dims; the query "
-                f"would score against a different space."
-            )
-        return embeddings_np
+        return self._loader.embed_text(query)
 
     def get_embedding_dim(self) -> int:
         return self.embedding_dim
@@ -258,9 +260,9 @@ class ClapTextQueryEncoder(QueryEncoder):
 
     The ``clap_embed`` sidecar that embeds the indexed audio answers
     ``POST /embed/text`` with one vector in the same space, so the query is
-    directly comparable to the stored acoustic embedding. Remote only, like
-    X-CLIP: a local fallback would answer from whatever checkpoint the
-    process happened to load.
+    directly comparable to the stored acoustic embedding. Remote only: a
+    local fallback would answer from whatever checkpoint the process
+    happened to load.
     """
 
     multi_vector = False
@@ -340,7 +342,10 @@ def query_encoder_identity(profile_config: dict) -> tuple:
 # The text encoder of each inference service that embeds a document field
 # other than the profile's own embedding. A profile names the service under
 # the field's name in ``inference_services``.
-SERVICE_TEXT_ENCODERS: dict = {"clap_embed": ClapTextQueryEncoder}
+SERVICE_TEXT_ENCODERS: dict = {
+    "clap_embed": ClapTextQueryEncoder,
+    "vllm_omni_embed": EmbeddingGemma2QueryEncoder,
+}
 
 
 class EncoderNotConfiguredError(ValueError):
@@ -718,10 +723,17 @@ class QueryEncoderFactory:
             return ColPaliQueryEncoder(model_name, inference_service_url=inference_url)
         if model_loader == "colqwen":
             return ColQwenQueryEncoder(model_name, inference_service_url=inference_url)
-        if model_loader == "xclip":
-            return XClipQueryEncoder(
-                model_name,
-                inference_service_url=inference_url,
+        if model_loader == "embeddinggemma2":
+            if not inference_url:
+                raise EncoderNotConfiguredError(
+                    f"Profile {profile!r} uses EmbeddingGemma 2, which is served "
+                    "only remotely; set inference_services.embedding to "
+                    "vllm_omni_embed.",
+                    profile=profile,
+                )
+            return EmbeddingGemma2QueryEncoder(
+                inference_url,
+                model_name=model_name,
                 embedding_dim=(profile_config.get("schema_config") or {}).get(
                     "embedding_dim", 768
                 ),

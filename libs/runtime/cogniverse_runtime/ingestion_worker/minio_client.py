@@ -16,6 +16,7 @@ used elsewhere in the runtime.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
 from pathlib import Path
@@ -54,7 +55,9 @@ def _client(**client_config):
         endpoint_url=endpoint,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
-        config=Config(signature_version="s3v4", **client_config),
+        # boto3 rewrites the retries dict it is handed; give it a copy so a
+        # shared config such as _REMOVAL_TIMEOUTS reaches every client as written.
+        config=Config(signature_version="s3v4", **copy.deepcopy(client_config)),
         region_name="us-east-1",  # MinIO ignores; boto3 requires *some* region.
     )
 

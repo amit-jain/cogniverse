@@ -84,7 +84,7 @@ The workspace has 12 packages total (`libs/*`); all are shown above. `cogniverse
 
 **System Integration Tests** (`tests/system/`):
 - `test_ensemble_search_e2e.py` - Ensemble search RRF-fusion plumbing across multiple Vespa schemas
-- `test_ensemble_comprehensive.py` - Ensemble search against real ColPali/X-CLIP/ColQwen profiles
+- `test_ensemble_comprehensive.py` - Ensemble search against real ColPali, ColQwen and EmbeddingGemma 2 profiles
 
 **Agent End-to-End Tests** (`tests/e2e/`, ~50 files, real LLM + real Vespa/Phoenix, no mocks):
 - `test_api_e2e.py` - Gateway/orchestrator REST routing and downstream execution

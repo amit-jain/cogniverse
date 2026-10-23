@@ -799,3 +799,116 @@ class TestSemanticEmbedderResolution:
             "http://denseon:8000",
             "lightonai/DenseOn",
         )
+
+
+_DSPY_BOOTSTRAP_PROBE = r"""
+import json
+import threading
+
+import dspy
+from dspy.utils.callback import BaseCallback
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
+
+import cogniverse_runtime.main as runtime_main
+from cogniverse_foundation.telemetry.tenant_context import tenant_span_context
+
+exporters = {}
+resolved = []
+
+
+class _TenantTracers:
+    def _get_tracer_for_project(self, tenant_id, project_name):
+        resolved.append((tenant_id, project_name))
+        provider = TracerProvider()
+        exporter = exporters.setdefault(tenant_id, InMemorySpanExporter())
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        return provider.get_tracer("probe")
+
+
+runtime_main.get_telemetry_manager = lambda: _TenantTracers()
+
+
+class _ModuleStarts(BaseCallback):
+    def __init__(self):
+        self.inputs = []
+
+    def on_module_start(self, call_id, instance, inputs):
+        self.inputs.append(inputs)
+
+
+class _Echo(dspy.Module):
+    def forward(self, text):
+        return text
+
+
+starts = _ModuleStarts()
+echo = _Echo()
+echo.callbacks = [starts]
+barrier = threading.Barrier(2)
+answers = {}
+
+
+def run(tenant_id):
+    barrier.wait()
+    with tenant_span_context(tenant_id):
+        answers[tenant_id] = echo(text=tenant_id)
+
+
+threads = [threading.Thread(target=run, args=(t,)) for t in ("acme:prod", "globex:dev")]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join()
+answers["no tenant"] = echo(text="no tenant")
+
+print(json.dumps({
+    "answers": answers,
+    "callback_inputs": sorted(i["kwargs"]["text"] for i in starts.inputs),
+    "resolved": sorted(resolved),
+    "spans": {
+        tenant_id: [span.name for span in exporter.get_finished_spans()]
+        for tenant_id, exporter in sorted(exporters.items())
+    },
+}))
+"""
+
+
+def test_runtime_bootstrap_routes_dspy_spans_per_tenant_and_keeps_callbacks():
+    """With OPENINFERENCE_DSPY=1 the runtime instruments DSPy once at import.
+
+    Each DSPy span goes to the tracer resolved for the tenant in scope, two
+    tenants calling concurrently each get only their own span, a call with no
+    tenant files nothing, and DSPy's callback dispatch still runs.
+    """
+    import json
+    import subprocess
+
+    env = {**os.environ, "OPENINFERENCE_DSPY": "1"}
+    completed = subprocess.run(
+        [sys.executable, "-c", _DSPY_BOOTSTRAP_PROBE],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    probe = json.loads(completed.stdout.strip().splitlines()[-1])
+
+    assert probe == {
+        "answers": {
+            "acme:prod": "acme:prod",
+            "globex:dev": "globex:dev",
+            "no tenant": "no tenant",
+        },
+        "callback_inputs": ["acme:prod", "globex:dev", "no tenant"],
+        "resolved": [["acme:prod", None], ["globex:dev", None]],
+        "spans": {
+            "acme:prod": ["_Echo.forward"],
+            "globex:dev": ["_Echo.forward"],
+        },
+    }

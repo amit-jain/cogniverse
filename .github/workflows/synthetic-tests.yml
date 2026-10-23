@@ -86,7 +86,7 @@ jobs:
 
     - name: Run unit tests
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/synthetic/unit/ \
+        uv run --no-sync python -m pytest tests/synthetic/unit/ \
           -v --tb=short \
           --cov=libs/synthetic/cogniverse_synthetic \
           --cov-report=term-missing \

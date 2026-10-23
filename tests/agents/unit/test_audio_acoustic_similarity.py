@@ -24,6 +24,9 @@ def _agent():
     agent._tenant_id = "acme:acme"
     agent._vespa_endpoint = "http://vespa:8080"
     agent._deployed_audio_schema = None
+    agent._audio_profile = "audio_clap_semantic"
+    agent._audio_schema = "audio_content"
+    agent._acoustic_service = "clap_embed"
     # embedding_generator is a lazy property; seed its backing attr.
     gen = MagicMock()
     gen.generate_acoustic_embedding = MagicMock(

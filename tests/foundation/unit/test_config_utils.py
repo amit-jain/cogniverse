@@ -441,3 +441,70 @@ class TestResolveDefaultProfile:
             "active_image_profile": "image_beta",
         }
         assert resolve_default_profile(config, "image") == "image_beta"
+
+
+class TestSelectTypeProfile:
+    PROFILES = {
+        "audio_clap_semantic": {"type": "audio"},
+        "audio_embeddinggemma2": {"type": "audio"},
+        "video_colpali_smol500_mv_frame": {"type": "video"},
+    }
+
+    def test_the_only_profile_of_a_type_is_selected(self):
+        from cogniverse_foundation.config.utils import select_type_profile
+
+        assert (
+            select_type_profile({"audio_clap_semantic": {"type": "audio"}}, {}, "audio")
+            == "audio_clap_semantic"
+        )
+
+    def test_the_configured_default_breaks_a_tie(self):
+        from cogniverse_foundation.config.utils import select_type_profile
+
+        assert (
+            select_type_profile(
+                self.PROFILES,
+                {"audio": {"profile": "audio_embeddinggemma2"}},
+                "audio",
+            )
+            == "audio_embeddinggemma2"
+        )
+
+    def test_a_tie_without_a_default_is_refused_naming_the_candidates(self):
+        from cogniverse_foundation.config.utils import select_type_profile
+
+        with pytest.raises(ValueError) as caught:
+            select_type_profile(self.PROFILES, {}, "audio")
+
+        assert str(caught.value) == (
+            "Multiple profiles available for type 'audio' but no default "
+            "configured. Available profiles: ['audio_clap_semantic', "
+            "'audio_embeddinggemma2']. Either specify 'profile' in query_dict or "
+            "configure backend.default_profiles.audio.profile"
+        )
+
+    def test_a_default_of_another_type_is_refused(self):
+        from cogniverse_foundation.config.utils import select_type_profile
+
+        with pytest.raises(ValueError) as caught:
+            select_type_profile(
+                self.PROFILES,
+                {"audio": {"profile": "video_colpali_smol500_mv_frame"}},
+                "audio",
+            )
+
+        assert str(caught.value) == (
+            "Default profile 'video_colpali_smol500_mv_frame' for type 'audio' not "
+            "found in available profiles: ['audio_clap_semantic', "
+            "'audio_embeddinggemma2']"
+        )
+
+    def test_a_type_with_no_profile_is_refused(self):
+        from cogniverse_foundation.config.utils import select_type_profile
+
+        with pytest.raises(ValueError) as caught:
+            select_type_profile(self.PROFILES, {}, "image")
+
+        assert str(caught.value) == (
+            "No profiles found for type 'image'. Available types: ['audio', 'video']"
+        )

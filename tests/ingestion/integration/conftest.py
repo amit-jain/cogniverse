@@ -113,15 +113,13 @@ def materialise_test_pipeline_config(http_port: int) -> str:
        fails with ``Refusing to deploy: Vespa has schemas [...] that
        are not in SchemaRegistry``.
     2. ``config.max_frames_per_video`` only feeds the cache lookup
-       path; the segmentation strategies' ``max_frames`` /
-       ``max_frames_per_segment`` knobs come straight out of this
-       JSON, default to 3000+, and are what actually drives how many
-       frames each video's pipeline pushes through the inference
-       sidecar. Without lowering them the suite runs 110+ frames per
+       path; the segmentation strategies' ``max_frames`` knob comes
+       straight out of this JSON, defaults to 3000+, and is what
+       actually drives how many frames each video's pipeline pushes
+       through the inference sidecar. Without lowering them the suite runs 110+ frames per
        profile (~22 min on CPU per profile) and starts hitting the
-       sidecar's sustained-load connection ceiling. Two keyframes /
-       frames-per-segment is enough for the ingestion-pipeline
-       contract these tests assert.
+       sidecar's sustained-load connection ceiling. Two keyframes are enough
+       for the ingestion-pipeline contract these tests assert.
     """
     src_config_path = Path("configs/config.json")
     config_blob = json.loads(src_config_path.read_text())
@@ -134,8 +132,6 @@ def materialise_test_pipeline_config(http_port: int) -> str:
         if isinstance(seg_params, dict):
             if "max_frames" in seg_params:
                 seg_params["max_frames"] = 2
-            if "max_frames_per_segment" in seg_params:
-                seg_params["max_frames_per_segment"] = 2
 
     import tempfile as _tempfile
 

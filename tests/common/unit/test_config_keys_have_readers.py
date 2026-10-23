@@ -123,8 +123,6 @@ CONFIG_EXTRA_RATCHET_KEYS = {
     "bucket",
     "chunk_based",
     "inference_config",
-    "max_frames_per_chunk",
-    "min_frames",
     "enable_reflective_recompile",
     "lifecycle_expiration_days",
     "min_reflective_failures",
@@ -135,8 +133,6 @@ CHART_EXTRA_RATCHET_KEYS = {
     "bucket",
     "chunk_based",
     "inference_config",
-    "max_frames_per_chunk",
-    "min_frames",
     "lifecycle_expiration_days",
 }
 
@@ -153,9 +149,9 @@ EXPECTED_RATCHET_KEYS = {
 }
 
 EXPECTED_KEY_COUNTS = {
-    CONFIG_PATHS[0]: 325,
-    CONFIG_PATHS[1]: 309,
-    CONFIG_PATHS[2]: 277,
+    CONFIG_PATHS[0]: 322,
+    CONFIG_PATHS[1]: 306,
+    CONFIG_PATHS[2]: 276,
 }
 
 EXPECTED_AGENT_MAPPINGS = {

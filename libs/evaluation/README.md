@@ -118,7 +118,7 @@ Command-line interface for running evaluations:
 uv run cogniverse-eval evaluate \
   --mode experiment \
   --dataset golden_eval_v1 \
-  --profiles frame_based_colpali \
+  --profiles video_colpali_smol500_mv_frame \
   --strategies binary_binary
 
 # Evaluate selected traces
@@ -295,7 +295,7 @@ Application Layer:
 uv sync --extra dev --extra cpu
 
 # Run the complete evaluation suite with full tracebacks
-JAX_PLATFORM_NAME=cpu uv run pytest tests/evaluation -v --tb=long
+uv run pytest tests/evaluation -v --tb=long
 
 # Run specific evaluator tests
 uv run pytest tests/evaluation/unit/test_visual_plugin.py -v --tb=long

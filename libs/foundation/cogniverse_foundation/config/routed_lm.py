@@ -37,7 +37,6 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import openai
-from litellm.exceptions import ContextWindowExceededError
 from opentelemetry import trace
 
 from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
@@ -292,6 +291,8 @@ def classify_routed_failure(
         )
     if not isinstance(exc, openai.APIError):
         return None
+    from litellm.exceptions import ContextWindowExceededError
+
     status = http_status_of(exc)
     if isinstance(exc, ContextWindowExceededError):
         reported = str(exc)

@@ -79,7 +79,7 @@ def _embedding_strategies(profile: dict) -> dict:
 def _expected_encodes(profile: dict, info) -> set[tuple[str, str | None]]:
     """The (service, model) encode requests one search with the strategy
     sends. A service that answers one vector per text takes no model in the
-    request: the X-CLIP sidecar and the field text encoders."""
+    request: the field text encoders."""
     encodings = query_input_encodings(
         profile, {"inputs": info.inputs, "input_fields": info.input_fields}
     )
@@ -87,8 +87,6 @@ def _expected_encodes(profile: dict, info) -> set[tuple[str, str | None]]:
     for encoding in encodings.values():
         if encoding.service is not None:
             expected.add((encoding.service, None))
-        elif profile.get("model_loader") == "xclip":
-            expected.add((_encode_service(profile), None))
         else:
             expected.add((_encode_service(profile), _query_model(profile)))
     return expected
@@ -117,11 +115,10 @@ class _Sidecar(BaseHTTPRequestHandler):
         elif self.path == "/embed/text":
             out = {"vec": [0.01] * dim}
         elif self.path == "/v1/embeddings":
+            # A chat-messages request embeds one conversation into one vector.
+            count = 1 if "messages" in body else len(body["input"])
             out = {
-                "data": [
-                    {"index": i, "embedding": [0.01] * dim}
-                    for i in range(len(body["input"]))
-                ]
+                "data": [{"index": i, "embedding": [0.01] * dim} for i in range(count)]
             }
         else:
             self.send_response(404)

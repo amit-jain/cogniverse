@@ -549,7 +549,7 @@ sequenceDiagram
 
 Examples:
 - video_colpali_smol500_mv_frame_acme_production
-- video_xclip_sv_chunk_6s_initech_staging
+- video_embeddinggemma2_sv_chunk_6s_initech_staging
 ```
 
 **Usage**:

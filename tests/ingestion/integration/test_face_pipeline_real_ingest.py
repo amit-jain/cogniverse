@@ -3,7 +3,8 @@ ingestion path.
 
 ``worker._default_processor`` localises the clip, runs the real
 ``VideoIngestionPipeline`` (keyframes, and the cluster's Whisper for the
-transcript), then the per-segment KG stage: GLiNER and the chat LLM (Modal)
+transcript, or the transcript a test seeds in its own pipeline cache), then
+the per-segment KG stage: GLiNER and the chat LLM (Modal)
 extract the transcript's entities and claims, and the face pipeline sends the
 keyframes ``KeyframeProcessor`` wrote to the cluster's face-embed service. The
 graph lands in a local Vespa. The keyframes carry only ``frame_number``,
@@ -34,6 +35,16 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 VIDEOS = REPO_ROOT / "tests/system/resources/videos"
 BASE_PROFILE = "video_colpali_smol500_mv_frame"
 PROFILE = f"{BASE_PROFILE}_faces"
+
+
+CROWD_TRANSCRIPT = {
+    "video_id": "v_-6dz6tBH77I",
+    "full_text": "Come on, Serena Williams!",
+    "language": "en",
+    "duration": 8.0563125,
+    "segments": [{"start": 0.0, "end": 7.84, "text": "Come on, Serena Williams!"}],
+    "dropped_chunks": [],
+}
 
 
 def _kg_documents(http_port: int, tenant_id: str) -> list[dict]:
@@ -84,6 +95,14 @@ def worker_env(shared_vespa, inference_endpoints, monkeypatch, tmp_path, request
     config_blob["backend"]["url"] = "http://localhost"
     config_blob["backend"]["port"] = http_port
     config_blob["llm_config"]["primary"]["api_base"] = ensure_llm(model=MODEL)
+    # The pipeline cache is the test's own: a transcript or keyframe list
+    # cached by an earlier run never stands in for this run's.
+    (cache_backend,) = [
+        backend
+        for backend in config_blob["pipeline_cache"]["backends"]
+        if backend["backend_type"] == "structured_filesystem"
+    ]
+    cache_backend["base_path"] = str(tmp_path / "pipeline_cache")
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / "schemas").symlink_to(
@@ -137,6 +156,26 @@ def worker_env(shared_vespa, inference_endpoints, monkeypatch, tmp_path, request
         BackendRegistry._instance = None
         BackendRegistry._backend_instances.clear()
         BackendRegistry._shared_schema_registry = None
+
+
+async def _seed_transcript(worker_env, clip: str, transcript: dict) -> None:
+    """Store ``transcript`` as the clip's cached transcript, through the
+    pipeline the worker builds for this tenant and profile."""
+    from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+    from cogniverse_runtime.ingestion_worker import worker
+
+    config_manager, schema_loader = worker._prepare_job_context(
+        worker_env["service_urls"]
+    )
+    pipeline = VideoIngestionPipeline(
+        tenant_id=worker_env["tenant_id"],
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+        schema_name=PROFILE,
+    )
+    video_path = VIDEOS / clip
+    await pipeline.set_cached_transcript(video_path, transcript)
+    assert await pipeline.get_cached_transcript(video_path) == transcript
 
 
 async def _ingest(worker_env, clip: str, caplog) -> tuple[dict, list[str], list[dict]]:
@@ -243,8 +282,10 @@ async def test_a_speakers_faces_are_tied_to_the_person_the_transcript_names(
 async def test_faces_no_transcript_person_covers_become_anonymous_face_nodes(
     worker_env, caplog
 ):
-    # 8 s of a crowd; the transcript's only Person-labelled mention ("Yeah")
+    # 8 s of a crowd, whose audio Whisper hears as no speech. The test owns
+    # the transcript: one segment naming a Person from 0.0 s to 7.84 s
     # covers the first four keyframes, not the fifth at 7.88 s.
+    await _seed_transcript(worker_env, "v_-6dz6tBH77I.mp4", CROWD_TRANSCRIPT)
     result, face_logs, documents = await _ingest(
         worker_env, "v_-6dz6tBH77I.mp4", caplog
     )
@@ -259,5 +300,5 @@ async def test_faces_no_transcript_person_covers_become_anonymous_face_nodes(
     # the edges are pinned by count, Person and the keyframes they cover.
     edges = _face_edges(documents)
     assert len(edges) == 19
-    assert {target for target, *_ in edges} == {"yeah"}
+    assert {target for target, *_ in edges} == {"serena_williams"}
     assert {segment for _, segment, *_ in edges} == {"0", "1", "2", "3"}

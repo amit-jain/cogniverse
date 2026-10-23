@@ -120,7 +120,7 @@ HARBOUR_TITLES = ["Harbour Tour", "Ferry"]
 async def _seed_two_searches(telemetry, client, tenant):
     record_search(tenant, SUNSET, "video_colpali", "hybrid", SUNSET_TITLES)
     time.sleep(0.01)
-    record_search(tenant, HARBOUR, "video_xclip", "bm25", HARBOUR_TITLES)
+    record_search(tenant, HARBOUR, "video_embeddinggemma2", "bm25", HARBOUR_TITLES)
     telemetry.force_flush(timeout_millis=10000)
     body = await _until(client, _searches_path(tenant), _searches(2))
     return {search["query"]: search for search in body["searches"]}
@@ -138,7 +138,7 @@ async def test_a_reviewer_rates_searches_and_the_ratings_read_back(telemetry, ap
             for query, s in searches.items()
         } == {
             SUNSET: (SUNSET_TITLES[:5], "video_colpali", "hybrid", None),
-            HARBOUR: (HARBOUR_TITLES, "video_xclip", "bm25", None),
+            HARBOUR: (HARBOUR_TITLES, "video_embeddinggemma2", "bm25", None),
         }
 
         sunset, harbour = searches[SUNSET]["span_id"], searches[HARBOUR]["span_id"]
@@ -394,7 +394,9 @@ def _seed_training_searches(tenant, temporal_profile, plain_profile, count=20):
 
 async def test_the_recommender_trains_stores_and_predicts(telemetry, app):
     tenant = _tenant("recommender")
-    _seed_training_searches(tenant, "video_colpali_temporal", "video_xclip_plain")
+    _seed_training_searches(
+        tenant, "video_colpali_temporal", "video_embeddinggemma2_plain"
+    )
     telemetry.force_flush(timeout_millis=10000)
     async with _client(app) as client:
         await _until(client, _searches_path(tenant), _searches(40))
@@ -428,7 +430,10 @@ async def test_the_recommender_trains_stores_and_predicts(telemetry, app):
     usage = analysis.json()
     assert usage["search_spans"] == 40
     assert usage["profile_usage"] == {
-        "attributes.profile": {"video_colpali_temporal": 20, "video_xclip_plain": 20}
+        "attributes.profile": {
+            "video_colpali_temporal": 20,
+            "video_embeddinggemma2_plain": 20,
+        }
     }
     assert [q["column"] for q in usage["quality"]] == ["attributes.top_score"]
     assert usage["quality"][0]["statistics"]["count"] == 40.0
@@ -438,7 +443,7 @@ async def test_the_recommender_trains_stores_and_predicts(telemetry, app):
             "quality_column": "attributes.top_score",
             "rows": [
                 {"profile": "video_colpali_temporal", "mean": 1.0, "count": 20},
-                {"profile": "video_xclip_plain", "mean": 1.0, "count": 20},
+                {"profile": "video_embeddinggemma2_plain", "mean": 1.0, "count": 20},
             ],
         }
     ]
@@ -451,7 +456,7 @@ async def test_the_recommender_trains_stores_and_predicts(telemetry, app):
     }
     assert (model["features"], model["profiles"]) == (
         6,
-        ["video_colpali_temporal", "video_xclip_plain"],
+        ["video_colpali_temporal", "video_embeddinggemma2_plain"],
     )
     importances = [entry["importance"] for entry in model["feature_importance"]]
     assert sorted(e["feature"] for e in model["feature_importance"]) == sorted(
@@ -460,7 +465,7 @@ async def test_the_recommender_trains_stores_and_predicts(telemetry, app):
     assert importances == sorted(importances, reverse=True)
     assert after.json() == {
         "trained": True,
-        "profiles": ["video_colpali_temporal", "video_xclip_plain"],
+        "profiles": ["video_colpali_temporal", "video_embeddinggemma2_plain"],
     }
     query = _temporal_query(99)
     assert temporal.json()["profile"] == "video_colpali_temporal"
@@ -472,7 +477,7 @@ async def test_the_recommender_trains_stores_and_predicts(telemetry, app):
         "has_object_keywords": 1.0,
         "avg_word_length": sum(len(w) for w in query.split()) / 9,
     }
-    assert plain.json()["profile"] == "video_xclip_plain"
+    assert plain.json()["profile"] == "video_embeddinggemma2_plain"
 
 
 async def test_recommenders_trained_at_once_learn_only_their_tenants_spans(

@@ -77,19 +77,15 @@ class StrategyConfig:
         with open(self.config_file) as f:
             self.config = json.load(f)
 
-        # Ranking strategies
-        ranking_strategies_path = (
-            self.config_dir / "schemas" / "ranking_strategies.json"
+        from cogniverse_vespa.ranking_strategy_extractor import (
+            ensure_ranking_strategies_file,
         )
-        if ranking_strategies_path.exists():
-            with open(ranking_strategies_path) as f:
-                self.ranking_strategies = json.load(f)
-        else:
-            raise FileNotFoundError(
-                f"ranking_strategies.json not found at {ranking_strategies_path}. "
-                f"This file is currently required. To generate it, run: "
-                f"uv run python -m cogniverse_vespa.ranking_strategy_extractor {self.config_dir / 'schemas'}"
-            )
+
+        ranking_strategies_path = ensure_ranking_strategies_file(
+            self.config_dir / "schemas"
+        )
+        with open(ranking_strategies_path) as f:
+            self.ranking_strategies = json.load(f)
 
     def get_strategy(self, profile_name: str) -> Strategy:
         """
@@ -114,7 +110,9 @@ class StrategyConfig:
         )
 
         # Resolve storage strategy
-        storage_mode = self._resolve_storage_mode(profile, processing_type)
+        storage_mode = self._resolve_storage_mode(
+            profile, processing_type, segmentation
+        )
 
         # Get schema and ranking strategies
         schema_name = profile.get("schema_name")
@@ -190,7 +188,7 @@ class StrategyConfig:
             else:
                 return "direct_video", "windows"
         elif profile.get("model_specific", {}).get("chunk_duration"):
-            # Single-vector with chunks (X-CLIP)
+            # Single-vector with chunks
             return "single_vector", "chunks"
 
         # 5. Check process_type in profile
@@ -234,31 +232,17 @@ class StrategyConfig:
         return "frames"
 
     def _resolve_storage_mode(
-        self, profile: dict[str, Any], processing_type: str
+        self, profile: dict[str, Any], processing_type: str, segmentation: str
     ) -> str:
         """Resolve storage mode"""
         # For multi-vector models (patches > 1), always use multi_doc
         if profile.get("schema_config", {}).get("num_patches", 1) > 1:
             return "multi_doc"
 
-        # Explicit in model config
-        if "store_as_single_doc" in profile.get("model_specific", {}):
-            return (
-                "single_doc"
-                if profile["model_specific"]["store_as_single_doc"]
-                else "multi_doc"
-            )
-
-        # Check process_type for video_chunks (single doc for single-vector only)
-        if (
-            profile.get("process_type") == "video_chunks"
-            and processing_type == "single_vector"
-        ):
-            return "single_doc"
-
-        # Based on processing type
-        if processing_type == "single_vector":
-            # Single vector typically uses single doc for chunks
+        # A single-vector schema holds one vector per document, so only a
+        # whole-video embedding fits in one; chunks and windows are a
+        # document each.
+        if processing_type == "single_vector" and segmentation == "global":
             return "single_doc"
 
         return "multi_doc"

@@ -25,3 +25,30 @@ def yql_quote(value: object) -> str:
     s = s.replace("\n", "\\n").replace("\r", "\\r")
     s = s.replace("\x00", "\\0")
     return '"' + s + '"'
+
+
+# Candidates HNSW explores beyond targetHits. With only targetHits explored,
+# graph search misses the true nearest neighbours of a small top-k whenever
+# the corpus's similarities sit in a narrow band: on 380 EmbeddingGemma 2
+# chunks a top-1 search agreed with exact search for every one of 125 queries
+# from 100 additional candidates up, and for 99 of them with none.
+NEAREST_NEIGHBOR_EXPLORE_ADDITIONAL_HITS = 200
+
+
+def nearest_neighbor(
+    field: str, query_tensor: str, target_hits: int, *, approximate: bool = True
+) -> str:
+    """The ``nearestNeighbor`` YQL term for ``field`` against ``query_tensor``.
+
+    Approximate search widens the HNSW beam by
+    ``NEAREST_NEIGHBOR_EXPLORE_ADDITIONAL_HITS``; exact search scans every
+    document.
+    """
+    if approximate:
+        annotations = (
+            f"targetHits: {target_hits}, "
+            f"hnsw.exploreAdditionalHits: {NEAREST_NEIGHBOR_EXPLORE_ADDITIONAL_HITS}"
+        )
+    else:
+        annotations = f"targetHits: {target_hits}, approximate: false"
+    return f"{{{annotations}}}nearestNeighbor({field}, {query_tensor})"

@@ -470,11 +470,11 @@ python -c "print('All packages imported successfully')"
 
 ```bash
 # Run all tests
-JAX_PLATFORM_NAME=cpu uv run pytest
+uv run pytest
 
 # Run package-specific tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/
+uv run pytest tests/common/
+uv run pytest tests/agents/
 ```
 
 ---

@@ -25,7 +25,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import dspy
 import numpy as np
@@ -1245,16 +1245,17 @@ class SearchAgent(
         # event loop.
         backend_config_data = self.search_config.get("backend", {})
         profiles_config = backend_config_data.get("profiles", {})
+        unknown = [p for p in profiles if p not in profiles_config]
+        if unknown:
+            raise ValueError(
+                f"Profile {unknown[0]!r} is not configured for tenant "
+                f"{self.search_config.tenant_id!r}, the tenant this search "
+                "agent was built for"
+            )
 
         def _encode_unit(profile_name: str):
             """Profiles whose query encoders are the same share one encode;
-            unknown profiles and the active profile use the agent's own
-            encoder."""
-            if profile_name not in profiles_config:
-                logger.warning(
-                    f"Profile {profile_name} not found in config, using active profile encoder"
-                )
-                return "__active__"
+            the active profile uses the agent's own encoder."""
             if profile_name == self.active_profile:
                 return "__active__"
             return query_encoder_identity(profiles_config[profile_name])
@@ -2500,47 +2501,78 @@ class SearchAgent(
     # Skill descriptors come from A2AAgent.get_agent_skills() (-> _get_skills()).
 
 
-# Global agent instance
+# The system tenant's agent, built at startup; /health and the agent card
+# read it.
 search_agent = None
+# Each request runs on its own tenant's agent, whose config carries that
+# tenant's profiles; built on the tenant's first request.
+_tenant_agents: Dict[str, "SearchAgent"] = {}
+_tenant_agents_lock = threading.Lock()
+_build_tenant_agent: Optional[Callable[[str], "SearchAgent"]] = None
+
+
+def tenant_search_agent(tenant_id: str) -> "SearchAgent":
+    """The agent for ``tenant_id``, built once on that tenant's first request.
+
+    A failed build is not cached; the tenant's next request builds again.
+    """
+    if _build_tenant_agent is None:
+        raise RuntimeError("The search agent app has not started")
+    tenant_id = canonical_tenant_id(tenant_id)
+    agent = _tenant_agents.get(tenant_id)
+    if agent is not None:
+        return agent
+    with _tenant_agents_lock:
+        agent = _tenant_agents.get(tenant_id)
+        if agent is None:
+            agent = _build_tenant_agent(tenant_id)
+            _tenant_agents[tenant_id] = agent
+    return agent
 
 
 @asynccontextmanager
 async def lifespan(application):
-    """Initialize agent on startup.
+    """Build the system tenant's agent on startup.
 
-    Agents are tenant-agnostic: no TENANT_ID or PROFILE env vars.
-    Only infrastructure config (BACKEND_URL, BACKEND_PORT) from BootstrapConfig.
+    No TENANT_ID or PROFILE env vars: each request names its tenant and runs
+    on that tenant's agent. Only infrastructure config (BACKEND_URL,
+    BACKEND_PORT) comes from BootstrapConfig.
     """
-    global search_agent
+    global search_agent, _build_tenant_agent
 
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.bootstrap import BootstrapConfig
+    from cogniverse_foundation.config.utils import create_default_config_manager
 
     bootstrap = BootstrapConfig.from_environment()
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+    # This process entrypoint has no manager to inject, so it builds the one
+    # every agent runs on.
+    config_manager = create_default_config_manager()
+    profile = getattr(application.state, "profile", None)
 
-    try:
-        deps = SearchAgentDeps(
-            backend_url=bootstrap.backend_url,
-            backend_port=bootstrap.backend_port,
-            profile=getattr(application.state, "profile", None),
-        )
-
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.utils import create_default_config_manager
-
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-
-        # This process entrypoint has no manager to inject, so it builds the
-        # one the agent runs on.
-        search_agent = SearchAgent(
-            deps=deps,
+    def build(tenant_id: str) -> SearchAgent:
+        return SearchAgent(
+            deps=SearchAgentDeps(
+                backend_url=bootstrap.backend_url,
+                backend_port=bootstrap.backend_port,
+                profile=profile,
+                tenant_id=None if tenant_id == SYSTEM_TENANT_ID else tenant_id,
+            ),
             schema_loader=schema_loader,
-            config_manager=create_default_config_manager(),
+            config_manager=config_manager,
         )
-        logger.info("Generic search agent initialized (tenant-agnostic)")
-    except Exception as e:
-        logger.error(f"Failed to initialize search agent: {e}")
-        raise
-    yield
+
+    _build_tenant_agent = build
+    try:
+        search_agent = tenant_search_agent(SYSTEM_TENANT_ID)
+        logger.info("Search agent app started; tenant agents build per request")
+        yield
+    finally:
+        search_agent = None
+        _build_tenant_agent = None
+        _tenant_agents.clear()
 
 
 app = FastAPI(
@@ -2601,10 +2633,13 @@ async def process_task(task: Dict[str, Any], request: Request):
     """Process search task"""
     if not search_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
+    if not task.get("tenant_id"):
+        raise HTTPException(status_code=400, detail="Task must include tenant_id")
 
     try:
         with request_trace_context(request.headers):
-            result = await asyncio.to_thread(search_agent.process_enhanced_task, task)
+            agent = await asyncio.to_thread(tenant_search_agent, task["tenant_id"])
+            result = await asyncio.to_thread(agent.process_enhanced_task, task)
         return result
     except Exception as e:
         logger.error(f"Task processing failed: {e}")
@@ -2630,8 +2665,9 @@ async def upload_video_search(
     try:
         with request_trace_context(request.headers):
             video_data = await file.read()
+            agent = await asyncio.to_thread(tenant_search_agent, tenant_id)
             results = await asyncio.to_thread(
-                search_agent._search_by_video,
+                agent._search_by_video,
                 video_data=video_data,
                 filename=file.filename or "uploaded_video.mp4",
                 tenant_id=tenant_id,
@@ -2672,8 +2708,9 @@ async def upload_image_search(
     try:
         with request_trace_context(request.headers):
             image_data = await file.read()
+            agent = await asyncio.to_thread(tenant_search_agent, tenant_id)
             results = await asyncio.to_thread(
-                search_agent._search_by_image,
+                agent._search_by_image,
                 image_data=image_data,
                 filename=file.filename or "uploaded_image.jpg",
                 tenant_id=tenant_id,
@@ -2714,8 +2751,9 @@ async def enhanced_search(params: RelationshipAwareSearchParams, request: Reques
 
         # Perform relationship-aware search
         with request_trace_context(request.headers):
+            agent = await asyncio.to_thread(tenant_search_agent, params.tenant_id)
             result = await asyncio.to_thread(
-                search_agent.search_with_relationship_context,
+                agent.search_with_relationship_context,
                 search_context,
                 tenant_id=params.tenant_id,
                 top_k=params.top_k,

@@ -126,7 +126,7 @@ def evaluate(
     Examples:
         # Run new experiment
         cogniverse-eval evaluate --mode experiment --dataset test_dataset \\
-            -p frame_based_colpali -s binary_binary
+            -p video_colpali_smol500_mv_frame -s binary_binary
 
         # Evaluate existing traces
         cogniverse-eval evaluate --mode batch --dataset test_dataset \\
@@ -349,7 +349,7 @@ def test(tenant_id):
         task = evaluation_task(
             mode="experiment",
             dataset_name=dataset_name,
-            profiles=["frame_based_colpali"],
+            profiles=["video_colpali_smol500_mv_frame"],
             strategies=["binary_binary"],
             config={"use_custom": True},
         )

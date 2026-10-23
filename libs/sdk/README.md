@@ -54,12 +54,12 @@ document = Document(
 document.add_embedding(
     "video_global",
     [0.1, 0.2, 0.3],
-    metadata={"model": "xclip"},
+    metadata={"model": "embeddinggemma2"},
 )
 
 assert document.get_embedding("video_global") == [0.1, 0.2, 0.3]
 assert document.get_embedding_metadata("video_global") == {
-    "model": "xclip"
+    "model": "embeddinggemma2"
 }
 ```
 

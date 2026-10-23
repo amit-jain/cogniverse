@@ -163,7 +163,6 @@ def main() -> int:
     env = {
         k: v for k, v in os.environ.items() if k not in ("BACKEND_URL", "BACKEND_PORT")
     }
-    env.setdefault("JAX_PLATFORM_NAME", "cpu")
 
     results: list[tuple[str, str, int]] = []
     for sel in selections:

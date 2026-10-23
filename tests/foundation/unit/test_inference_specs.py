@@ -33,11 +33,6 @@ EXPECTED_MODELS = {
         "abd49a1f1ebc12af1be84d06f6848221cf96dcad",
         None,
     ),
-    "video_embed": (
-        "microsoft/xclip-large-patch14",
-        "a9dd1429a16cf305df2aaea232d5e8dceba1c675",
-        768,
-    ),
     "vllm_llm_student": (
         "google/gemma-4-e4b-it",
         "ee0ef6023621cff504d758262d4e04895a5af4a2",
@@ -63,7 +58,14 @@ EXPECTED_MODELS = {
         "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f",
         512,
     ),
+    "vllm_omni_embed": (
+        "google/embeddinggemma-2",
+        "914f7f89142e33e77833254d9c9b90c3cef7303b",
+        768,
+    ),
 }
+
+CLUSTER_ONLY_SERVICES = {"vllm_omni_embed"}
 
 EXPECTED_HF_TOKEN_SERVICES = {"vllm_llm_student", "vllm_llm_teacher"}
 
@@ -110,19 +112,21 @@ def test_exact_hf_token_services_are_the_chat_models():
     assert observed == EXPECTED_HF_TOKEN_SERVICES
 
 
-def test_each_service_has_an_independent_scale_to_zero_app():
-    specs = tuple(INFERENCE_SERVICE_SPECS.values())
+def test_each_modal_service_has_an_independent_scale_to_zero_app():
+    specs = tuple(
+        spec for spec in INFERENCE_SERVICE_SPECS.values() if spec.modal_deployable
+    )
 
-    assert len(specs) == 11
-    assert len({spec.modal_app for spec in specs}) == 11
+    assert len(specs) == 10
+    assert len({spec.modal_app for spec in specs}) == 10
     assert all(
         spec.modal_app == f"cogniverse-{spec.name.replace('_', '-')}" for spec in specs
     )
     assert all(spec.min_containers == 0 for spec in specs)
     assert {spec.name: spec.scaledown_window for spec in specs} == {
-        name: 300 for name in EXPECTED_MODELS
+        name: 300 for name in set(EXPECTED_MODELS) - CLUSTER_ONLY_SERVICES
     }
-    assert set(EXPECTED_MODELS) == {spec.name for spec in specs}
+    assert set(EXPECTED_MODELS) - CLUSTER_ONLY_SERVICES == {spec.name for spec in specs}
     assert all(spec.boot_deadline_seconds == 600.0 for spec in specs)
 
 
@@ -137,6 +141,42 @@ def test_mutable_or_missing_model_revisions_are_rejected():
     for spec in INFERENCE_SERVICE_SPECS.values():
         assert spec.model_revision
         assert spec.model_revision not in {"main", "master", "latest"}
+
+
+def test_cluster_only_services_are_exactly_the_omni_embedder():
+    assert {
+        name
+        for name, spec in INFERENCE_SERVICE_SPECS.items()
+        if not spec.modal_deployable
+    } == CLUSTER_ONLY_SERVICES
+
+
+def test_omni_embed_definition_pins_the_cluster_only_contract():
+    assert get_inference_service_spec("vllm_omni_embed") == InferenceServiceSpec(
+        name="vllm_omni_embed",
+        model_id="google/embeddinggemma-2",
+        model_revision="914f7f89142e33e77833254d9c9b90c3cef7303b",
+        output_dimension=768,
+        gpu_candidates=(),
+        context_window=8192,
+        modal_deployable=False,
+    )
+
+
+def test_a_cluster_only_spec_with_modal_gpus_is_refused():
+    with pytest.raises(ValueError) as exc:
+        InferenceServiceSpec(
+            name="vllm_omni_embed",
+            model_id="google/embeddinggemma-2",
+            model_revision="914f7f89142e33e77833254d9c9b90c3cef7303b",
+            output_dimension=768,
+            gpu_candidates=("L4",),
+            modal_deployable=False,
+        )
+
+    assert str(exc.value) == (
+        "vllm_omni_embed: a cluster-only service names no Modal GPU candidates"
+    )
 
 
 def test_unknown_service_is_an_error():
@@ -178,21 +218,3 @@ def test_chat_models_prefer_a_high_bandwidth_gpu():
         candidates = get_inference_service_spec(name).gpu_candidates
         assert candidates[0] in _HIGH_BANDWIDTH_GPUS, name
         assert candidates == ("H100", "A100-80GB", "L40S"), name
-
-
-def test_video_embed_spec_agrees_with_the_sidecar_it_serves():
-    """The spec and the sidecar must describe the same checkpoint.
-
-    Derived from ``VideoEmbedConfig`` rather than restated, so a sidecar that
-    moves to a different checkpoint or projection width fails here instead of
-    silently serving vectors the schema cannot hold.
-    """
-    from cogniverse_cli.modal_inference.servers.video_embed import VideoEmbedConfig
-
-    sidecar = VideoEmbedConfig()
-    spec = get_inference_service_spec("video_embed")
-
-    assert spec.model_id == sidecar.model_name
-    assert spec.model_revision == sidecar.model_revision
-    assert spec.output_dimension == sidecar.embedding_dim
-    assert sidecar.num_frames == 8

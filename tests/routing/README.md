@@ -8,11 +8,11 @@ This directory contains comprehensive tests for query routing and analysis in th
 
 ### Run All Tests (Recommended)
 
-**Critical**: Always use `JAX_PLATFORM_NAME=cpu` for DSPy routing tests and UV workspace:
+**Critical**: Always run through the UV workspace:
 
 ```bash
 # Run comprehensive test with all models and modes (UV workspace)
-JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py
+uv run python tests/test_comprehensive_routing.py
 
 # Quick test with limited models (faster)
 python tests/test_comprehensive_routing.py quick

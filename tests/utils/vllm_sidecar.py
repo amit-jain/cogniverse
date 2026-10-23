@@ -454,9 +454,7 @@ def _container_tokens(container: object) -> list[str]:
 
 # The variables each model server reads its served model from
 # (cogniverse_cli/modal_inference/servers).
-_MODEL_ENV_NAMES = frozenset(
-    {"MODEL_NAME", "CLAP_EMBED_MODEL", "VIDEO_EMBED_MODEL", "FACE_EMBED_MODEL"}
-)
+_MODEL_ENV_NAMES = frozenset({"MODEL_NAME", "CLAP_EMBED_MODEL", "FACE_EMBED_MODEL"})
 
 
 def _container_declares_model(container: object, model: str) -> bool:

@@ -126,6 +126,24 @@ def _coerce_512(vec) -> List[float]:
     return [float(v) for v in arr]
 
 
+# CLAP crops anything longer than its 10 s input at random, so a clip is
+# embedded as fixed windows of at most this length and their mean.
+WINDOW_SECONDS = 10.0
+
+
+def audio_windows(
+    duration_s: float, window_s: float = WINDOW_SECONDS
+) -> List[tuple[float, float]]:
+    """Consecutive ``[start, end)`` windows from 0 s, the last one shorter."""
+    windows = []
+    start = 0.0
+    while start < duration_s:
+        end = min(start + window_s, duration_s)
+        windows.append((start, end))
+        start = end
+    return windows
+
+
 def _decode_audio(audio_b64: str, sample_rate: int):
     """Decode request bytes to a mono float array at the target rate —
     mirrors ``librosa.load(path, sr=..., mono=True)`` exactly."""
@@ -199,19 +217,33 @@ def build_app(cfg: ClapEmbedConfig) -> FastAPI:
             raise _model_error(cfg, "load", 503, exc) from exc
 
         torch = import_module("torch")
+        np = import_module("numpy")
 
+        duration = len(audio_array) / cfg.sample_rate
+        if duration <= 0:
+            raise HTTPException(status_code=400, detail="audio has no samples")
         try:
-            inputs = _inputs_to_device(
-                processor(
-                    audios=audio_array,
-                    sampling_rate=cfg.sample_rate,
-                    return_tensors="pt",
-                ),
-                cfg.device,
-            )
-            with torch.no_grad():
-                audio_embeds = model.get_audio_features(**inputs)
-            return EmbedResponse(vec=_coerce_512(audio_embeds.squeeze().cpu().numpy()))
+            window_vectors = []
+            for start, end in audio_windows(duration):
+                window = audio_array[
+                    round(start * cfg.sample_rate) : round(end * cfg.sample_rate)
+                ]
+                inputs = _inputs_to_device(
+                    processor(
+                        audios=window,
+                        sampling_rate=cfg.sample_rate,
+                        return_tensors="pt",
+                    ),
+                    cfg.device,
+                )
+                with torch.no_grad():
+                    audio_embeds = model.get_audio_features(**inputs)
+                vector = np.asarray(
+                    _coerce_512(audio_embeds.squeeze().cpu().numpy()), dtype=np.float64
+                )
+                window_vectors.append(vector / np.linalg.norm(vector))
+            mean = np.mean(window_vectors, axis=0)
+            return EmbedResponse(vec=[float(v) for v in mean / np.linalg.norm(mean)])
         except Exception as exc:
             raise _model_error(cfg, "inference", 500, exc) from exc
 

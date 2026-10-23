@@ -62,7 +62,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 
 1. **GatewayAgent** - Query entry point: GLiNER-based triage classifying queries as simple or complex (<100ms, no LLM)
 2. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion
-3. **SearchAgent** - Multi-modal video search (ColPali, X-CLIP)
+3. **SearchAgent** - Multi-modal video search (ColPali, EmbeddingGemma 2)
 4. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
 5. **EntityExtractionAgent** - Named entity extraction with DSPy primary path; GLiNER + SpaCy fallback (PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, TECHNOLOGY; verbatim query spans)
 6. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
@@ -218,7 +218,7 @@ subpackage; `wiki_manager.py` owns page persistence and lint reporting.
 
 ### 1. SearchAgent
 
-**Purpose**: Text-to-video search with ColPali and X-CLIP embeddings
+**Purpose**: Text-to-video search with ColPali and EmbeddingGemma 2 embeddings
 **Constructor**: `SearchAgent(deps: SearchAgentDeps, schema_loader=None, config_manager=None, port: int = 8002)`
 
 **Backend resolution**: the agent holds no backend. `_get_backend()` is the
@@ -260,15 +260,15 @@ flowchart LR
     Input --> ImageFile["<span style='color:#000'>Image File</span>"]
 
     TextQuery --> ColPaliEncode["<span style='color:#000'>ColPali Text Encoder</span>"]
-    TextQuery --> X-CLIPEncode["<span style='color:#000'>X-CLIP Text Encoder</span>"]
+    TextQuery --> EmbGemmaEncode["<span style='color:#000'>EmbeddingGemma 2 Text Encoder</span>"]
 
     VideoFile --> FrameExtract["<span style='color:#000'>Extract Frames<br/>1 FPS</span>"]
-    FrameExtract --> VideoEncode["<span style='color:#000'>Encode Frames<br/>ColPali/X-CLIP</span>"]
+    FrameExtract --> VideoEncode["<span style='color:#000'>Encode Frames<br/>ColPali</span>"]
 
-    ImageFile --> ImageEncode["<span style='color:#000'>Encode Image<br/>ColPali/X-CLIP</span>"]
+    ImageFile --> ImageEncode["<span style='color:#000'>Encode Image<br/>ColPali</span>"]
 
     ColPaliEncode --> VespaSearch["<span style='color:#000'>Vespa Search<br/>Schema: video_frames_{tenant_id}</span>"]
-    X-CLIPEncode --> VespaSearch
+    EmbGemmaEncode --> VespaSearch
     VideoEncode --> VespaSearch
     ImageEncode --> VespaSearch
 
@@ -280,7 +280,7 @@ flowchart LR
     style VideoFile fill:#90caf9,stroke:#1565c0,color:#000
     style ImageFile fill:#90caf9,stroke:#1565c0,color:#000
     style ColPaliEncode fill:#81d4fa,stroke:#0288d1,color:#000
-    style X-CLIPEncode fill:#81d4fa,stroke:#0288d1,color:#000
+    style EmbGemmaEncode fill:#81d4fa,stroke:#0288d1,color:#000
     style FrameExtract fill:#ffcc80,stroke:#ef6c00,color:#000
     style VideoEncode fill:#81d4fa,stroke:#0288d1,color:#000
     style ImageEncode fill:#81d4fa,stroke:#0288d1,color:#000
@@ -782,13 +782,12 @@ class ProfileSelectionOutput(AgentOutput):
 class ProfileSelectionDeps(AgentDeps):
     """Dependencies for profile selection agent (tenant-agnostic at startup)."""
     available_profiles: List[str] = Field(
-        default_factory=lambda: [
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_mv_chunk_30s",
-            "video_xclip_sv_chunk_6s",
-            "video_xclip_sv_chunk_6s",
-        ],
-        description="Default available profiles (must match config.json backend.profiles)",
+        default_factory=_default_available_profiles,  # shipped configs/config.json profiles
+        description=(
+            "Default fallback profiles for standalone construction. "
+            "Runtime requests derive the tenant-usable set from ConfigManager "
+            "and deployed inference services."
+        ),
     )
 
 class ProfileSelectionAgent(
@@ -944,7 +943,7 @@ deps = ProfileSelectionDeps()
         {
           "type": "data",
           "data": {
-            "available_profiles": ["colpali", "xclip", "qwen"]
+            "available_profiles": ["colpali", "embeddinggemma2", "qwen"]
           }
         }
       ]
@@ -1895,11 +1894,18 @@ declares (`build_query_encoder`, the resolution `POST /search` uses); profiles
 with the same `query_encoder_identity` share one `SharedQueryEncoder`, so one
 encode, and a leg encodes only when its ranking strategy needs embeddings. `SearchOutput.profiles` names the legs that ran and
 `SearchOutput.degraded_profiles` the ones that did not, so a caller reports a
-partial ensemble as partial. Every leg failing raises. The legs run on a pool
+partial ensemble as partial. Every leg failing raises, and so does a profile
+the agent's tenant has not configured, before any leg runs. The legs run on a pool
 of their own that is shut down without waiting, so a caller whose budget
 cancels the ensemble gets control back at once while a leg blocked on its
 encoder or backend finishes in its worker thread; the event loop never waits
 on a leg.
+
+The module's standalone app (`python -m cogniverse_agents.search_agent`, port
+8002) builds the system tenant's agent at startup for `/health` and
+`/agent.json`. Each request runs on its own tenant's agent, which
+`tenant_search_agent` builds once on that tenant's first request; a failed
+build is not cached. A `/process` task without `tenant_id` is refused with 400.
 
 Both search paths rewrite the query once. `_rewrite_query_for_search` runs the
 DSPy rewrite (`SearchOptimizationSignature`) before the mode branch, so a
@@ -1936,15 +1942,15 @@ flowchart TB
     Input["<span style='color:#000'>Query</span>"] --> Encode{"<span style='color:#000'>For Each Profile</span>"}
 
     Encode -->|Profile 1| Enc1["<span style='color:#000'>ColPali Encoder</span>"]
-    Encode -->|Profile 2| Enc2["<span style='color:#000'>X-CLIP Encoder</span>"]
+    Encode -->|Profile 2| Enc2["<span style='color:#000'>EmbeddingGemma 2 Encoder</span>"]
     Encode -->|Profile 3| Enc3["<span style='color:#000'>Qwen Encoder</span>"]
 
     Enc1 --> Search1["<span style='color:#000'>Vespa Search<br/>Profile: colpali</span>"]
-    Enc2 --> Search2["<span style='color:#000'>Vespa Search<br/>Profile: xclip</span>"]
+    Enc2 --> Search2["<span style='color:#000'>Vespa Search<br/>Profile: embeddinggemma2</span>"]
     Enc3 --> Search3["<span style='color:#000'>Vespa Search<br/>Profile: qwen</span>"]
 
     Search1 --> Results1["<span style='color:#000'>Results 1<br/>Ranked by ColPali</span>"]
-    Search2 --> Results2["<span style='color:#000'>Results 2<br/>Ranked by X-CLIP</span>"]
+    Search2 --> Results2["<span style='color:#000'>Results 2<br/>Ranked by EmbeddingGemma 2</span>"]
     Search3 --> Results3["<span style='color:#000'>Results 3<br/>Ranked by Qwen</span>"]
 
     Results1 --> RRF["<span style='color:#000'>RRF Fusion<br/>score = Σ 1/(k+rank)</span>"]
@@ -2645,10 +2651,15 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
 
 **Search Modes:**
 
-- `semantic` - Default. ColBERT (`phased_semantic`) over transcript text
+- `semantic` - ColBERT (`phased_semantic`) over transcript text
 - `transcript` - Lexical BM25 (`transcript_search`) over `audio_title` and `audio_transcript`
 - `hybrid` - Every clip ranked by ColBERT binary MaxSim plus `nativeRank` of `audio_title` and `audio_transcript` (`hybrid_semantic_bm25`)
-- `acoustic` - CLAP text-to-audio similarity over `acoustic_embedding`
+- `acoustic` - Text-to-audio similarity over `acoustic_embedding` (`acoustic_similarity`), embedded by the profile's `acoustic_service`
+
+A search that names no mode takes the first of `semantic` and `acoustic` whose
+rank profile the audio profile's schema declares (`DEFAULT_SEARCH_MODES`):
+`semantic` on `audio_content`, `acoustic` on `audio_embeddinggemma2`. A schema
+with neither raises `ValueError` naming the profile.
 
 Text modes go through the shared search backend with `type="audio"`; the
 backend selects the tenant's audio profile and encodes the query on demand.
@@ -2663,7 +2674,7 @@ clip with CLAP and searches `acoustic_embedding`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `query` | str | Search query |
-| `search_mode` | str | Mode: transcript, semantic, acoustic, hybrid |
+| `search_mode` | Optional[str] | Mode: transcript, semantic, acoustic, hybrid; unset takes the profile's default |
 | `limit` | int | Number of results (default: 20) |
 
 **Output Fields:**
@@ -2722,9 +2733,18 @@ the resolved headers as one immutable mapping for every multipart request. An
 authentication error, timeout, or serving failure is raised to the caller
 without exposing the credential or producing an empty transcript.
 
-Remote acoustic-query encoding uses `AudioAnalysisDeps.clap_endpoint`. Modal
-URLs obtain their bearer credential from `COGNIVERSE_INFERENCE_API_KEY` and
-reject `clap_headers`; non-Modal endpoints may accept one canonical
+The dispatcher searches the tenant's deployed audio profile
+(`audio_search_target`): the only audio-type profile whose schema the tenant
+has deployed, else `backend.default_profiles.audio` among several
+(`select_type_profile`); a tenant with none deployed gets a no-content answer.
+`AudioAnalysisDeps` carries that `audio_profile`, its
+`audio_schema`, the `acoustic_service` that embeds its `acoustic_embedding`
+field (`clap_embed` or `vllm_omni_embed`) and that service's
+`acoustic_endpoint`. Acoustic mode and acoustic reference-clip similarity embed
+the query or clip with that service and search `<audio_schema>_<tenant>`; the
+other modes name `audio_profile` on the backend search. Modal URLs obtain their
+bearer credential from `COGNIVERSE_INFERENCE_API_KEY` and reject
+`acoustic_headers`; non-Modal endpoints may accept one canonical
 `Authorization: Bearer ...` mapping. `AudioEmbeddingGenerator` resolves the
 credential before constructing its pooled HTTP client.
 Per-keyframe face extraction obtains Modal credentials from

@@ -3,7 +3,7 @@
 **Package**: cogniverse-vespa (Implementation Layer)
 **Related**: cogniverse-core (backend configuration)
 
-This document describes the 14 ranking strategies available on the ColPali/ColQwen patch-based schemas (video, image, and visual-document search) in the Vespa search backend — the richest and most commonly used strategy set. These strategies are implemented in the `cogniverse-vespa` package and configured through the backend profile system in `cogniverse-core`. Other schema families (X-CLIP, LateOn text/code, audio, knowledge graph) implement overlapping but smaller strategy sets, some under different names — see [Schema Family Coverage](#schema-family-coverage) below.
+This document describes the 14 ranking strategies available on the ColPali/ColQwen patch-based schemas (video, image, and visual-document search) in the Vespa search backend — the richest and most commonly used strategy set. These strategies are implemented in the `cogniverse-vespa` package and configured through the backend profile system in `cogniverse-core`. Other schema families (EmbeddingGemma 2, LateOn text/code, audio, knowledge graph) implement overlapping but smaller strategy sets, some under different names — see [Schema Family Coverage](#schema-family-coverage) below.
 
 ## Strategy Categories
 
@@ -117,19 +117,20 @@ The 14 strategy names above are not implemented identically by every schema — 
 |---|---|---|
 | ColPali/ColQwen patch, video | `video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s` | All 14 strategies + `default` (15 rank profiles) |
 | ColPali/ColQwen patch, image and page | `image_colpali_mv`, `document_visual_colpali` | 7 of the 14 (`bm25_only`, `float_float`, `binary_binary`, `float_binary`, `phased`, `hybrid_float_bm25`, `hybrid_binary_bm25`) + `default`, which ranks by binary MaxSim alone |
-| X-CLIP sv_chunk (no description field) | `video_xclip_sv_chunk_6s` | 9 of the 14 (`bm25_only`, `float_float`, `binary_binary`, `float_binary`, `phased`, `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float`) + `default`; `bm25_no_description` and all `*_no_description` hybrids are absent because there is no description field to exclude |
+| EmbeddingGemma 2 sv_chunk (no description field) | `video_embeddinggemma2_sv_chunk_6s` | 9 of the 14 (`bm25_only`, `float_float`, `binary_binary`, `float_binary`, `phased`, `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float`) + `default`; `bm25_no_description` and all `*_no_description` hybrids are absent because there is no description field to exclude |
 | LateOn text (`document_text` schema) | `document_text_semantic` | 7 of the 14 (`bm25_only`, `float_float`, `binary_binary`, `float_binary`, `phased`, `hybrid_float_bm25`, `hybrid_binary_bm25`) + `default`; no `hybrid_bm25_binary`/`hybrid_bm25_float` or `*_no_description` variants |
 | LateOn document (`lateon_mv` schema) | `lateon_mv` | `bm25_only`, `float_float`, `float_binary`, `hybrid_binary_bm25`, `hybrid_float_bm25` + `default`; the visual-search-only strategy is named `binary_only`, **not** `binary_binary` |
 | LateOn code (`code_lateon_mv` schema) | `code_lateon_mv` | Only 3: `float_float`, `bm25_only`, `hybrid_float_bm25` — no `default`, no binary/phased/no-description variants |
 | Knowledge graph (`knowledge_graph` schema) | used internally by `GraphManager`, not exposed as a `backend.profiles` entry | `bm25_only`, `float_float`, `hybrid_binary_bm25`, `hybrid_float_bm25` + `default`; like `lateon_mv`, the binary-only strategy is named `binary_only` |
 | Audio (`audio_content` schema) | `audio_clap_semantic` | Entirely different naming: `transcript_search` (BM25 on `audio_title`/`audio_transcript`), `acoustic_similarity` (CLAP acoustic embedding, `closeness()`), `semantic_float`/`semantic_binary` (ColBERT-style token embeddings), `phased_semantic`, `hybrid_semantic_bm25`, `hybrid_acoustic_bm25` + `default` |
+| Audio (`audio_embeddinggemma2` schema) | `audio_embeddinggemma2` | `transcript_search`, `acoustic_similarity`, `hybrid_acoustic_bm25` + `default` |
 
 ```mermaid
 flowchart TD
     A["<span style='color:#000'><b>VespaSearchBackend.search</b><br/>query_dict.type + query_dict.profile</span>"] --> B["<span style='color:#000'><b>backend.profiles(profile)</b><br/>resolves schema_name</span>"]
     B --> C{"<span style='color:#000'>Schema family</span>"}
     C -->|"video/image/document (ColPali/ColQwen)"| D["<span style='color:#000'><b>ColPali/ColQwen patch schema</b><br/>14 strategies + default</span>"]
-    C -->|"video (X-CLIP)"| E["<span style='color:#000'><b>X-CLIP mv_chunk / LVT schema</b><br/>9 strategies + default</span>"]
+    C -->|"video (EmbeddingGemma 2)"| E["<span style='color:#000'><b>EmbeddingGemma 2 sv_chunk schema</b><br/>9 strategies + default</span>"]
     C -->|"document/code (LateOn)"| F["<span style='color:#000'><b>LateOn text/doc/code schema</b><br/>3-7 strategies, binary_only naming</span>"]
     C -->|"audio"| G["<span style='color:#000'><b>Audio (CLAP) schema</b><br/>transcript_search / semantic_* / acoustic_*</span>"]
 
@@ -159,11 +160,11 @@ All BM25 strategies use fieldsets to search across:
 
 - `video_title`: Video file names and metadata
 
-- `segment_description`: Generated visual descriptions (ColPali schemas only - X-CLIP schemas do not include description fields)
+- `segment_description`: Generated visual descriptions (ColPali schemas only - EmbeddingGemma 2 schemas do not include description fields)
 
 - `audio_transcript`: Transcribed audio content
 
-**Note**: Different schemas use different field names and available fields. ColPali schemas use `segment_description` and `segment_id`. X-CLIP schemas use `segment_id` but have no description field. `VespaSearchBackend` handles these variations automatically.
+**Note**: Different schemas use different field names and available fields. ColPali schemas use `segment_description` and `segment_id`. EmbeddingGemma 2 schemas use `segment_id` but have no description field. `VespaSearchBackend` handles these variations automatically.
 
 ## Technical Implementation
 
@@ -171,20 +172,20 @@ All BM25 strategies use fieldsets to search across:
 - **Fieldset name**: `default`
 - **Fields**: `video_title`, `segment_description` (ColPali schemas only), `audio_transcript`
 - **Query method**: `VespaSearchBackend._build_query` emits YQL `userInput(@userQuery)`, which Vespa resolves against the schema's `default` fieldset; a visual-first hybrid on a multi-vector schema emits `rank(true, {grammar: "any"}userInput(@userQuery))` instead, matching every document and using the OR'ed query terms only to rank; a hybrid on a single-vector schema emits `({grammar: "any"}userInput(@userQuery)) OR nearestNeighbor(...)`; strategies without a text component build filter-only or `nearestNeighbor(...)` YQL. The rank profile's `first-phase`/`second-phase` expression then sums `bm25(field)` per fieldset member (e.g. `bm25_only` is `bm25(video_title) + bm25(segment_description) + bm25(audio_transcript)`) rather than relying on a single `model.defaultIndex` override.
-- **Note**: X-CLIP schemas exclude segment_description from the fieldset as they do not generate descriptions
+- **Note**: EmbeddingGemma 2 schemas exclude segment_description from the fieldset as they do not generate descriptions
 
 ### Embedding Types
 - **Multi-vector float** (ColPali/ColQwen): `tensor<bfloat16>(patch{}, v[D])` where D is embedding dimension (320 for ColPali/ColQwen via `TomoroAI/tomoro-colqwen3-embed-4b`)
 - **Multi-vector binary** (ColPali/ColQwen): `tensor<int8>(patch{}, v[B])` where B = D/8 (40 for ColPali/ColQwen)
-- **Single-vector float** (X-CLIP sv_chunk): `tensor<float>(v[768])` — no patch dimension
-- **Single-vector binary** (LVT sv_chunk): `tensor<int8>(v[B])` where B is 96 (base) or 128 (large) — no patch dimension
+- **Single-vector float** (EmbeddingGemma 2 sv_chunk): `tensor<float>(v[768])` — no patch dimension
+- **Single-vector binary** (EmbeddingGemma 2 sv_chunk): `tensor<int8>(v[96])` — no patch dimension
 - **Multi-vector token** (LateOn family — `lateon_mv`, `document_text`, `code_lateon_mv`): `tensor<bfloat16>(token{}, v[D])` where D is 128 (`lightonai/LateOn`) or 48 (`lightonai/LateOn-Code-edge`); binary counterpart `tensor<int8>(token{}, v[D/8])`
 
 ### Ranking Phases
 - **First phase**: Initial candidate selection
 - **Second phase**: Reranking top candidates (default: top 100, from each rank profile's `second-phase.rerank-count`)
 - **Binary MaxSim** (ColPali/ColQwen patch schemas, `max_sim_hamming`): for each query token, `1 - 2h/320`, where `h` is the Hamming distance to the token's nearest patch, summed over the query tokens.
-- **Visual-first hybrid** (`hybrid_float_bm25`, `hybrid_binary_bm25` and their `_no_description` variants, `hybrid_semantic_bm25`, `hybrid_acoustic_bm25`): one phase, a visual score plus `nativeRank` of the profile's text fields. The visual score is the MaxSim averaged over the query tokens (`1 - 2h/bits` per token for binary) on a multi-vector schema, and the dense `closeness` on a single-vector one; X-CLIP's `hybrid_binary_bm25` estimates the angular closeness from the Hamming distance of the 768-bit codes, `1/(1 + πh/768)`.
+- **Visual-first hybrid** (`hybrid_float_bm25`, `hybrid_binary_bm25` and their `_no_description` variants, `hybrid_semantic_bm25`, `hybrid_acoustic_bm25`): one phase, a visual score plus `nativeRank` of the profile's text fields. The visual score is the MaxSim averaged over the query tokens (`1 - 2h/bits` per token for binary) on a multi-vector schema, and the dense `closeness` on a single-vector one; EmbeddingGemma 2's `hybrid_binary_bm25` estimates the angular closeness from the Hamming distance of the 768-bit codes, `1/(1 + πh/768)`.
 - **Text-first hybrid** (`hybrid_bm25_*`, `"candidates": "text_matches"`): the matches weakAnd keeps for the query text, ranked in one phase by the same visual score plus `nativeRank`. Like `bm25_only`, that set depends on the order the documents were fed and on the request's hit count
 
 ### Strategy Extraction & Runtime Resolution
@@ -238,7 +239,7 @@ results = backend.search({
 ### Multi-Modal Support
 `query_dict["type"]` is matched against each profile's `type` value (`cogniverse_sdk.document.ContentType` enumerates VIDEO, AUDIO, IMAGE, TEXT, DATAFRAME, DOCUMENT, but the field is a plain string — `backend.profiles` also declares a `code` type for `code_lateon_mv` that is outside the enum). Coverage per type, using the strategy set that schema family actually implements (see [Schema Family Coverage](#schema-family-coverage)):
 
-- VIDEO: Frame/chunk-level visual search with temporal context — ColPali/ColQwen (14 strategies) or X-CLIP (9 strategies)
+- VIDEO: Frame/chunk-level visual search with temporal context — ColPali/ColQwen (14 strategies) or EmbeddingGemma 2 (9 strategies)
 
 - AUDIO: Transcript search (`transcript_search`, BM25) plus CLAP acoustic and ColBERT-style semantic embedding strategies — named differently from the 14-strategy set
 

@@ -115,6 +115,9 @@ Checkpoint + resume for long-running optimization / auto-eval workflows in `cogn
 ### Embedding
 Vector representation of content for similarity search. Different models produce different dimensions (128, 768, 1024).
 
+### EmbeddingGemma 2
+Single-vector embedding model (`google/embeddinggemma-2`, 768-dim) that places text, video and audio in one space. Served by `vllm_omni_embed`; used by the `video_embeddinggemma2_sv_chunk_6s` and `audio_embeddinggemma2` profiles.
+
 ### EmbeddingGenerator
 Embedding subsystem that generates embeddings and feeds them to backends, handling multi-vector and single-vector strategies. The concrete implementation is `EmbeddingGeneratorImpl`, constructed via `EmbeddingGeneratorFactory` / `create_embedding_generator`.
 
@@ -333,7 +336,7 @@ Multi-turn conversation context. Tracked via `session_id` in telemetry for conve
 Training technique using instruction-response pairs. Cogniverse extracts SFT data from traces.
 
 ### Single-Vector
-Embedding strategy that produces one vector per document. Used by X-CLIP for video-level embeddings.
+Embedding strategy that produces one vector per document. Used by EmbeddingGemma 2 for 6 s video-chunk embeddings.
 
 ### Span
 OpenTelemetry trace unit representing an operation. Has attributes, events, and parent/child relationships.
@@ -384,9 +387,6 @@ Multi-turn conversation sequence for fine-tuning. Extracted from session-aware t
 
 ### Vespa
 Vector database used for content storage and search. Supports multi-vector, hybrid search, tenant isolation.
-
-### X-CLIP
-Google's video embedding model. Produces global embeddings from video chunks/segments.
 
 ### VLM (Vision Language Model)
 Model that understands both images and text. Used for generating frame descriptions.

@@ -8,7 +8,7 @@ DELETE /admin/profiles removes it the tenant's search refuses it.
 
 We bypass the /search/ HTTP endpoint because it routes through
 `QueryEncoderFactory` which only knows ColPali/ColQwen/ColBERT/
-X-CLIP encoders — not generic text embedders like
+EmbeddingGemma 2 encoders — not generic text embedders like
 DenseOn. The backend search layer accepts pre-computed
 query_embeddings directly, so we call it that way and assert the
 ingested document is returned by id.
@@ -163,7 +163,7 @@ def test_admin_profile_post_makes_backend_search_return_ingested_doc(
             "pipeline_config": {},
             "strategies": {},
             "embedding_type": "single_vector",
-            "model_loader": "xclip",
+            "model_loader": "embeddinggemma2",
             "schema_config": {"embedding_dims": 768},
             "deploy_schema": True,
         },

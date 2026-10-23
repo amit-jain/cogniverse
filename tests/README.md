@@ -8,22 +8,22 @@ Comprehensive test coverage for the Cogniverse 10-package layered architecture s
 
 ```bash
 # Run all tests with UV workspace
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
+uv run pytest tests/ -v
 
 # Run layer-by-layer
-JAX_PLATFORM_NAME=cpu uv run pytest tests/foundation/ -v  # Foundation
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ tests/evaluation/ -v  # Core
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/routing/ -v  # Implementation
+uv run pytest tests/foundation/ -v  # Foundation
+uv run pytest tests/common/ tests/evaluation/ -v  # Core
+uv run pytest tests/agents/ tests/routing/ -v  # Implementation
 uv run pytest tests/ingestion/ tests/system/ -v  # Application
 
 # Run with coverage across workspace
-JAX_PLATFORM_NAME=cpu uv run pytest --cov=libs/ --cov-report=html --cov-report=term-missing
+uv run pytest --cov=libs/ --cov-report=html --cov-report=term-missing
 
 # CI-safe tests only
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -m ci_safe -v
+uv run pytest tests/ -m ci_safe -v
 
 # Local tests with real services
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -m "not ci_safe" -v
+uv run pytest tests/ -m "not ci_safe" -v
 ```
 
 ## 10-Package Architecture Under Test
@@ -76,7 +76,7 @@ The test suite validates all content modalities:
 
 | Modality | Processors | Embedding Models | Schema Types |
 |----------|-----------|------------------|--------------|
-| **Video** | Frame extraction, chunk segmentation | ColPali, X-CLIP, ColQwen | Multi-vector, single-vector |
+| **Video** | Frame extraction, chunk segmentation | ColPali, ColQwen, EmbeddingGemma 2 | Multi-vector, single-vector |
 | **Audio** | Whisper transcription, chunking | Text embeddings | BM25 + dense hybrid |
 | **Images** | Frame-level processing | ColPali visual embeddings | Frame-based |
 | **Documents** | PDF extraction, text chunking | ColPali, text embeddings | Document schemas |
@@ -109,7 +109,7 @@ The test suite validates all content modalities:
 #### Model Requirements
 - `@pytest.mark.requires_inference("vllm_colpali")` - Exact ColPali/ColQwen
   HTTP embedding service; collection also requests `vllm_asr`
-- `@pytest.mark.requires_inference("video_embed")` - Exact X-CLIP
+- `@pytest.mark.requires_inference("vllm_omni_embed")` - Exact EmbeddingGemma 2
   service; collection also requests `vllm_asr`
 - `@pytest.mark.requires_gliner` - GLiNER models (gliner package)
 - `@pytest.mark.requires_lm` - Configured test LM endpoint
@@ -133,8 +133,8 @@ uv run pytest tests/foundation/ -v
 
 ### Core Layer Tests
 ```bash
-# Core functionality (requires JAX_PLATFORM_NAME=cpu for DSPy)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ -v --cov=libs/core/cogniverse_core
+# Core functionality
+uv run pytest tests/common/ -v --cov=libs/core/cogniverse_core
 
 # Evaluation framework
 uv run pytest tests/evaluation/ -v --cov=libs/evaluation/cogniverse_evaluation
@@ -143,25 +143,25 @@ uv run pytest tests/evaluation/ -v --cov=libs/evaluation/cogniverse_evaluation
 uv run pytest tests/telemetry/ -v --cov=libs/telemetry-phoenix/cogniverse_telemetry_phoenix
 
 # Memory system (Mem0 wrapper)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/memory/ -v
+uv run pytest tests/memory/ -v
 ```
 
 ### Implementation Layer Tests
 ```bash
 # Agents with DSPy 3.0 optimization
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m "unit and ci_fast" -v
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -v
-JAX_PLATFORM_NAME=cpu timeout 600 uv run pytest tests/agents/e2e/ -v
+uv run pytest tests/agents/unit/ -m "unit and ci_fast" -v
+uv run pytest tests/agents/integration/ -v
+timeout 600 uv run pytest tests/agents/e2e/ -v
 
 # Routing system (GLiNER, LLM, GEPA)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/routing/unit/ -v
-JAX_PLATFORM_NAME=cpu uv run pytest tests/routing/integration/ -v
+uv run pytest tests/routing/unit/ -v
+uv run pytest tests/routing/integration/ -v
 
 # Vespa backend (multi-tenant, 9 ranking strategies)
 uv run pytest tests/backends/ -v --cov=libs/vespa/cogniverse_vespa
 
 # Synthetic data generation
-JAX_PLATFORM_NAME=cpu uv run pytest tests/synthetic/ -v
+uv run pytest tests/synthetic/ -v
 ```
 
 ### Application Layer Tests
@@ -190,14 +190,14 @@ uv run pytest tests/ -k image -v
 uv run pytest tests/ -k document -v
 
 # Multi-modal search tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/routing/ -k search -v
+uv run pytest tests/agents/ tests/routing/ -k search -v
 ```
 
 ## Coverage Reports
 
 ```bash
 # Full workspace coverage
-JAX_PLATFORM_NAME=cpu uv run pytest --cov=libs/ --cov-report=html --cov-report=term-missing
+uv run pytest --cov=libs/ --cov-report=html --cov-report=term-missing
 
 # Package-specific coverage
 uv run pytest tests/common/ --cov=libs/core/cogniverse_core --cov-report=html
@@ -205,7 +205,7 @@ uv run pytest tests/agents/ --cov=libs/agents/cogniverse_agents --cov-report=htm
 uv run pytest tests/backends/ --cov=libs/vespa/cogniverse_vespa --cov-report=html
 
 # Coverage thresholds
-JAX_PLATFORM_NAME=cpu uv run pytest --cov=libs/ --cov-fail-under=80
+uv run pytest --cov=libs/ --cov-fail-under=80
 ```
 
 ## CI/CD Integration
@@ -224,7 +224,7 @@ Tests run in separate CI jobs for each architecture layer:
 ```yaml
 - name: Test Core Layer
   run: |
-    JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ tests/evaluation/ tests/telemetry/ \
+    uv run pytest tests/common/ tests/evaluation/ tests/telemetry/ \
       -v --cov=libs/core --cov=libs/evaluation --cov=libs/telemetry-phoenix
 ```
 
@@ -232,7 +232,7 @@ Tests run in separate CI jobs for each architecture layer:
 ```yaml
 - name: Test Implementation Layer
   run: |
-    JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ tests/routing/unit/ \
+    uv run pytest tests/agents/unit/ tests/routing/unit/ \
       -m "unit and ci_fast" -v --cov=libs/agents
 ```
 
@@ -249,7 +249,6 @@ Tests run in separate CI jobs for each architecture layer:
 ```bash
 # CI environment detection
 export CI=true                           # Auto-detected in GitHub Actions
-export JAX_PLATFORM_NAME=cpu            # Required for DSPy tests
 export PYTEST_TIMEOUT=1800              # 30-minute timeout
 export RUN_HEAVY_TESTS=false            # Skip heavy model tests in CI
 
@@ -369,22 +368,22 @@ class TestVideoProcessor:
 ### Verbose Output
 ```bash
 # Show print statements and full output
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v -s
+uv run pytest tests/ -v -s
 
 # Show warnings
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v --tb=short
+uv run pytest tests/ -v --tb=short
 
 # Full traceback
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v --tb=long
+uv run pytest tests/ -v --tb=long
 ```
 
 ### Debug Specific Test
 ```bash
 # Run single test with debugger
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/test_gateway_agent.py::TestGatewayAgent::test_classify -vv --pdb
+uv run pytest tests/agents/unit/test_gateway_agent.py::TestGatewayAgent::test_classify -vv --pdb
 
 # Run with full output
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/test_gateway_agent.py -vv -s
+uv run pytest tests/agents/unit/test_gateway_agent.py -vv -s
 ```
 
 ### Check Test Discovery
@@ -404,10 +403,10 @@ uv run pytest tests/ --collect-only -k routing
 ### Benchmark Tests
 ```bash
 # Run benchmarks only
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -m benchmark --benchmark-only
+uv run pytest tests/ -m benchmark --benchmark-only
 
 # Compare benchmark results
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -m benchmark --benchmark-compare
+uv run pytest tests/ -m benchmark --benchmark-compare
 ```
 
 ### Load Testing
@@ -439,12 +438,6 @@ docker ps | grep vespa
 curl http://localhost:8080/ApplicationStatus
 ```
 
-**DSPy/JAX errors**
-```bash
-# Always use JAX_PLATFORM_NAME=cpu for DSPy tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
-```
-
 **Model download failures**
 ```bash
 # Pre-download Ollama models
@@ -455,7 +448,7 @@ ollama pull llama3.2:3b
 **CI test failures**
 ```bash
 # Run CI-safe tests locally
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -m ci_safe -v
+uv run pytest tests/ -m ci_safe -v
 ```
 
 ## Coverage Requirements
@@ -490,6 +483,5 @@ The Cogniverse test suite provides comprehensive validation of:
 1. Test from Foundation upward through layers
 2. Mock appropriately for CI (ci_safe) vs local (local_only)
 3. Validate all modalities (video, audio, images, documents, text, dataframes)
-4. Use `JAX_PLATFORM_NAME=cpu` for DSPy tests
-5. Use `uv run pytest` for workspace testing
-6. Maintain 80%+ coverage across all layers
+4. Use `uv run pytest` for workspace testing
+5. Maintain 80%+ coverage across all layers

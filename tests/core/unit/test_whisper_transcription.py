@@ -52,6 +52,7 @@ from cogniverse_core.common.models.whisper_transcription import (
     wav_bytes,
     word_agreement,
 )
+from cogniverse_foundation.inference_specs import VLLM_IMAGE_TAG
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -929,9 +930,19 @@ def _check_recording(recording: dict) -> None:
             "model": "openai/whisper-tiny",
             "recorded": "2026-10-03",
         },
+        "live-nightly": {
+            "image": f"vllm/vllm-openai-rocm:{VLLM_IMAGE_TAG}",
+            "model": "openai/whisper-large-v3-turbo",
+            "recorded": "2026-10-21",
+        },
+        "cpu-nightly": {
+            "image": f"vllm/vllm-openai-cpu:{VLLM_IMAGE_TAG}",
+            "model": "openai/whisper-tiny",
+            "recorded": "2026-10-21",
+        },
     }
     answers = recording["answers"]
-    assert len(answers) == 18
+    assert len(answers) == 35
     body_keys = {
         response_format(True): {"duration", "language", "segments", "text", "words"},
         response_format(False): {"text", "usage"},
@@ -995,7 +1006,7 @@ def test_the_compression_ratio_is_the_one_the_server_reports():
         for answer in answers.values()
         for segment in answer["body"].get("segments") or []
     ]
-    assert len(segments) == 23
+    assert len(segments) == 46
     assert [compression_ratio(s["text"]) for s in segments] == [
         s["compression_ratio"] for s in segments
     ]
@@ -1004,10 +1015,96 @@ def test_the_compression_ratio_is_the_one_the_server_reports():
 
 def test_only_the_recorded_loops_are_garbled():
     answers = _recording()["answers"]
+    nightly_loops = {
+        f"live-nightly/IMXSEIabMM/3/json/t{t}" for t in (0.0, 0.2, 0.4, 0.6)
+    }
     assert {
         name: compression_ratio(answer["body"]["text"]) > GARBLED_COMPRESSION_RATIO
         for name, answer in answers.items()
-    } == {name: "/loop_" in name for name in answers}
+    } == {name: "/loop_" in name or name in nightly_loops for name in answers}
+
+
+def _answer_kind(answer: dict) -> tuple[str, int]:
+    body = answer["body"]
+    text = body["text"]
+    segments = body.get("segments")
+    if not text.strip():
+        kind = "empty"
+    elif compression_ratio(text) > GARBLED_COMPRESSION_RATIO:
+        kind = "loop"
+    elif (
+        segments is not None
+        and max(s["end"] for s in segments) > (answer["chunk_len_s"])
+    ):
+        kind = "past_end"
+    elif segments is not None and not reaches_chunk_end(
+        segments, answer["chunk_len_s"]
+    ):
+        kind = "short_of_end"
+    else:
+        kind = "clean"
+    return kind, len(text)
+
+
+def test_the_nightly_servers_answer_each_recorded_v0_23_request():
+    # The nightly ROCm server no longer cuts json answers short or answers
+    # empty, and loops one temperature longer; whisper-tiny on the nightly CPU
+    # server still drops a timed answer's tail.
+    answers = _recording()["answers"]
+    nightly = {
+        (a["server"], a["clip"], a["chunk"], a["response_format"], a["temperature"]): a
+        for a in answers.values()
+        if a["server"].endswith("-nightly")
+    }
+    assert {
+        name: (
+            _answer_kind(answer),
+            _answer_kind(
+                nightly[
+                    (
+                        f"{answer['server']}-nightly",
+                        answer["clip"],
+                        answer["chunk"],
+                        answer["response_format"],
+                        answer["temperature"],
+                    )
+                ]
+            ),
+        )
+        for name, answer in answers.items()
+        if not answer["server"].endswith("-nightly")
+    } == {
+        "live/IMXSEIabMM/0/verbose_json": (("clean", 461), ("clean", 461)),
+        "live/IMXSEIabMM/0/json/token_limit": (("clean", 5), ("clean", 456)),
+        "live/IMXSEIabMM/1/verbose_json": (("clean", 465), ("clean", 465)),
+        "live/IMXSEIabMM/1/json/stopped_early": (("clean", 154), ("clean", 479)),
+        "live/IMXSEIabMM/2/verbose_json/empty": (("empty", 0), ("clean", 539)),
+        "live/IMXSEIabMM/2/verbose_json": (("clean", 539), ("clean", 539)),
+        "live/IMXSEIabMM/2/json": (("clean", 528), ("clean", 533)),
+        "live/IMXSEIabMM/3/verbose_json": (("clean", 519), ("clean", 519)),
+        "live/IMXSEIabMM/3/json/loop_t0.0": (("loop", 996), ("loop", 996)),
+        "live/IMXSEIabMM/3/json/loop_t0.2": (("loop", 996), ("loop", 996)),
+        "live/IMXSEIabMM/3/json/loop_t0.4": (("loop", 884), ("loop", 998)),
+        "live/IMXSEIabMM/3/json/t0.6": (("clean", 561), ("loop", 998)),
+        "cpu/pkfcMUIEMo/2/verbose_json/tail_dropped": (
+            ("short_of_end", 98),
+            ("short_of_end", 97),
+        ),
+        "cpu/pkfcMUIEMo/2/json": (("clean", 369), ("clean", 370)),
+        "cpu/IMXSEIabMM/1/verbose_json/stopped_at_18s": (
+            ("short_of_end", 266),
+            ("short_of_end", 267),
+        ),
+        "cpu/IMXSEIabMM/1/json": (("clean", 464), ("clean", 464)),
+        "live/vnSFKJNB94/3/verbose_json/past_duration": (
+            ("past_end", 11),
+            ("past_end", 11),
+        ),
+        "live/big_buck_bunny_clip/2/verbose_json/past_duration": (
+            ("past_end", 11),
+            ("past_end", 11),
+        ),
+    }
 
 
 class _Replay:

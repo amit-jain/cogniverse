@@ -593,7 +593,7 @@ uv run ruff check --fix .
 uv run mypy libs/
 
 # 4. Test
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
+uv run pytest tests/ -v
 
 # 5. Module-scoped Make targets (ingestion, routing, evaluation, agents)
 uv run make lint-all       # ruff check for those 4 modules

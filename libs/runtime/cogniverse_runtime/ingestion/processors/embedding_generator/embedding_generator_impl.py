@@ -67,7 +67,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         # Model and processor
         self.model = None
         self.processor = None
-        self.xclip_loader = None
+        self.segment_loader = None
         self.colbert_model = None
 
         # Per-thread cv2 capture cache: concurrent video threads share this
@@ -86,9 +86,10 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
     def _segment_embedder(self):
         """Loader that embeds a whole video segment in one remote call.
 
-        X-CLIP returns ``{"embeddings_np": ...}`` from ``process_video_segment``.
+        EmbeddingGemma 2 returns ``{"embeddings_np": ...}`` from
+        ``process_video_segment``.
         """
-        return self.xclip_loader
+        return self.segment_loader
 
     def _embed_segment_remotely(
         self,
@@ -128,7 +129,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         """Check if model should be loaded during initialization.
 
         ColPali/ColQwen models are loaded lazily when the first frame/chunk
-        is processed. All other models (ColBERT, X-CLIP) load at init.
+        is processed. All other models (ColBERT, EmbeddingGemma 2) load at init.
         """
         model_loader = self.profile_config.get("model_loader")
         if not model_loader:
@@ -155,8 +156,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 self.colbert_model, _ = get_or_load_model(
                     model_name, self.profile_config, self.logger
                 )
-            elif model_loader == "xclip":
-                self.xclip_loader, _ = get_or_load_model(
+            elif model_loader == "embeddinggemma2":
+                self.segment_loader, _ = get_or_load_model(
                     self.model_name, self.profile_config, self.logger
                 )
             elif model_loader in ("colpali", "colqwen"):
@@ -848,6 +849,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         self, video_data: dict[str, Any], segments: list[dict[str, Any]]
     ) -> EmbeddingResult:
         """Process audio files: CLAP acoustic + ColBERT semantic embeddings."""
+        if self.profile_config.get("model_loader") == "embeddinggemma2":
+            return self._process_omni_audio_segments(video_data, segments)
+
         from ..audio_embedding_generator import AudioEmbeddingGenerator
 
         content_id = video_data.get("video_id", "unknown")
@@ -863,7 +867,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         clap_model_name = self.profile_config.get(
             "embedding_model", "laion/clap-htsat-unfused"
         )
-        clap_endpoint_url = self.profile_config.get("clap_endpoint_url")
+        clap_endpoint_url = self.profile_config.get("acoustic_endpoint_url")
         audio_generator = AudioEmbeddingGenerator(
             clap_model=clap_model_name,
             clap_endpoint_url=clap_endpoint_url,
@@ -978,6 +982,97 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         documents_fed += self._feed_documents(feed_batch, errors=errors)
 
+        return EmbeddingResult(
+            video_id=content_id,
+            total_documents=total_documents,
+            documents_processed=documents_processed,
+            documents_fed=documents_fed,
+            processing_time=0,
+            errors=errors,
+            metadata={"num_audio_files": len(segments), "num_windows": total_documents},
+        )
+
+    def _process_omni_audio_segments(
+        self, video_data: dict[str, Any], segments: list[dict[str, Any]]
+    ) -> EmbeddingResult:
+        """One EmbeddingGemma 2 document per audio window of at most 10 s.
+
+        A file feeds only when every one of its windows embedded, so a failed
+        window never leaves the file partly indexed.
+        """
+        from cogniverse_core.common.models.model_loaders import (
+            audio_windows,
+            media_duration_seconds,
+        )
+
+        content_id = video_data.get("video_id", "unknown")
+        if self.segment_loader is None:
+            self._load_model()
+        transcript_data = video_data.get("transcript") or {}
+        spoken = transcript_data.get("segments") or []
+
+        feed_batch: list[Document] = []
+        errors: list[str] = []
+        total_documents = 0
+        documents_processed = 0
+        for idx, audio_info in enumerate(segments):
+            try:
+                audio_path = Path(audio_info["path"])
+                duration = transcript_data.get("duration") or media_duration_seconds(
+                    audio_path
+                )
+                windows = audio_windows(float(duration))
+                vectors = [
+                    self.segment_loader.embed_audio_window(audio_path, start, end)
+                    for start, end in windows
+                ]
+                audio_id = audio_info.get("audio_id", audio_path.stem)
+                title = self._resolve_title(
+                    video_data.get("original_filename"),
+                    audio_info.get("filename") or audio_path.name or audio_id,
+                )
+                for window_index, ((start, end), vector) in enumerate(
+                    zip(windows, vectors)
+                ):
+                    doc = Document(
+                        id=f"{content_id}_{audio_id}_w{window_index:04d}",
+                        content_type=ContentType.AUDIO,
+                        content_id=content_id,
+                        status=ProcessingStatus.COMPLETED,
+                    )
+                    doc.add_embedding(
+                        "embedding", vector, {"type": "float", "raw": True}
+                    )
+                    doc.add_metadata("audio_id", audio_id)
+                    doc.add_metadata("audio_title", title)
+                    doc.add_metadata("audio_path", str(audio_path))
+                    doc.add_metadata(
+                        "audio_transcript",
+                        " ".join(
+                            segment["text"]
+                            for segment in spoken
+                            if segment["start"] < end and segment["end"] > start
+                        ),
+                    )
+                    doc.add_metadata("chunk_index", window_index)
+                    doc.add_metadata("chunk_count", len(windows))
+                    doc.add_metadata("chunk_start", start)
+                    doc.add_metadata("chunk_end", end)
+                    doc.add_metadata("audio_duration", float(duration))
+                    language = transcript_data.get("language")
+                    if language:
+                        doc.add_metadata("audio_language", str(language))
+                    if video_data.get("source_url"):
+                        doc.add_metadata("source_url", video_data["source_url"])
+                    feed_batch.append(doc)
+                total_documents += len(windows)
+                documents_processed += len(windows)
+            except Exception as e:
+                total_documents += 1
+                self.logger.error(f"Error processing audio {idx}: {e}")
+                errors.append(f"Audio {idx}: {str(e)}")
+
+        documents_fed = self._feed_documents(feed_batch, errors=errors)
         return EmbeddingResult(
             video_id=content_id,
             total_documents=total_documents,

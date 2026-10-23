@@ -39,7 +39,10 @@ from cogniverse_core.common.models.whisper_transcription import (
     split_for_whisper,
     word_agreement,
 )
-from cogniverse_foundation.inference_specs import get_inference_service_spec
+from cogniverse_foundation.inference_specs import (
+    VLLM_IMAGE_TAG,
+    get_inference_service_spec,
+)
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 
 pytestmark = [
@@ -114,6 +117,38 @@ LOOPS = {
 }
 V, J = "verbose_json", "json"
 RECORDED = Path(__file__).parent / "fixtures" / "vllm_asr_cluster_speech_answers.json"
+
+
+NIGHTLY_TRANSCRIPT = (
+    "When a big snowstorm strikes, at some point we're going to have to dig out "
+    "from under it. But snow shoveling injuries land thousands of people in the "
+    "emergency room each year. And 96% of them happen at home. Dr. James Souto is "
+    "an emergency room doctor at Cleveland Clinic. He says common injuries occur "
+    "as the result of a slip and fall. Slipping and falling, hitting your hand, "
+    "causing an injury, a break, a fracture, but at least you're protecting your "
+    "hands. that's the most important. Sacrificing a limb hurting your hand and "
+    "saving your head because having your head hit the ice, especially when it "
+    "comes to black ice and getting a subdural hematoma, blood inside the brain, "
+    "can be devastating for a lot of people. Sprains, strains and fractures are "
+    "always near the top of the list of snow shoveling related injuries. They're "
+    "usually caused by slipping and twisting. Overexertion is also considered a "
+    "common cause for for emergency room visits after snow shoveling. It can cause "
+    "dehydration, fatigue and in some cases, heart attack. If you can do something "
+    "that's light, moderate activity, doesn't get yourself huffing and puffing too "
+    "much, that's fine. But if you have a heart problem, high blood pressure, "
+    "chronic back problems, those are things that it would be best deferred to "
+    "somebody else to do for you. You're also at an increased risk for lower back "
+    "injuries when you're shoveling. They're usually caused when you try to lift "
+    "too much snow. or you lift it improperly. And lots of people end up in the ER "
+    "after being hit by a shovel, usually after slipping. Dr. Souto says the other "
+    "thing to remember is to dress properly to prevent hypothermia. Dress in "
+    "layers. And as you start getting heated up, you take the top layer off to "
+    "cool off a little bit. If you're going to be out there for a long time, you "
+    "start to break a sweat, then you calm down. The sweat wets your clothes, the "
+    "clothes stay wet, now they get cold and that's how you become hypothermic. "
+    "Dr. Souto says to take frequent breaks and be sure to have proper footwear to "
+    "prevent slipping."
+)
 
 
 def _processor(endpoint: str) -> AudioProcessor:
@@ -243,48 +278,127 @@ def _recorded() -> dict:
     return json.loads(RECORDED.read_text())
 
 
-def _replayed(chunk: int, fields: dict) -> dict:
-    """The recorded cluster answer for a chunk, format and temperature."""
-    for answer in _recorded()["answers"]:
-        if (
-            answer["chunk"],
-            answer["response_format"],
-            answer["temperature"],
-        ) == (chunk, fields["response_format"], float(fields["temperature"])):
-            return answer["body"]
-    raise AssertionError(f"no recorded answer for chunk {chunk} {fields}")
+def _replay(server: str):
+    """Serve ``server``'s recorded answer for each chunk, format and temperature."""
+    answers = {
+        (a["chunk"], a["response_format"], a["temperature"]): a["body"]
+        for a in _recorded()["answers"]
+        if a["server"] == server
+    }
+
+    def answer(chunk: int, fields: dict) -> dict:
+        key = (chunk, fields["response_format"], float(fields["temperature"]))
+        if key not in answers:
+            raise AssertionError(f"no {server} answer for chunk {chunk} {fields}")
+        return answers[key]
+
+    return answer
+
+
+# The v0.23 server's decode varied from run to run; its recorded answers keep
+# the partial timed answer and json loops the nightly server no longer gives.
+_replayed = _replay("live")
 
 
 def test_the_recorded_cluster_answers_keep_their_shape(speech_chunks):
     recorded = _recorded()
-    assert (recorded["server"], recorded["clip"]) == (
+    assert (recorded["servers"], recorded["clip"]) == (
         {
-            "image": "vllm/vllm-openai-rocm:v0.23.0",
-            "model": MODEL,
-            "recorded": "2026-10-04",
+            "live": {
+                "image": "vllm/vllm-openai-rocm:v0.23.0",
+                "model": MODEL,
+                "recorded": "2026-10-04",
+            },
+            "live-nightly": {
+                "image": f"vllm/vllm-openai-rocm:{VLLM_IMAGE_TAG}",
+                "model": MODEL,
+                "recorded": "2026-10-21",
+            },
         },
         SPEECH_CLIP.name,
     )
-    answers = recorded["answers"]
-    assert sorted(
-        (a["chunk"], a["response_format"], a["temperature"]) for a in answers
-    ) == sorted(
-        (chunk.index, fmt, t)
-        for chunk in speech_chunks
-        for fmt in (response_format(True), response_format(False))
-        for t in FALLBACK_TEMPERATURES
-    )
-    assert {(a["chunk"], a["chunk_start_s"], a["chunk_len_s"]) for a in answers} == {
-        (chunk.index, chunk.start_s, round(chunk.end_s - chunk.start_s, 3))
-        for chunk in speech_chunks
-    }
-    assert {(a["response_format"], frozenset(a["body"])) for a in answers} == {
+    for server in recorded["servers"]:
+        answers = [a for a in recorded["answers"] if a["server"] == server]
+        assert sorted(
+            (a["chunk"], a["response_format"], a["temperature"]) for a in answers
+        ) == sorted(
+            (chunk.index, fmt, t)
+            for chunk in speech_chunks
+            for fmt in (response_format(True), response_format(False))
+            for t in FALLBACK_TEMPERATURES
+        ), server
+        assert {
+            (a["chunk"], a["chunk_start_s"], a["chunk_len_s"]) for a in answers
+        } == {
+            (chunk.index, chunk.start_s, round(chunk.end_s - chunk.start_s, 3))
+            for chunk in speech_chunks
+        }, server
+    timed = frozenset({"duration", "language", "segments", "text", "words"})
+    untimed = frozenset({"text", "usage"})
+    # The nightly server reports a timed answer's duration as a number.
+    assert {
         (
-            response_format(True),
-            frozenset({"duration", "language", "segments", "text", "words"}),
-        ),
-        (response_format(False), frozenset({"text", "usage"})),
+            a["server"],
+            a["response_format"],
+            frozenset(a["body"]),
+            type(a["body"].get("duration")).__name__,
+        )
+        for a in recorded["answers"]
+    } == {
+        (server, response_format(True), timed, duration)
+        for server, duration in (("live", "str"), ("live-nightly", "float"))
+    } | {
+        (server, response_format(False), untimed, "NoneType")
+        for server in ("live", "live-nightly")
     }
+
+
+def test_the_nightly_answers_replayed_transcribe_the_clip_from_its_timed_answers(
+    speech_chunks, tmp_path
+):
+    # Recorded from the nightly cluster server: the timed answers of chunks 0-3
+    # reach their chunk's end, so only chunk 4 (timed to 5.84 of 8.29 s) is
+    # asked again without timestamps, and chunk 3's looping json answers are
+    # never asked for.
+    with _Server(speech_chunks, answer=_replay("live-nightly")) as server:
+        transcript = _processor(server.url).transcribe_audio(SPEECH_CLIP, tmp_path)
+
+    assert "error" not in transcript, transcript.get("error")
+    assert server.requests == [
+        (0, V, 0.0),
+        (1, V, 0.0),
+        (2, V, 0.0),
+        (3, V, 0.0),
+        (4, V, 0.0),
+        (4, J, 0.0),
+    ]
+    assert server.languages == [None] + ["en"] * 5
+    assert transcript["dropped_chunks"] == []
+    assert [
+        (round(s["start"], 2), round(s["end"], 2)) for s in transcript["segments"]
+    ] == [
+        (0.0, 29.8),
+        (29.8, 36.8),
+        (36.8, 41.8),
+        (41.8, 46.8),
+        (46.8, 52.8),
+        (52.8, 58.8),
+        (58.8, 61.8),
+        (61.8, 66.56),
+        (66.56, 70.86),
+        (70.86, 72.86),
+        (72.86, 77.58),
+        (77.58, 81.72),
+        (81.72, 85.84),
+        (85.84, 88.6),
+        (88.6, 95.6),
+        (95.6, 101.6),
+        (101.6, 107.6),
+        (107.6, 111.6),
+        (111.6, 118.1),
+        (118.1, 123.94),
+    ]
+    assert transcript["full_text"] == NIGHTLY_TRANSCRIPT
 
 
 def test_a_partial_timed_answer_and_json_loops_replayed_keep_every_word(

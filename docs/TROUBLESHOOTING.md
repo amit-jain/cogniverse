@@ -296,7 +296,7 @@ Expected 768 values, got 1024
 
 - Check schema embedding dimension matches model:
   - ColPali (Tomoro ColQwen3), `video_colpali_smol500_mv_frame`: multi-vector, 320-dim patches (float) or 40-dim (binary): `tensor<bfloat16>(patch{}, v[320])`
-  - X-CLIP, single-vector profile `video_xclip_sv_chunk_6s`: 768-dim: `tensor<float>(v[768])`
+  - EmbeddingGemma 2, single-vector profile `video_embeddinggemma2_sv_chunk_6s`: 768-dim float `tensor<float>(v[768])`, binary code `tensor<int8>(v[96])`
 
 ```bash
 # Check schema tensor types (schemas are JSON files in configs/schemas/)
@@ -460,32 +460,13 @@ RuntimeError: CUDA out of memory
 **Solution:**
 ```bash
 # Use CPU instead
-JAX_PLATFORM_NAME=cpu uv run python script.py
+CUDA_VISIBLE_DEVICES= uv run python script.py
 
 # Or limit frames per video
 uv run python scripts/run_ingestion.py --tenant-id <tenant> --video_dir <dir> --max-frames 1
 
 # Clear GPU memory
 uv run python -c "import torch; torch.cuda.empty_cache()"
-```
-
-### JAX Platform Error
-
-**Error:**
-```text
-RuntimeError: Unable to initialize JAX backend
-```
-
-**Solution:**
-```bash
-# Force CPU mode
-export JAX_PLATFORM_NAME=cpu
-
-# Or set in code (before any jax import)
-import os
-os.environ["JAX_PLATFORM_NAME"] = "cpu"
-
-import jax  # Now uses CPU
 ```
 
 ---
@@ -654,23 +635,6 @@ load_dotenv()
 ---
 
 ## Testing Issues
-
-### Tests Fail with JAX Error
-
-**Error:**
-```text
-RuntimeError: jax.local_devices returned no devices
-```
-
-**Solution:**
-```bash
-# Always run tests with CPU mode
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
-
-# Add to conftest.py
-import os
-os.environ["JAX_PLATFORM_NAME"] = "cpu"
-```
 
 ### Async Test Not Running
 

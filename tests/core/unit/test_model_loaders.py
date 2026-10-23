@@ -249,14 +249,16 @@ class TestProcessImagesVllmConcurrent:
         def fake_post(url, json=None, timeout=None):
             threads.add(threading.current_thread().name)
             barrier.wait(timeout=5)
+            assert json["encoding_format"] == "base64"
             b64 = json["messages"][0]["content"][0]["image_url"]["url"].split(
                 "base64,", 1
             )[1]
             idx = b64_to_index[b64]
+            vectors = np.full((tokens(idx), 320), float(idx), dtype=np.float32)
             resp = MagicMock()
             resp.raise_for_status.return_value = None
             resp.json.return_value = {
-                "data": [{"data": [[float(idx)] * 4] * tokens(idx)}],
+                "data": [{"data": base64.b64encode(vectors.tobytes()).decode()}],
                 "model": "m",
                 "usage": {},
             }
@@ -292,9 +294,9 @@ class TestProcessImagesVllmConcurrent:
 
         assert embeddings.dtype == np.float32
         assert embeddings.tolist() == [
-            [[0.0] * 4, [0.0] * 4],
-            [[1.0] * 4, [1.0] * 4],
-            [[2.0] * 4, [2.0] * 4],
+            [[0.0] * 320, [0.0] * 320],
+            [[1.0] * 320, [1.0] * 320],
+            [[2.0] * 320, [2.0] * 320],
         ]
 
     def test_ragged_token_counts_keep_one_float32_array_per_image(self):
@@ -308,10 +310,39 @@ class TestProcessImagesVllmConcurrent:
         assert (embeddings.dtype, embeddings.shape) == (np.dtype(object), (3,))
         assert [row.dtype for row in embeddings] == [np.float32] * 3
         assert [row.tolist() for row in embeddings] == [
-            [[0.0] * 4],
-            [[1.0] * 4, [1.0] * 4],
-            [[2.0] * 4, [2.0] * 4, [2.0] * 4],
+            [[0.0] * 320],
+            [[1.0] * 320, [1.0] * 320],
+            [[2.0] * 320, [2.0] * 320, [2.0] * 320],
         ]
+
+    def test_a_payload_that_is_not_whole_vectors_is_refused(self):
+        import base64
+        from unittest.mock import MagicMock
+
+        from PIL import Image as PILImage
+
+        from cogniverse_core.common.models.model_loaders import (
+            RemoteInferenceClient,
+        )
+
+        client = RemoteInferenceClient(endpoint_url="http://unused:1")
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "data": [
+                {"data": base64.b64encode(np.zeros(321, np.float32).tobytes()).decode()}
+            ]
+        }
+        client.session = MagicMock()
+        client.session.post.return_value = resp
+
+        with pytest.raises(ValueError) as caught:
+            client.process_images_vllm([PILImage.new("RGB", (2, 2))], model_name="m")
+
+        assert str(caught.value) == (
+            "vllm_colpali at http://unused:1 returned 321 values, not a whole "
+            "number of 320-dim token vectors"
+        )
 
     def test_single_image_returns_bare_array(self):
         from PIL import Image as PILImage
@@ -323,7 +354,7 @@ class TestProcessImagesVllmConcurrent:
 
         assert client.session.post.call_count == 1
         arr = np.asarray(result["embeddings"])
-        assert arr.shape == (1, 4)
+        assert arr.shape == (1, 320)
 
 
 class TestPerKeyModelLoadLocks:

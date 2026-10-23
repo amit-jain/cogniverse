@@ -437,7 +437,7 @@ class ProfileSelector:
     @staticmethod
     def _model_family(profile_name: str) -> str:
         normalized = profile_name.lower()
-        for family in ("colpali", "colqwen", "xclip"):
+        for family in ("colpali", "colqwen", "embeddinggemma2"):
             if ProfileSelector._contains_token(normalized, family):
                 return family
         return profile_name

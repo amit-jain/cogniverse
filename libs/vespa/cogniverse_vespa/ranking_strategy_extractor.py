@@ -5,7 +5,9 @@ Extracts ranking profile configurations from schema JSON files for use by search
 
 import json
 import logging
+import os
 import re
+import tempfile
 import threading
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -168,12 +170,9 @@ class RankingStrategyExtractor:
 
         # nearestNeighbor (ANN) is derived structurally: the profile's FIRST
         # phase must score against a dense 1-d embedding attribute (directly
-        # via closeness/attribute or through a profile function). The previous
-        # profile-NAME allowlist silently dropped ANN for any profile named
-        # outside it — the wiki hybrid/semantic_search profiles ranked
-        # BM25-only with a dead closeness term. Multi-vector (mapped) fields
-        # never match; text-first profiles (bm25 first phase with a vector
-        # second phase) correctly stay off ANN.
+        # via closeness/attribute or through a profile function). Multi-vector
+        # (mapped) fields never match; text-first profiles (bm25 first phase
+        # with a vector second phase) stay off ANN.
         use_nearestneighbor = False
         nearestneighbor_field = None
         nearestneighbor_tensor = None
@@ -478,6 +477,19 @@ def extract_all_ranking_strategies(
     return deepcopy(all_strategies)
 
 
+def ensure_ranking_strategies_file(schema_dir: Path) -> Path:
+    """``schema_dir/ranking_strategies.json``, rebuilt when it is missing or
+    older than any schema beside it, so a new or edited schema is never read
+    through a stale derivation."""
+    path = schema_dir / "ranking_strategies.json"
+    schema_files = [p for p in schema_dir.glob("*.json") if p != path]
+    newest = max((p.stat().st_mtime_ns for p in schema_files), default=0)
+    if path.exists() and path.stat().st_mtime_ns >= newest:
+        return path
+    save_ranking_strategies(extract_all_ranking_strategies(schema_dir), path)
+    return path
+
+
 def save_ranking_strategies(
     strategies: Dict[str, Dict[str, RankingStrategyInfo]], output_path: Path
 ):
@@ -509,7 +521,17 @@ def save_ranking_strategies(
                 "schema_name": strategy_info.schema_name,
             }
 
-    with open(output_path, "w") as f:
+    # Written beside the target and renamed over it, so a concurrent reader
+    # sees the old file or the new one, never a partial write.
+    output_path = Path(output_path)
+    with tempfile.NamedTemporaryFile(
+        "w", dir=output_path.parent, suffix=".tmp", delete=False
+    ) as f:
         json.dump(output, f, indent=2)
+    try:
+        os.replace(f.name, output_path)
+    except OSError:
+        os.unlink(f.name)
+        raise
 
     logger.info(f"Saved ranking strategies to {output_path}")

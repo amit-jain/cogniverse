@@ -240,15 +240,16 @@ def upload_dataset_rows(
     return response.json()["data"]["dataset_id"]
 
 
-def _is_dataset_not_found(exc: BaseException) -> bool:
-    """True only for phoenix's own missing-dataset signal — a plain
-    ``ValueError('Dataset not found: ...')`` raised AFTER a successful HTTP
-    call resolves an empty record set. An outage/proxy 404 is an
-    ``httpx.HTTPStatusError`` (not a ValueError) whose text embeds "404 Not
-    Found" / the URL; matching that as "missing" would silently read an outage
-    as no-data.
+def _is_dataset_gone(exc: BaseException, dataset_id: str) -> bool:
+    """True only for Phoenix's own 404 for dataset ``dataset_id``.
+
+    Any other 404 — a proxy's, or one that merely echoes the URL — stays an
+    outage instead of reading as a deleted dataset.
     """
-    return isinstance(exc, ValueError) and "not found" in str(exc).lower()
+    response = getattr(exc, "response", None)
+    if response is None or getattr(response, "status_code", None) != 404:
+        return False
+    return response.text == f"Dataset with ID {dataset_id} not found"
 
 
 def _is_phoenix_project_not_found(exc: BaseException) -> bool:
@@ -1329,26 +1330,17 @@ class PhoenixDatasetStore(DatasetStore):
 
         The phoenix-client has no delete wrapper, so resolve the name to its
         global id and issue ``DELETE /v1/datasets/{id}`` (204 on success, 404
-        if it vanished). Returns False when no dataset by that name exists.
+        if it vanished). Returns False when no dataset by that name exists; a
+        listing Phoenix refuses raises, because reading an outage as "nothing
+        to delete" turns replace-dataset's delete-then-create into an append.
         """
-        import httpx
-        from phoenix.client import Client
 
         def _delete() -> bool:
-            client = Client(base_url=self.http_endpoint)
-            try:
-                dataset = client.datasets.get_dataset(
-                    dataset=name, timeout=_DATASET_OP_TIMEOUT_S
-                )
-            except Exception as e:
-                if _is_dataset_not_found(e):
-                    return False  # genuinely nothing to delete
-                # An outage must surface — reading it as "nothing to delete"
-                # turns replace-dataset's delete-then-create into a silent
-                # append, breaking the exactly-one-row invariant.
-                raise
+            summary = self._summary_by_name(name)
+            if summary is None:
+                return False
             resp = httpx.delete(
-                f"{self.http_endpoint.rstrip('/')}/v1/datasets/{dataset.id}",
+                f"{self.http_endpoint.rstrip('/')}/v1/datasets/{summary.id}",
                 timeout=_DATASET_OP_TIMEOUT_S,
             )
             if resp.status_code not in (204, 404):
@@ -1396,30 +1388,45 @@ class PhoenixDatasetStore(DatasetStore):
             name: Dataset name
 
         Returns:
-            DataFrame with dataset records
+            DataFrame with dataset records, empty for a dataset holding none
+            (an owned dataset between its creation and its first upload).
 
         Raises:
             DatasetNotFoundError: If no dataset by that name exists.
             DatasetStoreUnavailableError: If the store could not answer, so
                 whether the dataset exists is unknown.
         """
-        try:
-            from phoenix.client import Client
+        from phoenix.client import Client
+        from phoenix.client.resources.datasets import Dataset
 
-            def _get() -> pd.DataFrame:
-                sync_client = Client(base_url=self.http_endpoint)
-                return sync_client.datasets.get_dataset(
-                    dataset=name, timeout=_DATASET_OP_TIMEOUT_S
+        def _get() -> pd.DataFrame:
+            summary = self._summary_by_name(name)
+            if summary is None:
+                raise DatasetNotFoundError(f"Dataset not found: {name}")
+            if summary.example_count == 0:
+                # Phoenix answers 500 when asked to describe a dataset with
+                # no version yet.
+                return Dataset(
+                    {"id": summary.id, "name": name}, {"examples": []}
                 ).to_dataframe()
+            try:
+                return (
+                    Client(base_url=self.http_endpoint)
+                    .datasets.get_dataset(
+                        dataset=summary.id, timeout=_DATASET_OP_TIMEOUT_S
+                    )
+                    .to_dataframe()
+                )
+            except httpx.HTTPStatusError as e:
+                if _is_dataset_gone(e, summary.id):
+                    raise DatasetNotFoundError(f"Dataset not found: {name}") from e
+                raise
 
+        try:
             df = await asyncio.to_thread(_get)
-
-            logger.debug(f"Retrieved dataset '{name}' with {len(df)} records")
-            return df
-
+        except DatasetNotFoundError:
+            raise
         except Exception as e:
-            if _is_dataset_not_found(e):
-                raise DatasetNotFoundError(f"Dataset not found: {name}") from e
             logger.error(f"Failed to retrieve dataset '{name}': {e}")
             raise DatasetStoreUnavailableError(
                 f"dataset store at {self.http_endpoint} could not answer for "
@@ -1427,6 +1434,8 @@ class PhoenixDatasetStore(DatasetStore):
                 endpoint=self.http_endpoint,
                 dataset=name,
             ) from e
+        logger.debug(f"Retrieved dataset '{name}' with {len(df)} records")
+        return df
 
     async def append_to_dataset(
         self,
@@ -1458,25 +1467,14 @@ class PhoenixDatasetStore(DatasetStore):
         metadata_keys = metadata.get("metadata_keys", [])
 
         try:
-            from phoenix.client import Client
 
             def _append() -> None:
-                sync_client = Client(base_url=self.http_endpoint)
                 # Phoenix's append AUTO-CREATES a missing dataset, which would
                 # silently bypass the caller's create path (and its dataset
-                # metadata). Enforce the raise-on-missing contract with an
-                # explicit existence check — but only a genuine ValueError
-                # not-found counts; an outage must surface.
-                try:
-                    sync_client.datasets.get_dataset(
-                        dataset=name, timeout=_DATASET_OP_TIMEOUT_S
-                    )
-                except Exception as lookup_exc:
-                    if _is_dataset_not_found(lookup_exc):
-                        raise DatasetNotFoundError(
-                            f"Dataset not found: {name}"
-                        ) from lookup_exc
-                    raise
+                # metadata), so existence is checked first; a refused listing
+                # raises instead of reading as missing.
+                if self._summary_by_name(name) is None:
+                    raise DatasetNotFoundError(f"Dataset not found: {name}")
                 upload_dataset_rows(
                     self.http_endpoint,
                     name=name,

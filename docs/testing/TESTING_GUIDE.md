@@ -162,10 +162,10 @@ class TestSearchAgent:
 
 ```bash
 # Run all tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
+uv run pytest tests/ -v
 
 # Run specific package tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
+uv run pytest tests/agents/ -v
 
 # Run specific test file
 uv run pytest tests/agents/unit/test_search_agent.py -v
@@ -202,7 +202,7 @@ k3d fixes the loadbalancer's published ports when the cluster is created, so a
 cluster created before a host-port mapping was added is unhealthy until it
 publishes it. The failure names the command that adds the missing mappings,
 for example
-`k3d cluster edit cogniverse-e2e --port-add 33912:29012@loadbalancer`; it
+`k3d cluster edit cogniverse-e2e --port-add 33903:29003@loadbalancer`; it
 recreates only the loadbalancer.
 
 Do not stop the cluster after an individual pytest command. Once every
@@ -299,10 +299,11 @@ rejects any unregistered marker) plus a per-package override in
   `requires_gliner`, `requires_models`, `requires_cv2`, `requires_ffmpeg` —
   infrastructure/model dependencies
 - `requires_inference("vllm_colpali")` — exact ColPali/ColQwen HTTP embedding
-  service; `requires_inference("video_embed")` — exact X-CLIP service.
+  service; `requires_inference("vllm_omni_embed")` — exact EmbeddingGemma 2
+  service.
   Collection also requests every service a shipped profile using the named
   embedding service resolves at pipeline init, derived from
-  `configs/config.json` (`vllm_asr` for `vllm_colpali`, `video_embed` and
+  `configs/config.json` (`vllm_asr` for `vllm_colpali`, `vllm_omni_embed` and
   `colbert_pylate`). Cluster
   discovery reads `--revision` from rendered workload args: a pinned workload
   is tagged `identity_evidence=DEPLOYMENT`, and an unpinned one stays
@@ -332,7 +333,7 @@ uv run pytest -m local_only \
 
 ```bash
 # Run only the fast CI subset
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -m ci_fast -v
+uv run pytest tests/agents/integration/ -m ci_fast -v
 
 # Run integration tests but skip anything needing Ollama
 uv run pytest tests/agents/integration/ -m "integration and not requires_ollama" -v
@@ -342,7 +343,7 @@ uv run pytest tests/agents/integration/ -m "integration and not requires_ollama"
 
 ```bash
 # 30-minute timeout for long tests (using system timeout command)
-JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest tests/ -v
+timeout 1800 uv run pytest tests/ -v
 
 # For per-test timeout, install pytest-timeout first:
 # uv pip install pytest-timeout
@@ -359,10 +360,10 @@ Note: pytest-xdist is not currently installed. For parallel execution, install i
 uv pip install pytest-xdist
 
 # Run with 4 workers
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v -n 4
+uv run pytest tests/ -v -n 4
 
 # Auto-detect workers
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v -n auto
+uv run pytest tests/ -v -n auto
 ```
 
 ### With Output
@@ -372,7 +373,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v -n auto
 uv run pytest tests/ -v -s
 
 # Log to file
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v 2>&1 | tee /tmp/test_output.log
+uv run pytest tests/ -v 2>&1 | tee /tmp/test_output.log
 ```
 
 ### Finding Affected Tests
@@ -801,7 +802,7 @@ model copy holds gigabytes of it. Every model a test uses is served remotely:
   ``ModalLlmNotDeployedError`` or ``LlmEndpointMismatchError`` naming the
   deploy command; the test fails, never skips or falls back.
 - **Every other model** (ColPali/Tomoro, DenseOn, PyLate LateOn and the code
-  encoder, GLiNER, ASR, CLAP, video-embed, face-embed) is served by the
+  encoder, GLiNER, ASR, CLAP, EmbeddingGemma 2, face-embed) is served by the
   ``cogniverse-e2e`` cluster on GPU. ``remote_inference``
   (``tests/fixtures/inference.py``) and the ``requires_inference`` marker
   resolve a service from an explicit ``INFERENCE_SERVICE_URLS`` entry, else
@@ -862,6 +863,14 @@ run the recorder; re-record after a pinned revision changes:
 ```bash
 uv run python scripts/record_model_references.py
 ```
+
+The Whisper replay tests serve raw transcription answers recorded from real
+servers, each under a `servers` entry naming its image and model
+(`tests/core/unit/fixtures/vllm_whisper_chunk_answers.json`,
+`tests/ingestion/integration/fixtures/vllm_asr_cluster_speech_answers.json`).
+`scripts/record_whisper_answers.py` adds a server's answers to the same
+requests; earlier servers' answers stay, since they hold failures a later
+server may no longer give.
 
 Every pytest session prints a ``test sidecars`` section in its terminal summary,
 captured output or not: each model resolution (``resolved-remote`` with its
@@ -1085,7 +1094,7 @@ integration-tests:
 
   - name: Run integration tests (CI Fast subset)
     run: |
-      JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+      uv run python -m pytest \
         tests/module/integration/ \
         -m ci_fast \
         -v --tb=long \
@@ -1180,7 +1189,7 @@ Before every commit:
 grep -r "def test_" --include="*.py" tests/ | grep -i "<module>"
 
 # 2. Run tests
-JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest tests/ -v 2>&1 | tee /tmp/test_output.log
+timeout 1800 uv run pytest tests/ -v 2>&1 | tee /tmp/test_output.log
 
 # 3. Verify 100% pass
 grep -E "passed|failed" /tmp/test_output.log
@@ -1192,17 +1201,6 @@ uv run make lint-all
 ---
 
 ## Troubleshooting
-
-### JAX Platform Errors
-
-```bash
-# Always set JAX platform for CPU
-JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
-
-# Or in conftest.py
-import os
-os.environ["JAX_PLATFORM_NAME"] = "cpu"
-```
 
 ### Async Test Not Running
 
@@ -1300,8 +1298,7 @@ scenarios and fixtures:
 
 1. **Organize tests** by package (agents, system, ingestion, evaluation, etc.)
 2. **Use fixtures** for common setup
-3. **Run with JAX_PLATFORM_NAME=cpu** to avoid GPU issues
-4. **100% pass rate required** before commit
-5. **Find affected tests** with grep before committing
-6. **Use mocks** for external services in unit tests
-7. **Mark integration tests** that require real services
+3. **100% pass rate required** before commit
+4. **Find affected tests** with grep before committing
+5. **Use mocks** for external services in unit tests
+6. **Mark integration tests** that require real services

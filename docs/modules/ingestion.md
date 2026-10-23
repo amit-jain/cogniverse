@@ -71,7 +71,7 @@ libs/runtime/cogniverse_runtime/ingestion_worker/
 
 | Module | Role |
 |---|---|
-| `worker.py` | `python -m cogniverse_runtime.ingestion_worker.worker` is the `cogniverse-ingestor` pod's CMD. Long-lived process that joins the configured Redis consumer group and processes one job at a time via `_default_processor`, which localizes the source, runs the cold builds (config manager + graph-factory install) off-loop via `asyncio.to_thread`, calls `VideoIngestionPipeline.process_video_async` from `ingestion/`, then runs the per-segment KG extraction + face pipeline + back-ref PATCH. At startup it also calls the shared `cogniverse_runtime.entrypoint_env.configure_runtime_library_defaults()` helper, which mirrors MinIO creds onto the AWS names used by fsspec and configures the S3 cache backend defaults before the first Redis read. After content feed and before graph extraction it persists `ingest:graph-pending:<message_id>`. A graph exception, partial write, cancellation, or positive finite `INGEST_GRAPH_DEADLINE_SECONDS` timeout raises the retryable, nonterminal `GraphStageIncomplete` condition and publishes `retrying` with that `error_type`, without clearing inflight state, releasing the tenant slot, or acknowledging the queue entry. When `pipeline_cache` enables `s3` without MinIO settings, startup fails fast with the same cache-backend error used by the pipeline. Before it claims a job it subscribes to the config events channel (`config_event_subscriber`: `CONFIG_EVENT_CHANNEL` on `REDIS_URL`) as worker `ingestion:<consumer id>:<pid>:<suffix>`, handling `CONFIG_EVENT_HANDLERS` (`configs_changed`, `backend_profiles_changed`), so a config the runtime saves, restores or imports, and a backend profile it creates, updates or deletes, is dropped from every config manager the worker holds before that write answers; startup fails when the channel cannot be subscribed. Terminal cleanup (mark done, clear inflight, clear graph marker, decrement active, ack) runs only after the graph completes or before durable content exists. While a job runs the worker holds its ingestion task's lease on the shared task event store (`TaskEventStore.attach`, renewed by the worker's poller): a job cancelled while queued (`POST /events/ingestion/{job_id}/cancel`) settles without running — inflight cleared, graph marker cleared, tenant slot released, entry acked — and publishes `{"state": "cancelled", "reason"}`; a cancellation that arrives once the job runs lets its one video finish. The `error` and `cleanup_error` of the events it publishes carry every absolute path reduced to its file name (`_without_local_paths`), so a client never sees where the worker localised the upload. |
+| `worker.py` | `python -m cogniverse_runtime.ingestion_worker.worker` is the `cogniverse-ingestor` pod's CMD. Long-lived process that joins the configured Redis consumer group and processes one job at a time via `_default_processor`, which localizes the source, runs the cold builds (config manager + graph-factory install) off-loop via `asyncio.to_thread`, calls `VideoIngestionPipeline.process_video_async` from `ingestion/`, then runs the per-segment KG extraction + face pipeline + back-ref PATCH. At startup it also calls the shared `cogniverse_runtime.entrypoint_env.configure_runtime_library_defaults()` helper, which mirrors MinIO creds onto the AWS names used by fsspec and configures the S3 cache backend defaults before the first Redis read. After content feed and before graph extraction it persists `ingest:graph-pending:<message_id>`. A graph exception, partial write, cancellation, or positive finite `INGEST_GRAPH_DEADLINE_SECONDS` timeout raises the retryable, nonterminal `GraphStageIncomplete` condition, logs it with its cause at WARNING, and publishes `retrying` with that `error_type` and an `error` naming the cause's type and message, without clearing inflight state, releasing the tenant slot, or acknowledging the queue entry. When `pipeline_cache` enables `s3` without MinIO settings, startup fails fast with the same cache-backend error used by the pipeline. Before it claims a job it subscribes to the config events channel (`config_event_subscriber`: `CONFIG_EVENT_CHANNEL` on `REDIS_URL`) as worker `ingestion:<consumer id>:<pid>:<suffix>`, handling `CONFIG_EVENT_HANDLERS` (`configs_changed`, `backend_profiles_changed`), so a config the runtime saves, restores or imports, and a backend profile it creates, updates or deletes, is dropped from every config manager the worker holds before that write answers; startup fails when the channel cannot be subscribed. Terminal cleanup (mark done, clear inflight, clear graph marker, decrement active, ack) runs only after the graph completes or before durable content exists. While a job runs the worker holds its ingestion task's lease on the shared task event store (`TaskEventStore.attach`, renewed by the worker's poller): a job cancelled while queued (`POST /events/ingestion/{job_id}/cancel`) settles without running — inflight cleared, graph marker cleared, tenant slot released, entry acked — and publishes `{"state": "cancelled", "reason"}`; a cancellation that arrives once the job runs lets its one video finish. The `error` and `cleanup_error` of the events it publishes carry every absolute path reduced to its file name (`_without_local_paths`), so a client never sees where the worker localised the upload. |
 | `queue.py` | Redis Streams primitives (`submit`, `claim`, `ack`, `autoclaim`, `times_delivered`, active counters, status streams) + the `IngestJob` dataclass that flows through the stream. `publish_status_if_absent` seeds a status stream only when it does not exist, in one server-side step, so concurrent callers restoring a reclaimed stream write exactly one event between them and a surviving stream keeps its history. |
 | `idempotency.py` | Computes a per-file SHA at upload time; subsequent uploads of the same file return the existing `ingest_id` instead of re-running the pipeline. `force=true` query-param bypasses this. `get_done_ingest_id` distinguishes a completed run from an in-flight one for the reaper. |
 | `submit_api.py` | No router defined here — `enqueue_ingestion` is the queue-submission helper called by the `POST /ingestion/upload` handler in `routers/ingestion.py` after the route has resolved the canonical tenant's profile and uploaded the file to MinIO. Takes the upload's original `filename` and writes it on the job's `queued` status event (and on a re-seeded snapshot). Computes the idempotency SHA, marks the inflight key and increments the tenant's active counter BEFORE the job becomes claimable, enqueues an `IngestJob` on Redis; once the job is queued it is listed as an active ingestion task in the task event store the caller passes as `task_events` (the runtime passes its per-process store, on its shared-state client; `TaskEventStore.register_queued`; a worker that claims it first records it itself, so a refused registration is logged); the router then returns `202 + ingest_id` (or blocks for the terminal event when `wait=true`). The XADD and the committed marker (`ingest:submitted:<sha>`) commit in one MULTI/EXEC, so a submit failure verifies that marker on a fresh read before compensating: a genuine failure clears the inflight marker and restores the counter, while a reply lost after the transaction committed (the job is durably enqueued) is treated as success — no clear, no decrement — so a resubmit cannot duplicate the job. An idempotency hit returns the existing run's `ingest_id` carrying that run's state (`complete` once the done marker is set, otherwise `in_flight`) and re-seeds its status stream when Redis has already reclaimed it — the done marker outlives the stream by days — so every `ingest_id` this helper returns is readable through `GET /ingestion/{id}/status`. |
@@ -105,7 +105,7 @@ The Ingestion Module transforms raw content files into searchable, multi-modal r
 1. **Video Segmentation** - Extract frames, chunks, or sliding windows
 2. **Audio Transcription** - Whisper-based speech-to-text
 3. **Visual Description** - VLM-based frame descriptions
-4. **Embedding Generation** - ColPali, X-CLIP, ColQwen, ColBERT embeddings
+4. **Embedding Generation** - ColPali, EmbeddingGemma 2, ColQwen, ColBERT embeddings
 5. **Image Processing** - Directory of images presented as keyframes (`ImageSegmentationStrategy`) for ColPali embedding
 6. **Document Processing** - Text extraction and ColBERT semantic embeddings for PDFs/documents
 7. **Document Visual Processing** - PDF pages rendered to images (pdf2image) with ColPali multi-vector page embeddings (`document_visual_colpali` profile → `document_visual` schema)
@@ -202,11 +202,11 @@ flowchart TB
     EmbedGen --> ModelInference["<span style='color:#000'>Model Inference</span>"]
     ModelInference --> ModelType{"<span style='color:#000'>Embedding Model</span>"}
     ModelType -->|ColPali| ColPaliInfer["<span style='color:#000'>ColPali Multi-Vector</span>"]
-    ModelType -->|X-CLIP| X-CLIPInfer["<span style='color:#000'>X-CLIP Single-Vector</span>"]
+    ModelType -->|EmbeddingGemma 2| EmbGemmaInfer["<span style='color:#000'>EmbeddingGemma 2 Single-Vector</span>"]
     ModelType -->|ColQwen| ColQwenInfer["<span style='color:#000'>ColQwen Multi-Vector</span>"]
 
     ColPaliInfer --> DocBuild["<span style='color:#000'>Document Building</span>"]
-    X-CLIPInfer --> DocBuild
+    EmbGemmaInfer --> DocBuild
     ColQwenInfer --> DocBuild
 
     DocBuild --> StrategyAware["<span style='color:#000'>Strategy-Aware Document Construction</span>"]
@@ -256,7 +256,7 @@ flowchart TB
     style ModelInference fill:#ffcc80,stroke:#ef6c00,color:#000
     style ModelType fill:#b0bec5,stroke:#546e7a,color:#000
     style ColPaliInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style X-CLIPInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style EmbGemmaInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
     style ColQwenInfer fill:#ce93d8,stroke:#7b1fa2,color:#000
     style DocBuild fill:#ffcc80,stroke:#ef6c00,color:#000
     style StrategyAware fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -379,7 +379,7 @@ flowchart LR
 
     subgraph Embedding["<span style='color:#000'>Embedding Strategies</span>"]
         MultiVec["<span style='color:#000'>MultiVectorEmbeddingStrategy<br/>ColPali, ColQwen</span>"]
-        SingleVec["<span style='color:#000'>SingleVectorEmbeddingStrategy<br/>X-CLIP</span>"]
+        SingleVec["<span style='color:#000'>SingleVectorEmbeddingStrategy<br/>EmbeddingGemma 2</span>"]
         AudioEmb["<span style='color:#000'>AudioEmbeddingStrategy<br/>CLAP + ColBERT dual</span>"]
         DocText["<span style='color:#000'>DocumentTextEmbeddingStrategy<br/>ColBERT for text</span>"]
         DocVisEmb["<span style='color:#000'>DocumentVisualEmbeddingStrategy<br/>ColPali for PDF pages</span>"]
@@ -468,7 +468,7 @@ sequenceDiagram
 
 **Embedding Processing Types** (selected by which key `video_data` carries, checked in `generate_embeddings()`):
 
-- **Frame/Chunk/Window** (`_process_multi_documents` / `_process_single_document`, default path): ColPali multi-vector per frame, ColQwen multi-vector per chunk, or X-CLIP single-vector per segment/global — dispatch is by `storage_mode` (`multi_doc` vs `single_doc`), not a `processing_type` field
+- **Frame/Chunk/Window** (`_process_multi_documents` / `_process_single_document`, default path): ColPali multi-vector per frame, ColQwen multi-vector per chunk, or EmbeddingGemma 2 single-vector per chunk — dispatch is by `storage_mode` (`multi_doc` vs `single_doc`), not a `processing_type` field
 - **Document ColBERT** (`document_files` present → `_process_document_segments`): ColBERT 128-dim per-token multi-vector for text documents
 - **Document Visual ColPali** (`document_pages` present → `_process_document_visual_segments`): ColPali (Tomoro ColQwen3) 320-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
 - **Code ColBERT** (`code_files` present → `_process_code_segments`): LateOn-Code-edge 48-dim per-token multi-vector for source-code chunks (`CodeSegmentationStrategy` → `CodeTextEmbeddingStrategy`)
@@ -680,7 +680,7 @@ flowchart TB
 After `VideoIngestionPipeline` finishes feeding content to Vespa, the ingestion router (`libs/runtime/cogniverse_runtime/routers/ingestion.py`) runs a per-segment KG extraction pass against every text-emitting result it produced. Two functions drive it:
 
 - `_iter_segments_for_graph(processing_results, source_doc_id) -> Iterator[SegmentRecord]` — yields one record per Whisper transcript segment, VLM keyframe description, OCR/caption block, and document file. Each `SegmentRecord` carries `text` plus a `segment_anchor: Mention` with the timestamps the upstream processor produced.
-- `_extract_graph_per_segment(processing_results, source_doc_id, tenant_id, config_manager) -> dict` — extracts in two passes so the per-segment GLiNER and DSPy claim calls run concurrently (bounded by `_KG_EXTRACT_CONCURRENCY`) instead of one segment at a time. Pass 1 calls `DocExtractor.extract_entities_from_text(...)` for every segment (no cross-segment dependency); the coreference prior pool is then reconstructed in segment order, so segment N sees the entity names from segments 0..N-1 exactly as the serial path did; pass 2 calls `DocExtractor.extract_claims_from_text(..., segment_entities=<pass-1 result>, prior_entities=<0..N-1 pool>)` only for transcript, document, and code segments, while VLM and OCR segments still contribute entity anchors and back-refs. It accumulates `ExtractionResult` (anchored `Node.mentions: List[Mention]` + SPO `Edge` rows from `ClaimExtractor`) in segment order, runs `CrossModalLinker.link()` to add `same_as` edges across modalities, `GraphManager.upsert()`s the merged result, then PATCHes per-segment back-refs (`entity_ids` / `relation_ids` / `claim_ids` arrays) onto the corresponding content documents.
+- `_extract_graph_per_segment(processing_results, source_doc_id, tenant_id, config_manager) -> dict` — extracts in two passes so the per-segment GLiNER and DSPy claim calls run concurrently (bounded by `_KG_EXTRACT_CONCURRENCY`) instead of one segment at a time. Pass 1 calls `DocExtractor.extract_entities_from_text(...)` for every segment (no cross-segment dependency) on the GLiNER service the job's `SystemConfig.inference_service_urls["gliner"]` names — a missing entry fails the stage; the coreference prior pool is then reconstructed in segment order, so segment N sees the entity names from segments 0..N-1 exactly as the serial path did; pass 2 calls `DocExtractor.extract_claims_from_text(..., segment_entities=<pass-1 result>, prior_entities=<0..N-1 pool>)` only for transcript, document, and code segments, while VLM and OCR segments still contribute entity anchors and back-refs. It accumulates `ExtractionResult` (anchored `Node.mentions: List[Mention]` + SPO `Edge` rows from `ClaimExtractor`) in segment order, runs `CrossModalLinker.link()` to add `same_as` edges across modalities, `GraphManager.upsert()`s the merged result, then PATCHes per-segment back-refs (`entity_ids` / `relation_ids` / `claim_ids` arrays) onto the corresponding content documents.
 
 Key product knobs:
 
@@ -886,8 +886,8 @@ strategies:
 The factory looks up `inference_services[<strategy_type>]` and, if the
 strategy's `__init__` explicitly declares an `inference_service`
 parameter, passes it as `inference_service=<name>`. Audio profiles also
-use `inference_services.acoustic_embedding` to resolve the CLAP sidecar
-URL into `clap_endpoint_url`. Strategies whose constructor does NOT
+use `inference_services.acoustic_embedding` to resolve the acoustic
+service's URL into `acoustic_endpoint_url`. Strategies whose constructor does NOT
 declare the parameter are **not** injected — this is an opt-in
 contract, and `**kwargs` deliberately does not count as opting in (a
 `**kwargs` constructor absorbs the kwarg and silently drops it, so the
@@ -1039,7 +1039,7 @@ ffprobe failures in chunk extraction raise `RuntimeError` with the video path an
 # model_loader key maps directly to a loader class:
 # "colpali"    → ColPaliModelLoader
 # "colqwen"    → ColQwenModelLoader
-# "xclip" → RemoteXClipLoader (remote only)
+# "embeddinggemma2" → RemoteEmbeddingGemma2Loader (remote only)
 # "colbert"    → ColBERTModelLoader
 ```
 
@@ -1137,25 +1137,32 @@ requirements = strategy.get_required_processors()
 
 **Parameters**:
 
-- `strategy`: Segmentation strategy ("sliding_window", "uniform")
+- `strategy`: Segmentation strategy (`"chunks"`, `"windows"` or `"global"`)
 - `segment_duration`: Segment duration in seconds (default 6.0)
 - `segment_overlap`: Overlap between segments in seconds (default 1.0)
-- `sampling_fps`: FPS for frame sampling within segments (default 2.0)
-- `max_frames_per_segment`: Max frames per segment (default 12)
-- `store_as_single_doc`: Store all segments in one document (default False)
+
+The embedding service samples each segment's frames (the omni server's
+`--media-io-kwargs` sets 1 fps), and storage follows the schema: a
+one-vector schema stores one document per chunk, and only a `global`
+segmentation stores one document per video.
+
+Chunks advance by `segment_duration - segment_overlap`; the last chunk runs
+to the end of the video, and a remainder shorter than `min_segment_duration`
+(default 2.0) joins the chunk before it. A non-positive `segment_duration`,
+an overlap outside `[0, segment_duration)` or a negative
+`min_segment_duration` is refused when `SingleVectorVideoProcessor` is constructed, and a video whose header
+reports no duration raises `ValueError` naming the file.
 
 **Usage**:
 ```python
 strategy = SingleVectorSegmentationStrategy(
-    strategy="sliding_window",
+    strategy="chunks",
     segment_duration=6.0,
     segment_overlap=1.0,
-    sampling_fps=2.0,
-    max_frames_per_segment=12
 )
 ```
 
-**Best For**: X-CLIP single-vector embeddings
+**Best For**: EmbeddingGemma 2 single-vector embeddings
 
 **Custom Method**:
 
@@ -1244,12 +1251,12 @@ embeddings = await strategy.generate_embeddings_with_processor(
 
 **Parameters**:
 
-- `model_name`: Embedding model (default `"microsoft/xclip-large-patch14"`)
-- `inference_service`: Optional named remote service for X-CLIP inference (default `None`)
+- `model_name`: Embedding model (default `"google/embeddinggemma-2"`)
+- `inference_service`: Optional named remote inference service (default `None`)
 
 **Usage**:
 ```python
-strategy = SingleVectorEmbeddingStrategy(model_name="microsoft/xclip-large-patch14")
+strategy = SingleVectorEmbeddingStrategy(model_name="google/embeddinggemma-2")
 ```
 
 ### 8. NoDescriptionStrategy / NoTranscriptionStrategy
@@ -1602,10 +1609,9 @@ Process video into segments with transcript alignment.
 ```python
 processor = SingleVectorVideoProcessor(
     logger,
-    strategy="sliding_window",
+    strategy="chunks",
     segment_duration=6.0,
     segment_overlap=1.0,
-    sampling_fps=2.0
 )
 result = processor.process_video(
     video_path=Path("video.mp4"),
@@ -1616,7 +1622,6 @@ result = processor.process_video(
 #   "segments": [VideoSegment(...), VideoSegment(...), ...],
 #   "metadata": {...},
 #   "full_transcript": "...",
-#   "document_structure": {"type": "multi_document"}
 # }
 ```
 
@@ -1627,8 +1632,6 @@ class VideoSegment:
     segment_id: int
     start_time: float
     end_time: float
-    frames: list[np.ndarray]         # Actual frame data
-    frame_timestamps: list[float]    # Timestamps for each frame
     transcript_segments: list[dict[str, Any]]  # Transcript segments
     transcript_text: str = ""        # Combined transcript text
     metadata: dict[str, Any] = None  # Additional metadata
@@ -1851,61 +1854,55 @@ print(f"Throughput: {results['total_videos'] / (results['total_processing_time']
 # Throughput: 2.0 videos/min
 ```
 
-### Example 3: X-CLIP Single-Vector Processing
+### Example 3: EmbeddingGemma 2 Single-Vector Processing
 
 ```python
 import asyncio
 from pathlib import Path
 from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-async def ingest_with_xclip():
-    # Create pipeline for X-CLIP single-vector embeddings
+async def ingest_with_embeddinggemma2():
+    # One 768-d vector per 6 s chunk, from the chunk's frames and audio
     pipeline = VideoIngestionPipeline(
         tenant_id="your_org:production",
-        schema_name="video_xclip_sv_chunk_6s"
+        schema_name="video_embeddinggemma2_sv_chunk_6s"
     )
 
-    # Process video
     result = await pipeline.process_video_async(Path("data/videos/lecture.mp4"))
 
-    # Access single-vector processing results
     sv_data = result['results']['single_vector_processing']
     print(f"Segments: {len(sv_data['segments'])}")
-    print(f"Document structure: {sv_data['document_structure']['type']}")
     print(f"Documents fed: {result['results']['embeddings']['documents_fed']}")
 
-    # Output:
-    # Segments: 20
-    # Document structure: multi_document
-    # Documents fed: 20
-
-asyncio.run(ingest_with_xclip())
+asyncio.run(ingest_with_embeddinggemma2())
 ```
 
-**Profile Configuration**:
+**Profile Configuration** (`configs/config.json`):
 ```yaml
-video_xclip_sv_chunk_6s:
+video_embeddinggemma2_sv_chunk_6s:
+  embedding_model: "google/embeddinggemma-2"
+  model_loader: "embeddinggemma2"
+  modalities: ["video", "audio"]
+  inference_services:
+    embedding: "vllm_omni_embed"
+    transcription: "vllm_asr"
   strategies:
     segmentation:
       class: "SingleVectorSegmentationStrategy"
       params:
-        strategy: "sliding_window"
+        strategy: "chunks"
         segment_duration: 6.0
         segment_overlap: 1.0
-        sampling_fps: 2.0
-        max_frames_per_segment: 12
-        store_as_single_doc: false
     transcription:
       class: "AudioTranscriptionStrategy"
       params:
-        model: "whisper-large-v3"
+        model: "openai/whisper-large-v3-turbo"
     description:
       class: "NoDescriptionStrategy"
       params: {}
     embedding:
       class: "SingleVectorEmbeddingStrategy"
-      params:
-        model_name: "microsoft/xclip-large-patch14"
+      params: {}
 ```
 
 ### Example 4: ColQwen Chunk-Based Processing
@@ -2030,7 +2027,7 @@ from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 async def main():
     profiles = [
         "video_colpali_smol500_mv_frame",
-        "video_xclip_sv_chunk_6s",
+        "video_embeddinggemma2_sv_chunk_6s",
         "video_colqwen_omni_mv_chunk_30s"
     ]
 
@@ -2165,7 +2162,7 @@ outputs/processing/
 │   ├── transcripts/
 │   │   └── video_001_transcript.json
 │   └── pipeline_summary.json
-└── profile_video_xclip_sv_chunk_6s/
+└── profile_video_embeddinggemma2_sv_chunk_6s/
     └── ...
 ```
 
@@ -2199,7 +2196,7 @@ pipeline.process_videos_concurrent(assigned_videos, max_concurrent=3)
 ```python
 # Process different profiles on different GPUs
 profiles_gpu0 = ["video_colpali_smol500_mv_frame"]
-profiles_gpu1 = ["video_xclip_sv_chunk_6s"]
+profiles_gpu1 = ["video_embeddinggemma2_sv_chunk_6s"]
 
 # GPU 0
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"

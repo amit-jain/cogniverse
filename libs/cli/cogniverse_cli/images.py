@@ -44,7 +44,6 @@ GLINER_REPO = "cogniverse/gliner"
 SIDECAR_BUILDS = {
     "clap_embed": ("cogniverse/clap-embed", "deploy/clap_embed/Dockerfile", "."),
     "face_embed": ("cogniverse/face-embed", "deploy/face_embed/Dockerfile", "."),
-    "video_embed": ("cogniverse/video-embed", "deploy/video_embed/Dockerfile", "."),
     # Both LateOn services run the same PyLate image — LateOn retrieval
     # needs PyLate's exact encode (query expansion over masked padding),
     # which stock vLLM cannot reproduce. build_images dedupes the shared
@@ -60,20 +59,23 @@ LOCAL_IMAGE_BUILDS = {
     "gliner": (GLINER_REPO, "deploy/gliner/Dockerfile", "."),
     **SIDECAR_BUILDS,
 }
-# Whisper runs on vLLM, but from an image derived from the device's vLLM image
-# with the audio packages installed, so its pod starts without network access.
-# One repository per device, keyed by inference service name; the service's
-# ``device`` picks both the repository and the upstream image it derives from.
+# Whisper and EmbeddingGemma 2 run on vLLM, but from an image derived from the
+# device's vLLM image with the audio packages installed, so their pods decode
+# audio and start without network access. One repository per device, keyed by
+# inference service name; the service's ``device`` picks both the repository
+# and the upstream image it derives from. Services sharing a tag build it once.
+_VLLM_AUDIO_BUILD = (
+    {
+        "cpu": "cogniverse/vllm-audio-cpu",
+        "cuda": "cogniverse/vllm-audio-cuda",
+        "rocm": "cogniverse/vllm-audio-rocm",
+    },
+    "deploy/vllm_audio/Dockerfile",
+    ".",
+)
 DEVICE_IMAGE_BUILDS = {
-    "vllm_asr": (
-        {
-            "cpu": "cogniverse/vllm-audio-cpu",
-            "cuda": "cogniverse/vllm-audio-cuda",
-            "rocm": "cogniverse/vllm-audio-rocm",
-        },
-        "deploy/vllm_audio/Dockerfile",
-        ".",
-    ),
+    "vllm_asr": _VLLM_AUDIO_BUILD,
+    "vllm_omni_embed": _VLLM_AUDIO_BUILD,
 }
 # colpali and the DenseOn dense embedder are served by stock vLLM, not
 # built here:
@@ -101,7 +103,6 @@ IMAGE_DOCKERFILES = {
     "gliner": "deploy/gliner/Dockerfile",
     "clap_embed": "deploy/clap_embed/Dockerfile",
     "face_embed": "deploy/face_embed/Dockerfile",
-    "video_embed": "deploy/video_embed/Dockerfile",
     "vllm_audio": "deploy/vllm_audio/Dockerfile",
 }
 
@@ -147,12 +148,6 @@ IMAGE_INPUT_PATHS = {
         IMAGE_DOCKERFILES["face_embed"],
         "deploy/face_embed/requirements.txt",
         "libs/cli/cogniverse_cli/modal_inference/servers/face.py",
-        ".dockerignore",
-    ),
-    "video_embed": (
-        IMAGE_DOCKERFILES["video_embed"],
-        "deploy/video_embed/requirements.txt",
-        "libs/cli/cogniverse_cli/modal_inference/servers/video_embed.py",
         ".dockerignore",
     ),
     "vllm_audio": (
@@ -711,7 +706,8 @@ def build_images(
     passing the overlays helm receives is what brings an enabled sidecar into
     the build; omitting them builds the chart-default set only. The PyLate
     image is shared by colbert_pylate and code_colbert_pylate and builds once.
-    Whisper builds the ``DEVICE_IMAGE_BUILDS`` image for its device. ColPali
+    Whisper and EmbeddingGemma 2 build the ``DEVICE_IMAGE_BUILDS`` image for
+    their device. ColPali
     and DenseOn are served by stock vLLM and pulled directly.
 
     Raises when those values enable a first-party (``cogniverse/*``) service

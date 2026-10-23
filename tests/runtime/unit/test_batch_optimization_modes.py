@@ -1461,7 +1461,9 @@ class TestProfileSelectionTrainingExamples:
         unavailable_profile = BackendProfileConfig.from_dict(
             "unavailable_video_profile",
             shipped_profile(
-                profile_type="video", embedding_type="single_vector"
+                profile_type="video",
+                embedding_type="single_vector",
+                model_loader="embeddinggemma2",
             ).to_dict(),
         )
         config_manager = ConfigManager(store=InMemoryConfigStore())
@@ -1619,7 +1621,7 @@ class TestProfileSelectionTrainingExamples:
             "the optimizer cannot record which example it consumed"
         )
 
-    def test_profile_optimizer_source_does_not_embed_retired_pool(self):
+    def test_profile_optimizer_source_does_not_embed_a_hardcoded_pool(self):
 
         source = (
             Path(__file__).resolve().parents[3]
@@ -1629,12 +1631,12 @@ class TestProfileSelectionTrainingExamples:
             / "optimization_cli.py"
         )
         text = source.read_text()
-        retired_pool = (
+        hardcoded_pool = (
             "video_colpali_smol500_mv_frame,"
             "video_colqwen_omni_mv_chunk_30s,"
-            "video_xclip_sv_chunk_6s"
+            "video_embeddinggemma2_sv_chunk_6s"
         )
-        assert retired_pool not in text
+        assert hardcoded_pool not in text
 
 
 # ---------------------------------------------------------------------------
@@ -4976,7 +4978,10 @@ class TestProfileSelectionOptimization:
                 "video_colqwen_omni_mv_chunk_30s",
             ],
         )
-        assert _profile_selection_quality(_sel("video_xclip_base"), ex) == 0.0
+        assert (
+            _profile_selection_quality(_sel("video_embeddinggemma2_sv_chunk_6s"), ex)
+            == 0.0
+        )
 
     def test_profile_selection_floor_gap_is_exact(self):
         from cogniverse_runtime.optimization_cli import (
@@ -5787,11 +5792,12 @@ class TestProfileSelectionOptimization:
             "video_colpali_smol500_mv_frame": "video_title",
             "image_colpali_mv": "image_title",
             "audio_clap_semantic": "audio_title",
+            "audio_embeddinggemma2": "audio_title",
             "document_text_semantic": "document_title",
             "document_visual_colpali": "document_title",
             "lateon_mv": "title",
             "video_colqwen_omni_mv_chunk_30s": "video_title",
-            "video_xclip_sv_chunk_6s": "video_title",
+            "video_embeddinggemma2_sv_chunk_6s": "video_title",
             "code_lateon_mv": "chunk_name",
             "wiki_semantic": "title",
         }

@@ -456,19 +456,18 @@ class TestVideoIngestionPipelineUtilityMethods:
                     ],
                     "metadata": {"test": "data"},
                     "full_transcript": "Test transcript",
-                    "document_structure": {"sections": ["intro"]},
                 }
             }
         }
 
         result_data = mock_pipeline._process_single_vector_data(video_data, results)
 
-        # The method returns video_data with single vector processing data added
-        assert result_data["video_id"] == "test_video"
-        assert "segments" in result_data
-        assert "processing_metadata" in result_data
-        assert "full_transcript" in result_data
-        assert "document_structure" in result_data
+        assert result_data == {
+            "video_id": "test_video",
+            "segments": [{"start_time": 0.0, "end_time": 60.0, "text": "Test segment"}],
+            "processing_metadata": {"test": "data"},
+            "full_transcript": "Test transcript",
+        }
 
     @pytest.mark.asyncio
     async def test_process_video_async(self, mock_pipeline):
@@ -538,17 +537,28 @@ class TestVideoIngestionPipelineUtilityMethods:
                     ],
                     "metadata": {"test": "data"},
                     "full_transcript": "Test transcript",
-                    "document_structure": {"sections": ["intro"]},
                 }
             },
         }
 
         video_data = mock_pipeline._prepare_video_data(results)
 
-        assert video_data["video_id"] == "test_video"
         assert (
-            "segments" in video_data
-        )  # _process_single_vector_data adds segments directly
+            video_data["video_id"],
+            video_data["video_path"],
+            video_data["duration"],
+        ) == ("test_video", "/test/path.mp4", 120.0)
+        assert (
+            video_data["processing_type"],
+            video_data["storage_mode"],
+            video_data["schema_name"],
+        ) == ("frame", "vector", "test_schema")
+        assert video_data["segments"] == [
+            {"start_time": 0.0, "end_time": 60.0, "text": "Test segment"}
+        ]
+        assert video_data["processing_metadata"] == {"test": "data"}
+        assert video_data["full_transcript"] == "Test transcript"
+        assert "chunks" not in video_data and "keyframes" not in video_data
 
 
 @pytest.mark.unit

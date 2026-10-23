@@ -211,8 +211,8 @@ async def main() -> None:
                 "embedding_type": "multi_vector",
                 "pipeline_config": {"chunk_strategy": "frame"},
             },
-            "video_xclip_sv_chunk_6s": {
-                "embedding_type": "global",
+            "video_embeddinggemma2_sv_chunk_6s": {
+                "embedding_type": "single_vector",
                 "pipeline_config": {"chunk_strategy": "temporal"},
             },
         },
@@ -999,11 +999,11 @@ backend_config = BackendConfig(
             embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
             pipeline_config={"chunk_strategy": "frame"},
         ),
-        "video_xclip_sv_chunk_6s": BackendProfileConfig(
-            profile_name="video_xclip_sv_chunk_6s",
+        "video_embeddinggemma2_sv_chunk_6s": BackendProfileConfig(
+            profile_name="video_embeddinggemma2_sv_chunk_6s",
             type="video",
-            schema_name="video_xclip_sv_chunk_6s",
-            embedding_model="microsoft/xclip-large-patch14",
+            schema_name="video_embeddinggemma2_sv_chunk_6s",
+            embedding_model="google/embeddinggemma-2",
             pipeline_config={"chunk_strategy": "temporal"},
         ),
     },
@@ -1077,7 +1077,7 @@ service = SyntheticDataService(
 
 ```bash
 # Run all synthetic data tests
-JAX_PLATFORM_NAME=cpu uv run pytest \
+uv run pytest \
     tests/routing/unit/synthetic/ tests/synthetic/ \
     tests/agents/integration/test_replacement_record_store_real_redis.py \
     tests/runtime/integration/test_backend_querier_real_vespa.py \

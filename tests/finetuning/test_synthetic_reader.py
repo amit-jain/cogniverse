@@ -295,9 +295,9 @@ def test_real_and_synthetic_rows_share_exact_output_shape(
             {
                 "status": "approved",
                 "metadata.agent_type": "profile_selection",
-                **_profile_values(selected_profile="video_xclip"),
+                **_profile_values(selected_profile="video_embeddinggemma2"),
             },
-            "selected_profile 'video_xclip' is absent from available_profiles",
+            "selected_profile 'video_embeddinggemma2' is absent from available_profiles",
         ),
         (
             {

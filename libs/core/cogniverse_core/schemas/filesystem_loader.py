@@ -28,7 +28,7 @@ class FilesystemSchemaLoader(SchemaLoader):
     Example directory structure:
         configs/schemas/
             video_colpali_smol500_mv_frame_schema.json
-            video_xclip_sv_chunk_6s_schema.json
+            video_embeddinggemma2_sv_chunk_6s_schema.json
             ranking_strategies.json
     """
 

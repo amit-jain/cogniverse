@@ -1,6 +1,6 @@
 # Cogniverse
 
-Multi-agent platform for search and analysis over video, audio, image, and document content. Content is embedded with ColQwen3 (ColPali-style), X-CLIP, LateOn, DenseOn, and CLAP models and retrieved from Vespa. Agents use DSPy for reasoning and coordinate over the A2A protocol, with streaming responses and Phoenix tracing. 12-package uv workspace with multi-tenant isolation.
+Multi-agent platform for search and analysis over video, audio, image, and document content. Content is embedded with ColQwen3 (ColPali-style), EmbeddingGemma 2, LateOn, DenseOn, and CLAP models and retrieved from Vespa. Agents use DSPy for reasoning and coordinate over the A2A protocol, with streaming responses and Phoenix tracing. 12-package uv workspace with multi-tenant isolation.
 
 ## Features
 
@@ -8,7 +8,7 @@ Multi-agent platform for search and analysis over video, audio, image, and docum
 - **Multi-modal**: Ingestion and search profiles for video, images, audio, documents, code, and wiki pages
 - **Multi-agent orchestration**: DSPy 3.4 agents coordinated over the A2A protocol
 - **Cross-modal fusion**: The orchestrator combines results from agents working on different modalities
-- **Embedding models**: ColQwen3 (`TomoroAI/tomoro-colqwen3-embed-4b`) for video frames, images, and visual documents; X-CLIP for video clips; LateOn, LateOn-Code, and DenseOn for text and code; CLAP for audio
+- **Embedding models**: ColQwen3 (`TomoroAI/tomoro-colqwen3-embed-4b`) for video frames, images, and visual documents; EmbeddingGemma 2 (`google/embeddinggemma-2`) for 6 s video chunks (frames plus audio) and audio; LateOn, LateOn-Code, and DenseOn for text and code; CLAP for audio
 - **Multi-tenant**: Schema-per-tenant Vespa isolation, per-tenant Phoenix projects, and per-tenant memory
 - **Observability**: Phoenix traces and experiments, plus the Cogniverse web client (chat with every agent and operations views)
 - **Evaluation**: Provider-agnostic reference-free, visual LLM, and classical retrieval metrics
@@ -93,7 +93,7 @@ uv run python scripts/run_ingestion.py \
     --tenant-id default \
     --content-dir data/testset/evaluation/sample_videos \
     --profile video_colpali_smol500_mv_frame \
-               video_xclip_sv_chunk_6s \
+               video_embeddinggemma2_sv_chunk_6s \
                video_colqwen_omni_mv_chunk_30s
 ```
 
@@ -365,7 +365,7 @@ Ports and `enabled` status come from `configs/config.json` (`agents.*`); dashed 
 |---------------|-------|----------|------------|
 | `video_colpali_smol500_mv_frame` | ColQwen3 (TomoroAI/tomoro-colqwen3-embed-4b) | Keyframes at 0.5 fps | 320 (patch vector) |
 | `video_colqwen_omni_mv_chunk_30s` | ColQwen3 (TomoroAI/tomoro-colqwen3-embed-4b) | 30 s chunks | 320 (patch vector) |
-| `video_xclip_sv_chunk_6s` | X-CLIP Large (microsoft/xclip-large-patch14) | 6 s chunks | 768 |
+| `video_embeddinggemma2_sv_chunk_6s` | EmbeddingGemma 2 (google/embeddinggemma-2) | 6 s chunks, frames at 1 fps plus audio | 768 |
 
 ### Vespa Ranking Strategies
 
@@ -448,16 +448,16 @@ See [docs/modules/web-client.md](docs/modules/web-client.md).
 
 ```bash
 # Run full test suite
-JAX_PLATFORM_NAME=cpu uv run pytest
+uv run pytest
 
 # Unit tests only (per package: tests/<package>/unit/)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/
+uv run pytest tests/agents/unit/
 
 # Integration tests (per package: tests/<package>/integration/)
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/
+uv run pytest tests/agents/integration/
 
 # Specific component
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
+uv run pytest tests/agents/ -v
 ```
 
 ## Documentation

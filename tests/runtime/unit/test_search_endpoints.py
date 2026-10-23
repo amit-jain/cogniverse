@@ -424,7 +424,11 @@ class TestListProfilesRequiresADeployedSchema:
 
         for profile_name, schema_name, model in (
             ("deployed_video", "video_colpali_smol500_mv_frame", "deployed/model"),
-            ("undeployed_video", "video_xclip_sv_chunk_6s", "undeployed/model"),
+            (
+                "undeployed_video",
+                "video_embeddinggemma2_sv_chunk_6s",
+                "undeployed/model",
+            ),
         ):
             config_manager.add_backend_profile(
                 BackendProfileConfig(
@@ -462,7 +466,7 @@ class TestListProfilesRequiresADeployedSchema:
                 # Deploying the second schema is the only change; it is then
                 # advertised, so the filter tracks deployment, not the name.
                 register_deployed_schema(
-                    config_manager, tenant_id, "video_xclip_sv_chunk_6s"
+                    config_manager, tenant_id, "video_embeddinggemma2_sv_chunk_6s"
                 )
 
                 resp = client.get("/search/profiles", params={"tenant_id": tenant_id})

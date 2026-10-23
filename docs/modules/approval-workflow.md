@@ -1034,7 +1034,7 @@ consumption:
 
 ```bash
 # Run approval integration tests
-JAX_PLATFORM_NAME=cpu timeout 3600 uv run pytest \
+timeout 3600 uv run pytest \
     tests/synthetic/integration/test_synthetic_approval_integration.py \
     tests/agents/integration/test_approval_dataset_lock_real_redis.py \
     tests/agents/integration/test_replacement_record_store_real_redis.py \

@@ -212,7 +212,7 @@ cogniverse_core/
 ├── factories/   # Backend factory patterns
 ├── interfaces/  # Interface definitions
 ├── memory/      # Mem0MemoryManager, vector store
-├── query/       # Query encoders (ColBERT, ColPali/ColQwen, X-CLIP)
+├── query/       # Query encoders (ColBERT, ColPali/ColQwen, EmbeddingGemma 2, CLAP, dense)
 ├── registries/  # Agent, backend, DSPy, schema, adapter_store, workflow_store registries
 ├── schemas/     # Filesystem schema loader
 ├── telemetry/   # Telemetry utilities
@@ -496,7 +496,7 @@ cogniverse_runtime/
 - **Ingestion Pipeline**: Process video (frames/chunks), audio (transcription), images, documents, text with configurable profiles
 - **Inference Services**: Modal inference service for remote processing
 - **Dynamic Backend Loading**: Load backends (Vespa, agents) based on configuration with optional dependencies
-- **Multi-Modal Processing**: Support video (ColPali, X-CLIP, ColQwen), audio (Whisper, faster-whisper), images, documents, text
+- **Multi-Modal Processing**: Support video (ColPali, ColQwen, EmbeddingGemma 2), audio (Whisper, faster-whisper), images, documents, text
 
 ---
 
@@ -754,16 +754,16 @@ Heavy ML dependencies are declared in **root** `pyproject.toml` for shared insta
 ```toml
 [project]
 dependencies = [
-    "torch>=2.5.0",
-    "jax>=0.7.0",
-    "transformers>=4.50.0",
+    "torch==2.8.0",
+    "transformers==4.56.2",
+    "colpali-engine==0.3.13",
     # ... shared across all packages
 ]
 ```
 
 **Strategy**:
 
-- Root declares heavy ML libraries (torch, jax, transformers)
+- Root declares heavy ML libraries (torch, transformers, colpali-engine)
 - Packages declare only package-specific dependencies
 - Reduces duplication and ensures version consistency
 
@@ -838,7 +838,7 @@ uv run python scripts/run_ingestion.py \
 uv run python scripts/run_experiments_with_visualization.py \
     --tenant-id acme:acme \
     --dataset-path data/queries.csv \
-    --profiles frame_based_colpali
+    --profiles video_colpali_smol500_mv_frame
 ```
 
 ### Adding Dependencies
@@ -913,7 +913,7 @@ tests/
 
 ```bash
 # From root
-JAX_PLATFORM_NAME=cpu timeout 7200 uv run pytest -v
+timeout 7200 uv run pytest -v
 ```
 
 **Package-specific tests**:

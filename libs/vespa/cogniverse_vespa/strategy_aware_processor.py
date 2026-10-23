@@ -39,20 +39,9 @@ class StrategyAwareProcessor:
                 f"StrategyAwareProcessor requires FilesystemSchemaLoader."
             )
 
-        schemas_dir = self.schema_loader.base_path
-        strategies_file = schemas_dir / "ranking_strategies.json"
+        from .ranking_strategy_extractor import ensure_ranking_strategies_file
 
-        if not strategies_file.exists():
-            # Auto-generate if missing
-            from .ranking_strategy_extractor import (
-                extract_all_ranking_strategies,
-                save_ranking_strategies,
-            )
-
-            strategies = extract_all_ranking_strategies(schemas_dir)
-            save_ranking_strategies(strategies, strategies_file)
-            logger.info("Generated ranking strategies file")
-
+        strategies_file = ensure_ranking_strategies_file(self.schema_loader.base_path)
         with open(strategies_file, "r") as f:
             return json.load(f)
 

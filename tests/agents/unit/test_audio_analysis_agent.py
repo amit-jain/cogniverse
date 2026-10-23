@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
 
@@ -317,20 +318,22 @@ class TestAudioAnalysisAgent:
 
         mock_post.assert_not_called()
 
-    def test_clap_headers_reject_non_bearer_credentials(self):
-        with pytest.raises(ValueError, match="clap_headers.*Authorization"):
+    def test_acoustic_headers_reject_non_bearer_credentials(self):
+        with pytest.raises(ValueError, match="acoustic_headers.*Authorization"):
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
-                clap_endpoint="https://clap.modal.run",
-                clap_headers={"Modal-Key": "wrong-auth-scheme"},
+                acoustic_endpoint="https://clap.modal.run",
+                acoustic_headers={"Modal-Key": "wrong-auth-scheme"},
                 config_manager=_in_memory_config_manager(),
             )
 
-    def test_clap_headers_require_endpoint(self):
-        with pytest.raises(ValueError, match="clap_headers requires clap_endpoint"):
+    def test_acoustic_headers_require_endpoint(self):
+        with pytest.raises(
+            ValueError, match="acoustic_headers requires acoustic_endpoint"
+        ):
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
-                clap_headers={"Authorization": "Bearer modal-clap-secret"},
+                acoustic_headers={"Authorization": "Bearer modal-clap-secret"},
                 config_manager=_in_memory_config_manager(),
             )
 
@@ -341,7 +344,7 @@ class TestAudioAnalysisAgent:
         monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", initial_token)
         deps = AudioAnalysisDeps(
             tenant_id="test_tenant",
-            clap_endpoint="https://clap.modal.run",
+            acoustic_endpoint="https://clap.modal.run",
             config_manager=_in_memory_config_manager(),
         )
         monkeypatch.delenv("COGNIVERSE_INFERENCE_API_KEY")
@@ -352,7 +355,7 @@ class TestAudioAnalysisAgent:
         generator = agent.embedding_generator
 
         assert revalidated is deps
-        assert deps.clap_headers == {}
+        assert deps.acoustic_headers == {}
         assert generator._clap_endpoint_url == "https://clap.modal.run"
         assert generator._clap_headers == {"Authorization": f"Bearer {initial_token}"}
         with pytest.raises(TypeError):
@@ -366,11 +369,11 @@ class TestAudioAnalysisAgent:
     def test_modal_clap_endpoint_rejects_dependency_headers(self, monkeypatch, headers):
         monkeypatch.setenv("COGNIVERSE_INFERENCE_API_KEY", "shared-production-key")
 
-        with pytest.raises(ValueError, match="clap_headers.*Modal"):
+        with pytest.raises(ValueError, match="acoustic_headers.*Modal"):
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
-                clap_endpoint="https://clap.modal.run",
-                clap_headers=headers,
+                acoustic_endpoint="https://clap.modal.run",
+                acoustic_headers=headers,
                 config_manager=_in_memory_config_manager(),
             )
 
@@ -383,7 +386,7 @@ class TestAudioAnalysisAgent:
         ):
             AudioAnalysisDeps(
                 tenant_id="test_tenant",
-                clap_endpoint="https://clap.modal.run",
+                acoustic_endpoint="https://clap.modal.run",
                 config_manager=_in_memory_config_manager(),
             )
 
@@ -499,6 +502,7 @@ class TestAudioAnalysisAgent:
             {
                 "query": "AI podcast",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "transcript_search",
                 "tenant_id": "test_tenant",
                 "top_k": 20,
@@ -508,9 +512,14 @@ class TestAudioAnalysisAgent:
 
     @pytest.mark.asyncio
     async def test_search_audio_default_mode_is_semantic(self):
+        # audio_content's schema ranks with phased_semantic, the first
+        # default mode a profile's schema can serve.
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
         backend = MagicMock()
         backend.search = MagicMock(return_value=[])
         self.agent._get_backend = MagicMock(return_value=backend)
+        self.agent.schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         self.agent._embedding_generator = MagicMock(
             generate_acoustic_text_embedding=MagicMock(
                 side_effect=AssertionError("acoustic embedding should not be used")
@@ -524,6 +533,7 @@ class TestAudioAnalysisAgent:
             {
                 "query": "machine learning",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "phased_semantic",
                 "tenant_id": "test_tenant",
                 "top_k": 10,
@@ -554,6 +564,7 @@ class TestAudioAnalysisAgent:
             {
                 "query": "what was said about AI",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "phased_semantic",
                 "tenant_id": "test_tenant",
                 "top_k": 7,
@@ -686,6 +697,7 @@ class TestAudioAnalysisAgent:
             {
                 "query": "machine learning",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "phased_semantic",
                 "tenant_id": "test_tenant",
                 "top_k": 10,
@@ -747,7 +759,7 @@ class TestAudioAnalysisAgent:
         response = {
             "text": "hello world",
             "language": "en",
-            "duration": "1.23",
+            "duration": 1.23,
             "segments": [
                 {"start": 0.0, "end": 1.0, "text": "hello"},
                 {"start": 1.0, "end": 1.23, "text": "world"},
@@ -812,7 +824,7 @@ class TestAudioAnalysisAgent:
         response = {
             "text": " I'm going to go.",
             "language": "en",
-            "duration": "1.5",
+            "duration": 1.5,
             "segments": [
                 {
                     "start": 0.0,
@@ -881,7 +893,7 @@ class TestAudioAnalysisAgent:
             return {
                 "text": f"transcript-{index}",
                 "language": "en",
-                "duration": "1.0",
+                "duration": 1.0,
                 "segments": [
                     {
                         "start": 0.0,
@@ -962,27 +974,27 @@ class TestAudioAnalysisAgent:
         [
             ([], "$: expected an object"),
             (
-                {"language": "en", "duration": "1.0", "segments": []},
+                {"language": "en", "duration": 1.0, "segments": []},
                 "$.text: field is required",
             ),
             (
                 {
                     "text": 7,
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [],
                 },
                 "$.text: expected a string",
             ),
             (
-                {"text": "ok", "duration": "1.0", "segments": []},
+                {"text": "ok", "duration": 1.0, "segments": []},
                 "$.language: field is required",
             ),
             (
                 {
                     "text": "ok",
                     "language": 7,
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [],
                 },
                 "$.language: expected a non-empty string",
@@ -991,7 +1003,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "   ",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [],
                 },
                 "$.language: expected a non-empty string",
@@ -1004,33 +1016,33 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": 1.0,
+                    "duration": "1.0",
                     "segments": [],
                 },
-                "$.duration: expected a finite non-negative decimal string",
+                "$.duration: expected a finite non-negative number",
             ),
             (
                 {"text": "ok", "language": "en", "duration": False, "segments": []},
-                "$.duration: expected a finite non-negative decimal string",
+                "$.duration: expected a finite non-negative number",
             ),
             (
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "-0.1",
+                    "duration": -0.1,
                     "segments": [],
                 },
-                "$.duration: expected a finite non-negative decimal string",
+                "$.duration: expected a finite non-negative number",
             ),
             (
-                {"text": "ok", "language": "en", "duration": "1.0"},
+                {"text": "ok", "language": "en", "duration": 1.0},
                 "$.segments: field is required",
             ),
             (
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": {},
                 },
                 "$.segments: expected a list",
@@ -1039,7 +1051,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [7],
                 },
                 "$.segments[0]: expected an object",
@@ -1048,7 +1060,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"end": 1.0, "text": "ok"}],
                 },
                 "$.segments[0].start: field is required",
@@ -1057,7 +1069,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": "0.0", "end": 1.0, "text": "ok"}],
                 },
                 "$.segments[0].start: expected a finite non-negative number",
@@ -1066,7 +1078,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": -0.1, "end": 1.0, "text": "ok"}],
                 },
                 "$.segments[0].start: expected a finite non-negative number",
@@ -1075,7 +1087,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": 0.0, "text": "ok"}],
                 },
                 "$.segments[0].end: field is required",
@@ -1084,7 +1096,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": 0.0, "end": False, "text": "ok"}],
                 },
                 "$.segments[0].end: expected a finite non-negative number",
@@ -1093,7 +1105,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": 0.75, "end": 0.5, "text": "ok"}],
                 },
                 "$.segments[0].end: must be greater than or equal to start",
@@ -1102,7 +1114,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": 0.0, "end": 1.0}],
                 },
                 "$.segments[0].text: field is required",
@@ -1111,7 +1123,7 @@ class TestAudioAnalysisAgent:
                 {
                     "text": "ok",
                     "language": "en",
-                    "duration": "1.0",
+                    "duration": 1.0,
                     "segments": [{"start": 0.0, "end": 1.0, "text": 7}],
                 },
                 "$.segments[0].text: expected a string",
@@ -1143,7 +1155,7 @@ class TestAudioAnalysisAgent:
         # Recorded from the live server (v_-vnSFKJNB94 chunk 3): "Thank you."
         # timed to 29.98 s on an 18.77 s chunk.
         recorded = {
-            "duration": "18.769625",
+            "duration": 18.769625,
             "language": "en",
             "text": " Thank you.",
             "segments": [
@@ -1223,7 +1235,7 @@ class TestAudioAnalysisAgent:
         response = {
             "text": "ok",
             "language": "en",
-            "duration": "0.5",
+            "duration": 0.5,
             "segments": [],
         }
 
@@ -1250,12 +1262,12 @@ class TestAudioAnalysisAgent:
         clip = tmp_path / "audio.wav"
         clip_bytes = _write_tone(clip)
         answers = [
-            {"text": "", "language": "en", "duration": "1.0", "segments": []},
+            {"text": "", "language": "en", "duration": 1.0, "segments": []},
             {"text": " hello"},
             {
                 "text": " hello",
                 "language": "en",
-                "duration": "1.0",
+                "duration": 1.0,
                 "segments": [{"start": 0.0, "end": 1.0, "text": " hello"}],
             },
         ]
@@ -1295,7 +1307,7 @@ class TestAudioAnalysisAgent:
     ):
         clip = tmp_path / "audio.wav"
         _write_tone(clip)
-        empty = {"text": "", "language": "en", "duration": "1.0", "segments": []}
+        empty = {"text": "", "language": "en", "duration": 1.0, "segments": []}
 
         with _transcription_server(empty) as (base_url, captured_requests):
             agent = _agent_for_remote_transcription(
@@ -1327,7 +1339,7 @@ class TestAudioAnalysisAgent:
         def answer(body: bytes) -> dict:
             if b'name="response_format"\r\n\r\njson\r\n' in body:
                 return {"text": " *BANG* *BANG*"}
-            return {"text": "", "language": "en", "duration": "1.0", "segments": []}
+            return {"text": "", "language": "en", "duration": 1.0, "segments": []}
 
         with _transcription_server(answer) as (base_url, captured_requests):
             agent = _agent_for_remote_transcription(
@@ -1358,7 +1370,7 @@ class TestAudioAnalysisAgent:
         def answer(body: bytes) -> dict:
             if b'name="response_format"\r\n\r\njson\r\n' in body:
                 return {"usage": {"type": "duration", "seconds": 1}}
-            return {"text": "", "language": "en", "duration": "1.0", "segments": []}
+            return {"text": "", "language": "en", "duration": 1.0, "segments": []}
 
         with _transcription_server(answer) as (base_url, _):
             agent = _agent_for_remote_transcription(
@@ -1389,7 +1401,7 @@ class TestAudioAnalysisAgent:
             return {
                 "text": text,
                 "language": "en",
-                "duration": f"{seconds:.6f}",
+                "duration": seconds,
                 "segments": [{"start": 0.0, "end": seconds, "text": text}],
             }
 
@@ -1527,6 +1539,9 @@ class TestAudioSearchEventLoop:
         agent._tenant_id = "acme:acme"
         agent._vespa_endpoint = "http://vespa:8080"
         agent._deployed_audio_schema = None
+        agent._audio_profile = "audio_clap_semantic"
+        agent._audio_schema = "audio_content"
+        agent._acoustic_service = "clap_embed"
         agent._backend_type = "vespa"
         agent._backend_config = {}
         agent.bind_config_manager(_in_memory_config_manager())
@@ -1546,6 +1561,7 @@ class TestAudioSearchEventLoop:
             assert query_dict == {
                 "query": "q",
                 "type": "audio",
+                "profile": "audio_clap_semantic",
                 "strategy": "transcript_search",
                 "tenant_id": "acme:acme",
                 "top_k": 5,
@@ -1586,7 +1602,7 @@ class TestAudioSearchEventLoop:
                     "text": "hello world",
                     "language": "en",
                     "segments": [],
-                    "duration": "1.0",
+                    "duration": 1.0,
                 }
 
         def blocking_post(url, **kwargs):
@@ -1630,6 +1646,9 @@ def _bare_acoustic_agent(blocking_embed):
     agent._tenant_id = "test:test"
     agent._vespa_endpoint = "http://fake-vespa:8080"
     agent._deployed_audio_schema = None
+    agent._audio_profile = "audio_clap_semantic"
+    agent._audio_schema = "audio_content"
+    agent._acoustic_service = "clap_embed"
     agent._embedding_generator = SimpleNamespace(
         generate_acoustic_text_embedding=blocking_embed
     )
@@ -1648,6 +1667,7 @@ async def test_search_hybrid_offloads_blocking_backend_search(monkeypatch):
         assert query_dict == {
             "query": "q",
             "type": "audio",
+            "profile": "audio_clap_semantic",
             "strategy": "hybrid_semantic_bm25",
             "tenant_id": "test:test",
             "top_k": 5,

@@ -45,6 +45,7 @@ class JsonSchemaParser:
 
                 hnsw_config = index_val["hnsw"]
                 field_params["ann"] = HNSW(
+                    distance_metric=hnsw_config.get("distance-metric", "euclidean"),
                     max_links_per_node=hnsw_config.get("max-links-per-node", 16),
                     neighbors_to_explore_at_insert=hnsw_config.get(
                         "neighbors-to-explore-at-insert", 200

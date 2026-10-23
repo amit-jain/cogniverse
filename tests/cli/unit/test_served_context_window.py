@@ -33,7 +33,6 @@ API_KEY = "context-window-test-key"
 NON_VLLM_SERVICES = (
     "colbert_pylate",
     "gliner",
-    "video_embed",
     "clap_embed",
     "face_embed",
 )

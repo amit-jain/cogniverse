@@ -12,13 +12,17 @@ def test_selects_shipped_video_by_capabilities(tmp_path, monkeypatch, change_cwd
     if change_cwd:
         monkeypatch.chdir(tmp_path)
     profile = helpers.shipped_profile(
-        profile_type="video", embedding_type="single_vector"
+        profile_type="video",
+        embedding_type="single_vector",
+        model_loader="embeddinggemma2",
     )
     source = json.loads(helpers._PROFILES_PATH.read_text())["backend"]["profiles"]
     expected = {
         name: value
         for name, value in source.items()
-        if value["type"] == "video" and value["embedding_type"] == "single_vector"
+        if value["type"] == "video"
+        and value["embedding_type"] == "single_vector"
+        and value["model_loader"] == "embeddinggemma2"
     }
     assert {profile.profile_name: profile.to_dict()} == expected
     assert (
@@ -168,7 +172,7 @@ def test_rejects_missing_or_ambiguous_capabilities(profile_catalog, names):
     assert str(error.value) == (
         "Expected exactly one shipped profile for "
         "{'profile_type': 'video', 'embedding_type': 'single_vector', "
-        "'process_type': None, 'extract_keyframes': None}; "
+        "'process_type': None, 'extract_keyframes': None, 'model_loader': None}; "
         f"matched {sorted(names)!r}"
     )
 

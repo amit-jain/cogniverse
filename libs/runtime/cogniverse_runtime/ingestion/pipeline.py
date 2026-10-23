@@ -776,7 +776,6 @@ class VideoIngestionPipeline:
         video_data["segments"] = processing_data["segments"]
         video_data["processing_metadata"] = processing_data["metadata"]
         video_data["full_transcript"] = processing_data["full_transcript"]
-        video_data["document_structure"] = processing_data["document_structure"]
         self.logger.info(
             f"Using single vector processing data with {len(video_data['segments'])} segments"
         )

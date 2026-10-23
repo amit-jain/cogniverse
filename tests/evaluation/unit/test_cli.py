@@ -648,7 +648,7 @@ class TestCLI:
         call_kwargs = mock_task.call_args[1]
         assert call_kwargs["mode"] == "experiment"
         assert call_kwargs["dataset_name"] == "test_dataset_789"
-        assert call_kwargs["profiles"] == ["frame_based_colpali"]
+        assert call_kwargs["profiles"] == ["video_colpali_smol500_mv_frame"]
         assert call_kwargs["strategies"] == ["binary_binary"]
         assert "Created test dataset: test_dataset_789" in result.output
 

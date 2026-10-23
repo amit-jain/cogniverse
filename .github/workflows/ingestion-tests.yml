@@ -18,6 +18,8 @@ on:
       - '.github/workflows/ingestion-tests.yml'
       # test_audio_processor.py reads the shipped config.
       - 'configs/config.json'
+      # test_process_type_contract.py reads the configs directory.
+      - 'configs/**'
   pull_request:
     branches: [ main, develop ]
     paths:
@@ -34,6 +36,8 @@ on:
       - 'pyproject.toml'
       # test_audio_processor.py reads the shipped config.
       - 'configs/config.json'
+      # test_process_type_contract.py reads the configs directory.
+      - 'configs/**'
 
 env:
   CARGO_NET_RETRY: "10"
@@ -77,7 +81,7 @@ jobs:
       env:
         COVERAGE_FILE: .coverage
       run: |
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/ingestion/unit -m unit \
+        uv run --no-sync python -m pytest tests/ingestion/unit -m unit \
           --cov=libs/runtime/cogniverse_runtime/ingestion \
           --cov-report=term-missing \
           --cov-report=xml:coverage_ingestion.xml
@@ -231,7 +235,7 @@ jobs:
         COVERAGE_FILE: .coverage
       run: |
         # Tests manage their own Vespa containers via fixtures
-        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/ingestion/integration/ \
           -m "integration and ci_fast and not requires_lm" \
           -v --tb=short \

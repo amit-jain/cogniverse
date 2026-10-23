@@ -163,7 +163,6 @@ def searchable_images(shared_memory_vespa, real_encoder):
         deps=ImageSearchDeps(
             vespa_endpoint=f"http://localhost:{http_port}",
             tenant_id=tenant,
-            colpali_model=TOMORO_MODEL,
         )
     )
     agent._query_encoder = real_encoder
