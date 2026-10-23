@@ -334,10 +334,10 @@ async def test_zero_hit_text_does_not_hide_real_lm_connection_failure(build_agen
     with pytest.raises(Exception) as exc:
         await answer(agent, "summary", [])
     # The endpoint is read for its window before the request is sent.
-    assert type(exc.value).__name__ == "ContextWindowUnavailableError"
+    assert type(exc.value).__name__ == "ContextWindowEndpointUnreachableError"
     assert str(exc.value) == (
-        "openai/test at http://127.0.0.1:29071/v1 publishes no context window and "
-        "declares none, so no request budget can be derived"
+        "openai/test at http://127.0.0.1:29071/v1 is unreachable and declares no "
+        "context window, so no request budget can be derived"
     )
     assert str(exc.value.__cause__) == (
         "http://127.0.0.1:29071/v1/models is unreachable, so the served context "
@@ -362,10 +362,10 @@ async def test_report_lm_failure_propagates_after_attachment_shedding(build_agen
     )
     with pytest.raises(Exception) as raised:
         await answer(agent, "report", [DEAD_IMAGE])
-    assert type(raised.value).__name__ == "ContextWindowUnavailableError"
+    assert type(raised.value).__name__ == "ContextWindowEndpointUnreachableError"
     assert str(raised.value) == (
-        "openai/test at http://127.0.0.1:29071/v1 publishes no context window and "
-        "declares none, so no request budget can be derived"
+        "openai/test at http://127.0.0.1:29071/v1 is unreachable and declares no "
+        "context window, so no request budget can be derived"
     )
     assert str(raised.value.__cause__) == (
         "http://127.0.0.1:29071/v1/models is unreachable, so the served context "
