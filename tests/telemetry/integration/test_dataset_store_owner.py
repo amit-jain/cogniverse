@@ -12,17 +12,19 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+import httpx
 import pandas as pd
 import pytest
 
 from cogniverse_foundation.telemetry.providers.base import (
+    DatasetNotFoundError,
     DatasetStoreUnavailableError,
 )
 from cogniverse_telemetry_phoenix.provider import (
     DatasetOwnedByAnotherTenantError,
     PhoenixDatasetStore,
 )
-from tests.utils.http_fault_proxy import InterceptFaultProxy
+from tests.utils.http_fault_proxy import HTTPFaultProxy, InterceptFaultProxy
 
 pytestmark = [
     pytest.mark.integration,
@@ -166,3 +168,91 @@ async def test_a_refused_listing_raises_instead_of_listing_nothing(phoenix_conta
         with pytest.raises(DatasetStoreUnavailableError) as refused:
             await PhoenixDatasetStore(proxy.url).describe_datasets()
     assert (refused.value.endpoint, refused.value.dataset) == (proxy.url, "*")
+
+
+@pytest.mark.asyncio
+async def test_readers_during_an_owned_create_see_no_rows_or_all_of_them(
+    phoenix_container,
+):
+    """An owned dataset exists before its rows: Phoenix creates it empty and
+    the upload follows. Readers caught between the two read an empty dataset;
+    Phoenix itself answers 500 to a description of a dataset with no version,
+    which a reader must not surface as an outage."""
+    endpoint = phoenix_container["http_endpoint"]
+    name = f"window-{uuid.uuid4().hex[:8]}"
+    reader = PhoenixDatasetStore(endpoint)
+    with HTTPFaultProxy(lambda _path: endpoint, hold_s=60) as proxy:
+        proxy.arm(
+            lambda method, path, _body: (
+                method == "POST" and path.startswith("/v1/datasets/upload")
+            )
+        )
+        writer = PhoenixDatasetStore(f"http://127.0.0.1:{proxy.port}")
+        create = asyncio.create_task(
+            writer.create_dataset(name, _qa(("q", "a")), _keys("acme:window"))
+        )
+        assert await asyncio.to_thread(proxy.entered.wait, 60) is True
+        held = await asyncio.gather(*(reader.get_dataset(name) for _ in range(8)))
+        proxy.release.set()
+        await create
+    assert proxy.expired.is_set() is False
+    assert [(list(df.columns), len(df)) for df in held] == [
+        (["input", "output", "metadata"], 0)
+    ] * 8
+    assert _rows(await reader.get_dataset(name)) == [
+        ({"question": "q"}, {"answer": "a"})
+    ]
+    assert await reader.delete_dataset(name) is True
+    assert await _summary(reader, name) == []
+
+
+async def _created(store, name):
+    await store.create_dataset(name, _qa(("q", "a")), _keys("acme:gone"))
+    [summary] = await _summary(store, name)
+    return summary.id
+
+
+@pytest.mark.asyncio
+async def test_a_dataset_deleted_after_its_listing_reads_as_missing(
+    phoenix_container,
+):
+    endpoint = phoenix_container["http_endpoint"]
+    name = f"gone-{uuid.uuid4().hex[:8]}"
+    store = PhoenixDatasetStore(endpoint)
+    dataset_id = await _created(store, name)
+
+    def delete_before_the_read(method, path, _body):
+        if method == "GET" and path == f"/v1/datasets/{dataset_id}":
+            httpx.delete(f"{endpoint}/v1/datasets/{dataset_id}", timeout=30)
+        return None
+
+    with InterceptFaultProxy(endpoint, delete_before_the_read) as proxy:
+        with pytest.raises(DatasetNotFoundError) as missing:
+            await PhoenixDatasetStore(proxy.url).get_dataset(name)
+    assert str(missing.value) == f"Dataset not found: {name}"
+    assert missing.value.__cause__.response.status_code == 404
+    assert await _summary(store, name) == []
+
+
+@pytest.mark.asyncio
+async def test_a_404_the_store_did_not_send_is_an_outage(phoenix_container):
+    endpoint = phoenix_container["http_endpoint"]
+    name = f"proxied-{uuid.uuid4().hex[:8]}"
+    store = PhoenixDatasetStore(endpoint)
+    dataset_id = await _created(store, name)
+    with InterceptFaultProxy(
+        endpoint,
+        lambda method, path, _body: (
+            (404, f"Cannot GET /v1/datasets/{dataset_id}".encode())
+            if path == f"/v1/datasets/{dataset_id}"
+            else None
+        ),
+    ) as proxy:
+        with pytest.raises(DatasetStoreUnavailableError) as refused:
+            await PhoenixDatasetStore(proxy.url).get_dataset(name)
+    assert (refused.value.endpoint, refused.value.dataset) == (proxy.url, name)
+    assert refused.value.__cause__.response.status_code == 404
+    assert _rows(await store.get_dataset(name)) == [
+        ({"question": "q"}, {"answer": "a"})
+    ]
+    assert await store.delete_dataset(name) is True

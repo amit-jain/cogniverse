@@ -1,8 +1,9 @@
 """PhoenixDatasetStore must classify errors by TYPE/STATUS, not by substring
 matching on messages that embed the request URL or server body.
 
-A genuine missing dataset is a plain ValueError raised by phoenix's own name
-resolution after a successful HTTP call; an outage is an httpx error. A
+A dataset is found through Phoenix's name-filtered listing: an empty listing
+is a missing dataset, a refused listing is an outage, and a 404 counts as a
+deleted dataset only when Phoenix's own detail names that dataset's id. A
 duplicate-name conflict is HTTP 409. None of these may be confused with each
 other — the failure mode this pins is an outage being read as "no dataset"
 (silently disabling baseline reads) or a failed create being read as a
@@ -24,6 +25,7 @@ pytestmark = pytest.mark.unit
 
 
 _ENDPOINT = "http://phoenix:6006"
+_DATASET_ID = "RGF0YXNldDox"
 
 
 def _store():
@@ -33,35 +35,64 @@ def _store():
 
 
 def _http_error(
-    status: int, url: str = "http://phoenix:6006/v1/datasets"
+    status: int, url: str = "http://phoenix:6006/v1/datasets", **body
 ) -> httpx.HTTPStatusError:
     """A realistic httpx error whose message matches raise_for_status() —
     i.e. it embeds the status ('404 Not Found') and the URL, exactly the text
     the old substring sniff misread."""
     req = httpx.Request("GET", url)
-    resp = httpx.Response(status, request=req, text="backend detail")
+    resp = httpx.Response(status, request=req, **(body or {"text": "backend detail"}))
     try:
         resp.raise_for_status()
     except httpx.HTTPStatusError as e:
         return e
 
 
+def _listing(*, status: int = 200, example_count: int | None = None) -> httpx.Response:
+    """Phoenix's answer to ``GET /v1/datasets?name=ds1``: one row when
+    ``example_count`` is given, none otherwise, or a refusal."""
+    request = httpx.Request("GET", f"{_ENDPOINT}/v1/datasets")
+    if status != 200:
+        return httpx.Response(status, request=request, text="backend detail")
+    rows = (
+        []
+        if example_count is None
+        else [
+            {
+                "id": _DATASET_ID,
+                "name": "ds1",
+                "example_count": example_count,
+                "created_at": "2026-10-23T00:00:00+00:00",
+                "description": "",
+                "metadata": {},
+            }
+        ]
+    )
+    return httpx.Response(
+        200, request=request, json={"data": rows, "next_cursor": None}
+    )
+
+
+def _listed(response: httpx.Response):
+    return patch(
+        "cogniverse_telemetry_phoenix.provider.httpx.get", return_value=response
+    )
+
+
 class TestGetDataset:
     @pytest.mark.asyncio
     async def test_genuine_not_found_maps_to_subclass(self):
-        client = MagicMock()
-        client.datasets.get_dataset.side_effect = ValueError("Dataset not found: ds1")
-        with patch("phoenix.client.Client", return_value=client):
-            with pytest.raises(DatasetNotFoundError):
+        with _listed(_listing()), patch("phoenix.client.Client") as client_cls:
+            with pytest.raises(DatasetNotFoundError) as excinfo:
                 await _store().get_dataset("ds1")
+        assert str(excinfo.value) == "Dataset not found: ds1"
+        assert client_cls.call_count == 0
 
     @pytest.mark.asyncio
     async def test_http_404_from_outage_is_not_read_as_missing(self):
         """A 404 whose text embeds a URL/port containing '404', or a proxy 404
         during an outage, must surface as an error — never DatasetNotFoundError."""
-        client = MagicMock()
-        client.datasets.get_dataset.side_effect = _http_error(404)
-        with patch("phoenix.client.Client", return_value=client):
+        with _listed(_listing(status=404)):
             with pytest.raises(DatasetStoreUnavailableError) as excinfo:
                 await _store().get_dataset("ds1")
         assert excinfo.value.dataset == "ds1"
@@ -71,9 +102,7 @@ class TestGetDataset:
 
     @pytest.mark.asyncio
     async def test_503_outage_raises_not_missing(self):
-        client = MagicMock()
-        client.datasets.get_dataset.side_effect = _http_error(503)
-        with patch("phoenix.client.Client", return_value=client):
+        with _listed(_listing(status=503)):
             with pytest.raises(DatasetStoreUnavailableError) as excinfo:
                 await _store().get_dataset("ds1")
         assert excinfo.value.dataset == "ds1"
@@ -85,9 +114,7 @@ class TestGetDataset:
     async def test_name_containing_404_still_raises_on_outage(self):
         """Dataset name 'quality-baseline-20260404' + a 500 must not be read
         as not-found just because '404' appears in the name/message."""
-        client = MagicMock()
-        client.datasets.get_dataset.side_effect = _http_error(500)
-        with patch("phoenix.client.Client", return_value=client):
+        with _listed(_listing(status=500)):
             with pytest.raises(DatasetStoreUnavailableError) as excinfo:
                 await _store().get_dataset("quality-baseline-20260404")
         assert excinfo.value.dataset == "quality-baseline-20260404"
@@ -95,23 +122,92 @@ class TestGetDataset:
         assert isinstance(excinfo.value.__cause__, httpx.HTTPStatusError)
         assert excinfo.value.__cause__.response.status_code == 500
 
+    @pytest.mark.asyncio
+    async def test_a_dataset_holding_no_rows_reads_empty_without_describing_it(self):
+        """Phoenix answers 500 to a description of a dataset with no version,
+        so a listed dataset with no examples is answered from the listing."""
+        with (
+            _listed(_listing(example_count=0)),
+            patch("phoenix.client.Client") as client_cls,
+        ):
+            df = await _store().get_dataset("ds1")
+        assert (list(df.columns), df.index.name, len(df)) == (
+            ["input", "output", "metadata"],
+            "example_id",
+            0,
+        )
+        assert client_cls.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_rows_are_read_from_the_listed_dataset_id(self):
+        frame = pd.DataFrame({"input": [{"q": "a"}]})
+        client = MagicMock()
+        client.datasets.get_dataset.return_value.to_dataframe.return_value = frame
+        with (
+            _listed(_listing(example_count=1)),
+            patch("phoenix.client.Client", return_value=client),
+        ):
+            df = await _store().get_dataset("ds1")
+        assert df is frame
+        assert client.datasets.get_dataset.call_args.kwargs == {
+            "dataset": _DATASET_ID,
+            "timeout": 120,
+        }
+
+    @pytest.mark.asyncio
+    async def test_phoenix_404_naming_the_dataset_reads_as_deleted(self):
+        """Deleted between the listing and the read: Phoenix's own 404 names
+        the dataset id."""
+        client = MagicMock()
+        client.datasets.get_dataset.side_effect = _http_error(
+            404, text=f"Dataset with ID {_DATASET_ID} not found"
+        )
+        with (
+            _listed(_listing(example_count=1)),
+            patch("phoenix.client.Client", return_value=client),
+        ):
+            with pytest.raises(DatasetNotFoundError) as excinfo:
+                await _store().get_dataset("ds1")
+        assert str(excinfo.value) == "Dataset not found: ds1"
+        assert excinfo.value.__cause__.response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_a_404_not_naming_the_dataset_is_an_outage(self):
+        client = MagicMock()
+        client.datasets.get_dataset.side_effect = _http_error(
+            404, text=f"Cannot GET /v1/datasets/{_DATASET_ID}"
+        )
+        with (
+            _listed(_listing(example_count=1)),
+            patch("phoenix.client.Client", return_value=client),
+        ):
+            with pytest.raises(DatasetStoreUnavailableError) as excinfo:
+                await _store().get_dataset("ds1")
+        assert (excinfo.value.dataset, excinfo.value.endpoint) == ("ds1", _ENDPOINT)
+        assert excinfo.value.__cause__.response.status_code == 404
+
 
 class TestAppendToDataset:
     @pytest.mark.asyncio
     async def test_missing_raises_dataset_not_found_subclass(self):
-        client = MagicMock()
-        client.datasets.get_dataset.side_effect = ValueError("Dataset not found: ds1")
-        with patch("phoenix.client.Client", return_value=client):
+        with (
+            _listed(_listing()),
+            patch("cogniverse_telemetry_phoenix.provider.httpx.post") as post,
+        ):
             with pytest.raises(DatasetNotFoundError):
                 await _store().append_to_dataset("ds1", pd.DataFrame([{"a": 1}]))
+        assert post.call_count == 0
 
     @pytest.mark.asyncio
     async def test_outage_during_lookup_raises_not_missing(self):
-        client = MagicMock()
-        client.datasets.get_dataset.side_effect = _http_error(503)
-        with patch("phoenix.client.Client", return_value=client):
-            with pytest.raises(httpx.HTTPStatusError):
+        with (
+            _listed(_listing(status=503)),
+            patch("cogniverse_telemetry_phoenix.provider.httpx.post") as post,
+        ):
+            with pytest.raises(httpx.HTTPStatusError) as excinfo:
                 await _store().append_to_dataset("ds1", pd.DataFrame([{"a": 1}]))
+        assert excinfo.value.response.status_code == 503
+        assert post.call_count == 0
 
 
 def _upload_response(status: int, **kwargs) -> httpx.Response:
@@ -194,17 +290,35 @@ class TestCreateDataset:
 class TestDeleteDataset:
     @pytest.mark.asyncio
     async def test_genuine_missing_returns_false(self):
-        client = MagicMock()
-        client.datasets.get_dataset.side_effect = ValueError("Dataset not found: ds1")
-        with patch("phoenix.client.Client", return_value=client):
+        with (
+            _listed(_listing()),
+            patch("cogniverse_telemetry_phoenix.provider.httpx.delete") as delete,
+        ):
             assert await _store().delete_dataset("ds1") is False
+        assert delete.call_count == 0
 
     @pytest.mark.asyncio
     async def test_outage_raises_not_false(self):
         """A dead/hung backend must not be read as 'nothing to delete' — that
         turns replace-dataset's delete-then-create into a silent append."""
-        client = MagicMock()
-        client.datasets.get_dataset.side_effect = _http_error(503)
-        with patch("phoenix.client.Client", return_value=client):
-            with pytest.raises(httpx.HTTPStatusError):
+        with (
+            _listed(_listing(status=503)),
+            patch("cogniverse_telemetry_phoenix.provider.httpx.delete") as delete,
+        ):
+            with pytest.raises(httpx.HTTPStatusError) as excinfo:
                 await _store().delete_dataset("ds1")
+        assert excinfo.value.response.status_code == 503
+        assert delete.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_the_listed_dataset_id_is_deleted(self):
+        request = httpx.Request("DELETE", f"{_ENDPOINT}/v1/datasets/{_DATASET_ID}")
+        with (
+            _listed(_listing(example_count=0)),
+            patch(
+                "cogniverse_telemetry_phoenix.provider.httpx.delete",
+                return_value=httpx.Response(204, request=request),
+            ) as delete,
+        ):
+            assert await _store().delete_dataset("ds1") is True
+        assert delete.call_args.args == (f"{_ENDPOINT}/v1/datasets/{_DATASET_ID}",)
