@@ -1,0 +1,38 @@
+name: Install system packages
+description: >-
+  apt-install packages, reusing the .deb files the last install of the same
+  package set downloaded, so the runner's Ubuntu mirror is read only when
+  the set changes.
+inputs:
+  packages:
+    description: Space-separated apt package names.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Restore downloaded packages
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.cache/apt-archives
+        key: apt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.packages }}
+        restore-keys: apt-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Install packages
+      shell: bash
+      run: |
+        printf 'Acquire::Retries "5";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\n' \
+          | sudo tee /etc/apt/apt.conf.d/80-ci-timeouts
+        mkdir -p "$HOME/.cache/apt-archives/partial"
+        sudo apt-get update
+        sudo apt-get -o Dir::Cache::Archives="$HOME/.cache/apt-archives" \
+          install -y --no-install-recommends ${{ inputs.packages }}
+        sudo rm -rf "$HOME/.cache/apt-archives/partial" "$HOME/.cache/apt-archives/lock"
+        sudo chown -R "$(id -u):$(id -g)" "$HOME/.cache/apt-archives"
+
+    - name: Save downloaded packages
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/apt-archives
+        key: apt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.packages }}

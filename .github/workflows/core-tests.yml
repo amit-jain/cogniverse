@@ -98,10 +98,9 @@ jobs:
 
     - name: Install system libraries
       timeout-minutes: 12
-      run: |
-        printf 'Acquire::Retries \"5\";\nAcquire::http::Timeout \"20\";\nAcquire::https::Timeout \"20\";\n' | sudo tee /etc/apt/apt.conf.d/80-ci-timeouts
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends ffmpeg
+      uses: ./.github/actions/install-system-packages
+      with:
+        packages: ffmpeg
 
     - name: Prefetch DenseOn tokenizer
       run: |

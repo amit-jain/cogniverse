@@ -46,6 +46,7 @@ env:
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 27
     
     steps:
     - uses: actions/checkout@v4
@@ -57,11 +58,10 @@ jobs:
     
     - name: Install system dependencies
       timeout-minutes: 12
-      run: |
-        printf 'Acquire::Retries \"5\";\nAcquire::http::Timeout \"20\";\nAcquire::https::Timeout \"20\";\n' | sudo tee /etc/apt/apt.conf.d/80-ci-timeouts
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0 poppler-utils
-    
+      uses: ./.github/actions/install-system-packages
+      with:
+        packages: ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0 poppler-utils
+
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
@@ -142,6 +142,7 @@ jobs:
 
   test-cli:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: unit-tests
     
     steps:
@@ -154,11 +155,10 @@ jobs:
     
     - name: Install system dependencies
       timeout-minutes: 12
-      run: |
-        printf 'Acquire::Retries \"5\";\nAcquire::http::Timeout \"20\";\nAcquire::https::Timeout \"20\";\n' | sudo tee /etc/apt/apt.conf.d/80-ci-timeouts
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0 poppler-utils
-    
+      uses: ./.github/actions/install-system-packages
+      with:
+        packages: ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0 poppler-utils
+
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
@@ -192,7 +192,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 37
     needs: unit-tests
 
     steps:
@@ -205,10 +205,9 @@ jobs:
 
     - name: Install system dependencies
       timeout-minutes: 12
-      run: |
-        printf 'Acquire::Retries \"5\";\nAcquire::http::Timeout \"20\";\nAcquire::https::Timeout \"20\";\n' | sudo tee /etc/apt/apt.conf.d/80-ci-timeouts
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0 poppler-utils
+      uses: ./.github/actions/install-system-packages
+      with:
+        packages: ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0 poppler-utils
 
     - name: Install uv
       uses: astral-sh/setup-uv@v4
