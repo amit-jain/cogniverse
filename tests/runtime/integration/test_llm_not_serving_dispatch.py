@@ -120,6 +120,10 @@ def app(undeployed_student, telemetry_off):
                 process_endpoint=f"/agents/{name}/process",
             )
         )
+    # /health answers from the registry injected into the agents router, so
+    # this app injects its own rather than read one an earlier test left.
+    saved = (agents._agent_registry, agents._dispatcher)
+    agents.set_agent_registry(registry)
     agents._dispatcher = AgentDispatcher(
         agent_registry=registry, config_manager=manager, schema_loader=None
     )
@@ -127,7 +131,7 @@ def app(undeployed_student, telemetry_off):
     application.include_router(health.router)
     application.include_router(agents.router, prefix="/agents")
     yield application
-    agents._dispatcher = None
+    agents._agent_registry, agents._dispatcher = saved
 
 
 def _task(query: str) -> dict:

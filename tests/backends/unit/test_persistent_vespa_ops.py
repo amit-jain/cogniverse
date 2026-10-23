@@ -9,6 +9,9 @@ those ops through a persistent session instead.
 
 from __future__ import annotations
 
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import MagicMock, patch
 
 from vespa.application import VespaSync
@@ -81,3 +84,61 @@ def test_store_close_is_noop_for_injected_plain_app():
     store = VespaConfigStore(vespa_app=injected)
 
     store.close()  # must not raise
+
+
+class _DocumentHandler(BaseHTTPRequestHandler):
+    """A document/v1 GET answering, in order, the statuses in ``answers``."""
+
+    protocol_version = "HTTP/1.1"
+    answers: list = []
+    received: list = []
+    connections: list = []
+
+    def setup(self):
+        super().setup()
+        type(self).connections.append(self.client_address)
+
+    def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler contract
+        type(self).received.append(self.path)
+        status, body = type(self).answers.pop(0)
+        encoded = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def log_message(self, *args):
+        return
+
+
+def test_get_document_answers_every_status_over_one_connection():
+    answers = [
+        (503, {"message": "Vespa is overloaded"}),
+        (404, {"id": "id:ns:s::d"}),
+        (200, {"id": "id:ns:s::d", "fields": {"version": 3}}),
+    ]
+    handler = type(
+        "Handler",
+        (_DocumentHandler,),
+        {"answers": list(answers), "received": [], "connections": []},
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    ops = make_persistent_vespa_ops(
+        url="http://127.0.0.1", port=server.server_address[1]
+    )
+    try:
+        seen = [
+            (response.status_code, response.get_json())
+            for response in (
+                ops.get_document(schema="config_metadata", data_id="d", namespace="ns")
+                for _ in answers
+            )
+        ]
+    finally:
+        ops.close()
+        server.shutdown()
+    assert seen == answers
+    assert handler.received == ["/document/v1/ns/config_metadata/docid/d"] * 3
+    assert len(handler.connections) == 1

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -17,6 +18,7 @@ import pytest
 from cogniverse_foundation.config.token_budget import (
     SINGLE_TURN_TEMPLATE_TOKENS,
     TOKENIZE_TIMEOUT_SECONDS,
+    ContextWindowEndpointUnreachableError,
     ContextWindowUnavailableError,
     FittedLines,
     FittedText,
@@ -638,12 +640,12 @@ class TestBudgetFaultContract:
             num_retries=0,
         )
 
-        with pytest.raises(ContextWindowUnavailableError) as exc:
+        with pytest.raises(ContextWindowEndpointUnreachableError) as exc:
             lm.budget
 
         assert str(exc.value) == (
-            f"openai/Qwen/Qwen3-14B-AWQ at {base_url}/v1 publishes no context "
-            f"window and declares none, so no request budget can be derived"
+            f"openai/Qwen/Qwen3-14B-AWQ at {base_url}/v1 is unreachable and "
+            f"declares no context window, so no request budget can be derived"
         )
         assert str(exc.value.__cause__) == (
             f"{base_url}/v1/models is unreachable, so the served context window "
@@ -795,6 +797,44 @@ class _ConcurrentServer(ThreadingHTTPServer):
     request_queue_size = 64
 
 
+# Past httpx's default 5 s keep-alive, inside the counter's own.
+IDLE_PAST_DEFAULT_KEEPALIVE_S = 6.0
+
+
+def _serve_tokenize_kept_alive(
+    *, close_after_response: bool = False, delay_s: float = 0.0
+):
+    """A ``/tokenize`` speaking HTTP/1.1 that records each connection it
+    accepts. ``close_after_response`` drops the connection after answering
+    without saying so, as an endpoint closing an idle connection does."""
+    received: list = []
+    connections: list = []
+
+    class Handler(_TokenizeHandler):
+        protocol_version = "HTTP/1.1"
+
+        def setup(self):
+            super().setup()
+            connections.append(self.client_address)
+
+        def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler contract
+            time.sleep(delay_s)
+            super().do_POST()
+            if close_after_response:
+                self.close_connection = True
+
+    Handler.received = received
+    Handler.failures = []
+    server = _ConcurrentServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return (
+        server,
+        f"http://127.0.0.1:{server.server_address[1]}/v1",
+        received,
+        connections,
+    )
+
+
 @pytest.mark.unit
 class TestServedMessageCounter:
     """The student is counted by the tokenizer and chat template it serves."""
@@ -924,6 +964,82 @@ class TestServedMessageCounter:
             server.shutdown()
         assert results == {index: 4 + index + 1 for index in range(threads)}
         assert len(received) == threads
+
+    def test_a_count_after_an_idle_pause_reuses_the_connection(self):
+        server, api_base, received, connections = _serve_tokenize_kept_alive()
+        try:
+            count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+            first = count(self.MESSAGES)
+            time.sleep(IDLE_PAST_DEFAULT_KEEPALIVE_S)
+            second = count(self.MESSAGES)
+        finally:
+            server.shutdown()
+        assert (first, second, len(received), len(connections)) == (16, 16, 2, 1)
+
+    def test_a_connection_the_endpoint_closed_is_replaced_without_a_failed_count(
+        self,
+    ):
+        server, api_base, received, connections = _serve_tokenize_kept_alive(
+            close_after_response=True
+        )
+        slept: list = []
+        try:
+            count = served_message_counter(
+                api_base, "openai/google/gemma-4-e4b-it", retries=0, sleep=slept.append
+            )
+            first = count(self.MESSAGES)
+            time.sleep(0.5)
+            second = count(self.MESSAGES)
+        finally:
+            server.shutdown()
+        assert (first, second, len(received), len(connections), slept) == (
+            16,
+            16,
+            2,
+            2,
+            [],
+        )
+
+    def test_concurrent_counts_after_an_idle_pause_reuse_their_connections(self):
+        threads = 16
+        server, api_base, received, connections = _serve_tokenize_kept_alive(
+            delay_s=0.3
+        )
+        count = served_message_counter(api_base, "openai/google/gemma-4-e4b-it")
+
+        def round_of_counts() -> dict[int, int]:
+            barrier = threading.Barrier(threads)
+            results: dict[int, int] = {}
+
+            def worker(index: int) -> None:
+                messages = [{"role": "user", "content": _words(index + 1)}]
+                barrier.wait()
+                results[index] = count(messages)
+
+            pool = [
+                threading.Thread(target=worker, args=(index,))
+                for index in range(threads)
+            ]
+            for thread in pool:
+                thread.start()
+            for thread in pool:
+                thread.join()
+            return results
+
+        try:
+            first = round_of_counts()
+            opened = len(connections)
+            time.sleep(IDLE_PAST_DEFAULT_KEEPALIVE_S)
+            second = round_of_counts()
+        finally:
+            server.shutdown()
+        expected = {index: 4 + index + 1 for index in range(threads)}
+        assert (first, second) == (expected, expected)
+        assert (opened, len(connections), len(received)) == (
+            threads,
+            threads,
+            2 * threads,
+        )
 
 
 def _allowance(api_base: str, *, window: int, reserved: int, margin: int = 0):

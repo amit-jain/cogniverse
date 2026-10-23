@@ -15,7 +15,7 @@ import pytest
 from cogniverse_agents.inference.tolerant_interpreter import TolerantRLM
 from cogniverse_foundation.config.semantic_router import create_routed_lm
 from cogniverse_foundation.config.token_budget import (
-    ContextWindowUnavailableError,
+    ContextWindowEndpointUnreachableError,
     TokenCountUnavailableError,
     clear_context_window_memo,
     cut_notice,
@@ -199,13 +199,13 @@ class TestSubQueryBudgetFaultContract:
         lm = _lm(dead, router.api_base, "orchestrator_agent")
         try:
             with dspy.context(lm=lm):
-                with pytest.raises(ContextWindowUnavailableError) as raised:
+                with pytest.raises(ContextWindowEndpointUnreachableError) as raised:
                     _tools()["llm_query"]("short prompt")
         finally:
             router.close()
 
         assert str(raised.value) == (
-            f"{STUDENT} at {dead} publishes no context window and declares "
-            "none, so no request budget can be derived"
+            f"{STUDENT} at {dead} is unreachable and declares no context "
+            "window, so no request budget can be derived"
         )
         assert router.received == []

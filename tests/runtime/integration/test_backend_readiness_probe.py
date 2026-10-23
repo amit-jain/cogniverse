@@ -546,21 +546,24 @@ def _history(store, tenant):
 
 
 class _RefuseReadsOf:
-    """An ``InterceptFaultProxy`` intercept answering 503 to the document API
-    reads of ``tenant``'s config, as a Vespa that is not answering does: the
-    first ``times`` reads, or every one when ``times`` is None. ``refused``
-    counts them; every other request is forwarded."""
+    """An ``InterceptFaultProxy`` intercept answering 503 to the reads of
+    ``tenant``'s config version counter, the read a write makes first, as a
+    Vespa that is not answering does: the first ``times`` reads, or every one
+    when ``times`` is None. ``refused`` counts them; every other request is
+    forwarded."""
 
     def __init__(self, tenant: str, times: int | None) -> None:
-        self._needle = f'config_metadata.tenant_id == "{tenant}"'
+        self._tenant = tenant
         self._times = times
         self._lock = threading.Lock()
         self.refused = 0
 
     def __call__(self, method, path, _body):
-        if method != "GET" or not path.startswith("/document/v1/"):
+        if method != "GET" or not path.startswith(
+            f"/document/v1/{config_store_module._VERSION_COUNTER_NAMESPACE}/"
+        ):
             return None
-        if self._needle not in unquote_plus(path):
+        if f"/docid/{self._tenant}:" not in unquote_plus(path):
             return None
         with self._lock:
             if self._times is not None and self.refused >= self._times:
@@ -569,11 +572,14 @@ class _RefuseReadsOf:
         return 503, {"message": "config store not answering"}
 
 
-_UNANSWERED_READ = (
-    r"ConfigStoreUnavailableError: Failed to read Vespa config visit after "
-    rf"{config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS} attempts over "
-    r"\d+\.\d{3}s: HTTPError: 503 Server Error: .*"
-)
+def _unanswered_read(tenant: str) -> str:
+    """The counter read's failure once every attempt was refused, escaped."""
+    return re.escape(
+        "ConfigStoreUnavailableError: Failed to read the version counter of "
+        f"config {tenant}:system:system:system_config after "
+        f"{config_store_module._CONFIG_STORE_READ_MAX_ATTEMPTS} attempts: "
+        "HTTP 503: {'message': 'config store not answering'}"
+    )
 
 
 def test_a_startup_config_write_waits_out_a_store_that_does_not_answer(
@@ -620,7 +626,7 @@ def test_a_startup_config_write_waits_out_a_store_that_does_not_answer(
     assert len(waits) == 1, waits
     assert re.fullmatch(
         r"Config store for the startup test write is not ready \(attempt 1, "
-        r"retrying in 0\.1s\): " + _UNANSWERED_READ,
+        r"retrying in 0\.1s\): " + _unanswered_read(tenant),
         waits[0],
     ), waits[0]
     assert _history(direct, tenant) == [
@@ -669,7 +675,7 @@ def test_a_store_unavailable_past_the_budget_fails_the_write_naming_it(vespa_ins
     # after that one attempt.
     assert re.fullmatch(
         r"Config store for the startup test write was not ready after 1 attempt "
-        r"within 1\.0s: " + _UNANSWERED_READ,
+        r"within 1\.0s: " + _unanswered_read(tenant),
         str(raised.value),
     ), str(raised.value)
     assert type(raised.value.__cause__) is ConfigStoreUnavailableError

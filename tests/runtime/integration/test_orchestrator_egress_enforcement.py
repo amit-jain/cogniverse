@@ -12,7 +12,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cogniverse_agents.orchestrator_agent import AgentStep, OrchestrationPlan
+from cogniverse_agents.orchestrator_agent import (
+    ORCHESTRATION_STEP_CONTEXT_KEY,
+    AgentStep,
+    OrchestrationPlan,
+)
 from cogniverse_core.registries.agent_registry import AgentEndpoint, AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
@@ -274,7 +278,11 @@ def dispatched(query: str, tenant: str) -> list[tuple[str, dict]]:
     return [
         (
             f"/agents/{name}/process",
-            {"agent_name": name, "query": query, "context": {"tenant_id": tenant}},
+            {
+                "agent_name": name,
+                "query": query,
+                "context": {"tenant_id": tenant, ORCHESTRATION_STEP_CONTEXT_KEY: True},
+            },
         )
         for name in PLAN_AGENTS
     ]

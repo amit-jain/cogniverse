@@ -15,6 +15,7 @@ and returned ``no_data`` even on real traffic.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -179,6 +180,14 @@ async def test_profile_selection_span_yields_training_pair(
         tenant_id=tenant_id,
     )
     register_deployed_schema(config_manager_memory, tenant_id, profile_name)
+    # A profile is selectable only once its embedding service is configured;
+    # the selection never calls the encoder, so nothing listens there.
+    config_manager_memory.set_system_config(
+        dataclasses.replace(
+            config_manager_memory.get_system_config(),
+            inference_service_urls={"vllm_colpali": "http://127.0.0.1:29071"},
+        )
+    )
     agent = ProfileSelectionAgent(deps=ProfileSelectionDeps(), port=19111)
     agent.bind_config_manager(config_manager_memory)
     agent.set_telemetry_manager(real_telemetry)
@@ -224,10 +233,9 @@ async def test_orchestration_span_carries_canonical_workflow(
     )
     from cogniverse_core.common.agent_models import AgentEndpoint
     from cogniverse_core.registries.agent_registry import AgentRegistry
-    from cogniverse_foundation.config.unified_config import (
-        RoutingConfigUnified,
-        SystemConfig,
-    )
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from tests.utils.memory_store import InMemoryConfigStore
 
     tenant_id = "orch-opt-real"
 
@@ -248,26 +256,22 @@ async def test_orchestration_span_carries_canonical_workflow(
         )
     )
 
-    mock_cm = MagicMock()
-    mock_cm.get_system_config.return_value = SystemConfig(
-        backend_url="http://localhost",
-        backend_port=8080,
-        iter_retrieval_max_iter=3,
-        iter_retrieval_token_budget=10000,
-        iter_retrieval_wall_clock_ms=10000,
-        inference_service_urls={"gliner": gliner_url},
-    )
-    mock_cm.get_config.return_value = {}
-    mock_cm.get_routing_config.side_effect = (
-        lambda tenant_id=None, service="gateway_agent": RoutingConfigUnified(
-            tenant_id=tenant_id
+    config_manager = ConfigManager(store=InMemoryConfigStore())
+    config_manager.set_system_config(
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=8080,
+            iter_retrieval_max_iter=3,
+            iter_retrieval_token_budget=10000,
+            iter_retrieval_wall_clock_ms=10000,
+            inference_service_urls={"gliner": gliner_url},
         )
     )
 
     agent = OrchestratorAgent(
         deps=OrchestratorDeps(),
         registry=registry,
-        config_manager=mock_cm,
+        config_manager=config_manager,
         port=19113,
     )
     agent.set_telemetry_manager(real_telemetry)

@@ -106,6 +106,32 @@ _LITELLM_PROVIDERS = (
 )
 
 
+# One-token completions against the Modal chat apps scaled to zero after 900 s
+# idle, 2026-09-13: student cold 135.0 s, teacher cold 82.6 s (105-120 s on
+# earlier days); warm calls under 0.9 s on both.
+LONGEST_MEASURED_MODAL_CHAT_COLD_START_S = 135.0
+
+
+def wait_for_test_lm_to_answer() -> None:
+    """Block until the test LM answers one completion.
+
+    A scaled-to-zero Modal app answers its first request only after its cold
+    start, so a caller holding a budget measured on a warm endpoint waits for
+    one answer first instead of timing out on the cold one.
+    """
+    import litellm
+
+    litellm.completion(
+        model=resolve_prefixed_model(),
+        api_base=resolve_base_url(),
+        api_key=resolve_api_key(),
+        messages=[{"role": "user", "content": "ready"}],
+        max_tokens=1,
+        timeout=2 * LONGEST_MEASURED_MODAL_CHAT_COLD_START_S,
+        num_retries=0,
+    )
+
+
 def resolve_base_url() -> str:
     api_base, _ = _resolved_llm_config()
     return api_base

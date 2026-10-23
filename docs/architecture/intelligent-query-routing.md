@@ -452,10 +452,11 @@ flowchart TD
 
 ## Context-Aware Routing
 
-Follow-up queries carry anaphoric references ("that", "those", "longer ones") that only resolve against the prior turn. `AgentDispatcher` passes the caller-supplied `conversation_history` through to `_rewrite_query_with_history`, which uses `ConversationalQueryRewriteModule` (a `dspy.Module` in `cogniverse_agents/search_agent.py`) to rewrite the query into a self-contained form before it reaches search or the gateway's entity classification.
+Follow-up queries carry anaphoric references ("that", "those", "the first one") that only resolve against the prior turn. `AgentDispatcher` rewrites such a query with `_rewrite_query_with_history`, which runs `ConversationalQueryRewriteModule` (a `dspy.Module` in `cogniverse_agents/search_agent.py`) over the caller-supplied `conversation_history`, before the query reaches search, image, audio or document search, deep research, or the orchestrator. The orchestrator's planner also reads the history, but the agents it runs receive only the rewritten query.
 
-- The rewriter receives the raw query plus the full `conversation_history` list supplied on the request (no separate session store or sliding window is maintained server-side)
-- When the rewritten query differs from the input, both `original_query` and `rewritten_query` are included in the response so callers can see what changed
+- The rewriter reads the last five turns of the history, each cut to 200 characters. The history is the request's `conversation_history`, or, for a request carrying a `context_id` and no history, the turns the runtime stored for that context
+- Whenever a `conversation_history` is supplied, search and orchestration responses carry both `original_query` and `rewritten_query`, equal when nothing needed resolving
+- When the rewrite's LM call fails, the request fails; the unresolved query is never run
 - If no `conversation_history` is supplied, the query is passed through unchanged
 
 ---

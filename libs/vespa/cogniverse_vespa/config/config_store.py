@@ -661,11 +661,10 @@ class VespaConfigStore(ImmutableConfigStore):
         """
         for attempt in range(1, _CONFIG_STORE_READ_MAX_ATTEMPTS + 1):
             try:
-                response = self.vespa_app.get_data(
+                response = self.vespa_app.get_document(
                     schema=self.schema_name,
                     namespace=_VERSION_COUNTER_NAMESPACE,
                     data_id=config_id,
-                    raise_on_not_found=False,
                 )
             except Exception as exc:
                 if (

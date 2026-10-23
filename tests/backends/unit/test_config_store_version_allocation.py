@@ -162,7 +162,7 @@ class App:
     def get_document_v1_path(self, id: str, schema: str, namespace: str) -> str:
         return f"/document/v1/{namespace}/{schema}/docid/{id}"
 
-    def get_data(self, schema, data_id, namespace=None, raise_on_not_found=False):
+    def get_document(self, schema, data_id, namespace):
         status, body = self.fake.get(namespace or schema, data_id)
         return SimpleNamespace(status_code=status, get_json=lambda: body)
 
@@ -371,7 +371,7 @@ def test_an_unreadable_counter_raises_before_any_write(fake):
     def refuse(**kwargs):
         raise requests.ConnectionError("connection refused")
 
-    app.get_data = refuse
+    app.get_document = refuse
 
     with pytest.raises(config_store_module.ConfigStoreUnavailableError) as raised:
         store.set_config(*COORDINATES, {"n": 2})
@@ -385,18 +385,18 @@ def test_an_unreadable_counter_raises_before_any_write(fake):
 def _answer_counter_reads_with(app: App, answers: list[tuple[int, dict]]) -> list[int]:
     """Serve the next counter GETs from ``answers``, then the fake's own; the
     returned list grows by one entry per counter GET."""
-    real_get = app.get_data
+    real_get = app.get_document
     reads: list[int] = []
 
-    def get_data(schema, data_id, namespace=None, raise_on_not_found=False):
+    def get_document(schema, data_id, namespace):
         if namespace == config_store_module._VERSION_COUNTER_NAMESPACE:
             reads.append(len(reads))
             if answers:
                 status, body = answers.pop(0)
                 return SimpleNamespace(status_code=status, get_json=lambda: body)
-        return real_get(schema, data_id, namespace, raise_on_not_found)
+        return real_get(schema, data_id, namespace)
 
-    app.get_data = get_data
+    app.get_document = get_document
     return reads
 
 

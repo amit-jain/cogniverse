@@ -27,6 +27,7 @@ from cogniverse_foundation.config.llm_factory import create_budgeted_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMConfig
 from cogniverse_runtime.agent_dispatcher import GROUNDING_SEARCH_TIMEOUT_KEY
 from cogniverse_runtime.synthetic_config import parse_synthetic_runtime_config
+from tests.fixtures.llm import LONGEST_MEASURED_MODAL_CHAT_COLD_START_S
 from tests.fixtures.shipped_config import load_shipped_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -343,12 +344,6 @@ def test_shipped_configs_declare_identical_teacher_request_bounds():
             "request_timeout": 210.0,
         }
     )
-
-
-# One-token completions against the Modal chat apps scaled to zero after 900 s
-# idle, 2026-09-13: student cold 135.0 s, teacher cold 82.6 s (105-120 s on
-# earlier days); warm calls under 0.9 s on both.
-LONGEST_MEASURED_MODAL_CHAT_COLD_START_S = 135.0
 
 
 @pytest.mark.unit

@@ -45,8 +45,15 @@ from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_foundation.config.inference_auth import (
+    endpoint_root,
+    inference_headers,
+)
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.token_budget import (
+    ContextWindowEndpointUnreachableError,
+)
 from cogniverse_foundation.config.unified_config import (
     BackendProfileConfig,
     SystemConfig,
@@ -125,8 +132,9 @@ LOOP_GAP_BUDGET_SECONDS = 0.15
 # streamify (anyio's from-thread bridge).
 LM_STREAM_TASK_QUALNAME = "AsyncIOBackend.run_async_from_thread.<locals>.task_wrapper"
 LM_413_ERROR_TYPE = "APIError"
-# litellm reports a refused connection as InternalServerError.
-LM_UNREACHABLE_ERROR_TYPE = "InternalServerError"
+# The summarizer reads its endpoint's context window before the first
+# completion; a dead port fails that read.
+LM_UNREACHABLE_ERROR_TYPE = ContextWindowEndpointUnreachableError.__name__
 # The grounding search over the tenant's empty schema retrieves nothing, so the
 # summarizer sends the question as both its content and its query.
 MARKER_COPIES_PER_REQUEST = 2
@@ -151,10 +159,15 @@ def _free_port() -> int:
 
 
 class RecordingProxy:
-    """A real HTTP hop in front of the LM that records every request body."""
+    """A real HTTP hop in front of the LM that records every completion request
+    body. It also relays the model listing and ``/tokenize`` a budgeted LM
+    reads before completing, with the upstream's credentials, as the router in
+    front of the served model does; those are not recorded."""
 
     def __init__(self, upstream: str) -> None:
         self.upstream = upstream.rstrip("/")
+        upstream_root = endpoint_root(self.upstream)
+        upstream_auth = dict(inference_headers(upstream_root))
         self.requests: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
         proxy = self
@@ -163,30 +176,23 @@ class RecordingProxy:
             def log_message(self, *args: Any) -> None:
                 return
 
-            def do_POST(self) -> None:
-                raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                body = json.loads(raw)
-                with proxy._lock:
-                    proxy.requests.append(body)
+            def _relay(self, method: str, raw: bytes | None) -> None:
                 # Relayed bytes are the upstream's raw body, so ask for it
                 # unencoded: the relayed headers carry no Content-Encoding.
                 headers = {
                     "Content-Type": "application/json",
                     "Accept-Encoding": "identity",
+                    **upstream_auth,
                 }
                 if self.headers.get("Authorization"):
                     headers["Authorization"] = self.headers["Authorization"]
-                path = (
-                    self.path[len("/v1") :]
+                target = (
+                    f"{proxy.upstream}{self.path[len('/v1') :]}"
                     if self.path.startswith("/v1")
-                    else self.path
+                    else f"{upstream_root}{self.path}"
                 )
                 with httpx.stream(
-                    "POST",
-                    f"{proxy.upstream}{path}",
-                    content=raw,
-                    headers=headers,
-                    timeout=180.0,
+                    method, target, content=raw, headers=headers, timeout=180.0
                 ) as upstream:
                     self.send_response(upstream.status_code)
                     self.send_header(
@@ -200,6 +206,16 @@ class RecordingProxy:
                             self.wfile.flush()
                     except (BrokenPipeError, ConnectionResetError):
                         return
+
+            def do_GET(self) -> None:
+                self._relay("GET", None)
+
+            def do_POST(self) -> None:
+                raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                if self.path.endswith("/chat/completions"):
+                    with proxy._lock:
+                        proxy.requests.append(json.loads(raw))
+                self._relay("POST", raw)
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self._server.daemon_threads = True
@@ -221,7 +237,8 @@ class RecordingProxy:
 
 
 class StatusServer:
-    """A real HTTP LM endpoint that rejects every request with one status."""
+    """A real HTTP LM endpoint that lists its model and counts tokens, as a
+    served model does, and rejects every completion with one status."""
 
     def __init__(self, status: int, body: bytes) -> None:
         self.hits = 0
@@ -231,8 +248,29 @@ class StatusServer:
             def log_message(self, *args: Any) -> None:
                 return
 
+            def _json(self, payload: Dict[str, Any]) -> None:
+                encoded = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def do_GET(self) -> None:
+                self._json(
+                    {
+                        "object": "list",
+                        "data": [{"id": MODEL, "max_model_len": 8192}],
+                    }
+                )
+
             def do_POST(self) -> None:
-                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                if self.path == "/tokenize":
+                    messages = json.loads(raw)["messages"]
+                    words = sum(len(str(m["content"]).split()) for m in messages)
+                    self._json({"count": words + 4 * len(messages), "tokens": []})
+                    return
                 server.hits += 1
                 self.send_response(status)
                 self.send_header("Content-Type", "text/plain")

@@ -15,6 +15,7 @@ from typing import Optional
 from urllib.parse import urlsplit
 
 from vespa.application import Vespa
+from vespa.io import VespaResponse
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,26 @@ class PersistentVespaOps:
 
     def get_data(self, *args, **kwargs):
         return self._sync.get_data(*args, **kwargs)
+
+    def get_document(self, schema: str, data_id: str, namespace: str) -> VespaResponse:
+        """``GET`` one document over the persistent session and answer its
+        status whatever it is. ``get_data`` raises on a 5xx with an
+        ``HTTPError`` that carries no status, so a caller that retries an
+        overloaded backend could not tell it from a refused request."""
+        path = self.app.get_document_v1_path(
+            id=data_id, schema=schema, namespace=namespace
+        )
+        response = self._sync._request_with_retry("GET", f"{self.app.end_point}{path}")
+        try:
+            body = response.json()
+        except ValueError:
+            body = {"message": response.text}
+        return VespaResponse(
+            json=body,
+            status_code=response.status_code,
+            url=str(response.url),
+            operation_type="get",
+        )
 
     def delete_data(self, *args, **kwargs):
         return self._sync.delete_data(*args, **kwargs)

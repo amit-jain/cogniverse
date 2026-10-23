@@ -814,11 +814,35 @@ def retrieval_dispatcher(retrieval_config_manager, seeded_corpus):
     return _dispatcher(retrieval_config_manager)
 
 
+@pytest.fixture
+def answering_lm(ensure_host_ollama, retrieval_config_manager):
+    """The rewrite LM, answering, and its window read the way a runtime worker
+    reads it at startup, before the test holds a rewrite to its budget.
+
+    The Modal student scales to zero when idle and answers its first request
+    only after its cold start; a rewrite then overruns the budget and the
+    search is correctly reported degraded, which is not the state these tests
+    pin.
+    """
+    from cogniverse_foundation.config.utils import get_config
+    from cogniverse_runtime.main import preload_served_context_windows
+    from tests.fixtures.llm import wait_for_test_lm_to_answer
+
+    wait_for_test_lm_to_answer()
+    preload_served_context_windows(
+        get_config(
+            tenant_id=TENANT_RETRIEVAL, config_manager=retrieval_config_manager
+        ).get_llm_config(),
+        retrieval_config_manager.get_system_config().inference_service_urls,
+    )
+
+
 def _hit_ids(grounding) -> list[str]:
     return [hit["id"] for hit in grounding.hits]
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("answering_lm")
 class TestGroundingSearchReturnsTheTenantsDocuments:
     """The grounding search returns THIS tenant's documents, ranked."""
 
@@ -924,6 +948,7 @@ def _dispatcher_with_colpali_at(retrieval_vespa, pylate_url: str, colpali_url: s
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("answering_lm")
 class TestOneProfilesEncoderDownDegradesTheGrounding:
     """A fan-out leg whose encoder is unreachable is named, not erased."""
 
@@ -1036,6 +1061,7 @@ class TestGroundingSearchIsBounded:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("answering_lm")
 class TestConcurrentDispatchesDeriveProfilesPerRequest:
     """Concurrent grounding derives each request's own tenant's profiles."""
 
@@ -1079,6 +1105,7 @@ class TestConcurrentDispatchesDeriveProfilesPerRequest:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("answering_lm")
 class TestEnsembleFanOutCost:
     """What the fan-out costs, and that it is paid in parallel."""
 
@@ -1217,9 +1244,11 @@ def _counting_test_lm():
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.calls = 0
+            self.requests = []
 
         def __call__(self, *args, **kwargs):
             self.calls += 1
+            self.requests.append(kwargs.get("messages"))
             return super().__call__(*args, **kwargs)
 
     return _CountingLM(
@@ -1281,6 +1310,7 @@ async def _search(dispatcher, query, profiles, enhanced_query=None):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("answering_lm")
 class TestBothSearchPathsRewriteTheQueryOnce:
     async def test_one_profile_and_an_ensemble_search_the_same_rewritten_query(
         self, retrieval_dispatcher, ensure_host_ollama
@@ -1303,12 +1333,15 @@ class TestBothSearchPathsRewriteTheQueryOnce:
         assert (after_single, lm.calls - after_single) == (1, 1), (
             "one rewrite per search — never one per ensemble leg"
         )
-        rewritten = single["query_rewrite"]["enhanced_query"]
-        assert rewritten != REWRITE_QUERY, "the rewrite left the query unchanged"
-        assert rewritten == rewritten.strip() != ""
-        assert ensemble["query_rewrite"]["enhanced_query"] == rewritten, (
-            "the profile count must not change which query is searched"
+        assert lm.requests[0] == lm.requests[1], (
+            "the profile count must not change what the rewrite is asked"
         )
+        for rewritten in (
+            single["query_rewrite"]["enhanced_query"],
+            ensemble["query_rewrite"]["enhanced_query"],
+        ):
+            assert rewritten != REWRITE_QUERY, "the rewrite left the query unchanged"
+            assert rewritten == rewritten.strip() != ""
         assert (
             single["query_rewrite"]["degraded"],
             ensemble["query_rewrite"]["degraded"],
