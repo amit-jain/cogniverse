@@ -3196,22 +3196,13 @@ class AgentDispatcher:
         Reads the tenant's persisted ``AgentConfig`` (set via
         ``ConfigManager.set_agent_config``) and threads ``thinking_enabled`` /
         ``visual_analysis_enabled`` into the agent's Deps. Returns an empty dict
-        — so the Deps field defaults apply — when no per-tenant config is set,
-        or when the config read fails (a behavior toggle must not break
-        dispatch).
+        — so the Deps field defaults apply — when no per-tenant config is set.
+        A config that cannot be read raises, so no agent is built without the
+        tenant's toggles.
         """
         from cogniverse_foundation.config.agent_config import AgentConfig
 
-        try:
-            cfg = self._config_manager.get_agent_config(tenant_id, agent_name)
-        except Exception as exc:
-            logger.warning(
-                "agent config read failed for %s/%s: %r — using Deps defaults",
-                tenant_id,
-                agent_name,
-                exc,
-            )
-            return {}
+        cfg = self._config_manager.get_agent_config(tenant_id, agent_name)
         # get_agent_config is typed Optional[AgentConfig]; anything else (None,
         # or a test double that doesn't honor the contract) means no per-tenant
         # override, so the Deps field defaults apply.
