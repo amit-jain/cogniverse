@@ -1,13 +1,8 @@
-"""Pipeline-cache reserved surfaces: segment frames, invalidation, stats.
-
-Kept as supported API (segment-frame caching for chunked profiles, ops
-invalidation, stats) — none had a single caller or test, so their contracts
-are pinned here against the real filesystem-backed CacheManager.
-"""
+"""Pipeline-cache invalidation and stats against the real filesystem-backed
+CacheManager."""
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from cogniverse_core.common.cache.base import CacheConfig, CacheManager
@@ -30,55 +25,6 @@ def cache(tmp_path):
         )
     )
     return PipelineArtifactCache(manager, ttl=3600, profile="test_profile")
-
-
-@pytest.mark.asyncio
-async def test_segment_frames_round_trip(cache):
-    frames = [np.full((4, 4, 3), i, dtype=np.uint8) for i in range(3)]
-    ok = await cache.set_segment_frames(
-        video_path="/videos/clip.mp4",
-        segment_id=0,
-        start_time=0.0,
-        end_time=6.0,
-        frames=frames,
-        timestamps=[0.0, 2.0, 4.0],
-    )
-    assert ok is True
-
-    result = await cache.get_segment_frames(
-        video_path="/videos/clip.mp4",
-        segment_id=0,
-        start_time=0.0,
-        end_time=6.0,
-        load_images=True,
-    )
-    assert result is not None
-    metadata, images = result if isinstance(result, tuple) else (result, [])
-    assert metadata["segment_id"] == 0
-    assert metadata["timestamps"] == [0.0, 2.0, 4.0]
-    assert len(images) == 3
-    assert (images[1] == frames[1]).all(), "frame bytes must survive the cache"
-
-
-@pytest.mark.asyncio
-async def test_segment_frames_miss_on_different_segment(cache):
-    await cache.set_segment_frames(
-        video_path="/videos/clip.mp4",
-        segment_id=0,
-        start_time=0.0,
-        end_time=6.0,
-        frames=[np.zeros((2, 2, 3), dtype=np.uint8)],
-        timestamps=[0.0],
-    )
-    assert (
-        await cache.get_segment_frames(
-            video_path="/videos/clip.mp4",
-            segment_id=7,
-            start_time=42.0,
-            end_time=48.0,
-        )
-        is None
-    )
 
 
 @pytest.mark.asyncio

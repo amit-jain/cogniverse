@@ -27,7 +27,7 @@ The Cache Module provides a **comprehensive caching infrastructure** for the Cog
 - **Tiered Caching Architecture**: Multi-level cache hierarchy support with automatic tier population
 - **Backend Abstraction**: Pluggable backend architecture via registry pattern
 - **Current Implementation**: Structured filesystem (L1) and S3/MinIO (L2) backends with TTL support
-- **Specialized Caches**: `PipelineArtifactCache` for video processing artifacts (keyframes, transcripts, descriptions, segment frames, segmentation results)
+- **Specialized Caches**: `PipelineArtifactCache` for video processing artifacts (keyframes, transcripts, descriptions, segmentation results)
 - **Efficient Storage**: Binary format support, smart serialization
 - **Cache Invalidation**: Pattern-based clearing, TTL expiration, manual invalidation
 - **Performance Tracking**: Hit/miss statistics, size monitoring, eviction tracking
@@ -232,8 +232,6 @@ flowchart TB
 - `"profile:video:a3f2e9d8c7b6a5f4:keyframes:frame_42"` → `profile/keyframes/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.jpg`
 
 - `"profile:video:a3f2e9d8c7b6a5f4:transcript:lang=auto:model=base"` → `profile/transcripts/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.pkl`
-
-- `"profile:video:a3f2e9d8c7b6a5f4:segment_frames:...:frame_1"` → `profile/segments/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.jpg`
 
 **Design Benefits:**
 
@@ -785,7 +783,6 @@ class StructuredFilesystemConfig:
     priority: int = 0
     enable_ttl: bool = True
     cleanup_on_startup: bool = True
-    metadata_format: str = "json"
 ```
 
 **Key Features:**
@@ -824,9 +821,6 @@ those components recovers the original key byte-for-byte.
 "profile:video:a3f2e9d8c7b6a5f4:transcript:lang=auto:model=base"
 → ~/.cache/cogniverse/pipeline/profile/transcripts/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.pkl
 
-# Segment frame
-"profile:video:a3f2e9d8c7b6a5f4:segment_frames:...:frame_1"
-→ ~/.cache/cogniverse/pipeline/profile/segments/a3f2e9d8c7b6a5f4/.keys/k<base64url-full-key>.jpg
 ```
 
 Only files matching this canonical `.keys` encoding are cache entries.
@@ -1037,7 +1031,7 @@ MinIO deployment as media uploads but a **different bucket / prefix**.
 - boto3 is synchronous; every call is wrapped in `asyncio.to_thread` so the
   backend stays compatible with the async `CacheBackend` contract.
 
-- Raw `bytes` values (keyframe / segment-frame JPEGs) round-trip byte-for-byte;
+- Raw `bytes` values (keyframe JPEGs) round-trip byte-for-byte;
   dict artifacts are pickle/json/msgpack serialized.
 
 **Layered (L1 + L2) configuration** — `CacheManager` iterates backends by
@@ -1074,8 +1068,6 @@ change until then.
 - Audio transcripts
 
 - Frame descriptions (VLM outputs)
-
-- Temporal segment frames
 
 - Single-vector segmentation results (boundary math + transcript alignment)
 
@@ -1380,95 +1372,6 @@ success = await pipeline_cache.set_descriptions(
     descriptions_data,
     model_name="Qwen/Qwen2-VL-2B-Instruct",
     batch_size=500
-)
-```
-
----
-
-#### `async get_segment_frames(video_path: str, segment_id: int, start_time: float, end_time: float, sampling_fps: float = 2.0, max_frames: int = 12, load_images: bool = True) -> Optional[Union[Dict[str, Any], Tuple[Dict, List[np.ndarray]]]]`
-Get cached segment frames.
-
-**Parameters:**
-
-- `video_path`: Path to video file
-
-- `segment_id`: Segment identifier
-
-- `start_time`: Segment start time (seconds)
-
-- `end_time`: Segment end time (seconds)
-
-- `sampling_fps`: Frames per second for sampling
-
-- `max_frames`: Maximum frames per segment
-
-- `load_images`: Whether to load actual images
-
-**Returns:**
-
-- Metadata dict if load_images=False
-
-- Tuple (metadata, frames) if load_images=True
-
-**Example:**
-```python
-# Get segment frames
-metadata, frames = await pipeline_cache.get_segment_frames(
-    "/path/to/robot_soccer.mp4",
-    segment_id=0,
-    start_time=0.0,
-    end_time=6.0,
-    sampling_fps=2.0,
-    max_frames=12,
-    load_images=True
-)
-
-if frames:
-    print(f"Loaded {len(frames)} frames from segment 0")
-    for i, frame in enumerate(frames):
-        print(f"Frame {i}: {frame.shape}")
-```
-
----
-
-#### `async set_segment_frames(video_path: str, segment_id: int, start_time: float, end_time: float, frames: List[np.ndarray], timestamps: List[float], sampling_fps: float = 2.0, max_frames: int = 12) -> bool`
-Cache segment frames.
-
-**Parameters:**
-
-- `video_path`: Path to video file
-
-- `segment_id`: Segment identifier
-
-- `start_time`: Segment start time
-
-- `end_time`: Segment end time
-
-- `frames`: List of frame images (numpy arrays)
-
-- `timestamps`: List of frame timestamps
-
-- `sampling_fps`: Sampling rate used
-
-- `max_frames`: Max frames per segment
-
-**Returns:** True if stored successfully
-
-**Example:**
-```python
-# Prepare frames and timestamps
-frames = [frame1, frame2, frame3]  # numpy arrays
-timestamps = [0.0, 0.5, 1.0]
-
-success = await pipeline_cache.set_segment_frames(
-    "/path/to/robot_soccer.mp4",
-    segment_id=0,
-    start_time=0.0,
-    end_time=6.0,
-    frames=frames,
-    timestamps=timestamps,
-    sampling_fps=2.0,
-    max_frames=12
 )
 ```
 
@@ -1815,101 +1718,7 @@ print(f"  Descriptions: {'✓' if descriptions else '✗'}")
 
 ---
 
-### Example 3: Segment-Based Caching
-
-```python
-"""
-Cache temporal segment frames for efficient chunk-based processing.
-"""
-import numpy as np
-from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
-
-# Initialize cache (assuming cache_manager already created)
-pipeline_cache = PipelineArtifactCache(
-    cache_manager=cache_manager,
-    ttl=604800,
-    profile="video_embeddinggemma2_sv_chunk_6s"
-)
-
-video_path = "/path/to/long_video.mp4"
-
-# Define segments (30-second chunks)
-segments = [
-    {"id": 0, "start": 0.0, "end": 30.0},
-    {"id": 1, "start": 30.0, "end": 60.0},
-    {"id": 2, "start": 60.0, "end": 90.0},
-]
-
-sampling_fps = 2.0  # Sample 2 frames per second
-max_frames = 60     # Max 60 frames per segment
-
-# Process each segment
-for segment in segments:
-    seg_id = segment["id"]
-    start = segment["start"]
-    end = segment["end"]
-
-    print(f"\nProcessing segment {seg_id} ({start:.1f}s - {end:.1f}s)")
-
-    # Check cache
-    result = await pipeline_cache.get_segment_frames(
-        video_path,
-        segment_id=seg_id,
-        start_time=start,
-        end_time=end,
-        sampling_fps=sampling_fps,
-        max_frames=max_frames,
-        load_images=True
-    )
-
-    if result:
-        metadata, frames = result
-        print(f"✓ Loaded {len(frames)} cached frames")
-
-        # Use cached frames
-        for i, frame in enumerate(frames):
-            timestamp = metadata['timestamps'][i]
-            print(f"  Frame {i}: {frame.shape} at {timestamp:.2f}s")
-
-    else:
-        print(f"✗ Segment not cached - extracting...")
-
-        # Simulate frame extraction
-        num_frames = int((end - start) * sampling_fps)
-        frames = [
-            np.random.randint(0, 255, (720, 1280, 3), dtype=np.uint8)
-            for _ in range(num_frames)
-        ]
-
-        timestamps = [
-            start + i / sampling_fps
-            for i in range(num_frames)
-        ]
-
-        # Store in cache
-        success = await pipeline_cache.set_segment_frames(
-            video_path,
-            segment_id=seg_id,
-            start_time=start,
-            end_time=end,
-            frames=frames,
-            timestamps=timestamps,
-            sampling_fps=sampling_fps,
-            max_frames=max_frames
-        )
-
-        print(f"{'✓' if success else '✗'} Stored {len(frames)} frames in cache")
-
-# Cache statistics
-stats = await pipeline_cache.get_cache_stats()
-print(f"\nCache Stats:")
-print(f"  Overall size: {stats['overall']['manager']['size_bytes']} bytes")
-print(f"  Hit rate: {stats['overall']['manager']['hit_rate']:.2%}")
-```
-
----
-
-### Example 4: Cache Invalidation and Cleanup
+### Example 3: Cache Invalidation and Cleanup
 
 ```python
 """
@@ -2550,7 +2359,7 @@ The Cache Module provides **production-ready caching infrastructure** for the Co
 
 **Integration Points:**
 
-- Ingestion pipeline processors use `PipelineArtifactCache` for keyframes, transcripts, descriptions, segment frames, and single-vector segmentation results
+- Ingestion pipeline processors use `PipelineArtifactCache` for keyframes, transcripts, descriptions, and single-vector segmentation results
 
 - `VideoIngestionPipeline` wires a `CacheManager` + `PipelineArtifactCache` directly from `pipeline_cache` config (`libs/runtime/cogniverse_runtime/ingestion/pipeline.py`)
 

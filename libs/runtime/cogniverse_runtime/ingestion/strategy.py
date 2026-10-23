@@ -1,17 +1,6 @@
 #!/usr/bin/env python3
-"""
-Strategy Configuration - Single source of truth for ALL strategies
-
-This replaces the fragmented strategy systems:
-- StrategyResolver (processing strategies)
-- StrategyAwareProcessor (ranking strategies)
-- Schema-based strategies
-
-Provides a coherent interface for:
-1. Processing strategies (how to segment/process video)
-2. Ranking strategies (how to search/rank results)
-3. Storage strategies (how to store embeddings)
-"""
+"""Per-profile processing, storage and ranking strategy, resolved from the
+shipped config and the schemas' ranking strategies."""
 
 import json
 import logging
@@ -37,15 +26,6 @@ class Strategy:
     # Ranking strategies available for this schema
     ranking_strategies: dict[str, dict[str, Any]]
     default_ranking: str
-
-    # Model configuration
-    model_name: str
-    model_config: dict[str, Any]
-
-    # Embedding requirements (derived from ranking strategies)
-    needs_float_embeddings: bool
-    needs_binary_embeddings: bool
-    embedding_fields: dict[str, str]  # float_field, binary_field names
 
     def __repr__(self):
         return (
@@ -120,9 +100,6 @@ class StrategyConfig:
             raise ValueError(f"schema_name not found in profile: {profile}")
         schema_rankings = self.ranking_strategies.get(schema_name, {})
 
-        # Determine embedding requirements from ranking strategies
-        embedding_reqs = self._analyze_embedding_requirements(schema_rankings)
-
         # Create strategy
         strategy = Strategy(
             processing_type=processing_type,
@@ -131,11 +108,6 @@ class StrategyConfig:
             schema_name=schema_name,
             ranking_strategies=schema_rankings,
             default_ranking=self._get_default_ranking(schema_rankings),
-            model_name=profile.get("embedding_model", ""),
-            model_config=profile.get("model_specific", {}),
-            needs_float_embeddings=embedding_reqs["needs_float"],
-            needs_binary_embeddings=embedding_reqs["needs_binary"],
-            embedding_fields=embedding_reqs["field_names"],
         )
 
         # Cache it
@@ -247,37 +219,6 @@ class StrategyConfig:
 
         return "multi_doc"
 
-    def _analyze_embedding_requirements(
-        self, schema_rankings: dict[str, dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Analyze what embeddings are needed based on ranking strategies"""
-        needs_float = False
-        needs_binary = False
-        float_fields = set()
-        binary_fields = set()
-
-        for strategy in schema_rankings.values():
-            if strategy.get("needs_float_embeddings", False):
-                needs_float = True
-                field = strategy.get("embedding_field", "")
-                if field and "binary" not in field:
-                    float_fields.add(field)
-
-            if strategy.get("needs_binary_embeddings", False):
-                needs_binary = True
-                field = strategy.get("embedding_field", "")
-                if field and "binary" in field:
-                    binary_fields.add(field)
-
-        return {
-            "needs_float": needs_float,
-            "needs_binary": needs_binary,
-            "field_names": {
-                "float_field": next(iter(float_fields), "embedding"),
-                "binary_field": next(iter(binary_fields), "embedding_binary"),
-            },
-        }
-
     def _get_default_ranking(self, schema_rankings: dict[str, dict[str, Any]]) -> str:
         """Get default ranking strategy"""
         if "default" in schema_rankings:
@@ -287,28 +228,3 @@ class StrategyConfig:
         elif schema_rankings:
             return next(iter(schema_rankings.keys()))
         return "default"
-
-    def get_processing_config(self, profile_name: str) -> dict[str, Any]:
-        """Get processing configuration for pipeline"""
-        strategy = self.get_strategy(profile_name)
-
-        return {
-            "processing_type": strategy.processing_type,
-            "segmentation": strategy.segmentation,
-            "storage_mode": strategy.storage_mode,
-            "model_config": strategy.model_config,
-            "needs_embeddings": {
-                "float": strategy.needs_float_embeddings,
-                "binary": strategy.needs_binary_embeddings,
-            },
-        }
-
-    def get_ranking_strategies(self, profile_name: str) -> dict[str, dict[str, Any]]:
-        """Get available ranking strategies for a profile"""
-        strategy = self.get_strategy(profile_name)
-        return strategy.ranking_strategies
-
-    def get_embedding_fields(self, profile_name: str) -> dict[str, str]:
-        """Get embedding field names for a profile"""
-        strategy = self.get_strategy(profile_name)
-        return strategy.embedding_fields

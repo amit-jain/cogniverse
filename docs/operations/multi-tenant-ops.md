@@ -169,9 +169,7 @@ routing_config = RoutingConfigUnified(
     # dispatch time — do not rely on them.
     routing_mode="tiered",
     enable_fast_path=True,
-    enable_slow_path=True,
     fast_path_confidence_threshold=0.7,
-    slow_path_confidence_threshold=0.6,
     enable_auto_optimization=True,
     optimization_interval_seconds=3600
 )

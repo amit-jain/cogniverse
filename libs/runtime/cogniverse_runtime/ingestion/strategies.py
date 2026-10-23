@@ -701,20 +701,12 @@ class DocumentVisualEmbeddingStrategy(BaseStrategy):
 class MultiVectorEmbeddingStrategy(BaseStrategy):
     """Generate multi-vector embeddings."""
 
-    def __init__(
-        self,
-        model_name: str = "TomoroAI/tomoro-colqwen3-embed-4b",
-        inference_service: str | None = None,
-    ):
-        self.model_name = model_name
+    def __init__(self, inference_service: str | None = None):
         self.inference_service = inference_service
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Multi-vector embedding uses the generic embedding generator."""
-        config: dict[str, Any] = {
-            "type": "multi_vector",
-            "model_name": self.model_name,
-        }
+        config: dict[str, Any] = {"type": "multi_vector"}
         if self.inference_service:
             config["inference_service"] = self.inference_service
         return {"embedding": config}
@@ -740,20 +732,12 @@ class MultiVectorEmbeddingStrategy(BaseStrategy):
 class SingleVectorEmbeddingStrategy(BaseStrategy):
     """Generate single-vector embeddings."""
 
-    def __init__(
-        self,
-        model_name: str = "google/embeddinggemma-2",
-        inference_service: str | None = None,
-    ):
-        self.model_name = model_name
+    def __init__(self, inference_service: str | None = None):
         self.inference_service = inference_service
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Single-vector embedding uses the generic embedding generator."""
-        config: dict[str, Any] = {
-            "type": "single_vector",
-            "model_name": self.model_name,
-        }
+        config: dict[str, Any] = {"type": "single_vector"}
         if self.inference_service:
             config["inference_service"] = self.inference_service
         return {"embedding": config}

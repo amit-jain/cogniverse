@@ -284,7 +284,6 @@
       "request_timeout": 210.0
     },
     "overrides": {
-      "query_analysis_module": null,
       "llm_auto_annotator": null
     }
   },
@@ -356,17 +355,9 @@
     ],
     "output_rails": []
   },
-  "deep_research_agent": {
-    "max_iterations": 3,
-    "max_sub_questions": 5
-  },
   "search_backend": "vespa",
   "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
   "embedding_model": "lightonai/DenseOn",
-  "prompts": {
-    "artifacts_path": null,
-    "default_system_prompt": "You are a precise and efficient routing agent. Analyze the query and output a JSON object with 'search_modality' (video or text) and 'generation_type' (detailed_report, summary, or raw_results)."
-  },
   "remote_inference_url": null,
   "evaluators": {
     "visual_judge": {
@@ -402,8 +393,7 @@
         "serialization_format": "json",
         "priority": 0,
         "enable_ttl": true,
-        "cleanup_on_startup": true,
-        "metadata_format": "json"
+        "cleanup_on_startup": true
       },
       {
         "backend_type": "s3",
@@ -420,26 +410,18 @@
     "enable_compression": true,
     "serialization_format": "json"
   },
-  "query_inference_engine": {
-    "mode": "llm",
-    "gliner_threshold": 0.3
-  },
   "pipeline_config": {
     "extract_keyframes": true,
     "transcribe_audio": true,
     "generate_descriptions": true,
     "generate_embeddings": true,
-    "keyframe_extraction_method": "fps",
     "keyframe_fps": 0.5
   },
   "max_workers": 4,
   "timeout": 60.0,
-  "log_level": "INFO",
-  "log_file": "multi_agent_system.log",
   "reranking": {
     "enabled": false,
     "model": "heuristic",
-    "use_hybrid": false,
     "hybrid_strategy": "weighted_ensemble",
     "learned_weight": 0.7,
     "heuristic_weight": 0.3,
@@ -453,121 +435,10 @@
       "ollama_bge": "openai/bge-reranker-v2-m3",
       "ollama_mxbai": "openai/mxbai-rerank-large-v2",
       "heuristic": "heuristic"
-    },
-    "ollama_config": {
-      "api_base": "http://localhost:11434/v1"
     }
   },
   "routing": {
     "routing_mode": "tiered",
-    "tier_config": {
-      "enable_fast_path": true,
-      "enable_slow_path": true,
-      "enable_fallback": true,
-      "fast_path_confidence_threshold": 0.7,
-      "slow_path_confidence_threshold": 0.6,
-      "max_routing_time_ms": 5000
-    },
-    "gliner_config": {
-      "gliner_model": "urchade/gliner_multi-v2.1",
-      "gliner_threshold": 0.3,
-      "gliner_labels": [
-        "video_content",
-        "visual_content",
-        "media_content",
-        "document_content",
-        "text_information",
-        "written_content",
-        "summary_request",
-        "detailed_analysis",
-        "report_request",
-        "time_reference",
-        "date_pattern",
-        "temporal_context",
-        "purchase_intent",
-        "comparison_intent",
-        "query_intent",
-        "complaint_intent"
-      ],
-      "device": "cpu",
-      "batch_size": 32,
-      "max_length": 512
-    },
-    "keyword_config": {
-      "video_keywords": [
-        "video",
-        "clip",
-        "scene",
-        "recording",
-        "footage",
-        "show me",
-        "visual",
-        "watch",
-        "frame",
-        "moment",
-        "demonstration",
-        "presentation",
-        "meeting",
-        "tutorial",
-        "screencast",
-        "webinar",
-        "stream",
-        "broadcast"
-      ],
-      "text_keywords": [
-        "document",
-        "report",
-        "text",
-        "article",
-        "information",
-        "data",
-        "details",
-        "analysis",
-        "research",
-        "study",
-        "paper",
-        "blog",
-        "documentation",
-        "guide",
-        "manual",
-        "whitepaper",
-        "book"
-      ],
-      "summary_keywords": [
-        "summary",
-        "summarize",
-        "brief",
-        "overview",
-        "main points",
-        "key takeaways",
-        "tldr",
-        "gist",
-        "essence",
-        "highlights"
-      ],
-      "report_keywords": [
-        "detailed report",
-        "comprehensive analysis",
-        "full report",
-        "in-depth",
-        "thorough",
-        "extensive",
-        "complete analysis",
-        "deep dive",
-        "exhaustive"
-      ]
-    },
-    "ensemble_config": {
-      "enabled_strategies": [
-        "gliner",
-        "keyword"
-      ],
-      "voting_method": "weighted",
-      "weights": {
-        "gliner": 2.0,
-        "keyword": 1.0
-      }
-    },
     "optimization_config": {
       "enable_auto_optimization": false,
       "optimization_interval_seconds": 3600,
@@ -606,34 +477,8 @@
           "downweight_factor": 0.5,
           "confirmation_score_threshold": 0.7
         }
-      },
-      "performance_degradation_threshold": 0.1,
-      "min_accuracy": 0.8,
-      "max_acceptable_latency_ms": 1000,
-      "dspy_enabled": false,
-      "gliner_threshold_optimization": true,
-      "gliner_label_optimization": false
+      }
     },
-    "monitoring_config": {
-      "enable_metrics": true,
-      "metrics_batch_size": 100,
-      "export_metrics": true,
-      "metrics_export_dir": "outputs/routing_metrics",
-      "enable_tracing": false
-    },
-    "cache_config": {
-      "enable_caching": true,
-      "cache_ttl_seconds": 300,
-      "max_cache_size": 1000,
-      "backend": "integrated",
-      "use_pipeline_cache": true
-    },
-    "query_fusion_config": {
-      "include_original": true,
-      "rrf_k": 60
-    },
-    "entity_confidence_threshold": 0.6,
-    "min_entities_for_fast_path": 1,
     "annotation": {
       "model": "claude-3-5-sonnet-20241022",
       "api_base": null,
@@ -1213,16 +1058,8 @@
           "transcription": "vllm_asr"
         },
         "model_specific": {
-          "max_patches": 1024,
           "segment_duration": 30.0,
-          "chunk_duration": 30.0,
-          "chunk_overlap": 5.0,
-          "extract_audio": true,
-          "transcribe_audio": true,
-          "whisper_model": "base",
-          "adaptive_segmentation": false,
-          "max_pixels": 16777216,
-          "sampling_fps": 1.0
+          "chunk_duration": 30.0
         },
         "schema_config": {
           "schema_name": "video_colqwen_omni_mv_chunk_30s",
@@ -1279,20 +1116,13 @@
           "transcription": "vllm_asr"
         },
         "model_specific": {
-          "chunk_duration": 6.0,
-          "chunk_overlap": 1.0
-        },
-        "inference_config": {
-          "model_type": "embeddinggemma2",
-          "backend": "remote",
-          "query_encoder": "google/embeddinggemma-2"
+          "chunk_duration": 6.0
         },
         "schema_config": {
           "schema_name": "video_embeddinggemma2_sv_chunk_6s",
           "model_name": "EmbeddingGemma-2",
           "embedding_dim": 768,
-          "binary_dim": 96,
-          "chunk_based": true
+          "binary_dim": 96
         }
       },
       "code_lateon_mv": {
@@ -1364,13 +1194,6 @@
       "audio": {
         "profile": "audio_clap_semantic"
       }
-    }
-  },
-  "messaging": {
-    "telegram": {
-      "enabled": true,
-      "max_message_length": 4096,
-      "max_results_per_message": 5
     }
   },
   "base_url": "http://localhost:11434",

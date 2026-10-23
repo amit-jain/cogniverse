@@ -46,7 +46,6 @@ class StructuredFilesystemConfig:
     priority: int = 0
     enable_ttl: bool = True  # Whether to enforce TTL
     cleanup_on_startup: bool = True  # Clean expired items on startup
-    metadata_format: str = "json"  # Metadata always in JSON for portability
 
 
 class StructuredFilesystemBackend(CacheBackend):
@@ -128,7 +127,7 @@ class StructuredFilesystemBackend(CacheBackend):
         namespace = cls._key_namespace_parts(key)
         return bool(
             namespace
-            and namespace[2] in {"keyframes", "segment_frames"}
+            and namespace[2] == "keyframes"
             and key.split(":")[-1].startswith("frame_")
         )
 
@@ -143,7 +142,6 @@ class StructuredFilesystemBackend(CacheBackend):
                 "keyframes": "keyframes",
                 "transcript": "transcripts",
                 "descriptions": "descriptions",
-                "segment_frames": "segments",
                 "segmentation": "segments",
             }.get(artifact_type, "other")
             return self.base_path / profile / artifact_dir / video_id

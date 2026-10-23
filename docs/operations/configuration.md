@@ -308,15 +308,11 @@ flowchart LR
 
 **Configuration (`RoutingConfigUnified` fields):**
 
-- Tier enable flags: `enable_fast_path`, `enable_slow_path`, `enable_fallback` (all default `True`)
+- Fast path: `enable_fast_path` (default `True`), `fast_path_confidence_threshold` (0.4)
 
-- Confidence thresholds: `fast_path_confidence_threshold` (0.7), `slow_path_confidence_threshold` (0.6)
+- GLiNER settings: `gliner_model`, `gliner_threshold`, `gliner_device`
 
-- GLiNER settings: `gliner_model`, `gliner_threshold`, `gliner_device`, `gliner_labels`
-
-- DSPy optimizer knobs: `dspy_enabled`, `dspy_max_bootstrapped_demos`, `dspy_max_labeled_demos` — `BootstrapFewShot` is the only DSPy teleprompter actually instantiated at runtime today; `SIMBA`/`GEPA`/`MIPROv2` are valid `OptimizerType` values but are not wired into an active optimization loop
-
-- Caching: `enable_caching`, `cache_ttl_seconds`, `max_cache_size`
+- Auto-optimization: `enable_auto_optimization`, `optimization_interval_seconds`, `min_samples_for_optimization`, `min_unique_queries`, `optimizer_floors`, `training_selection`, `optimization_gap_share`, `optimization_skip_above_score`
 
 - Tenant-isolated routing config and version history (via `ConfigStore`)
 
