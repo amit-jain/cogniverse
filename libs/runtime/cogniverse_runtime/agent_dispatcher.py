@@ -183,6 +183,12 @@ GENERIC_AGENT_CACHE_CAPACITY = 64
 ORCHESTRATOR_ARTIFACT_TTL_S = 300.0
 ORCHESTRATOR_AGENT_CACHE_CAPACITY = 64
 
+# Bounds on cached tenants for the thread-built search-agent and rail-chain
+# caches. A tenant's search agents are a dict of {profile -> SearchAgent};
+# tenant delete evicts both caches' entries via the registered-cache hook.
+SEARCH_AGENT_CACHE_CAPACITY = 64
+RAIL_CHAINS_CACHE_CAPACITY = 64
+
 # When a TTL reload of a cached agent's artifact fails (transient artifact-store
 # blip on exactly the request that crosses the TTL boundary), keep serving the
 # still-valid cached agent and reschedule the reload this many seconds out —
@@ -424,6 +430,22 @@ class _OrchestratorAgentEntry:
 
     agent: Any
     loaded_at: float
+
+
+def _new_search_agent_cache() -> "TenantLRUCache[Dict[str, Any]]":
+    return register_tenant_cache(TenantLRUCache(capacity=SEARCH_AGENT_CACHE_CAPACITY))
+
+
+@dataclasses.dataclass(frozen=True)
+class _RailChainsEntry:
+    """A tenant's compiled (input, output) rail chains; ``None`` when the
+    tenant's config enables no rails."""
+
+    chains: Optional[tuple]
+
+
+def _new_rail_chains_cache() -> "TenantLRUCache[_RailChainsEntry]":
+    return register_tenant_cache(TenantLRUCache(capacity=RAIL_CHAINS_CACHE_CAPACITY))
 
 
 def _new_orchestrator_agent_cache(
@@ -804,9 +826,13 @@ class AgentDispatcher:
         # heavyweight SearchAgent init or a Vespa get_config read — are guarded
         # by threading.Locks. An asyncio Future guard (as the agent caches use)
         # would not serialize concurrent thread first-touches.
-        self._search_agent_cache: Dict[Tuple[str, str], Any] = {}
+        self._search_agent_cache: TenantLRUCache[Dict[str, Any]] = (
+            _new_search_agent_cache()
+        )
         self._search_agent_cache_lock = threading.Lock()
-        self._rail_chains_cache: Dict[str, Optional[tuple]] = {}
+        self._rail_chains_cache: TenantLRUCache[_RailChainsEntry] = (
+            _new_rail_chains_cache()
+        )
         self._rail_chains_cache_lock = threading.Lock()
         # Per-tenant OrchestratorAgent cache — the orchestration path (dispatch
         # and streaming) resolves through it so the workflow corpus is read once
@@ -3170,22 +3196,13 @@ class AgentDispatcher:
         Reads the tenant's persisted ``AgentConfig`` (set via
         ``ConfigManager.set_agent_config``) and threads ``thinking_enabled`` /
         ``visual_analysis_enabled`` into the agent's Deps. Returns an empty dict
-        — so the Deps field defaults apply — when no per-tenant config is set,
-        or when the config read fails (a behavior toggle must not break
-        dispatch).
+        — so the Deps field defaults apply — when no per-tenant config is set.
+        A config that cannot be read raises, so no agent is built without the
+        tenant's toggles.
         """
         from cogniverse_foundation.config.agent_config import AgentConfig
 
-        try:
-            cfg = self._config_manager.get_agent_config(tenant_id, agent_name)
-        except Exception as exc:
-            logger.warning(
-                "agent config read failed for %s/%s: %r — using Deps defaults",
-                tenant_id,
-                agent_name,
-                exc,
-            )
-            return {}
+        cfg = self._config_manager.get_agent_config(tenant_id, agent_name)
         # get_agent_config is typed Optional[AgentConfig]; anything else (None,
         # or a test double that doesn't honor the contract) means no per-tenant
         # override, so the Deps field defaults apply.
@@ -3525,15 +3542,15 @@ class AgentDispatcher:
         tenant's config, which carries the tenant's own profiles."""
         from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 
-        key = (tenant_id, profile)
-        agent = self._search_agent_cache.get(key)
-        if agent is not None:
-            return agent
+        agents = self._search_agent_cache.get(tenant_id)
+        if agents is not None and profile in agents:
+            return agents[profile]
         with self._search_agent_cache_lock:
             # Double-check: a concurrent thread may have built it while we
             # waited on the lock — otherwise N first-touches each run the full
             # SearchAgent build (encoder init + Vespa get_system_config read).
-            agent = self._search_agent_cache.get(key)
+            agents = self._search_agent_cache.set_if_absent(tenant_id, {})
+            agent = agents.get(profile)
             if agent is None:
                 # SearchAgentDeps.backend_url defaults to "http://localhost" if
                 # not set — that's the pod itself, never Vespa. Read the real
@@ -3557,7 +3574,7 @@ class AgentDispatcher:
                 )
 
                 agent.telemetry_manager = get_telemetry_manager()
-                self._search_agent_cache[key] = agent
+                agents[profile] = agent
             return agent
 
     async def _code_search(self, query: str, tenant_id: str) -> List[Dict[str, Any]]:
@@ -3641,35 +3658,33 @@ class AgentDispatcher:
 
         Loads the ``rails`` block from config (config.json / ConfigStore) and
         compiles it into RailChains once per tenant. Returns ``None`` when
-        rails are absent or disabled. Rails are enforced at the gateway —
-        the request front door — so internal agent-to-agent calls aren't
-        gated.
+        rails are absent or disabled. A config that cannot be read or does
+        not compile raises and is not cached, so the tenant's rails are never
+        dropped by a failed read. Rails are enforced at the gateway — the
+        request front door — so internal agent-to-agent calls aren't gated.
         """
-        if tenant_id in self._rail_chains_cache:
-            return self._rail_chains_cache[tenant_id]
+        entry = self._rail_chains_cache.get(tenant_id)
+        if entry is not None:
+            return entry.chains
         with self._rail_chains_cache_lock:
             # Double-check under the lock — a concurrent to_thread first-touch
             # for the same tenant otherwise re-runs the get_config Vespa read
             # and chain compile.
-            if tenant_id in self._rail_chains_cache:
-                return self._rail_chains_cache[tenant_id]
-            chains: Optional[tuple] = None
-            try:
-                from cogniverse_core.agents.rails import RailsConfig
-                from cogniverse_foundation.config.utils import get_config
+            entry = self._rail_chains_cache.get(tenant_id)
+            if entry is not None:
+                return entry.chains
+            from cogniverse_core.agents.rails import RailsConfig
+            from cogniverse_foundation.config.utils import get_config
 
-                rails_cfg = get_config(tenant_id, self._config_manager).get("rails", {})
-                if rails_cfg:
-                    rc = RailsConfig(**rails_cfg)
-                    if rc.enabled:
-                        chains = (rc.build_input_chain(), rc.build_output_chain())
-            except Exception as exc:  # noqa: BLE001 — rails must never break dispatch
-                logger.warning(
-                    "Failed to build content rails for tenant %s: %s", tenant_id, exc
-                )
-                chains = None
-            self._rail_chains_cache[tenant_id] = chains
-            return self._rail_chains_cache[tenant_id]
+            chains: Optional[tuple] = None
+            rails_cfg = get_config(tenant_id, self._config_manager).get("rails", {})
+            if rails_cfg:
+                rc = RailsConfig(**rails_cfg)
+                if rc.enabled:
+                    chains = (rc.build_input_chain(), rc.build_output_chain())
+            return self._rail_chains_cache.set_if_absent(
+                tenant_id, _RailChainsEntry(chains)
+            ).chains
 
     async def _execute_gateway_task(
         self,

@@ -45,33 +45,35 @@ class TestRealIngestionPipeline:
             shutil.rmtree(output_dir)
 
     def test_real_strategy_resolution_frame_based(self):
-        """
-        REAL TEST: Test strategy resolution for frame-based processing.
+        """The shipped ColPali frame profile resolves to frame processing, one
+        document per frame, and its schema's ranking strategies."""
+        from cogniverse_runtime.ingestion.strategy import StrategyConfig
 
-        Tests that Strategy correctly resolves processing strategies.
-        """
-        from cogniverse_runtime.ingestion.strategy import Strategy
+        config = StrategyConfig(Path(__file__).resolve().parents[3] / "configs")
+        strategy = config.get_strategy("video_colpali_smol500_mv_frame")
 
-        # Create frame-based strategy config
-        strategy = Strategy(
-            processing_type="frame_based",
-            segmentation="frames",
-            storage_mode="multi_doc",
-            schema_name="video_colpali",
-            ranking_strategies={},
-            default_ranking="default",
-            model_name="colpali",
-            model_config={},
-            needs_float_embeddings=True,
-            needs_binary_embeddings=False,
-            embedding_fields={"float_field": "embedding"},
-        )
-
-        # Validate strategy creation
-        assert strategy is not None
-        assert strategy.processing_type == "frame_based"
-        assert strategy.segmentation == "frames"
-        assert strategy.model_name == "colpali"
-
-        # Verify segmentation is frame-based
-        assert "frame" in strategy.segmentation.lower()
+        assert (
+            strategy.processing_type,
+            strategy.segmentation,
+            strategy.storage_mode,
+        ) == ("frame_based", "frames", "multi_doc")
+        assert strategy.schema_name == "video_colpali_smol500_mv_frame"
+        assert strategy.default_ranking == "default"
+        assert sorted(strategy.ranking_strategies) == [
+            "binary_binary",
+            "bm25_no_description",
+            "bm25_only",
+            "default",
+            "float_binary",
+            "float_float",
+            "hybrid_binary_bm25",
+            "hybrid_binary_bm25_no_description",
+            "hybrid_bm25_binary",
+            "hybrid_bm25_binary_no_description",
+            "hybrid_bm25_float",
+            "hybrid_bm25_float_no_description",
+            "hybrid_float_bm25",
+            "hybrid_float_bm25_no_description",
+            "phased",
+        ]
+        assert config.get_strategy("video_colpali_smol500_mv_frame") is strategy

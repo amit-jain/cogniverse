@@ -1952,3 +1952,106 @@ class TestStableNameReplaceSemantics:
             f"stable-name save must replace; accumulated {loaded!r}"
         )
         assert loaded[0]["input"] == '{"q": "second"}'
+
+
+def _dead_artifact_manager(tenant_id: str) -> tuple[ArtifactManager, str]:
+    """An ArtifactManager over a real Phoenix provider whose endpoints refuse
+    every connection."""
+    import socket
+
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    endpoint = f"http://127.0.0.1:{port}"
+    provider = get_telemetry_registry().get(
+        name="phoenix",
+        tenant_id=tenant_id,
+        config={"http_endpoint": endpoint, "grpc_endpoint": f"127.0.0.1:{port}"},
+    )
+    return ArtifactManager(provider, tenant_id), endpoint
+
+
+def _claim_anchor():
+    from cogniverse_agents.graph.graph_schema import Mention
+
+    return Mention(
+        source_doc_id="v_curie",
+        segment_id="seg-0",
+        ts_start=0.0,
+        ts_end=6.0,
+        modality="transcript",
+        evidence_span="Marie Curie discovered radium in 1898.",
+    )
+
+
+class TestClaimExtractorArtifactStoreDown:
+    """An artifact store that cannot be read fails claim extraction, and the
+    extractor keeps no module, so it reads the artifact again once the store
+    answers instead of running without it."""
+
+    def test_extraction_raises_and_keeps_no_module(self):
+        from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+
+        tenant_id = "claim-extractor-store-down"
+        mgr, endpoint = _dead_artifact_manager(tenant_id)
+        extractor = ClaimExtractor(artifact_manager=mgr)
+
+        with pytest.raises(RuntimeError) as caught:
+            extractor.extract(
+                text="Marie Curie discovered radium in 1898.",
+                entity_hints=["Marie Curie", "radium"],
+                modality_hint="transcript",
+                segment_anchor=_claim_anchor(),
+                tenant_id=tenant_id,
+                source_doc_id="v_curie",
+            )
+
+        assert str(caught.value).startswith(
+            "Claim extraction failed for source 'v_curie' segment 'seg-0': "
+        )
+        cause = caught.value.__cause__
+        assert (type(cause).__name__, cause.endpoint) == (
+            "DatasetStoreUnavailableError",
+            endpoint,
+        )
+        assert extractor._cot_module is None
+
+    def test_concurrent_extractions_each_raise_and_keep_no_module(self):
+        import threading
+
+        from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+
+        tenant_id = "claim-extractor-store-down-concurrent"
+        mgr, endpoint = _dead_artifact_manager(tenant_id)
+        extractor = ClaimExtractor(artifact_manager=mgr)
+        barrier = threading.Barrier(4)
+        causes: list[tuple[str, str]] = []
+        lock = threading.Lock()
+
+        def extract() -> None:
+            barrier.wait(timeout=30)
+            try:
+                extractor.extract(
+                    text="Marie Curie discovered radium in 1898.",
+                    entity_hints=["Marie Curie", "radium"],
+                    modality_hint="transcript",
+                    segment_anchor=_claim_anchor(),
+                    tenant_id=tenant_id,
+                    source_doc_id="v_curie",
+                )
+            except RuntimeError as exc:
+                with lock:
+                    causes.append(
+                        (type(exc.__cause__).__name__, exc.__cause__.endpoint)
+                    )
+
+        threads = [threading.Thread(target=extract) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=120)
+
+        assert causes == [("DatasetStoreUnavailableError", endpoint)] * 4
+        assert extractor._cot_module is None

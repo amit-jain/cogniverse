@@ -1220,12 +1220,11 @@ strategy = VLMDescriptionStrategy(
 
 **Parameters**:
 
-- `model_name`: Embedding model (default `"TomoroAI/tomoro-colqwen3-embed-4b"`)
-- `inference_service`: Optional named remote service for ColPali/ColQwen inference (default `None`)
+- `inference_service`: Optional named remote service for ColPali/ColQwen inference (default `None`); the profile's `embedding_model` names the model
 
 **Usage**:
 ```python
-strategy = MultiVectorEmbeddingStrategy(model_name="TomoroAI/tomoro-colqwen3-embed-4b")
+strategy = MultiVectorEmbeddingStrategy(inference_service="vllm_colpali")
 ```
 
 **Custom Method** (shared by every embedding strategy: `MultiVectorEmbeddingStrategy`,
@@ -1251,12 +1250,11 @@ embeddings = await strategy.generate_embeddings_with_processor(
 
 **Parameters**:
 
-- `model_name`: Embedding model (default `"google/embeddinggemma-2"`)
-- `inference_service`: Optional named remote inference service (default `None`)
+- `inference_service`: Optional named remote inference service (default `None`); the profile's `embedding_model` names the model
 
 **Usage**:
 ```python
-strategy = SingleVectorEmbeddingStrategy(model_name="google/embeddinggemma-2")
+strategy = SingleVectorEmbeddingStrategy(inference_service="vllm_omni_embed")
 ```
 
 ### 8. NoDescriptionStrategy / NoTranscriptionStrategy

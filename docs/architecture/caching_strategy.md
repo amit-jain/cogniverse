@@ -2,7 +2,7 @@
 
 Caching architecture for the Cogniverse multi-agent video search system. Two independent caching systems exist:
 
-1. **Pipeline artifact cache** (`cogniverse_core.common.cache`) — durable, disk/S3-backed cache for video processing outputs (keyframes, transcripts, descriptions, segment frames), keyed by tenant/schema profile.
+1. **Pipeline artifact cache** (`cogniverse_core.common.cache`) — durable, disk/S3-backed cache for video processing outputs (keyframes, transcripts, descriptions, segmentation results), keyed by tenant/schema profile.
 2. **Tenant instance cache** (`cogniverse_foundation.caching.TenantLRUCache`) — bounded in-memory LRU cache for per-tenant singleton objects (agent instances, memory managers, backend clients, registry instances), used to prevent unbounded per-tenant memory growth in long-running processes.
 
 ## Overview
@@ -235,29 +235,11 @@ descriptions = await cache.get_descriptions(
     batch_size=500
 )
 
-# Cache temporal segment frames (e.g. for chunked/segment-based profiles)
-await cache.set_segment_frames(
-    video_path="/path/to/video.mp4",
-    segment_id=0,
-    start_time=0.0,
-    end_time=6.0,
-    frames=frame_list,
-    timestamps=timestamp_list,
-    sampling_fps=2.0,
-    max_frames=12
-)
-segment = await cache.get_segment_frames(
-    video_path="/path/to/video.mp4",
-    segment_id=0,
-    start_time=0.0,
-    end_time=6.0
-)
-
 # Invalidate all cache entries for a video
 await cache.invalidate_video(video_path="/path/to/video.mp4")
 ```
 
-`PipelineArtifactCache` supports four artifact types end to end: keyframes, audio transcripts, frame descriptions, and temporal segment frames, each fetched with its own getter. Full per-method parameter documentation lives in `docs/modules/cache.md`.
+`PipelineArtifactCache` supports four artifact types end to end: keyframes, audio transcripts, frame descriptions, and single-vector segmentation results, each fetched with its own getter. Full per-method parameter documentation lives in `docs/modules/cache.md`.
 
 ## Structured Filesystem Backend
 

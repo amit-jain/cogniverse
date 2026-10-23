@@ -1666,8 +1666,8 @@ async def test_a_tenant_operation_whose_lease_cannot_be_written_changes_nothing(
     assert caught.value.status_code == 503
     assert caught.value.detail == {
         "error": "tenant_operation_unavailable",
-        "message": f"Tenant {tenant_id} was not {verb}: the config store did not "
-        "answer; retry.",
+        "message": f"Tenant {tenant_id} was not {verb}: the config store could "
+        "not record the operation's lease; retry.",
         "failure": "VespaError",
         "tenant_id": tenant_id,
     }

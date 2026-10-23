@@ -29,7 +29,13 @@ def _config() -> dict:
 def test_top_level_pipeline_default_is_half_fps():
     cfg = _config()
     pipeline = cfg["pipeline_config"]
-    assert pipeline["keyframe_extraction_method"] == "fps"
+    assert set(pipeline) == {
+        "extract_keyframes",
+        "transcribe_audio",
+        "generate_descriptions",
+        "generate_embeddings",
+        "keyframe_fps",
+    }
     assert pipeline["keyframe_fps"] == 0.5
 
 

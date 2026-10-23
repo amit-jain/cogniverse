@@ -624,8 +624,14 @@ class TestEventLoopStateReset:
         try:
             assert asyncio.events._get_running_loop() is stale
 
-            _drive_reset_fixture()
+            with pytest.warns(RuntimeWarning) as caught:
+                _drive_reset_fixture()
 
+            leaker = e2e_conftest._LAST_FINISHED_TEST or "session setup"
+            assert [str(w.message) for w in caught] == [
+                f"Detached a leaked running event loop {stale!r} left by "
+                f"{leaker}; that test must unwind the loop it started"
+            ]
             assert asyncio.events._get_running_loop() is None, (
                 "reset must detach a stale running-loop thread-local; "
                 "pytest-asyncio Runner.run() reads exactly this slot"

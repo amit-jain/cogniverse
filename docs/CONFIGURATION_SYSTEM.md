@@ -70,17 +70,15 @@ Per-agent DSPy module and optimizer settings (`AgentConfig` in `cogniverse_found
 - Optimizer selection (`bootstrap_few_shot`, `labeled_few_shot`, `bootstrap_few_shot_with_random_search`, `copro`, `mipro_v2`, `gepa`, `simba`)
 - Model-specific parameters
 - Prompt templates and signatures (DSPy module `signature`)
-- Per-tenant agent-behavior toggles (`thinking_enabled`, `visual_analysis_enabled`) — the dispatcher threads these into the summarizer / detailed-report agent Deps
+- Per-tenant agent-behavior toggles (`thinking_enabled`, `visual_analysis_enabled`) — the dispatcher threads these into the summarizer / detailed-report agent Deps; a tenant with no agent config gets the Deps defaults, and a config that cannot be read fails the dispatch
 
 ### Routing Configuration
 
 Routing strategy settings (`RoutingConfigUnified` in `cogniverse_foundation.config.unified_config`). Only `routing_mode="tiered"` is implemented end-to-end; other mode strings are accepted for forward-compat but produce no dispatch-time behavior change:
 
-- Tier toggles and confidence thresholds: `enable_fast_path` / `enable_slow_path` / `enable_fallback`, `fast_path_confidence_threshold`, `slow_path_confidence_threshold`, `max_routing_time_ms`
-- Fast-path GLiNER settings: model, threshold, device, labels
-- Slow-path LLM settings: provider, endpoint, temperature, max tokens, chain-of-thought toggle
-- DSPy auto-optimization: `dspy_enabled`, bootstrapped/labeled demo counts, `optimization_interval_seconds`, `min_samples_for_optimization`, `min_unique_queries`, per-optimizer `optimizer_floors`, and the tenant's promotion-gate overrides `optimization_gap_share` / `optimization_skip_above_score`
-- Caching: `enable_caching`, `cache_ttl_seconds`, `max_cache_size`
+- Fast path: `enable_fast_path`, `fast_path_confidence_threshold`
+- Fast-path GLiNER settings: `gliner_model`, `gliner_threshold`, `gliner_device`
+- Auto-optimization: `enable_auto_optimization`, `optimization_interval_seconds`, `min_samples_for_optimization`, `min_unique_queries`, per-optimizer `optimizer_floors` and `training_selection`, and the tenant's promotion-gate overrides `optimization_gap_share` / `optimization_skip_above_score`
 - Multi-tenant routing rules (per-tenant `RoutingConfigUnified` via `set_routing_config`)
 
 ### Telemetry Configuration

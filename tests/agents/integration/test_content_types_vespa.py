@@ -961,3 +961,30 @@ class TestInCodeTextFirstHybrids:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
+
+
+def test_clap_text_and_audio_vectors_are_unit_length(remote_inference, tmp_path):
+    """The served CLAP model answers text and audio with unit-length vectors,
+    so a text query's ``closeness`` to the indexed audio depends on direction
+    alone and adds to a BM25 score on one scale."""
+    import soundfile as sf
+
+    from cogniverse_core.common.models.model_loaders import RemoteClapClient
+
+    endpoint = remote_inference.resolve("clap_embed")
+    client = RemoteClapClient(endpoint.base_url, _resolved_headers=endpoint.headers)
+    sample_rate = 48000
+    t = np.linspace(0, 3.0, 3 * sample_rate, endpoint=False)
+    tone = tmp_path / "tone.wav"
+    sf.write(tone, (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32), sample_rate)
+
+    vectors = [
+        client.generate_acoustic_text_embedding("a dog barking in the distance"),
+        client.generate_acoustic_text_embedding("rain on a tin roof"),
+        client.generate_acoustic_embedding(audio_path=tone),
+    ]
+
+    assert [vector.shape for vector in vectors] == [(512,)] * 3
+    assert [float(np.linalg.norm(vector)) for vector in vectors] == pytest.approx(
+        [1.0, 1.0, 1.0], abs=1e-5
+    )

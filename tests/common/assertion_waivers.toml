@@ -134,3 +134,12 @@ removed_symbols = [
     "libs/cli/cogniverse_cli/modal_inference/servers/video_embed.py:VideoEmbedConfig",
 ]
 reason = "The video_embed spec's agreement with its server config, removed with X-CLIP."
+
+[[waiver]]
+file = "tests/core/unit/test_pipeline_cache_surfaces.py"
+max_net_loss = 7
+removed_symbols = [
+    "libs/core/cogniverse_core/common/cache/pipeline_cache.py:PipelineArtifactCache.get_segment_frames",
+    "libs/core/cogniverse_core/common/cache/pipeline_cache.py:PipelineArtifactCache.set_segment_frames",
+]
+reason = "The per-segment frame cache round trip and miss, removed with the cache methods: no ingestion path cached segment frames."

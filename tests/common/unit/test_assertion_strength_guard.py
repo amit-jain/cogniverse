@@ -291,21 +291,34 @@ def load_waivers(path: Path = WAIVERS_PATH) -> list[Waiver]:
     return waivers
 
 
-def _defines(source: str, name: str) -> bool:
-    """Whether ``source`` binds ``name`` at module level."""
-    for node in ast.parse(source).body:
+def _binds(body: list[ast.stmt], name: str) -> ast.stmt | None:
+    for node in body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             if node.name == name:
-                return True
+                return node
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if any(isinstance(t, ast.Name) and t.id == name for t in targets):
-                return True
-    return False
+                return node
+    return None
+
+
+def _defines(source: str, name: str) -> bool:
+    """Whether ``source`` binds ``name`` at module level, or ``Class.member``
+    in the body of a module-level class."""
+    body = ast.parse(source).body
+    *owners, member = name.split(".")
+    for owner in owners:
+        node = _binds(body, owner)
+        if not isinstance(node, ast.ClassDef):
+            return False
+        body = node.body
+    return _binds(body, member) is not None
 
 
 def symbol_defined(sha: str, symbol: str, repo: Path = REPO_ROOT) -> bool:
-    """Whether ``path:Name`` is a top-level binding of ``path`` at ``sha``."""
+    """Whether ``path:Name`` (or ``path:Class.member``) is bound in ``path`` at
+    ``sha``."""
     path, _, name = symbol.partition(":")
     if not path or not name:
         raise ValueError(f"waiver symbol must be 'path:Name', got {symbol!r}")
@@ -835,6 +848,60 @@ def test_a_waived_symbol_that_still_exists_fails(tmp_path):
 
     assert remaining == {"tests/test_lib.py": {"removed": 2, "moved": 0, "added": 0}}
     assert errors == ["tests/test_lib.py: src/lib.py:kept still exists at HEAD"]
+
+
+def _method_waiver_repo(tmp_path: Path) -> tuple[Path, str]:
+    """A branch that deletes ``Kept.gone`` and the assertion that tested it,
+    keeping the class."""
+    repo = tmp_path / "method_waivers"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir()
+    _run_git(["init", "-q", "-b", "main", str(repo)], tmp_path)
+    _run_git(["config", "user.email", "guard@example.invalid"], repo)
+    _run_git(["config", "user.name", "Guard"], repo)
+    (repo / "src" / "lib.py").write_text(
+        "class Kept:\n    def stays(self):\n        return 1\n\n"
+        "    async def gone(self):\n        return 2\n"
+    )
+    (repo / "tests" / "test_lib.py").write_text(
+        "def test_lib():\n"
+        "    assert Kept().stays() == 1\n"
+        "    assert Kept().gone() == 2\n"
+    )
+    _run_git(["add", "."], repo)
+    _run_git(["commit", "-q", "-m", "Seed"], repo)
+    base = _run_git(["rev-parse", "HEAD"], repo).strip()
+    (repo / "src" / "lib.py").write_text(
+        "class Kept:\n    def stays(self):\n        return 1\n"
+    )
+    (repo / "tests" / "test_lib.py").write_text(
+        "def test_lib():\n    assert Kept().stays() == 1\n"
+    )
+    _run_git(["commit", "-q", "-am", "Remove Kept.gone"], repo)
+    return repo, base
+
+
+def test_a_waiver_for_a_removed_method_accepts_the_loss(tmp_path):
+    repo, base = _method_waiver_repo(tmp_path)
+
+    assert _waived(
+        repo,
+        base,
+        Waiver("tests/test_lib.py", 1, ("src/lib.py:Kept.gone",), "removed"),
+    ) == ({}, [])
+
+
+def test_a_waived_method_that_still_exists_fails(tmp_path):
+    repo, base = _method_waiver_repo(tmp_path)
+
+    remaining, errors = _waived(
+        repo,
+        base,
+        Waiver("tests/test_lib.py", 1, ("src/lib.py:Kept.stays",), "removed"),
+    )
+
+    assert remaining == {"tests/test_lib.py": {"removed": 1, "moved": 0, "added": 0}}
+    assert errors == ["tests/test_lib.py: src/lib.py:Kept.stays still exists at HEAD"]
 
 
 def test_a_waived_symbol_that_never_existed_fails(tmp_path):

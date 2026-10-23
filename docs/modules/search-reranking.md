@@ -713,8 +713,7 @@ numbers.
 {
   "reranking": {
     "enabled": true,
-    "model": "heuristic",
-    "use_hybrid": false
+    "model": "heuristic"
   }
 }
 ```
@@ -729,8 +728,7 @@ numbers.
       "cohere": "cohere/rerank-english-v3.0"
     },
     "top_n": 10,
-    "max_results_to_rerank": 100,
-    "use_hybrid": false
+    "max_results_to_rerank": 100
   }
 }
 ```
@@ -744,11 +742,12 @@ numbers.
     "supported_models": {
       "ollama_bge": "openai/bge-reranker-v2-m3"
     },
-    "api_base": "http://localhost:11434/v1",
-    "use_hybrid": false
+    "api_base": "http://localhost:11434/v1"
   }
 }
 ```
+
+The hybrid settings below apply to requests that select the `hybrid` strategy.
 
 **Hybrid Weighted Ensemble**:
 ```json
@@ -756,7 +755,6 @@ numbers.
   "reranking": {
     "enabled": true,
     "model": "cohere",
-    "use_hybrid": true,
     "hybrid_strategy": "weighted_ensemble",
     "learned_weight": 0.7,
     "heuristic_weight": 0.3
@@ -774,7 +772,6 @@ numbers.
       "ollama_bge": "openai/bge-reranker-v2-m3"
     },
     "api_base": "http://localhost:11434/v1",
-    "use_hybrid": true,
     "hybrid_strategy": "cascade"
   }
 }

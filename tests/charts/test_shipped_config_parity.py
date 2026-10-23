@@ -562,18 +562,12 @@ def test_the_omni_video_profile_is_pinned_whole(path: Path):
             "embedding": "vllm_omni_embed",
             "transcription": "vllm_asr",
         },
-        "model_specific": {"chunk_duration": 6.0, "chunk_overlap": 1.0},
-        "inference_config": {
-            "model_type": "embeddinggemma2",
-            "backend": "remote",
-            "query_encoder": "google/embeddinggemma-2",
-        },
+        "model_specific": {"chunk_duration": 6.0},
         "schema_config": {
             "schema_name": "video_embeddinggemma2_sv_chunk_6s",
             "model_name": "EmbeddingGemma-2",
             "embedding_dim": 768,
             "binary_dim": 96,
-            "chunk_based": True,
         },
     }
 

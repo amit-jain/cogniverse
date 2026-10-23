@@ -337,7 +337,11 @@ Three concrete rails (raise `RailBlockedError` on violation):
 
 Rails are configured under the `rails` block in `config.json`
 (`enabled`, `input_rails`, `output_rails`); `RailsConfig.build_input_chain()` /
-`build_output_chain()` compile the definitions into `RailChain`s.
+`build_output_chain()` compile the definitions into `RailChain`s. The dispatcher
+compiles a tenant's chains on its first gateway request and caches them; a
+`rails` block that cannot be read or does not compile fails that request and is
+read again by the next, so a failed read never serves the tenant without its
+rails.
 
 ```json
 "rails": {
@@ -2023,8 +2027,7 @@ metadata = await cache.get_keyframes(
 ```
 
 Artifact families: keyframes (`get/set_keyframes`), audio transcripts
-(`get/set_transcript`), frame descriptions (`get/set_descriptions`),
-per-segment frames (`get/set_segment_frames`), and single-vector
+(`get/set_transcript`), frame descriptions (`get/set_descriptions`), and single-vector
 segmentation results (`get/set_segmentation` — boundary math + transcript
 alignment keyed by strategy params and a transcript fingerprint; the
 single-vector segmentation strategy hands the pipeline cache to

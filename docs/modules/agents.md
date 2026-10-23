@@ -2148,20 +2148,9 @@ def _fuse_results_rrf(
 
 #### Configuration
 
-```python
-# Search agent ensemble configuration
-{
-    "search_agent": {
-        "ensemble_config": {
-            "rrf_k": 60,
-            "max_profiles": 3,
-            "parallel_timeout": 5.0,
-            "enable_reranking": True,
-            "min_overlap": 0.1
-        }
-    }
-}
-```
+Ensemble search is selected per request: a multi-element `SearchInput.profiles`
+list runs every profile in parallel and fuses them with RRF using
+`SearchInput.rrf_k` (default `60`).
 
 #### Performance Characteristics
 

@@ -849,6 +849,92 @@ class TestAgentBehaviorConfigWiring:
         assert captured["deps"].visual_analysis_enabled is False
         assert captured["deps"].tenant_id == "acme:acme"
 
+    def _dispatcher_over_failing_store(self):
+        """A dispatcher whose config store refuses reads while ``down`` is
+        set, holding a persisted summarizer config with both toggles off."""
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+        from tests.utils.memory_store import InMemoryConfigStore
+
+        state = {"down": False}
+
+        class _FailingStore(InMemoryConfigStore):
+            def get_config(self, *args, **kwargs):
+                if state["down"]:
+                    raise ConfigStoreUnavailableError("config store did not answer")
+                return super().get_config(*args, **kwargs)
+
+        store = _FailingStore()
+        store.initialize()
+        cm = ConfigManager(store=store)
+        cm.set_agent_config(
+            tenant_id="acme:acme",
+            agent_name="summarizer_agent",
+            agent_config=self._agent_config(
+                "summarizer_agent",
+                thinking_enabled=False,
+                visual_analysis_enabled=False,
+            ),
+        )
+        dispatcher = AgentDispatcher(
+            agent_registry=_registry_mock(),
+            config_manager=cm,
+            schema_loader=MagicMock(),
+        )
+        return dispatcher, state
+
+    def test_an_unreadable_config_raises_and_is_read_again(self):
+        """A failed read must not build the agent with the Deps defaults in
+        place of the tenant's toggles: it raises, and once the store answers
+        the toggles are read."""
+        from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+        dispatcher, state = self._dispatcher_over_failing_store()
+        state["down"] = True
+
+        with pytest.raises(ConfigStoreUnavailableError) as caught:
+            dispatcher._agent_behavior_kwargs("acme:acme", "summarizer_agent")
+        assert str(caught.value) == "config store did not answer"
+
+        state["down"] = False
+        assert dispatcher._agent_behavior_kwargs("acme:acme", "summarizer_agent") == {
+            "thinking_enabled": False,
+            "visual_analysis_enabled": False,
+        }
+
+    @pytest.mark.asyncio
+    async def test_dispatch_over_an_unreadable_config_builds_no_agent(
+        self, monkeypatch
+    ):
+        from cogniverse_sdk.interfaces.config_store import ConfigStoreUnavailableError
+
+        dispatcher, state = self._dispatcher_over_failing_store()
+        entry = MagicMock()
+        entry.capabilities = ["summarization"]
+        dispatcher._registry.get_agent.return_value = entry
+        built = []
+
+        class _CapturingSummarizer:
+            def __init__(self, deps, config_manager=None):
+                built.append(deps)
+
+        monkeypatch.setattr(
+            "cogniverse_agents.summarizer_agent.SummarizerAgent",
+            _CapturingSummarizer,
+        )
+        monkeypatch.setattr(
+            dispatcher,
+            "_resolve_answer_search_results",
+            AsyncMock(return_value=AnswerGrounding(hits=[], state=GROUNDING_SEARCHED)),
+        )
+        state["down"] = True
+
+        with pytest.raises(ConfigStoreUnavailableError):
+            await dispatcher.create_streaming_agent(
+                "summarizer_agent", "summarize the clips", "acme:acme"
+            )
+        assert built == []
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio

@@ -318,8 +318,8 @@ async def _tenant_operation(store, tenant_id: str, done: str) -> AsyncIterator[N
         raise failure_response(
             503,
             "tenant_operation_unavailable",
-            f"Tenant {tenant_id} was not {done}: the config store did not "
-            "answer; retry.",
+            f"Tenant {tenant_id} was not {done}: the config store could not "
+            "record the operation's lease; retry.",
             exc,
             tenant_id=tenant_id,
         ) from exc

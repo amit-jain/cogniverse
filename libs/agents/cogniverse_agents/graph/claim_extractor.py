@@ -532,30 +532,21 @@ class ClaimExtractor:
         return extract_claims
 
     def _load_compiled_state(self, module: dspy.Module, tenant_id: str) -> None:
-        """Restore compiled DSPy state from the ArtifactManager if present.
-
-        Mirrors EntityExtractionAgent / QueryEnhancementAgent: the compiled
-        module state is persisted as a JSON blob under
-        ``("model", "claim_extraction")`` and restored via
-        ``module.load_state``. The ArtifactManager is already bound to its
-        tenant at construction, so ``tenant_id`` here is only for logging.
+        """Restore the compiled state persisted under
+        ``("model", "claim_extraction")``; a tenant with none runs the base
+        module. A store that cannot be read or a blob that does not load
+        raises. The ArtifactManager is bound to its tenant, so ``tenant_id``
+        is only for logging.
         """
         if self._artifact_manager is None:
             return
-        try:
-            blob = run_coro_blocking(
-                self._artifact_manager.load_blob("model", "claim_extraction")
-            )
-            if not blob:
-                return
-            module.load_state(json.loads(blob))
-            logger.info("ClaimExtractor loaded compiled state for tenant %s", tenant_id)
-        except Exception as exc:
-            logger.warning(
-                "No claim_extraction artifact loaded for tenant %s (using defaults): %s",
-                tenant_id,
-                exc,
-            )
+        blob = run_coro_blocking(
+            self._artifact_manager.load_blob("model", "claim_extraction")
+        )
+        if not blob:
+            return
+        module.load_state(json.loads(blob))
+        logger.info("ClaimExtractor loaded compiled state for tenant %s", tenant_id)
 
     @staticmethod
     def _coerce_claims(prediction: dspy.Prediction) -> List[dict]:

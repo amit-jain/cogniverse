@@ -140,7 +140,7 @@ class TestInferenceServicesInjection:
             "strategies": {
                 "embedding": {
                     "class": "MultiVectorEmbeddingStrategy",
-                    "params": {"model_name": "TomoroAI/tomoro-colqwen3-embed-4b"},
+                    "params": {},
                 }
             },
         }
@@ -153,10 +153,31 @@ class TestInferenceServicesInjection:
         assert strategy.get_required_processors() == {
             "embedding": {
                 "type": "multi_vector",
-                "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
                 "inference_service": "svc_x",
             }
         }
+
+    @pytest.mark.parametrize(
+        "strategy_class",
+        ["MultiVectorEmbeddingStrategy", "SingleVectorEmbeddingStrategy"],
+    )
+    def test_an_embedding_strategy_naming_a_model_is_refused(self, strategy_class):
+        """The profile's ``embedding_model`` names the model, so an embedding
+        strategy given its own model fails to build."""
+        profile_config = {
+            "strategies": {
+                "embedding": {
+                    "class": strategy_class,
+                    "params": {"model_name": "google/embeddinggemma-2"},
+                }
+            },
+        }
+        with pytest.raises(TypeError) as caught:
+            StrategyFactory.create_from_profile_config(profile_config)
+        assert str(caught.value) == (
+            f"{strategy_class}.__init__() got an unexpected keyword argument "
+            "'model_name'"
+        )
 
     def test_unknown_param_in_profile_surfaces_as_typeerror(self):
         """A typo in profile params raises TypeError at construction so the
@@ -185,7 +206,6 @@ class TestInferenceServiceInProcessorRequirements:
         assert strategy.get_required_processors() == {
             "embedding": {
                 "type": "multi_vector",
-                "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
                 "inference_service": "vllm_colpali",
             }
         }
@@ -195,7 +215,6 @@ class TestInferenceServiceInProcessorRequirements:
         assert strategy.get_required_processors() == {
             "embedding": {
                 "type": "multi_vector",
-                "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
             }
         }
 
@@ -204,7 +223,6 @@ class TestInferenceServiceInProcessorRequirements:
         assert strategy.get_required_processors() == {
             "embedding": {
                 "type": "single_vector",
-                "model_name": "google/embeddinggemma-2",
                 "inference_service": "vllm_colpali",
             }
         }
@@ -214,7 +232,6 @@ class TestInferenceServiceInProcessorRequirements:
         assert strategy.get_required_processors() == {
             "embedding": {
                 "type": "single_vector",
-                "model_name": "google/embeddinggemma-2",
             }
         }
 
