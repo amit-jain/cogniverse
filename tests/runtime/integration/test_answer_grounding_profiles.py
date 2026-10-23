@@ -576,21 +576,38 @@ class TestGroundingResolutionLeavesTheLoopFree:
     async def test_twenty_concurrent_resolutions_keep_the_loop_responsive(
         self, grounding_vespa
     ):
-        class SlowProfileReads(ConfigManager):
-            """The real manager with a backend round-trip's latency on the
-            profile read the grounding resolution makes."""
+        reads = {"held": False, "in_flight": 0, "peak": 0}
+        arrived = threading.Condition()
+
+        class HeldProfileReads(ConfigManager):
+            """The real manager whose profile read, once held, waits until 20
+            reads are in flight together, so overlap is forced rather than
+            left to timing; reads made on the loop would never overlap."""
 
             def list_backend_profiles(self, *args, **kwargs):
-                time.sleep(0.03)
-                return super().list_backend_profiles(*args, **kwargs)
+                if not reads["held"]:
+                    return super().list_backend_profiles(*args, **kwargs)
+                with arrived:
+                    reads["in_flight"] += 1
+                    reads["peak"] = max(reads["peak"], reads["in_flight"])
+                    arrived.notify_all()
+                    arrived.wait_for(lambda: reads["peak"] >= 20, timeout=10)
+                try:
+                    return super().list_backend_profiles(*args, **kwargs)
+                finally:
+                    with arrived:
+                        reads["in_flight"] -= 1
 
-        slow = _build_config_manager(
-            grounding_vespa["http_port"], manager_cls=SlowProfileReads
+        held = _build_config_manager(
+            grounding_vespa["http_port"], manager_cls=HeldProfileReads
         )
         for name in DOCUMENT_PROFILES:
-            slow.add_backend_profile(_profile(name), tenant_id=TENANT_DOCUMENTS)
-        dispatcher = _dispatcher(slow)
+            profile = _profile(name)
+            held.add_backend_profile(profile, tenant_id=TENANT_DOCUMENTS)
+            register_deployed_schema(held, TENANT_DOCUMENTS, profile.schema_name)
+        dispatcher = _dispatcher(held)
         await dispatcher._grounding_plan(DOCUMENT_QUERY, TENANT_DOCUMENTS, {}, None)
+        reads["held"] = True
 
         gaps: list[float] = []
 
@@ -603,7 +620,6 @@ class TestGroundingResolutionLeavesTheLoopFree:
                 previous = now
 
         tick = asyncio.create_task(ticker())
-        started = time.perf_counter()
         try:
             plans = await asyncio.gather(
                 *(
@@ -613,7 +629,6 @@ class TestGroundingResolutionLeavesTheLoopFree:
                     for _ in range(20)
                 )
             )
-            elapsed = time.perf_counter() - started
         finally:
             tick.cancel()
             await asyncio.gather(tick, return_exceptions=True)
@@ -627,13 +642,13 @@ class TestGroundingResolutionLeavesTheLoopFree:
             ]
             * 20
         )
-        # Run on the loop these 20 reads would serialize into 20 x 30ms of dead
-        # loop and the ticker would not tick at all; offloaded they overlap.
+        # Offloaded, the 20 held reads are in flight together while the loop
+        # keeps ticking; run on the loop, the first would hold it for 10s.
+        assert reads["peak"] == 20
         assert gaps and max(gaps) < 0.05, (
             f"loop ticked {len(gaps)} times, max gap "
             f"{max(gaps, default=float('inf')):.4f}s"
         )
-        assert elapsed < 0.3, f"20 concurrent resolutions took {elapsed:.3f}s"
 
 
 # --- Grounding against a real corpus -----------------------------------------
