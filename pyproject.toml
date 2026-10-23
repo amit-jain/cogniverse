@@ -326,6 +326,8 @@ dev = [
     # Unpacks the Clotho evaluation audio the omni-embedding comparison
     # re-records from.
     "py7zr==1.1.4",
+    # Renders a chat reply as the web client shows it, for the browser tests.
+    "markdown-it-py==4.0.0",
 ]
 runtime-models = ["en-core-web-sm==3.8.0"]
 docs = [
