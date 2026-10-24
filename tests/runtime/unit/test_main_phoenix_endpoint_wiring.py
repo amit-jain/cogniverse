@@ -98,7 +98,8 @@ async def test_lifespan_wires_admin_phoenix_endpoints_from_telemetry_env(
     monkeypatch.setattr(PhoenixProvider, "initialize", lambda self, config: None)
     monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
     monkeypatch.setattr(
-        "cogniverse_runtime.backend_startup.metadata_schemas_current", lambda _: False
+        "cogniverse_runtime.backend_startup.deployed_application_current",
+        lambda _: False,
     )
 
     try:

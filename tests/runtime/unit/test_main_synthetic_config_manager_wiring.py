@@ -90,7 +90,8 @@ async def test_lifespan_passes_config_manager_to_synthetic_service(
     monkeypatch.setattr(PhoenixProvider, "initialize", lambda self, config: None)
     monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
     monkeypatch.setattr(
-        "cogniverse_runtime.backend_startup.metadata_schemas_current", lambda _: False
+        "cogniverse_runtime.backend_startup.deployed_application_current",
+        lambda _: False,
     )
     monkeypatch.setattr(
         "cogniverse_synthetic.api.configure_service", _spy_configure_synthetic

@@ -3196,7 +3196,7 @@ class TestSharedClusterOwnership:
 
 
 class TestDeployDiskPreflight:
-    """A deploy refuses to start on a host disk at Vespa's feed-block limit."""
+    """A deploy refuses to start on a host disk its image builds could push into Vespa's feed block."""
 
     @staticmethod
     def _disk(monkeypatch, used_fraction):
@@ -3214,23 +3214,32 @@ class TestDeployDiskPreflight:
         return deployment, seen
 
     def test_a_disk_at_the_limit_fails_naming_usage_and_the_prune(self, monkeypatch):
-        deployment, seen = self._disk(monkeypatch, 0.80)
+        deployment, seen = self._disk(monkeypatch, 0.87)
 
         with pytest.raises(RuntimeError) as raised:
             deployment.refuse_deploy_on_a_full_disk()
 
         assert seen == [Path("/var/lib")]
         assert str(raised.value) == (
-            "host disk at /var/lib is 80.0% used (200 GiB free), at or above "
-            "Vespa's 75% feed-block limit, so the deployed runtime could not "
-            "write to Vespa. Free space first, e.g. `docker builder prune -f`, "
-            "then rerun."
+            "host disk at /var/lib is 87.0% used (130 GiB free), within 5% of "
+            "Vespa's 90% feed-block limit, so the deploy's image builds could "
+            "push it into the block and the deployed runtime could not write "
+            "to Vespa. Free space first, e.g. `docker builder prune -f`, then "
+            "rerun."
         )
 
-    def test_exactly_the_limit_is_refused(self, monkeypatch):
-        deployment, _ = self._disk(monkeypatch, 0.75)
+    def test_the_limit_is_five_points_below_vespas_feed_block(self, monkeypatch):
+        from cogniverse_vespa import vespa_schema_manager
+        from tests.e2e.deployment import conftest as deployment
 
-        with pytest.raises(RuntimeError, match="75.0% used"):
+        assert deployment.deploy_disk_limit() == 0.85
+        monkeypatch.setattr(vespa_schema_manager, "FEED_BLOCK_DISK_LIMIT", 0.80)
+        assert deployment.deploy_disk_limit() == 0.75
+
+    def test_exactly_the_limit_is_refused(self, monkeypatch):
+        deployment, _ = self._disk(monkeypatch, 0.85)
+
+        with pytest.raises(RuntimeError, match="85.0% used"):
             deployment.refuse_deploy_on_a_full_disk()
 
     def test_a_disk_below_the_limit_deploys(self, monkeypatch):

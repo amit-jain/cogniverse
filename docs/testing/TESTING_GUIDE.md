@@ -833,8 +833,8 @@ When the deploy serves the chat models from Modal, the e2e session runs
 ``release`` at teardown: the query rewrite gives the student 2.8 s, which a
 runner starting from zero cannot meet. A failed warm fails the session. The
 deploy itself refuses to build when the host disk holding docker's data is at
-or above 75%, Vespa's feed-block limit; free space (``docker builder prune -f``)
-and rerun.
+or above 85%, 5% below Vespa's 90% feed-block limit, so the image builds cannot
+push it into the block; free space (``docker builder prune -f``) and rerun.
 
 The cluster is deployed through the e2e path (``tests/e2e/deployment``), not a
 plain ``cogniverse up``. ``tests/common/unit/test_no_local_model_servers.py``
@@ -1085,7 +1085,7 @@ integration-tests:
 
   - name: Free up disk space for Vespa (if needed)
     run: |
-      # Vespa requires <75% disk usage
+      # Vespa blocks feeding at 90% disk usage
       sudo rm -rf /usr/share/dotnet
       sudo rm -rf /usr/local/lib/android
       sudo rm -rf /opt/ghc
@@ -1103,7 +1103,7 @@ integration-tests:
 
 ### Disk Cleanup for Vespa
 
-Vespa requires disk usage below 75%. GitHub runners have ~14GB disk, so cleanup is required:
+Vespa blocks feeding at 90% disk usage (`FEED_BLOCK_DISK_LIMIT`). GitHub runners have ~14GB disk, so cleanup is required:
 
 ```bash
 # Remove ~30GB of unused packages

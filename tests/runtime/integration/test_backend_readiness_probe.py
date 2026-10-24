@@ -353,15 +353,17 @@ def test_upload_metadata_schemas_removal_disabled_refuses_partial_package(
     assert _deployed_schema_files(vespa_instance["config_port"]) == before
 
 
-def test_metadata_schemas_current_compares_the_live_definitions(
+def test_deployed_application_current_compares_the_live_definitions(
     vespa_instance, monkeypatch
 ):
     """Startup skips the metadata redeploy only when every metadata schema
-    the config server serves equals the one this build deploys."""
+    the config server serves equals the one this build deploys and the live
+    services.xml carries this build's content-cluster tuning."""
     from vespa.package import Field
 
     import cogniverse_vespa.metadata_schemas as metadata_schemas
-    from cogniverse_runtime.backend_startup import metadata_schemas_current
+    import cogniverse_vespa.vespa_schema_manager as vespa_schema_manager
+    from cogniverse_runtime.backend_startup import deployed_application_current
     from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
     def manager(config_port: int) -> VespaSchemaManager:
@@ -375,8 +377,8 @@ def test_metadata_schemas_current_compares_the_live_definitions(
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         closed_port = probe.getsockname()[1]
-    current = metadata_schemas_current(live)
-    unreachable = metadata_schemas_current(manager(closed_port))
+    current = deployed_application_current(live)
+    unreachable = deployed_application_current(manager(closed_port))
 
     shipped = metadata_schemas.create_config_metadata_schema
 
@@ -387,10 +389,18 @@ def test_metadata_schemas_current_compares_the_live_definitions(
         )
         return schema
 
+    with monkeypatch.context() as tuned:
+        tuned.setattr(vespa_schema_manager, "FEED_BLOCK_DISK_LIMIT", 0.85)
+        after_tuning_drift = deployed_application_current(live)
     monkeypatch.setattr(metadata_schemas, "create_config_metadata_schema", drifted)
-    after_drift = metadata_schemas_current(live)
+    after_drift = deployed_application_current(live)
 
-    assert (current, unreachable, after_drift) == (True, False, False)
+    assert (current, unreachable, after_tuning_drift, after_drift) == (
+        True,
+        False,
+        False,
+        False,
+    )
 
 
 @pytest.fixture

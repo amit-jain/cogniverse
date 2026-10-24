@@ -1582,7 +1582,10 @@ assign its result to `app_package.services_config` before zipping. A package
 without a services tree gets pyvespa's default layout (one container
 cluster, one `cogniverse_content` content cluster with every schema in
 `index` mode); a package that already carries one keeps it. Either way the
-content cluster's `engine/proton/tuning/searchnode/flushstrategy/native/component/maxage`
+content cluster's `tuning/resource-limits/disk` is `FEED_BLOCK_DISK_LIMIT`
+(0.90), the disk fraction at which the cluster controller blocks feeding,
+unless the package declares its own, and its
+`engine/proton/tuning/searchnode/flushstrategy/native/component/maxage`
 is `FLUSH_COMPONENT_MAXAGE_S` (1800 s), which bounds how long a
 document-less DocumentDB retains config operations in its transaction log
 (see [Vespa Restart Cost](../operations/troubleshooting.md#vespa-restart-cost)).
