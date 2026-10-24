@@ -204,12 +204,13 @@ def _bootstrap_metadata_schemas(bootstrap, application_name: str) -> None:
     logger.info("Metadata schemas bootstrapped for fresh backend")
 
 
-def metadata_schemas_current(schema_manager) -> bool:
+def deployed_application_current(schema_manager) -> bool:
     """Whether every metadata schema live in the backend is the one this
-    build deploys.
+    build deploys and the live services.xml carries this build's
+    content-cluster tuning.
 
-    Reads each metadata schema file of the active application from the
-    config server and compares it with the definition
+    Reads each metadata schema file and services.xml of the active
+    application from the config server and compares them with what
     ``upload_metadata_schemas`` would deploy. A failed or missing read
     answers False, so the caller deploys.
     """
@@ -223,12 +224,13 @@ def metadata_schemas_current(schema_manager) -> bool:
         create_organization_metadata_schema,
         create_tenant_metadata_schema,
     )
+    from cogniverse_vespa.vespa_schema_manager import services_tuning_current
 
     base_url = re.sub(r":\d+$", "", schema_manager.backend_endpoint)
-    schemas_url = (
+    content_url = (
         f"{base_url}:{schema_manager.backend_port}"
         "/application/v2/tenant/default/application/default/"
-        "environment/prod/region/default/instance/default/content/schemas/"
+        "environment/prod/region/default/instance/default/content/"
     )
     for schema in (
         create_organization_metadata_schema(),
@@ -237,10 +239,17 @@ def metadata_schemas_current(schema_manager) -> bool:
         create_adapter_registry_schema(),
     ):
         try:
-            response = requests.get(f"{schemas_url}{schema.name}.sd", timeout=10)
+            response = requests.get(
+                f"{content_url}schemas/{schema.name}.sd", timeout=10
+            )
         except requests.RequestException as exc:
             logger.info("Live metadata schema %s unreadable: %s", schema.name, exc)
             return False
         if response.status_code != 200 or response.text != schema.schema_to_text:
             return False
-    return True
+    try:
+        response = requests.get(f"{content_url}services.xml", timeout=10)
+    except requests.RequestException as exc:
+        logger.info("Live services.xml unreadable: %s", exc)
+        return False
+    return response.status_code == 200 and services_tuning_current(response.text)

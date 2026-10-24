@@ -4,6 +4,7 @@ import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
+from xml.etree import ElementTree
 
 from vespa.configuration.services import (
     container,
@@ -47,6 +48,12 @@ REMOVAL_CONVERGENCE_TIMEOUT_S = 120.0
 # transaction log (Vespa default 111600s).
 FLUSH_COMPONENT_MAXAGE_S = 1800
 
+# Fraction of the content node's disk at which the cluster controller blocks
+# feeding (Vespa default 0.8).
+FEED_BLOCK_DISK_LIMIT = 0.90
+
+_DISK_LIMIT_PATH = ("tuning", "resource_limits", "disk")
+
 
 _FLUSH_MAXAGE_PATH = (
     "engine",
@@ -70,10 +77,12 @@ def _child(parent: VT, tag: str) -> VT:
 
 
 def build_services_config(app_package: ApplicationPackage) -> ServicesConfiguration:
-    """services.xml for ``app_package`` with the proton flush bound set.
+    """services.xml for ``app_package`` with the feed-block disk limit and
+    the proton flush bound set.
 
     A package without ``services_config`` gets pyvespa's default layout; one
-    that already carries a services tree keeps it and gains the bound.
+    that already carries a services tree keeps it, including a disk limit it
+    declares, and gains the flush bound.
     """
     if app_package.services_config is None:
         root = services(
@@ -110,6 +119,11 @@ def build_services_config(app_package: ApplicationPackage) -> ServicesConfigurat
             f"services.xml for {app_package.name} must declare exactly one "
             f"content cluster, found {len(content_tags)}"
         )
+    disk_tag = content_tags[0]
+    for tag in _DISK_LIMIT_PATH:
+        disk_tag = _child(disk_tag, tag)
+    if not disk_tag.children:
+        disk_tag.children = (f"{FEED_BLOCK_DISK_LIMIT:.2f}",)
     maxage_tag = content_tags[0]
     for tag in _FLUSH_MAXAGE_PATH:
         maxage_tag = _child(maxage_tag, tag)
@@ -117,6 +131,19 @@ def build_services_config(app_package: ApplicationPackage) -> ServicesConfigurat
     return ServicesConfiguration(
         application_name=app_package.name, services_config=root
     )
+
+
+def services_tuning_current(services_xml: str) -> bool:
+    """Whether a deployed services.xml carries the content-cluster tuning
+    ``build_services_config`` sets."""
+    content_cluster = ElementTree.fromstring(services_xml).find("content")
+    if content_cluster is None:
+        return False
+    maxage_path = "/".join(_FLUSH_MAXAGE_PATH)
+    disk_path = "/".join(tag.replace("_", "-") for tag in _DISK_LIMIT_PATH)
+    return content_cluster.findtext(disk_path) == (
+        f"{FEED_BLOCK_DISK_LIMIT:.2f}"
+    ) and content_cluster.findtext(maxage_path) == str(FLUSH_COMPONENT_MAXAGE_S)
 
 
 # Float MaxSim per query token over the in-code image schema's patches.

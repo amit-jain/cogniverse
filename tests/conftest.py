@@ -1279,6 +1279,8 @@ def _shared_vespa_application_package(metadata_schemas):
     )
     from vespa.package import ApplicationPackage, ServicesConfiguration
 
+    from cogniverse_vespa.vespa_schema_manager import FEED_BLOCK_DISK_LIMIT
+
     services_vt = services(
         container(id="cogniverse_container", version="1.0")(
             search(),
@@ -1294,7 +1296,7 @@ def _shared_vespa_application_package(metadata_schemas):
                 ]
             ),
             nodes(node(distribution_key="0", hostalias="node1")),
-            tuning(resource_limits(disk("0.90"))),
+            tuning(resource_limits(disk(f"{FEED_BLOCK_DISK_LIMIT:.2f}"))),
         ),
         version="1.0",
     )

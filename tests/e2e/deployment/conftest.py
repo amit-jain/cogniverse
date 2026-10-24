@@ -717,21 +717,37 @@ def dump_pod_state(namespace: str) -> None:
 # disk resource limit), and the e2e cluster's Vespa data lives on the host
 # disk that image builds fill: a deploy that starts above the limit leaves
 # the new runtime unable to write its config and crash-looping.
-E2E_DEPLOY_DISK_LIMIT = 0.75
+E2E_DEPLOY_BUILD_HEADROOM = 0.05
+"""Disk fraction a deploy's image builds may add (~70 GB of build cache on the
+1.6 TB e2e host, 4.4%) before Vespa blocks feeding."""
 E2E_DEPLOY_DISK_PATH = Path("/var/lib")
 """A path on the filesystem holding docker's data, and with it Vespa's."""
 
 
+def deploy_disk_limit() -> float:
+    """Disk fraction at which a deploy refuses to build."""
+    from cogniverse_vespa import vespa_schema_manager
+
+    return round(
+        vespa_schema_manager.FEED_BLOCK_DISK_LIMIT - E2E_DEPLOY_BUILD_HEADROOM, 2
+    )
+
+
 def refuse_deploy_on_a_full_disk(path: Path = E2E_DEPLOY_DISK_PATH) -> None:
-    """Fail before building when the host disk is at Vespa's feed-block limit."""
+    """Fail before building when the image builds could fill the disk to
+    Vespa's feed-block limit."""
+    from cogniverse_vespa import vespa_schema_manager
+
     usage = shutil.disk_usage(path)
     used = usage.used / usage.total
-    if used >= E2E_DEPLOY_DISK_LIMIT:
+    if used >= deploy_disk_limit():
         raise RuntimeError(
             f"host disk at {path} is {used:.1%} used "
-            f"({usage.free / 1024**3:.0f} GiB free), at or above Vespa's "
-            f"{E2E_DEPLOY_DISK_LIMIT:.0%} feed-block limit, so the deployed "
-            "runtime could not write to Vespa. Free space first, e.g. "
+            f"({usage.free / 1024**3:.0f} GiB free), within "
+            f"{E2E_DEPLOY_BUILD_HEADROOM:.0%} of Vespa's "
+            f"{vespa_schema_manager.FEED_BLOCK_DISK_LIMIT:.0%} feed-block limit, "
+            "so the deploy's image builds could push it into the block and the "
+            "deployed runtime could not write to Vespa. Free space first, e.g. "
             "`docker builder prune -f`, then rerun."
         )
 
@@ -786,7 +802,7 @@ def deploy_stack(
     # ``cogniverse up`` does — keeps the current build + one prior and drops
     # the rest. Without this, each e2e rebuild leaves ~24GB of stale
     # cogniverse/* tags, and repeated runs fill the host disk until Vespa
-    # trips its 80% feed-block and the runtime crash-loops on NO_SPACE.
+    # trips its feed-block and the runtime crash-loops on NO_SPACE.
     try:
         prune_superseded_images(
             built_tags, node_container=f"k3d-{cluster_name}-server-0"

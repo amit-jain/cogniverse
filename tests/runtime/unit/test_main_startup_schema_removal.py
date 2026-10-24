@@ -93,7 +93,8 @@ async def test_startup_metadata_deploy_disables_schema_removal(
     monkeypatch.setattr(PhoenixProvider, "initialize", lambda self, config: None)
     monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
     monkeypatch.setattr(
-        "cogniverse_runtime.backend_startup.metadata_schemas_current", lambda _: False
+        "cogniverse_runtime.backend_startup.deployed_application_current",
+        lambda _: False,
     )
 
     with pytest.raises(_AbortStartup, match="stop after the startup metadata deploy"):
@@ -135,7 +136,7 @@ async def test_an_unusable_redis_stops_startup_before_any_side_effect(
     monkeypatch.setattr(PhoenixProvider, "initialize", lambda self, config: None)
     monkeypatch.setenv("REDIS_URL", f"redis://:startup-pw@127.0.0.1:{closed_port}/0")
     monkeypatch.setattr(
-        "cogniverse_runtime.backend_startup.metadata_schemas_current",
+        "cogniverse_runtime.backend_startup.deployed_application_current",
         lambda _: side_effects.append("metadata-check") or False,
     )
     monkeypatch.setattr(
@@ -191,7 +192,7 @@ class _ContendedSchemaManager:
 async def test_current_live_metadata_schemas_are_not_redeployed(monkeypatch):
     manager = _ContendedSchemaManager([])
     monkeypatch.setattr(
-        "cogniverse_runtime.backend_startup.metadata_schemas_current",
+        "cogniverse_runtime.backend_startup.deployed_application_current",
         lambda schema_manager: schema_manager is manager,
     )
 
@@ -213,7 +214,8 @@ async def test_a_held_deployment_lease_is_retried_in_the_background_not_fatal(
         [TimeoutError(_LEASE_HELD), TimeoutError(_LEASE_HELD), None]
     )
     monkeypatch.setattr(
-        "cogniverse_runtime.backend_startup.metadata_schemas_current", lambda _: False
+        "cogniverse_runtime.backend_startup.deployed_application_current",
+        lambda _: False,
     )
     monkeypatch.setattr(runtime_main, "METADATA_DEPLOY_RETRY_SECONDS", 0.05)
 
@@ -248,7 +250,8 @@ async def test_a_refused_startup_metadata_deploy_still_fails_startup(monkeypatch
     refusal = RuntimeError("Vespa refused the application package")
     manager = _ContendedSchemaManager([refusal])
     monkeypatch.setattr(
-        "cogniverse_runtime.backend_startup.metadata_schemas_current", lambda _: False
+        "cogniverse_runtime.backend_startup.deployed_application_current",
+        lambda _: False,
     )
 
     with pytest.raises(RuntimeError) as raised:
@@ -497,7 +500,7 @@ async def test_the_background_retry_skips_a_deploy_a_peer_already_made(
     manager = _ContendedSchemaManager([TimeoutError(_LEASE_HELD)])
     checks = iter([False, True])
     monkeypatch.setattr(
-        "cogniverse_runtime.backend_startup.metadata_schemas_current",
+        "cogniverse_runtime.backend_startup.deployed_application_current",
         lambda _: next(checks),
     )
     monkeypatch.setattr(runtime_main, "METADATA_DEPLOY_RETRY_SECONDS", 0.05)
@@ -516,7 +519,7 @@ async def test_the_background_retry_skips_a_deploy_a_peer_already_made(
     ] == [
         f"Metadata schema deploy did not get the deployment lease ({_LEASE_HELD}); "
         "retrying every 0s in the background",
-        "Metadata schemas are live and current; background deploy skipped",
+        "Metadata schemas and services tuning are live and current; background deploy skipped",
     ]
 
 
@@ -562,7 +565,7 @@ async def test_a_bad_a2a_setting_stops_startup_before_any_side_effect(
     monkeypatch.setenv("REDIS_URL", workflow_state_redis_url)
     monkeypatch.setenv(variable, value)
     monkeypatch.setattr(
-        "cogniverse_runtime.backend_startup.metadata_schemas_current",
+        "cogniverse_runtime.backend_startup.deployed_application_current",
         lambda _: side_effects.append("metadata-check") or False,
     )
     monkeypatch.setattr(

@@ -227,15 +227,19 @@ METADATA_DEPLOY_RETRY_SECONDS = 30.0
 async def _deploy_metadata_schemas_at_startup(
     schema_manager: Any, application_name: str
 ) -> asyncio.Task | None:
-    """Deploy the metadata schemas unless the live ones already match.
+    """Deploy the metadata schemas unless the live ones and the live
+    services.xml tuning already match.
 
     A deploy that waits out another deployer's lease does not fail startup:
     it is retried in the background, and the returned task is that retry.
     """
-    from cogniverse_runtime.backend_startup import metadata_schemas_current
+    from cogniverse_runtime.backend_startup import deployed_application_current
 
-    if await asyncio.to_thread(metadata_schemas_current, schema_manager):
-        logger.info("Metadata schemas are live and current; startup deploy skipped")
+    if await asyncio.to_thread(deployed_application_current, schema_manager):
+        logger.info(
+            "Metadata schemas and services tuning are live and current; "
+            "startup deploy skipped"
+        )
         return None
     try:
         await asyncio.to_thread(
@@ -261,13 +265,14 @@ async def _deploy_metadata_schemas_at_startup(
 async def _retry_metadata_deploy(schema_manager: Any, application_name: str) -> None:
     """Retry the startup metadata deploy until it gets the deployment lease,
     unless a peer has deployed the same metadata schemas meanwhile."""
-    from cogniverse_runtime.backend_startup import metadata_schemas_current
+    from cogniverse_runtime.backend_startup import deployed_application_current
 
     while True:
         await asyncio.sleep(METADATA_DEPLOY_RETRY_SECONDS)
-        if await asyncio.to_thread(metadata_schemas_current, schema_manager):
+        if await asyncio.to_thread(deployed_application_current, schema_manager):
             logger.info(
-                "Metadata schemas are live and current; background deploy skipped"
+                "Metadata schemas and services tuning are live and current; "
+                "background deploy skipped"
             )
             return
         try:

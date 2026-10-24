@@ -1,4 +1,4 @@
-"""Proton flush tuning shipped by the deploy funnels, observed on a real Vespa."""
+"""Content-cluster tuning shipped by the deploy funnels, observed on a real Vespa."""
 
 from __future__ import annotations
 
@@ -16,7 +16,10 @@ from cogniverse_core.registries.schema_registry import SchemaRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.unified_config import BackendConfig
 from cogniverse_vespa.backend import VespaBackend
-from cogniverse_vespa.vespa_schema_manager import FLUSH_COMPONENT_MAXAGE_S
+from cogniverse_vespa.vespa_schema_manager import (
+    FEED_BLOCK_DISK_LIMIT,
+    FLUSH_COMPONENT_MAXAGE_S,
+)
 from tests.utils.vespa_test_helpers import make_config_manager, schema_full_name
 
 pytestmark = pytest.mark.integration
@@ -24,6 +27,10 @@ pytestmark = pytest.mark.integration
 _SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
 _BASE_SCHEMA = "provenance"
 _PROTON_CONFIG_ID = "cogniverse_content/search/cluster.cogniverse_content/0"
+_FLEETCONTROLLER_CONFIG_ID = (
+    "admin/cluster-controllers/0/components/"
+    "clustercontroller-cogniverse_content-configurer"
+)
 _PROTON_STATE_URL = "http://localhost:19113/state/v1/config"
 _SEARCH_DIR = "/opt/vespa/var/db/vespa/search/cluster.cogniverse_content/n0"
 _LOG_DIR = "/opt/vespa/logs/vespa"
@@ -32,6 +39,7 @@ _TENANTS = {
     "test_metadata_bootstrap_sets_production_flush_maxage": "bootstrap",
     "test_tenant_schema_deploy_sets_production_flush_maxage": "tenant",
     "test_config_generations_of_document_less_db_are_pruned_after_maxage": "prune",
+    "test_tenant_schema_deploy_sets_feed_block_disk_limit": "feedblock",
 }
 _GENERATIONS = 3
 _PRUNE_BUDGET_S = 120
@@ -90,6 +98,19 @@ def _effective_maxage(vespa: dict) -> int:
         _PROTON_CONFIG_ID,
     )
     return json.loads(raw)["flush"]["memory"]["maxage"]["time"]
+
+
+def _feed_block_disk_limit(vespa: dict) -> float:
+    raw = _docker_exec(
+        vespa["container_name"],
+        "vespa-get-config",
+        "-j",
+        "-n",
+        "vespa.config.content.fleetcontroller",
+        "-i",
+        _FLEETCONTROLLER_CONFIG_ID,
+    )
+    return json.loads(raw)["cluster_feed_block_limit"]["disk"]
 
 
 def _proton_log(container: str) -> list[str]:
@@ -183,6 +204,13 @@ def test_tenant_schema_deploy_sets_production_flush_maxage(
         tenant_id=tenant_backend["tenant_id"], base_schema_name=_BASE_SCHEMA
     )
     assert _effective_maxage(shared_vespa) == FLUSH_COMPONENT_MAXAGE_S
+
+
+def test_tenant_schema_deploy_sets_feed_block_disk_limit(shared_vespa, tenant_backend):
+    tenant_backend["backend"].schema_registry.deploy_schema(
+        tenant_id=tenant_backend["tenant_id"], base_schema_name=_BASE_SCHEMA
+    )
+    assert _feed_block_disk_limit(shared_vespa) == FEED_BLOCK_DISK_LIMIT
 
 
 def test_config_generations_of_document_less_db_are_pruned_after_maxage(

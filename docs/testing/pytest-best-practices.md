@@ -1022,7 +1022,7 @@ container.
 
 ### CI Disk Space Requirements
 
-Vespa requires disk usage below 75%. In GitHub Actions:
+Vespa blocks feeding at 90% disk usage (`FEED_BLOCK_DISK_LIMIT`). In GitHub Actions:
 
 ```yaml
 - name: Free up disk space for Vespa
