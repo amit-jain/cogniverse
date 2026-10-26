@@ -98,7 +98,10 @@ to split and indexes one document per span.
 # imports only tags absent from the k3d node. Third-party images are pulled one
 # at a time. A failed pull, inventory, build, or import aborts deployment. After
 # all imports, `up` helm-upgrades with per-image tag overrides; the runtime tag
-# supplies the chart's scalar package version. In dev mode the pods mount the
+# supplies the chart's scalar package version. After importing, `up` removes
+# image generations older than the current one and the one before it (host and
+# k3d node), then prunes the build cache no remaining image references. In dev
+# mode the pods mount the
 # working tree over the images, so day-to-day code changes only need a
 # `kubectl rollout restart` of the affected deployment — rerun `cogniverse up` when
 # dependencies, Dockerfiles, or the chart change (see "Development Workflow:

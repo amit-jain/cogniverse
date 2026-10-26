@@ -858,6 +858,11 @@ def prune_superseded_images(
     whose every tag is superseded, because crictl removes all of an ID's tags
     at once (the gliner image reuses one ID across builds).
 
+    Finally ``docker builder prune -f`` drops the build cache no remaining
+    image references — the removed generations' layers. Cache shared with the
+    kept images, and cache held by an in-flight build, stays for the next
+    incremental build. A failed cache prune raises ``RuntimeError``.
+
     ``runner`` is injectable for tests. Returns the removed host tags.
     """
     current_by_repo = {
@@ -942,6 +947,18 @@ def prune_superseded_images(
                     text=True,
                     check=False,
                 )
+
+    cache = runner(
+        ["docker", "builder", "prune", "-f"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if cache.returncode != 0:
+        raise RuntimeError(
+            f"docker builder prune failed (exit {cache.returncode}): "
+            f"{(cache.stderr or '').strip()}"
+        )
 
     return removed
 

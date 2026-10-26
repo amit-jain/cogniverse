@@ -1717,6 +1717,55 @@ class TestPruneSupersededImages:
 
         assert removed == ["cogniverse/runtime-rocm:0.1.dev2397-g0f2366466"]
 
+    def test_dangling_build_cache_is_pruned_after_every_image_removal(self):
+        from cogniverse_cli.images import prune_superseded_images
+
+        calls: list = []
+        prune_superseded_images(
+            self.CURRENT_TAGS,
+            node_container="k3d-cogniverse-server-0",
+            runner=self._runner(calls),
+        )
+
+        assert calls[-1] == ["docker", "builder", "prune", "-f"]
+        assert [c for c in calls if c[:2] == ["docker", "builder"]] == [calls[-1]]
+        assert [c for c in calls if "rmi" in c] == [
+            ["docker", "rmi", "cogniverse/runtime-rocm:0.1.dev2397-g0f2366466"],
+            [
+                "docker",
+                "exec",
+                "k3d-cogniverse-server-0",
+                "crictl",
+                "rmi",
+                "sha-runtime-old",
+            ],
+        ]
+
+    def test_failed_build_cache_prune_raises_with_docker_stderr(self):
+        from cogniverse_cli.images import prune_superseded_images
+
+        calls: list = []
+        healthy = self._runner(calls)
+
+        def run(cmd, **kwargs):
+            if cmd[:3] == ["docker", "builder", "prune"]:
+                calls.append(cmd)
+                return subprocess.CompletedProcess(
+                    cmd, 1, stdout="", stderr="ERROR: failed to prune: disk I/O\n"
+                )
+            return healthy(cmd, **kwargs)
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"^docker builder prune failed \(exit 1\): "
+            r"ERROR: failed to prune: disk I/O$",
+        ):
+            prune_superseded_images(self.CURRENT_TAGS, runner=run)
+
+        assert [c for c in calls if c[:2] == ["docker", "rmi"]] == [
+            ["docker", "rmi", "cogniverse/runtime-rocm:0.1.dev2397-g0f2366466"]
+        ]
+
 
 class TestDetectTorchBackend:
     """The backend ladder: env override -> nvidia-smi -> rocminfo(gfx) ->
