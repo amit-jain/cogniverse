@@ -184,6 +184,7 @@ async def _run_loop(orch, plan, *, inbound_queue):
 
 class _StubPlanStep:
     def __init__(self) -> None:
+        self.agent_name = "stub-agent"
         self.input_data: Dict[str, Any] = {}
 
 

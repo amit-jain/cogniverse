@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import threading
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -2537,3 +2537,361 @@ class TestOrchestrationTerminalOutcome:
         from cogniverse_agents.orchestrator_agent import orchestration_status
 
         assert orchestration_status({"status": status, "results": {}}) == status
+
+
+class _AgentServer:
+    """Real HTTP agents for the loop's ``_execute_plan``: every POST is
+    recorded as ``(agent_name, payload)`` and answered by ``answers``."""
+
+    def __init__(self, answers):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.answers = answers
+        self.posts: list[tuple[str, dict]] = []
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                payload = json.loads(
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                )
+                server.posts.append((payload["agent_name"], payload))
+                status, body = server.answers(payload, len(server.posts))
+                encoded = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            def log_message(self, *_args):
+                pass
+
+        self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
+        self._thread = threading.Thread(target=self._httpd.serve_forever)
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc):
+        self._httpd.shutdown()
+        self._httpd.server_close()
+        self._thread.join()
+
+    def calls(self, agent_name: str) -> list[dict]:
+        return [payload for name, payload in self.posts if name == agent_name]
+
+
+def _agent_answer(payload, call_number):
+    """Each agent's answer, carrying the query it was asked so a test can
+    tell which round produced it."""
+    query = payload["query"]
+    agent = payload["agent_name"]
+    if agent == "entity_extraction_agent":
+        return 200, {"entities": [{"text": query, "label": "topic"}]}
+    if agent == "profile_selection_agent":
+        return 200, {"selected_profile": f"profile-for:{query}"}
+    if agent == "query_enhancement_agent":
+        return 200, {"enhanced_query": f"enhanced:{query}"}
+    if agent == "search_agent":
+        return 200, {
+            "agent": "search_agent",
+            "results": [
+                {
+                    "source_doc_id": f"doc-{call_number}",
+                    "segment_id": "0",
+                    "text": f"hit for {query}",
+                    "score": 0.9,
+                }
+            ],
+        }
+    if agent == "summarizer_agent":
+        return 200, {"summary": f"summary of {query}"}
+    return 404, {}
+
+
+_PINNED_PLAN_AGENTS = (
+    "entity_extraction_agent",
+    "profile_selection_agent",
+    "query_enhancement_agent",
+    "search_agent",
+    "summarizer_agent",
+)
+
+
+def _pinned_plan(query: str) -> OrchestrationPlan:
+    return OrchestrationPlan(
+        query=query,
+        steps=[
+            AgentStep(agent_name=name, depends_on=depends_on, reasoning="")
+            for name, depends_on in zip(
+                _PINNED_PLAN_AGENTS, ([], [], [], [0, 1, 2], [3])
+            )
+        ],
+    )
+
+
+class TestLoopRoundsRerunOnlyWhatTheGapChanges:
+    """Rounds after the first re-run query enhancement and search only:
+    entity extraction and profile selection answer the user's question, not
+    the gap, and the answer step is generated once from the final round."""
+
+    @pytest.fixture
+    def loop_orchestrator(self, orchestrator_agent):
+        orch = orchestrator_agent
+        orch._config_manager.get_system_config = Mock(
+            return_value=SystemConfig(
+                inference_service_urls={"gliner": "http://127.0.0.1:29071"},
+                iter_retrieval_max_iter=3,
+                iter_retrieval_token_budget=1_000_000,
+                iter_retrieval_wall_clock_ms=600_000,
+            )
+        )
+        gate_iterations: list[int] = []
+
+        async def gate(*, original_query, accumulated_evidence, iteration_idx):
+            gate_iterations.append(iteration_idx)
+            return {
+                "sufficient": False,
+                "missing_aspects": ["the gap"],
+                "confidence": 0.2,
+            }
+
+        async def reformulate(query, missing_aspects):
+            return f"{query} | {', '.join(missing_aspects)}", ""
+
+        orch._run_sufficiency_gate = gate
+        orch._reformulate_query = reformulate
+        orch.gate_iterations = gate_iterations
+        return orch
+
+    @staticmethod
+    @asynccontextmanager
+    async def _agents(orch, answers):
+        import httpx
+
+        with _AgentServer(answers) as server:
+            for name in _PINNED_PLAN_AGENTS:
+                endpoint = orch.registry.agents[name]
+                endpoint.url = server.url
+                endpoint.process_endpoint = "/process"
+                endpoint.timeout = 10.0
+            async with httpx.AsyncClient() as client:
+                orch._http_client_override = client
+                yield server
+
+    @staticmethod
+    async def _loop(orch, query, *, sink, order=None, inbound_queue=None):
+        return await orch._iterative_retrieval_loop(
+            query=query,
+            plan=_pinned_plan(query),
+            tenant_id="test:unit",
+            workflow_id=f"wf-{query}",
+            session_id=f"session-{query}",
+            agent_results_sink=sink,
+            inbound_queue=inbound_queue,
+            execution_order_sink=order,
+        )
+
+    async def test_later_rounds_reuse_entities_and_profile_and_answer_once(
+        self, loop_orchestrator
+    ):
+        orch = loop_orchestrator
+        sink: dict = {}
+        order: list[str] = []
+        async with self._agents(orch, _agent_answer) as server:
+            result = await self._loop(orch, "red cars", sink=sink, order=order)
+
+        later = "red cars | the gap"
+        assert result.exit_reason == "sufficient"
+        assert result.iterations_executed == 2
+        assert orch.gate_iterations == [0]
+        assert [p["query"] for p in server.calls("entity_extraction_agent")] == [
+            "red cars"
+        ]
+        assert [p["query"] for p in server.calls("profile_selection_agent")] == [
+            "red cars"
+        ]
+        assert [p["query"] for p in server.calls("query_enhancement_agent")] == [
+            "red cars",
+            later,
+        ]
+        searches = server.calls("search_agent")
+        assert [
+            (p["query"], p["entities"], p["profiles"], p["enhanced_query"])
+            for p in searches
+        ] == [
+            (
+                "red cars",
+                [{"text": "red cars", "label": "topic"}],
+                ["profile-for:red cars"],
+                "enhanced:red cars",
+            ),
+            (
+                later,
+                [{"text": "red cars", "label": "topic"}],
+                ["profile-for:red cars"],
+                f"enhanced:{later}",
+            ),
+        ]
+        (summary_call,) = server.calls("summarizer_agent")
+        assert summary_call["query"] == later
+        assert summary_call["context"]["search_results"] == [
+            {
+                "source_doc_id": "doc-6",
+                "segment_id": "0",
+                "text": f"hit for {later}",
+                "score": 0.9,
+            }
+        ]
+        assert server.posts[-1][0] == "summarizer_agent"
+        assert sorted(order[:3]) == sorted(_PINNED_PLAN_AGENTS[:3])
+        assert order[3:] == [
+            "search_agent",
+            "query_enhancement_agent",
+            "search_agent",
+            "summarizer_agent",
+        ]
+        assert sink == {
+            "entity_extraction_agent": {
+                "entities": [{"text": "red cars", "label": "topic"}]
+            },
+            "profile_selection_agent": {"selected_profile": "profile-for:red cars"},
+            "query_enhancement_agent": {"enhanced_query": f"enhanced:{later}"},
+            "search_agent": {
+                "agent": "search_agent",
+                "results": [
+                    {
+                        "source_doc_id": "doc-6",
+                        "segment_id": "0",
+                        "text": f"hit for {later}",
+                        "score": 0.9,
+                    }
+                ],
+            },
+            "summarizer_agent": {"summary": f"summary of {later}"},
+        }
+
+    async def test_a_failed_entity_extraction_is_asked_again_next_round(
+        self, loop_orchestrator
+    ):
+        orch = loop_orchestrator
+
+        def answers(payload, call_number):
+            if payload["agent_name"] == "entity_extraction_agent" and (
+                payload["query"] == "red cars"
+            ):
+                return 503, {"detail": "busy"}
+            return _agent_answer(payload, call_number)
+
+        sink: dict = {}
+        async with self._agents(orch, answers) as server:
+            await self._loop(orch, "red cars", sink=sink)
+
+        assert [p["query"] for p in server.calls("entity_extraction_agent")] == [
+            "red cars",
+            "red cars | the gap",
+        ]
+        assert [p["query"] for p in server.calls("profile_selection_agent")] == [
+            "red cars"
+        ]
+        assert [p.get("entities") for p in server.calls("search_agent")] == [
+            None,
+            [{"text": "red cars | the gap", "label": "topic"}],
+        ]
+
+    async def test_a_stopped_loop_answers_from_the_rounds_it_ran(
+        self, loop_orchestrator
+    ):
+        from cogniverse_runtime.messaging import (
+            InboundMessage,
+            get_inbound_queue_registry,
+            reset_inbound_queue_registry_for_testing,
+        )
+
+        orch = loop_orchestrator
+        reset_inbound_queue_registry_for_testing()
+        queue = await get_inbound_queue_registry().get_or_create_queue(
+            "session-red cars", "test:unit"
+        )
+        stop = InboundMessage(
+            session_id="session-red cars",
+            role="user",
+            content="",
+            tags=("stop",),
+            created_at="2026-11-01T00:00:00+00:00",
+            deadline_ms=None,
+        )
+
+        execute_plan = orch._execute_plan
+
+        async def execute_then_stop(plan, **kwargs):
+            results = await execute_plan(plan, **kwargs)
+            await queue.enqueue(stop)
+            return results
+
+        orch._execute_plan = execute_then_stop
+        sink: dict = {}
+        async with self._agents(orch, _agent_answer) as server:
+            result = await self._loop(orch, "red cars", sink=sink, inbound_queue=queue)
+
+        assert result.exit_reason == "user_stop"
+        assert result.iterations_executed == 1
+        assert [name for name, _ in server.posts][-2:] == [
+            "search_agent",
+            "summarizer_agent",
+        ]
+        (summary_call,) = server.calls("summarizer_agent")
+        assert summary_call["query"] == "red cars"
+        assert summary_call["context"]["search_results"][0]["text"] == (
+            "hit for red cars"
+        )
+        assert sink["summarizer_agent"] == {"summary": "summary of red cars"}
+
+    async def test_a_failed_answer_step_is_recorded_as_its_error(
+        self, loop_orchestrator
+    ):
+        orch = loop_orchestrator
+
+        def answers(payload, call_number):
+            if payload["agent_name"] == "summarizer_agent":
+                return 500, {"detail": "down"}
+            return _agent_answer(payload, call_number)
+
+        sink: dict = {}
+        async with self._agents(orch, answers) as server:
+            await self._loop(orch, "red cars", sink=sink)
+
+        assert len(server.calls("summarizer_agent")) == 1
+        assert sink["summarizer_agent"]["status"] == "error"
+        assert sink["summarizer_agent"]["message"].startswith(
+            "HTTPStatusError: Server error '500 Internal Server Error' for url "
+            f"'{server.url}/process'"
+        )
+
+    async def test_two_concurrent_loops_keep_their_own_pinned_results(
+        self, loop_orchestrator
+    ):
+        orch = loop_orchestrator
+        sinks: dict[str, dict] = {"red cars": {}, "blue boats": {}}
+        async with self._agents(orch, _agent_answer) as server:
+            await asyncio.gather(
+                *(self._loop(orch, query, sink=sinks[query]) for query in sinks)
+            )
+
+        for query in sinks:
+            later = f"{query} | the gap"
+            searches = [
+                p for p in server.calls("search_agent") if p["query"] in (query, later)
+            ]
+            assert [(p["query"], p["entities"], p["profiles"]) for p in searches] == [
+                (query, [{"text": query, "label": "topic"}], [f"profile-for:{query}"]),
+                (later, [{"text": query, "label": "topic"}], [f"profile-for:{query}"]),
+            ]
+            assert sinks[query]["summarizer_agent"] == {
+                "summary": f"summary of {later}"
+            }
+        assert len(server.calls("entity_extraction_agent")) == 2
+        assert len(server.calls("summarizer_agent")) == 2

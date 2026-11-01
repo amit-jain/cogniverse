@@ -286,6 +286,12 @@ def _merge_enrichment(
 # Steps whose output enriches the steps after them rather than answering.
 _ENRICHMENT_AGENTS = frozenset(_ENRICHMENT_FIELD_MAP) | {"profile_selection_agent"}
 
+# Enrichment steps that answer the user's question rather than the gap a
+# retrieval round fills: a successful result is reused by later rounds.
+_PINNED_ACROSS_ROUNDS = frozenset(
+    {"entity_extraction_agent", "profile_selection_agent"}
+)
+
 
 def _canonical_agent_name(agent_name: str) -> str:
     return agent_name if agent_name.endswith("_agent") else f"{agent_name}_agent"
@@ -1861,6 +1867,8 @@ class OrchestratorAgent(
         session_id: Optional[str] = None,
         execution_order_sink: Optional[List[str]] = None,
         agent_observations_sink: Optional[List[Dict[str, Any]]] = None,
+        completed: Optional[Dict[str, Any]] = None,
+        deferred: frozenset[str] = frozenset(),
     ) -> Dict[str, Any]:
         """
         Action Phase: Execute orchestration plan via A2A HTTP calls.
@@ -1875,14 +1883,27 @@ class OrchestratorAgent(
             workflow_id: Workflow identifier for tracking
             tenant_id: Tenant identifier (per-request)
             session_id: Session identifier (per-request)
+            completed: Results of steps already answered, by agent name.
+                Those steps are not dispatched; their results enrich the
+                steps that run and are returned with them.
+            deferred: Agent names whose steps are not run and return no
+                result.
 
         Returns:
             Dictionary of agent results
         """
         import asyncio
 
-        agent_results = {}
-        executed = [False] * len(plan.steps)
+        completed = completed or {}
+        agent_results = {
+            step.agent_name: completed[step.agent_name]
+            for step in plan.steps
+            if step.agent_name in completed
+        }
+        executed = [
+            step.agent_name in completed or step.agent_name in deferred
+            for step in plan.steps
+        ]
         step_count = 0
 
         # Execute steps respecting dependencies and parallelism
@@ -2808,6 +2829,10 @@ class OrchestratorAgent(
         ``agent_results_sink`` receives the per-agent results from each
         iteration so the caller can keep emitting them (the orchestration
         envelope still surfaces agent_results) without re-running steps.
+
+        A successful entity extraction or profile selection is reused by
+        later rounds rather than re-run. Answer steps (summary, report) run
+        once after the loop, on the last round's results, whatever the exit.
         """
         loop_started = time.monotonic()
         # ``raw_accumulated`` keeps every snippet that came back from a
@@ -2853,6 +2878,15 @@ class OrchestratorAgent(
         # byte-equal against per-iter goldens.
         loop_trajectory: List[Dict[str, Any]] = []
         iterations_executed = 0
+        # Results later rounds reuse instead of re-running the step.
+        pinned: Dict[str, Any] = {}
+        # Answer steps run once, after the loop, on the final round's results.
+        answer_agents = frozenset(
+            step.agent_name
+            for step in plan.steps
+            if _canonical_agent_name(step.agent_name) in _ANSWER_AGENTS_CONSUMING_SEARCH
+        )
+        round_results: Dict[str, Any] = {}
         # Read loop-tuning caps from SystemConfig (set at runtime
         # startup from ITER_RETRIEVAL_* env vars). Read once per
         # /process call so a live ConfigManager update between
@@ -2891,29 +2925,13 @@ class OrchestratorAgent(
                 for msg in inbound_msgs:
                     if "stop" in msg.tags:
                         exit_reason = "user_stop"
-                        iterations_executed = iter_idx
-                        loop_duration_ms = (time.monotonic() - loop_started) * 1000.0
-                        return AccumulatedEvidence(
-                            evidence=accumulated,
-                            iterations_executed=iterations_executed,
-                            exit_reason=exit_reason,
-                            final_gate_output=gate_output,
-                            partial_due_to_budget=partial_due_to_budget,
-                            partial_due_to_timeout=partial_due_to_timeout,
-                            trace_id=trace_id,
-                            inbound_constraints_applied=list(
-                                accumulated_inbound_constraints
-                            ),
-                            loop_trajectory=list(loop_trajectory),
-                            duration_ms=loop_duration_ms,
-                            per_iter_duration_ms=[
-                                t["duration_ms"] for t in loop_trajectory
-                            ],
-                        )
+                        break
                     if (
                         "constraint" in msg.tags or "interrupt" in msg.tags
                     ) and msg.content:
                         accumulated_inbound_constraints.append(msg.content)
+                if exit_reason == "user_stop":
+                    break
 
             base_missing = gate_output.get("missing_aspects", []) if gate_output else []
             # Inbound constraints take precedence over gate-derived
@@ -2941,8 +2959,18 @@ class OrchestratorAgent(
                 session_id=session_id,
                 execution_order_sink=execution_order_sink,
                 agent_observations_sink=agent_observations_sink,
+                completed=pinned,
+                deferred=answer_agents,
             )
             agent_results_sink.update(iter_results)
+            round_results = iter_results
+            pinned.update(
+                (agent, result)
+                for agent, result in iter_results.items()
+                if _canonical_agent_name(agent) in _PINNED_ACROSS_ROUNDS
+                and isinstance(result, dict)
+                and result.get("status") not in FAILED_STEP_STATUSES | {PARTIAL_STATUS}
+            )
 
             new_snippets = self._extract_evidence_from_results(iter_results)
             raw_accumulated = raw_accumulated + new_snippets
@@ -2953,22 +2981,27 @@ class OrchestratorAgent(
             # gate question even when 3+ evidence snippets already span
             # the query's main aspects. The orchestrator must not run
             # unbounded retrievals chasing the gate's perfectionism. From
-            # the second iteration onward, if every sub-agent in the plan
-            # contributed at least one usable evidence snippet this
-            # round, the loop has converged: continuing would just
-            # re-query the same agents with the same reformulated query
-            # and return the same evidence. The loop exits whatever the
-            # gate would say, so the gate is not asked and
-            # ``final_gate_output`` is empty. A constraint is folded into
-            # THIS iteration's reformulation (above) and the evidence is
-            # gathered against it before this check, so it never blocks
+            # the second iteration onward, if every retrieval step in the
+            # plan (every step but enrichment) contributed at least one
+            # usable evidence snippet this round, the loop has converged:
+            # continuing would just re-query the same agents with the same
+            # reformulated query and return the same evidence. The loop
+            # exits whatever the gate would say, so the gate is not asked
+            # and ``final_gate_output`` is empty. A constraint is folded
+            # into THIS iteration's reformulation (above) and the evidence
+            # is gathered against it before this check, so it never blocks
             # convergence.
+            retrieval_results = {
+                agent: result
+                for agent, result in iter_results.items()
+                if _canonical_agent_name(agent) not in _ENRICHMENT_AGENTS
+            }
             converged = (
                 iter_idx >= 1
-                and bool(iter_results)
+                and bool(retrieval_results)
                 and all(
                     bool(self._extract_evidence_from_results({agent: result}))
-                    for agent, result in iter_results.items()
+                    for agent, result in retrieval_results.items()
                 )
             )
             gate_output = (
@@ -3058,6 +3091,26 @@ class OrchestratorAgent(
 
             # Defensive guard against runaway iterations from clock skew.
             del iteration_started
+
+        if answer_agents and iterations_executed:
+            answers = await self._execute_plan(
+                plan,
+                workflow_id=workflow_id,
+                tenant_id=tenant_id,
+                session_id=session_id,
+                execution_order_sink=execution_order_sink,
+                agent_observations_sink=agent_observations_sink,
+                completed=round_results,
+                deferred=frozenset(
+                    step.agent_name
+                    for step in plan.steps
+                    if step.agent_name not in answer_agents
+                    and step.agent_name not in round_results
+                ),
+            )
+            agent_results_sink.update(
+                (agent, answers[agent]) for agent in answer_agents if agent in answers
+            )
 
         loop_duration_ms = (time.monotonic() - loop_started) * 1000.0
         return AccumulatedEvidence(
