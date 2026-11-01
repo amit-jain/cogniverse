@@ -306,11 +306,19 @@ class _IterRetrievalPeer:
     endpoints so the loop sees exactly the snippets the goldens expect.
 
     The ``preload`` constructor knob lets the RLM-promotion test prime
-    evidence to >6000 chars so the gate promotes to ``InstrumentedRLM``.
+    evidence to >6000 chars so the gate promotes to ``InstrumentedRLM``;
+    ``first_search_only`` makes every search after the first return nothing,
+    so a later iteration does not converge and the gate judges it.
     """
 
-    def __init__(self, preload: Optional[List[Dict[str, Any]]] = None):
+    def __init__(
+        self,
+        preload: Optional[List[Dict[str, Any]]] = None,
+        *,
+        first_search_only: bool = False,
+    ):
         self.preload = preload or []
+        self.first_search_only = first_search_only
         self.search_calls = 0
         self.kg_calls = 0
 
@@ -321,7 +329,7 @@ class _IterRetrievalPeer:
                 self.search_calls += 1
                 if self.search_calls == 1:
                     results = [_marie_curie_30s_seg3()] + self.preload
-                elif self.search_calls == 2:
+                elif self.search_calls == 2 and not self.first_search_only:
                     # Second iteration receives reformulated query that
                     # locates the work-location and year corroboration
                     results = [
@@ -436,6 +444,21 @@ def test_query_string_literal():
 # ---------------------------------------------------------------------------
 
 
+def _record_gate_calls(orchestrator: OrchestratorAgent) -> List[tuple]:
+    """Wrap the real gate so each call's ``(iteration_idx, output)`` is
+    recorded; the gate itself still runs on the real LM."""
+    calls: List[tuple] = []
+    real_gate = orchestrator._run_sufficiency_gate
+
+    async def _recording_gate(**kwargs):
+        output = await real_gate(**kwargs)
+        calls.append((kwargs["iteration_idx"], output))
+        return output
+
+    orchestrator._run_sufficiency_gate = _recording_gate  # type: ignore[method-assign]
+    return calls
+
+
 async def _run_loop(
     orchestrator: OrchestratorAgent,
     *,
@@ -544,13 +567,28 @@ async def test_iter2_evidence_byte_equal_golden(captured_spans, dspy_lm, gliner_
 async def test_gate2_output_locked_to_decision_contract(
     captured_spans, dspy_lm, gliner_url
 ):
+    """Iteration 2 converges (its search returned evidence), so the loop
+    exits without asking the gate and reports no final gate decision. The
+    gate's own verdict on that evidence still meets the decision contract."""
     peer = _IterRetrievalPeer()
     orchestrator = _build_orchestrator(
         telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
     )
+    gate_calls = _record_gate_calls(orchestrator)
     loop_result, _ = await _run_loop(orchestrator)
+
+    assert [iteration for iteration, _ in gate_calls] == [0]
+    assert (loop_result.exit_reason, loop_result.final_gate_output) == (
+        "sufficient",
+        {},
+    )
+    gate_output = await orchestrator._run_sufficiency_gate(
+        original_query=CANONICAL_QUERY,
+        accumulated_evidence=loop_result.evidence,
+        iteration_idx=1,
+    )
     assert_gate_decision_grounded(
-        loop_result.final_gate_output,
+        gate_output,
         sources=[
             CANONICAL_QUERY,
             json.dumps(loop_result.evidence, sort_keys=True, default=str),
@@ -608,12 +646,14 @@ async def test_retrieval_iteration_spans_carry_each_gate_decision(
     captured_spans, dspy_lm, gliner_url
 ):
     """One span per executed iteration, numbered in order, each carrying the
-    loop's declared attributes, and the last one recording exactly the
-    confidence the final gate returned."""
+    loop's declared attributes. The gate judged iteration 1 only, so only
+    its span records a sufficiency score: exactly the confidence that gate
+    returned. Iteration 2 converged without the gate and records none."""
     peer = _IterRetrievalPeer()
     orchestrator = _build_orchestrator(
         telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
     )
+    gate_calls = _record_gate_calls(orchestrator)
     loop_result, _ = await _run_loop(orchestrator)
 
     spans = [
@@ -626,16 +666,18 @@ async def test_retrieval_iteration_spans_carry_each_gate_decision(
         s.name for s in captured_spans.exporter.get_finished_spans()
     ]
     assert [int(s.attributes["iteration_idx"]) for s in spans] == [1, 2]
-    assert [set(s.attributes) for s in spans] == [ITERATION_SPAN_ATTRIBUTES] * 2
+    assert [set(s.attributes) for s in spans] == [
+        ITERATION_SPAN_ATTRIBUTES,
+        ITERATION_SPAN_ATTRIBUTES - {"sufficiency_score"},
+    ]
     assert [s.attributes["exit_reason"] for s in spans] == ["in_progress"] * 2
     # The last iteration's span counts the evidence the loop ended with.
     assert int(spans[-1].attributes["evidence_count"]) == len(loop_result.evidence)
     # The score the span records is the decision it came from, not a
-    # re-derivation: the last iteration's gate is the loop's final gate.
-    assert (
-        float(spans[-1].attributes["sufficiency_score"])
-        == loop_result.final_gate_output["confidence"]
-    )
+    # re-derivation.
+    [(gate_iteration, gate_output)] = gate_calls
+    assert gate_iteration == 0
+    assert float(spans[0].attributes["sufficiency_score"]) == gate_output["confidence"]
 
 
 # ---------------------------------------------------------------------------
@@ -704,6 +746,11 @@ async def test_rlm_promotion_emits_instrumented_rlm_child_span(
         "cogniverse_agents.orchestrator_agent._ITER_RETRIEVAL_WALL_CLOCK_MS",
         30 * 60 * 1000,
     )
+    # Two iterations, the second with no new evidence, so it does not
+    # converge and the gate judges both.
+    monkeypatch.setattr(
+        "cogniverse_agents.orchestrator_agent._ITER_RETRIEVAL_MAX_ITER", 2
+    )
     from cogniverse_agents.inference.instrumented_rlm import InstrumentedRLM
 
     # The REPL steps each promoted gate actually took, read off the
@@ -720,7 +767,7 @@ async def test_rlm_promotion_emits_instrumented_rlm_child_span(
     # 100 copies of the seg_3 snippet pushes the JSON serialization above
     # _ITER_GATE_RLM_PROMOTION_CHARS (6000 chars).
     preload = [_marie_curie_30s_seg3() for _ in range(100)]
-    peer = _IterRetrievalPeer(preload=preload)
+    peer = _IterRetrievalPeer(preload=preload, first_search_only=True)
     orchestrator = _build_orchestrator(
         telemetry_manager=captured_spans, peer=peer, gliner_url=gliner_url
     )

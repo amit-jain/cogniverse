@@ -4114,7 +4114,10 @@ cap of three iterations; smaller evidence sets use
 not mean the accumulated evidence is discarded: its rationale must cite
 concrete support already found and name only the facets still missing. The
 next retrieval round can therefore reformulate for the gaps without losing
-supported facts. The integration golden in
+supported facts. From the second round on, a round in which every sub-agent
+returned evidence ends the loop as `sufficient` without asking the gate, so
+`final_gate_output` and the response's `missing_aspects` are empty on that
+exit; a round that ends at `max_iter` is still judged by the gate. The integration golden in
 `tests/agents/integration/test_iterative_retrieval_loop.py` pins both the
 multi-round behavior and the three-iteration RLM cap.
 

@@ -87,6 +87,7 @@ class _StubOrchestrator:
         self._reformulate_calls: List[List[str]] = []
         self._execute_calls: int = 0
         self._executed_queries: List[str] = []
+        self._gate_iterations: List[int] = []
         # ``_iterative_retrieval_loop`` reads tuning caps off
         # ``self._config_manager.get_system_config()``; supply a real
         # ``SystemConfig`` with bounded test defaults so the loop
@@ -145,6 +146,7 @@ class _StubOrchestrator:
     async def _run_sufficiency_gate(
         self, *, original_query: str, accumulated_evidence, iteration_idx: int
     ) -> Dict[str, Any]:
+        self._gate_iterations.append(iteration_idx)
         return {
             "sufficient": False,
             "missing_aspects": [],
@@ -395,6 +397,10 @@ async def test_no_inbound_queue_loop_runs_unchanged():
     # reformulation reads the (empty) gate output only.
     assert stub._reformulate_calls == [[]]
     assert stub._executed_queries == ["test query", "test query :: "]
+    # Iter 1 converged, so only iter 0 asked the gate and the loop reports
+    # no final gate decision.
+    assert stub._gate_iterations == [0]
+    assert result.final_gate_output == {}
 
 
 # --------------------------------------------------------------------- #
@@ -571,6 +577,45 @@ async def test_max_iter_exit_reason_distinct_from_user_stop_and_sufficient():
     assert result.iterations_executed == 3
     assert result.exit_reason != "user_stop"
     assert result.exit_reason != "sufficient"
+    # No iteration converged, so the gate judged every one, the last
+    # included, and its decision is the loop's final gate output.
+    assert stub._gate_iterations == [0, 1, 2]
+    assert result.final_gate_output == {
+        "sufficient": False,
+        "missing_aspects": [],
+        "confidence": 0.3,
+        "rationale": "stub",
+    }
+
+
+async def test_a_sufficient_gate_ends_a_round_that_did_not_converge():
+    """A round where some sub-agent returned nothing does not converge, so
+    the gate is asked, and its ``sufficient`` verdict from iter 1 onward
+    ends the loop with that verdict as the final gate output."""
+    reset_inbound_queue_registry_for_testing()
+    verdict = {
+        "sufficient": True,
+        "missing_aspects": [],
+        "confidence": 0.9,
+        "rationale": "stub-sufficient",
+    }
+
+    class _OneAgentSilentStub(_StubOrchestrator):
+        async def _execute_plan(self, plan, **kwargs):
+            results = await super()._execute_plan(plan, **kwargs)
+            results["silent-agent"] = {"results": []}
+            return results
+
+        async def _run_sufficiency_gate(self, *, iteration_idx, **_kwargs):
+            self._gate_iterations.append(iteration_idx)
+            return dict(verdict)
+
+    stub = _OneAgentSilentStub()
+    result = await _run_loop(stub, _StubPlan(), inbound_queue=None)
+
+    assert (result.exit_reason, result.iterations_executed) == ("sufficient", 2)
+    assert stub._gate_iterations == [0, 1]
+    assert result.final_gate_output == verdict
 
 
 # --------------------------------------------------------------------- #

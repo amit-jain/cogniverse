@@ -581,9 +581,11 @@ class AccumulatedEvidence:
     ``evidence`` is the running list of snippets collected across all
     iterations. Each snippet is a dict with at least
     ``{source_doc_id, segment_id, ts_start, ts_end, text}`` plus optional
-    ranking / modality fields. ``final_gate_output`` mirrors the last
-    sufficient-context gate decision, keyed by ``SUFFICIENCY_GATE_FIELDS``,
-    so callers can surface why the loop stopped without re-running it.
+    ranking / modality fields. ``final_gate_output`` is the final
+    iteration's sufficient-context gate decision, keyed by
+    ``SUFFICIENCY_GATE_FIELDS``, so callers can surface why the loop stopped
+    without re-running it; it is empty when the loop stopped on convergence,
+    where the gate is not asked.
 
     ``trace_id`` is the OTEL trace id of the orchestration span; tests
     use it to fetch the ``retrieval_iteration`` child spans from Phoenix.
@@ -2723,16 +2725,17 @@ class OrchestratorAgent(
         *,
         tenant_id: str,
         iteration_idx: int,
-        sufficiency_score: float,
+        sufficiency_score: Optional[float],
         exit_reason: str,
         evidence_count: int,
         session_id: Optional[str] = None,
         inbound_constraints_applied: Optional[List[str]] = None,
     ) -> None:
         """Emit a ``retrieval_iteration`` Phoenix span carrying
-        ``iteration_idx``, ``sufficiency_score``, ``exit_reason``, and
-        ``evidence_count`` so trajectory-level evaluation can grade each
-        loop iteration independently.
+        ``iteration_idx``, ``exit_reason``, ``evidence_count`` and, for an
+        iteration the sufficiency gate judged, its ``sufficiency_score``, so
+        trajectory-level evaluation can grade each loop iteration
+        independently.
 
         ``session_id`` + ``inbound_constraints_applied`` are added as
         attributes so end-to-end tests can query Phoenix spans by
@@ -2745,10 +2748,11 @@ class OrchestratorAgent(
         try:
             attrs: Dict[str, Any] = {
                 "iteration_idx": int(iteration_idx),
-                "sufficiency_score": float(sufficiency_score),
                 "exit_reason": exit_reason,
                 "evidence_count": int(evidence_count),
             }
+            if sufficiency_score is not None:
+                attrs["sufficiency_score"] = float(sufficiency_score)
             if session_id:
                 attrs["session_id"] = session_id
             if inbound_constraints_applied:
@@ -2933,10 +2937,37 @@ class OrchestratorAgent(
             raw_accumulated = raw_accumulated + new_snippets
             accumulated = self._deduplicate_evidence(raw_accumulated)
 
-            gate_output = await self._run_sufficiency_gate(
-                original_query=query,
-                accumulated_evidence=raw_accumulated,
-                iteration_idx=iter_idx,
+            # Convergence heuristic — small / cautious LMs (gemma-class
+            # student models) keep returning ``sufficient=False`` on the
+            # gate question even when 3+ evidence snippets already span
+            # the query's main aspects. The orchestrator must not run
+            # unbounded retrievals chasing the gate's perfectionism. From
+            # the second iteration onward, if every sub-agent in the plan
+            # contributed at least one usable evidence snippet this
+            # round, the loop has converged: continuing would just
+            # re-query the same agents with the same reformulated query
+            # and return the same evidence. The loop exits whatever the
+            # gate would say, so the gate is not asked and
+            # ``final_gate_output`` is empty. A constraint is folded into
+            # THIS iteration's reformulation (above) and the evidence is
+            # gathered against it before this check, so it never blocks
+            # convergence.
+            converged = (
+                iter_idx >= 1
+                and bool(iter_results)
+                and all(
+                    bool(self._extract_evidence_from_results({agent: result}))
+                    for agent, result in iter_results.items()
+                )
+            )
+            gate_output = (
+                {}
+                if converged
+                else await self._run_sufficiency_gate(
+                    original_query=query,
+                    accumulated_evidence=raw_accumulated,
+                    iteration_idx=iter_idx,
+                )
             )
 
             iterations_executed = iter_idx + 1
@@ -2959,12 +2990,16 @@ class OrchestratorAgent(
             self._emit_retrieval_iteration_span(
                 tenant_id=tenant_id,
                 iteration_idx=iterations_executed,
-                sufficiency_score=gate_output.get("confidence", 0.0),
+                sufficiency_score=gate_output.get("confidence"),
                 exit_reason="in_progress",
                 evidence_count=len(accumulated),
                 session_id=session_id,
                 inbound_constraints_applied=list(accumulated_inbound_constraints),
             )
+
+            if converged:
+                exit_reason = "sufficient"
+                break
 
             # Honor a ``sufficient`` gate decision only from the second
             # iteration onwards. Real-world LMs (especially smaller
@@ -2975,31 +3010,6 @@ class OrchestratorAgent(
             # call. Requiring iter_idx >= 1 forces at least one
             # corroborating retrieval pass before we trust the gate.
             if iter_idx >= 1 and gate_output.get("sufficient"):
-                exit_reason = "sufficient"
-                break
-
-            # Convergence heuristic — small / cautious LMs (gemma-class
-            # student models) keep returning ``sufficient=False`` on the
-            # gate question even when 3+ evidence snippets already span
-            # the query's main aspects. The orchestrator must not run
-            # unbounded retrievals chasing the gate's perfectionism. From
-            # the second iteration onward, if every sub-agent in the plan
-            # contributed at least one usable evidence snippet this
-            # round, treat the loop as converged: continuing would just
-            # re-query the same agents with the same reformulated query
-            # and return the same evidence. The gate's missing-aspects
-            # list is retained in ``final_gate_output`` so the caller can
-            # still surface what the gate flagged.
-            all_agents_returned_evidence = bool(iter_results) and all(
-                bool(self._extract_evidence_from_results({agent: result}))
-                for agent, result in iter_results.items()
-            )
-            # A constraint is folded into THIS iteration's reformulation
-            # (above) and the evidence below is gathered against it before this
-            # check, so it never blocks convergence — it keeps steering via
-            # missing_aspects. The loop converges once every sub-agent
-            # contributed evidence this round.
-            if iter_idx >= 1 and all_agents_returned_evidence:
                 exit_reason = "sufficient"
                 break
 
