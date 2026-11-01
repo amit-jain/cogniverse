@@ -1170,9 +1170,10 @@ class TestOrchestratorAgent:
 
         summary = orchestrator_agent._generate_summary(plan, agent_results)
 
-        assert "2/2" in summary  # 2 executed out of 2 planned
-        assert "1 successful" in summary  # 1 successful out of 2 executed
-        assert "Test plan" in summary
+        assert summary == (
+            "Executed 2/2 steps (1 successful). "
+            "Agents: search_agent, summarizer_agent. Plan: Test plan"
+        )
 
     def test_dspy_to_a2a_output(self, orchestrator_agent):
         """Test conversion to A2A output format"""

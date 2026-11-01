@@ -677,7 +677,8 @@ class OrchestrationSignature(dspy.Signature):
     gateway_context: str = dspy.InputField(
         desc=(
             "Classification hints from the gateway: modality, generation_type, "
-            "matched workflow template. Use these as priors when choosing "
+            "matched workflow template, and the tenant's past successful plans "
+            "for similar queries. Use these as priors when choosing "
             "preprocessing and execution agents. Empty string if not available."
         )
     )
@@ -1283,18 +1284,20 @@ class OrchestratorAgent(
                 )
                 inbound_queue = None
 
-        # Lazy memory initialization for this tenant. First touch builds a Mem0
-        # stack (embedder + Vespa vector store) — a multi-second sync build kept
-        # off the loop; the lock inside makes concurrent first touches safe.
+        # Recall the tenant's past successful plans while the agents it may
+        # plan with are read: the two run at once, and either failing fails
+        # the request with its own error.
         self.set_tenant_for_context(tenant_id)
-        await asyncio.to_thread(self._ensure_memory_for_tenant, tenant_id)
-
-        # Get relevant context from memory (cross-session). Mem0 search is a
-        # synchronous LLM/vector round trip — run it off the event loop.
         await self.report_phase("memory_context", "Retrieving memory context...")
-        memory_context = await asyncio.to_thread(self.get_relevant_context, query)
-        if memory_context:
-            logger.info(f"Retrieved memory context for query: {query[:50]}...")
+        recalled, planning = await asyncio.gather(
+            self._recall_past_plans(tenant_id, query),
+            self._tenant_planning(tenant_id),
+            return_exceptions=True,
+        )
+        for outcome in (recalled, planning):
+            if isinstance(outcome, BaseException):
+                raise outcome
+        planning_agents, withheld_agents = planning
 
         # Format conversation history for DSPy planner
         conversation_context = self._format_conversation_context(
@@ -1317,9 +1320,12 @@ class OrchestratorAgent(
                     f"suggested_sequence={json.dumps(template.task_sequence)}"
                 )
                 logger.info(f"Workflow intelligence matched template: {template.name}")
+        if recalled:
+            gateway_hints.append(
+                "past_successful_plans=" + " | ".join(recalled.split("\n\n"))
+            )
         gateway_context = "; ".join(gateway_hints)
 
-        planning_agents, withheld_agents = await self._tenant_planning(tenant_id)
         plan = await self._create_plan(
             query,
             conversation_context,
@@ -3632,6 +3638,15 @@ class OrchestratorAgent(
                 summary = "Orchestration did not complete every planned agent"
         return summary[:512]
 
+    async def _recall_past_plans(self, tenant_id: str, query: str) -> Optional[str]:
+        """The tenant's remembered successful plans for queries like ``query``.
+
+        The first touch builds the tenant's Mem0 stack; both it and the search
+        are blocking, so they run off the loop.
+        """
+        await asyncio.to_thread(self._ensure_memory_for_tenant, tenant_id)
+        return await asyncio.to_thread(self.get_relevant_context, query)
+
     def _generate_summary(
         self, plan: OrchestrationPlan, agent_results: Dict[str, Any]
     ) -> str:
@@ -3647,6 +3662,7 @@ class OrchestratorAgent(
         return (
             f"Executed {executed_steps}/{total_steps} steps "
             f"({successful_steps} successful). "
+            f"Agents: {', '.join(step.agent_name for step in plan.steps)}. "
             f"Plan: {plan.reasoning}"
         )
 

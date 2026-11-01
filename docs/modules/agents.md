@@ -1565,7 +1565,10 @@ with the withheld retrieval agents and the modalities each retrieves.
 **`_create_plan(query, conversation_context, gateway_context, *, available_agents, withheld_agents=None, requested_modalities=()) -> OrchestrationPlan`**
 
 Planning Phase: the DSPy planner proposes an agent sequence from
-`available_agents` (the `_planning_agents` list). Its instructions name only
+`available_agents` (the `_planning_agents` list). Its `gateway_context` hints
+include `past_successful_plans`: the tenant's remembered successful runs for
+similar queries, each naming its agents and reasoning, recalled from Mem0 while
+`_tenant_planning` reads the tenant's agents. A memory outage fails the request. Its instructions name only
 the preprocessing agents; every other agent reaches it through
 `available_agents`.
 
