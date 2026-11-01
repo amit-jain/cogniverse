@@ -2439,10 +2439,9 @@ class OrchestratorAgent(
     ) -> tuple[str, str]:
         """Run the query analysis module and return (reformulated, rationale).
 
-        On the first iteration ``missing_aspects`` is empty and the
-        reformulator works from the original query alone. On subsequent
-        iterations the missing aspects are appended so the reformulator
-        targets the gaps the gate identified.
+        With empty ``missing_aspects`` the reformulator works from the
+        original query alone; otherwise the missing aspects are appended so
+        it targets the gaps the gate identified or the caller's constraints.
 
         A malformed LM answer comes back from the analysis module as its
         named fallback, whose enhanced query is the seeded query. An LM or
@@ -2906,9 +2905,14 @@ class OrchestratorAgent(
             # missing_aspects — the caller's explicit steering is more
             # specific than the gate's inferred gaps.
             missing_aspects = list(accumulated_inbound_constraints) + list(base_missing)
-            reformulated_query, _ = await self._reformulate_query(
-                query, missing_aspects
-            )
+            # The first pass, with no gap or constraint to steer toward, runs
+            # the query as asked.
+            if iter_idx == 0 and not missing_aspects:
+                reformulated_query = query
+            else:
+                reformulated_query, _ = await self._reformulate_query(
+                    query, missing_aspects
+                )
 
             # Inject the reformulated query into every plan step so the
             # execution path re-runs against the targeted question.

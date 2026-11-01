@@ -18,6 +18,7 @@ Enhanced with:
 import asyncio
 import functools
 import logging
+import re
 import tempfile
 import threading
 import time
@@ -82,6 +83,62 @@ class EncoderCapabilityError(Exception):
     method. Callers (notably the orchestrator) catch this and return a
     capability-aware response instead of crashing.
     """
+
+
+# Words through which an English follow-up leans on an earlier turn:
+# pronouns and demonstratives ("those"), positions in an earlier answer
+# ("the first one"), repetition ("more", "again"), comparatives ("longer
+# ones") and refinements ("only from 2024").
+FOLLOW_UP_REFERENCE_WORDS = frozenset(
+    (
+        # pronouns and demonstratives
+        "it its itself this that these those them they their theirs he him "
+        "his she her hers one ones such there here you your "
+        # position in an earlier answer
+        "first second third fourth fifth last previous prior above earlier "
+        "former latter next top same other another else rest remaining "
+        # repetition and addition
+        "more again also too additional instead similar different related "
+        # comparatives
+        "less fewer longer shorter newer older later recent bigger smaller "
+        "better worse higher lower faster slower cheaper "
+        # refinements of the previous request
+        "only just now filter sort narrow exclude except without compare"
+    ).split()
+)
+# Openings that continue the previous request ("and in colour", "what about
+# dogs").
+FOLLOW_UP_OPENINGS = (
+    ("and",),
+    ("but",),
+    ("or",),
+    ("so",),
+    ("then",),
+    ("what", "about"),
+    ("how", "about"),
+)
+FOLLOW_UP_MAX_ELLIPTICAL_WORDS = 3
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def needs_history_rewrite(query: str) -> bool:
+    """Whether ``query`` may lean on earlier turns, so the LM must rewrite it.
+
+    False only for an ASCII query of more than
+    ``FOLLOW_UP_MAX_ELLIPTICAL_WORDS`` words that holds no word of
+    ``FOLLOW_UP_REFERENCE_WORDS`` and opens on none of ``FOLLOW_UP_OPENINGS``.
+    Any other query, including every non-English one, keeps the rewrite: a
+    standalone query that matches costs only the call it always had.
+    """
+    if not query.isascii():
+        return True
+    words = _WORD_RE.findall(query.lower())
+    if len(words) <= FOLLOW_UP_MAX_ELLIPTICAL_WORDS:
+        return True
+    if any(tuple(words[: len(opening)]) == opening for opening in FOLLOW_UP_OPENINGS):
+        return True
+    return any(word in FOLLOW_UP_REFERENCE_WORDS for word in words)
 
 
 class ConversationalQueryRewriteSignature(dspy.Signature):

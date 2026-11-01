@@ -2,6 +2,7 @@
 Unit tests for SearchAgent
 """
 
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import dspy
@@ -2113,6 +2114,180 @@ class TestConversationalQueryRewrite:
             )
 
             assert result.rewritten_query == "machine learning tutorials"
+
+
+# Every follow-up query the suite drives through the history rewrite.
+SUITE_FOLLOW_UPS = (
+    "show me more like those",
+    "find longer ones",
+    "show me the recipes from those",
+    "Tell me more about the first one",
+    "and the blue one",
+    "show me more",
+    "show me longer ones",
+    "filter by Italian cuisine",
+    "which ones are under 10 minutes",
+    "answer2",
+)
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestFollowUpDetection:
+    """``needs_history_rewrite`` keeps the LM rewrite for anything that may
+    lean on an earlier turn and drops it only for a standalone query."""
+
+    @pytest.mark.parametrize("query", SUITE_FOLLOW_UPS)
+    def test_every_suite_follow_up_keeps_the_rewrite(self, query):
+        from cogniverse_agents.search_agent import needs_history_rewrite
+
+        assert needs_history_rewrite(query) is True
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "search for dog videos",
+            "search for sports clips",
+            "find videos about Marie Curie discovering radium",
+            "what is the capital of France",
+            # "it" and "what" inside longer words are not the words
+            "itinerary planning videos for Japan",
+            "whatever happened at the 1998 final",
+        ],
+    )
+    def test_a_standalone_query_drops_the_rewrite(self, query):
+        from cogniverse_agents.search_agent import needs_history_rewrite
+
+        assert needs_history_rewrite(query) is False
+
+    @pytest.mark.parametrize(
+        ("query", "rule"),
+        [
+            ("show me cooking videos from her channel", "reference word"),
+            ("and videos about volcanoes", "single-word opening"),
+            ("what about golden retrievers", "two-word opening"),
+            ("in French", "elliptical length"),
+            ("cooking videos please", "elliptical length"),
+            ("vidéos de cuisine italienne", "non-English"),
+        ],
+    )
+    def test_each_rule_alone_keeps_the_rewrite(self, query, rule):
+        """Each query matches exactly one rule, so removing that rule turns
+        its case red."""
+        from cogniverse_agents import search_agent
+
+        words = query.lower().replace("é", "e").split()
+        matched = {
+            "reference word": any(
+                w in search_agent.FOLLOW_UP_REFERENCE_WORDS for w in words
+            ),
+            "single-word opening": (words[0],) in search_agent.FOLLOW_UP_OPENINGS,
+            "two-word opening": tuple(words[:2]) in search_agent.FOLLOW_UP_OPENINGS,
+            "elliptical length": len(words)
+            <= search_agent.FOLLOW_UP_MAX_ELLIPTICAL_WORDS,
+            "non-English": not query.isascii(),
+        }
+        assert {name for name, hit in matched.items() if hit} == {rule}
+        assert search_agent.needs_history_rewrite(query) is True
+
+
+def _dead_lm_dispatcher():
+    """A dispatcher whose history rewriter calls an LM on a port nothing
+    listens on, so any rewrite that reaches the LM fails at connect."""
+    from cogniverse_agents.search_agent import ConversationalQueryRewriteModule
+    from cogniverse_foundation.config.body_bounded_lm import BodyBoundedLM
+    from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+
+    dispatcher = AgentDispatcher(
+        agent_registry=Mock(), config_manager=Mock(), schema_loader=Mock()
+    )
+    dispatcher._query_rewriter = ConversationalQueryRewriteModule()
+    dispatcher._query_rewriter.set_lm(
+        BodyBoundedLM(
+            "openai/followup-unreachable",
+            api_base="http://127.0.0.1:29071/v1",
+            api_key="test",
+            num_retries=0,
+            timeout=1,
+            cache=False,
+        )
+    )
+    return dispatcher
+
+
+DEAD_LM_ERROR = (
+    "litellm.InternalServerError: InternalServerError: OpenAIException "
+    "- Connection error."
+)
+HISTORY = [
+    {"role": "user", "content": "search for cat videos"},
+    {"role": "assistant", "content": "Found 5 cat video results"},
+]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestHistoryRewriteSkipsStandaloneQueries:
+    """The dispatcher's history rewrite against a real, unreachable LM: a
+    standalone query never reaches it, a follow-up always does."""
+
+    @pytest.mark.asyncio
+    async def test_a_standalone_query_returns_as_asked_without_the_lm(self):
+        dispatcher = _dead_lm_dispatcher()
+
+        assert (
+            await dispatcher._rewrite_query_with_history(
+                "search for dog videos", HISTORY
+            )
+            == "search for dog videos"
+        )
+        assert (
+            await dispatcher._resolve_history_query("search for dog videos", HISTORY)
+            == "search for dog videos"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_follow_up_still_fails_loud_when_the_lm_is_down(self):
+        import litellm
+
+        dispatcher = _dead_lm_dispatcher()
+
+        with pytest.raises(litellm.InternalServerError) as refused:
+            await dispatcher._rewrite_query_with_history("show me more", HISTORY)
+
+        assert str(refused.value) == DEAD_LM_ERROR
+
+    @pytest.mark.asyncio
+    async def test_concurrent_mixed_turns_each_get_their_own_outcome(self):
+        """Standalone and follow-up turns interleaved on one dispatcher: every
+        standalone comes back as asked and every follow-up fails at the LM."""
+        import litellm
+
+        dispatcher = _dead_lm_dispatcher()
+        queries = [
+            f"search for dog videos {i}" if i % 2 else f"show me more like those {i}"
+            for i in range(8)
+        ]
+        gate = asyncio.Barrier(len(queries))
+
+        async def _turn(query):
+            await gate.wait()
+            return await dispatcher._rewrite_query_with_history(query, HISTORY)
+
+        outcomes = await asyncio.gather(
+            *(_turn(q) for q in queries), return_exceptions=True
+        )
+
+        assert [
+            outcome if isinstance(outcome, str) else type(outcome)
+            for outcome in outcomes
+        ] == [
+            query if query.startswith("search") else litellm.InternalServerError
+            for query in queries
+        ]
+        assert {
+            str(outcome) for outcome in outcomes if not isinstance(outcome, str)
+        } == {DEAD_LM_ERROR}
 
 
 @pytest.mark.unit

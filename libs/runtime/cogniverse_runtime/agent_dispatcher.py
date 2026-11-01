@@ -3629,11 +3629,17 @@ class AgentDispatcher:
         """Rewrite a query that may contain anaphoric references using conversation history.
 
         Uses a DSPy ChainOfThought module to resolve references like 'that',
-        'those', 'more' etc. Raises on failure — callers must handle explicitly.
+        'those', 'more' etc. A query ``needs_history_rewrite`` finds standalone
+        is returned as asked, with no LM call. Raises on failure — callers
+        must handle explicitly.
         """
         from cogniverse_agents.search_agent import (
             ConversationalQueryRewriteModule,
+            needs_history_rewrite,
         )
+
+        if not needs_history_rewrite(query):
+            return query
 
         if self._query_rewriter is None:
             self._query_rewriter = ConversationalQueryRewriteModule()
