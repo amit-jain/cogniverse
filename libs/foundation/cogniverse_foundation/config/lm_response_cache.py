@@ -14,9 +14,11 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 from dspy.clients.cache import Cache
+from opentelemetry import trace
 
 from cogniverse_foundation.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.lm_deadline import LMCallDeadlineExceeded
+from cogniverse_foundation.telemetry.span_contract import LLM_CACHE_HIT_ATTRIBUTE
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +76,9 @@ class TenantScopedLMCache:
 
     ``ttl_seconds`` and ``max_entries`` come from the shipped
     ``SemanticRouterConfig``; ``clock`` is the monotonic source the TTL is
-    measured against.
+    measured against. Each call is counted as a hit (served from a stored
+    entry or a call already in flight) or a miss (it reached the LM), and
+    stamped with ``LLM_CACHE_HIT_ATTRIBUTE`` on the span it ran under.
     """
 
     def __init__(
@@ -94,6 +98,8 @@ class TenantScopedLMCache:
         self._entries: OrderedDict[str, _Entry] = OrderedDict()
         self._inflight: dict[str, Future] = {}
         self._lock = threading.Lock()
+        self._hits = 0
+        self._misses = 0
 
     def __deepcopy__(self, memo: dict) -> "TenantScopedLMCache":
         """Process state, not LM state: ``dspy.LM.copy()`` deepcopies the LM and
@@ -103,6 +109,15 @@ class TenantScopedLMCache:
     def entry_count(self) -> int:
         with self._lock:
             return len(self._entries)
+
+    def stats(self) -> dict[str, int]:
+        """Hits and misses since the cache was built, and the entries held."""
+        with self._lock:
+            return {
+                "hits": self._hits,
+                "misses": self._misses,
+                "entries": len(self._entries),
+            }
 
     def clear(self) -> None:
         with self._lock:
@@ -159,17 +174,27 @@ class TenantScopedLMCache:
 
     def _claim(self, key: str) -> tuple[Future, bool]:
         with self._lock:
-            hit = self._take(key)
-            if hit is not _MISS:
-                ready = Future()
-                ready.set_result(hit)
-                return ready, False
-            pending = self._inflight.get(key)
-            if pending is not None:
-                return pending, False
-            pending = Future()
-            self._inflight[key] = pending
-            return pending, True
+            pending = self._claim_locked(key)
+            owner = pending is None
+            if owner:
+                pending = Future()
+                self._inflight[key] = pending
+                self._misses += 1
+            else:
+                self._hits += 1
+        span = trace.get_current_span()
+        if span.get_span_context().is_valid:
+            span.set_attribute(LLM_CACHE_HIT_ATTRIBUTE, not owner)
+        return pending, owner
+
+    def _claim_locked(self, key: str) -> Future | None:
+        """The stored or in-flight answer for ``key``, or None to call the LM."""
+        hit = self._take(key)
+        if hit is not _MISS:
+            ready = Future()
+            ready.set_result(hit)
+            return ready
+        return self._inflight.get(key)
 
     def _finish(self, key: str, pending: Future, value: Any) -> None:
         with self._lock:
