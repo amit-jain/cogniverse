@@ -1532,14 +1532,16 @@ class OrchestratorAgent(
         self, tenant_id: str
     ) -> tuple[List[str], Dict[str, frozenset[str]]]:
         """The registered agents a plan for ``tenant_id`` may use, and the
-        retrieval agents withheld from it with the modalities each retrieves.
+        agents withheld from it with the modalities each retrieves.
 
         A retrieval agent (one whose declared modality and capabilities make
         it the retrieval agent for that modality) is withheld when the tenant
         serves none of its modalities: it can only answer that the tenant has
-        no such content. Every other registered agent is kept. The tenant's
-        served modalities come from its servable profiles, so a store or
-        registry outage raises rather than planning against a guess.
+        no such content. ``profile_selection_agent`` is withheld, retrieving
+        nothing, when the tenant serves at most one profile: there is no
+        choice for it to make. Every other registered agent is kept. The
+        tenant's served modalities come from its servable profiles, so a
+        store or registry outage raises rather than planning against a guess.
         """
         from cogniverse_agents.gateway_agent import MODALITY_PROFILE_TYPES
         from cogniverse_agents.profile_selection_agent import (
@@ -1547,25 +1549,21 @@ class OrchestratorAgent(
         )
         from cogniverse_foundation.config.utils import get_config
 
-        def read() -> tuple[Dict[str, Any], set[str]]:
+        def read() -> tuple[Dict[str, Any], set[str], int]:
             agents_config = get_config(
                 tenant_id=tenant_id, config_manager=self._config_manager
             ).get("agents", {})
-            served_types = {
-                (profile.type or "").lower()
-                for _, profile in servable_tenant_profiles(
-                    self._config_manager, tenant_id
-                )
-            }
+            profiles = servable_tenant_profiles(self._config_manager, tenant_id)
+            served_types = {(profile.type or "").lower() for _, profile in profiles}
             served = {
                 modality
                 for modality, types in MODALITY_PROFILE_TYPES.items()
                 if types & served_types
             }
-            return agents_config, served
+            return agents_config, served, len(profiles)
 
         try:
-            agents_config, served = await asyncio.to_thread(read)
+            agents_config, served, profile_count = await asyncio.to_thread(read)
         except Exception as exc:
             raise RuntimeError(
                 f"Cannot plan for tenant {tenant_id!r}: its servable profiles "
@@ -1575,6 +1573,9 @@ class OrchestratorAgent(
         planning_agents = []
         withheld: Dict[str, frozenset[str]] = {}
         for agent_name in self.registry.list_agents():
+            if agent_name == "profile_selection_agent" and profile_count <= 1:
+                withheld[agent_name] = frozenset()
+                continue
             agent_config = agents_config.get(agent_name)
             retrieves = set()
             if isinstance(agent_config, dict):
@@ -1621,10 +1622,12 @@ class OrchestratorAgent(
         Planning Phase: Create execution plan using LLM reasoning.
 
         An agent the planner names outside ``available_agents`` is reported
-        in ``unavailable_agents``, with one exception: a retrieval agent
-        withheld from this tenant, named for a request whose modalities are
-        known and include none it retrieves, is dropped. The request did not
-        ask for what that agent finds, so nothing it asked for is missing.
+        in ``unavailable_agents``, with two exceptions, both dropped: a
+        withheld agent that retrieves nothing, which has no choice to make
+        for this tenant; and a retrieval agent withheld from this tenant,
+        named for a request whose modalities are known and include none it
+        retrieves. The request did not ask for what that agent finds, so
+        nothing it asked for is missing.
         A plan left with no execution agent ends with the search agent.
 
         Args:
@@ -1632,7 +1635,7 @@ class OrchestratorAgent(
             conversation_context: Formatted previous conversation turns
             gateway_context: Classification context from gateway agent
             available_agents: The agents the plan may use
-            withheld_agents: The retrieval agents withheld from this tenant
+            withheld_agents: The agents withheld from this tenant
                 and the modalities each retrieves (``_tenant_planning``)
             requested_modalities: The modalities the request was detected to
                 ask for; empty when they are not known
@@ -1698,7 +1701,15 @@ class OrchestratorAgent(
         for i, agent_name in enumerate(agent_sequence):
             agent_name = _agent_lookup.get(agent_name, agent_name)
             if agent_name not in registered_agents:
-                retrieves = withheld_agents.get(agent_name)
+                retrieves = withheld_agents.get(
+                    agent_name, withheld_agents.get(f"{agent_name}_agent")
+                )
+                if retrieves is not None and not retrieves:
+                    logger.info(
+                        f"LLM proposed agent '{agent_name}', which has no choice "
+                        f"to make for this tenant, dropping it from the plan"
+                    )
+                    continue
                 if retrieves and requested and not requested & retrieves:
                     logger.warning(
                         f"LLM proposed agent '{agent_name}', which retrieves "

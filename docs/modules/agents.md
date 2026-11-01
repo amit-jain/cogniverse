@@ -1555,7 +1555,9 @@ for a modality (`search_agent` for video, `image_search_agent`,
 `audio_analysis_agent`, `document_agent`) — is left out when none of the
 modalities it retrieves is served by the tenant's servable profiles
 (`servable_tenant_profiles`, mapped through `MODALITY_PROFILE_TYPES`). A
-video-only tenant is therefore never planned an image or audio search. A
+video-only tenant is therefore never planned an image or audio search.
+`profile_selection_agent` is left out, retrieving nothing, when the tenant
+serves at most one profile, since there is nothing to choose between. A
 store or registry outage raises `RuntimeError` naming the tenant instead of
 planning against a guess. `_tenant_planning(tenant_id)` returns the same list
 with the withheld retrieval agents and the modalities each retrieves.
@@ -1597,7 +1599,8 @@ async def _create_plan(
     #   - an agent not offered is dropped and listed in unavailable_agents;
     #     a retrieval agent withheld from the tenant is dropped without being
     #     listed when requested_modalities are known and include none it
-    #     retrieves
+    #     retrieves; an agent withheld retrieving nothing (profile selection
+    #     for a one-profile tenant) is always dropped without being listed
     #   - a repeated agent keeps its first step only (results are keyed
     #     by agent name)
     #   - parallel_steps / dependency indices are remapped from the raw
