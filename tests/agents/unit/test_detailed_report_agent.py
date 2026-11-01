@@ -1153,3 +1153,152 @@ class TestRecommendationItems:
             "Add the 'Game of Thrones' title, if known, to the query",
             "Review clips 3, 4 and 7 (low relevance) by hand",
         ]
+
+
+VISUAL_REPLY = (
+    "[[ ## descriptions ## ]]\na kitchen sink\n\n"
+    "[[ ## themes ## ]]\ncleaning\n\n"
+    "[[ ## key_objects ## ]]\nsink, sponge\n\n"
+    "[[ ## insights ## ]]\ndishes being washed\n\n"
+    "[[ ## relevance_score ## ]]\n0.8\n\n"
+    "[[ ## completed ## ]]"
+)
+
+
+def _served_vlm(api_base: str):
+    """The production VLMInterface bound to an LM at ``api_base``."""
+    import dspy
+
+    from cogniverse_core.common.vlm_interface import VLMInterface
+
+    vlm = object.__new__(VLMInterface)
+    vlm._dspy_lm = dspy.LM(
+        "openai/test-model",
+        api_base=api_base,
+        api_key="test",
+        cache=False,
+        num_retries=0,
+    )
+    return vlm
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestVisualAnalysisRunsConcurrently:
+    """Visual analysis against a real OpenAI-compatible endpoint that holds
+    each completion until the expected number are in flight together."""
+
+    @pytest.mark.asyncio
+    async def test_two_analyses_are_in_flight_together(self, tmp_path):
+        """A VLM call that blocked the event loop would hold the second call
+        back until the first returned, so the endpoint could never see two."""
+        from tests.utils.llm_endpoint_stub import serve_llm_endpoint
+
+        stub = serve_llm_endpoint(reply=VISUAL_REPLY, hold_until=2)
+        try:
+            vlm = _served_vlm(stub.api_base)
+            image = tmp_path / "frame.jpg"
+            image.write_bytes(b"jpg")
+
+            outs = await asyncio.wait_for(
+                asyncio.gather(
+                    vlm.analyze_visual_content([str(image)], "washing dishes"),
+                    vlm.analyze_visual_content([str(image)], "washing dishes"),
+                ),
+                timeout=30,
+            )
+        finally:
+            stub.close()
+
+        assert stub.max_in_flight == 2
+        assert [out["insights"] for out in outs] == [["dishes being washed"]] * 2
+        assert [out["relevance_score"] for out in outs] == [0.8, 0.8]
+
+    @pytest.mark.asyncio
+    async def test_a_report_analyzes_its_results_concurrently_in_order(self, tmp_path):
+        """Six visual results: four are analyzed at once, never more, and the
+        analyses come back in result order."""
+        from types import SimpleNamespace
+
+        from cogniverse_agents.detailed_report_agent import (
+            VISUAL_ANALYSIS_CONCURRENCY,
+            DetailedReportAgent,
+        )
+        from tests.utils.llm_endpoint_stub import serve_llm_endpoint
+
+        stub = serve_llm_endpoint(
+            reply=VISUAL_REPLY,
+            hold_until=VISUAL_ANALYSIS_CONCURRENCY,
+            hold_timeout_s=1.0,
+        )
+        try:
+            agent = object.__new__(DetailedReportAgent)
+            agent.visual_analysis_enabled = True
+            agent.vlm = _served_vlm(stub.api_base)
+            results = []
+            for i in range(6):
+                image = tmp_path / f"frame{i}.jpg"
+                image.write_bytes(b"jpg")
+                results.append({"id": f"r{i}", "image_path": str(image)})
+            request = ReportRequest(
+                query="washing dishes",
+                search_results=results,
+                report_type="comprehensive",
+                include_visual_analysis=True,
+            )
+            thinking = SimpleNamespace(visual_assessment={"has_visual_content": True})
+
+            out = await asyncio.wait_for(
+                agent._perform_visual_analysis(request, thinking), timeout=30
+            )
+        finally:
+            stub.close()
+
+        assert VISUAL_ANALYSIS_CONCURRENCY == 4
+        assert stub.max_in_flight == VISUAL_ANALYSIS_CONCURRENCY
+        assert out == [
+            {
+                "result_id": f"r{i}",
+                "insights": ["dishes being washed"],
+                "confidence": 0.8,
+            }
+            for i in range(6)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_analysis_fails_the_report_naming_its_image(self, tmp_path):
+        """The endpoint refuses every call: the analysis raises naming the
+        image, never an empty list that reads as "nothing visual"."""
+        from types import SimpleNamespace
+
+        from dspy.utils.exceptions import LMServerError
+
+        from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+        from tests.utils.llm_endpoint_stub import serve_llm_endpoint
+
+        stub = serve_llm_endpoint(
+            chat_error=(500, {"error": {"message": "vlm down", "type": "server"}})
+        )
+        try:
+            agent = object.__new__(DetailedReportAgent)
+            agent.visual_analysis_enabled = True
+            agent.vlm = _served_vlm(stub.api_base)
+            image = tmp_path / "frame.jpg"
+            image.write_bytes(b"jpg")
+            request = ReportRequest(
+                query="washing dishes",
+                search_results=[{"id": "r0", "image_path": str(image)}],
+                report_type="comprehensive",
+                include_visual_analysis=True,
+            )
+            thinking = SimpleNamespace(visual_assessment={"has_visual_content": True})
+
+            with pytest.raises(RuntimeError) as failed:
+                await agent._perform_visual_analysis(request, thinking)
+        finally:
+            stub.close()
+
+        assert str(failed.value) == (
+            f"Visual analysis failed for {image}: [openai/test-model] vlm down"
+        )
+        assert type(failed.value.__cause__) is LMServerError

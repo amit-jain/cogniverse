@@ -4,7 +4,9 @@ Serves ``GET /v1/models`` (with ``max_model_len`` when ``context_window`` is
 set), ``POST /tokenize`` (four template tokens per message plus one per
 whitespace-separated word) and ``POST /v1/chat/completions`` (answers
 ``reply``, or ``chat_error`` as ``(status, error body)``). Every request body
-is appended to ``received`` as ``(path, body)``.
+is appended to ``received`` as ``(path, body)``. With ``hold_until`` set, each
+chat completion is held until that many are in flight at once (or
+``hold_timeout_s`` passes); ``max_in_flight`` records the most seen together.
 """
 
 from __future__ import annotations
@@ -29,6 +31,11 @@ class LLMEndpointStub:
     server: ThreadingHTTPServer
     api_base: str
     received: list = field(default_factory=list)
+    in_flight: dict = field(default_factory=lambda: {"now": 0, "max": 0})
+
+    @property
+    def max_in_flight(self) -> int:
+        return self.in_flight["max"]
 
     def posted(self, path: str) -> list[dict[str, Any]]:
         return [body for seen, body in self.received if seen == path]
@@ -44,8 +51,12 @@ def serve_llm_endpoint(
     context_window: int | None = None,
     reply: str = "ok",
     chat_error: tuple[int, dict[str, Any]] | None = None,
+    hold_until: int | None = None,
+    hold_timeout_s: float = 3.0,
 ) -> LLMEndpointStub:
     received: list = []
+    in_flight = {"now": 0, "max": 0}
+    arrivals = threading.Condition()
 
     class Handler(BaseHTTPRequestHandler):
         def _answer(self, status: int, payload: dict[str, Any]) -> None:
@@ -77,6 +88,21 @@ def serve_llm_endpoint(
             if chat_error is not None:
                 self._answer(*chat_error)
                 return
+            with arrivals:
+                in_flight["now"] += 1
+                in_flight["max"] = max(in_flight["max"], in_flight["now"])
+                arrivals.notify_all()
+                if hold_until is not None:
+                    arrivals.wait_for(
+                        lambda: in_flight["now"] >= hold_until, timeout=hold_timeout_s
+                    )
+            try:
+                self._answer_completion()
+            finally:
+                with arrivals:
+                    in_flight["now"] -= 1
+
+        def _answer_completion(self) -> None:
             self._answer(
                 200,
                 {
@@ -108,6 +134,7 @@ def serve_llm_endpoint(
         server=server,
         api_base=f"http://127.0.0.1:{server.server_address[1]}/v1",
         received=received,
+        in_flight=in_flight,
     )
 
 

@@ -2246,7 +2246,7 @@ class DetailedReportAgent(
 | `query` | str | Query for report generation |
 | `search_results` | List[Dict] | Results to analyze |
 | `report_type` | str | Type: comprehensive, technical, analytical |
-| `include_visual_analysis` | bool | Include VLM visual analysis |
+| `include_visual_analysis` | bool | Include VLM visual analysis; up to `VISUAL_ANALYSIS_CONCURRENCY` (4) analyses run at once, results stay in input order, and one failed analysis fails the report naming its image |
 | `include_technical_details` | bool | Include technical breakdown |
 | `include_recommendations` | bool | Include actionable recommendations |
 | `max_results_to_analyze` | int | Maximum results to process (default: 20) |
