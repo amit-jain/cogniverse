@@ -639,6 +639,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "gliner" },
+    { name = "gliner2", extra = ["local"] },
     { name = "httpx" },
     { name = "inspect-ai" },
     { name = "langextract" },
@@ -775,6 +776,7 @@ requires-dist = [
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "faster-whisper", specifier = "==1.2.1" },
     { name = "gliner", specifier = "==0.2.26" },
+    { name = "gliner2", extras = ["local"], specifier = "==2.1.0" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "inspect-ai", specifier = "==0.3.272" },
     { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
@@ -1931,6 +1933,33 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/49/18/e199cb97147c4a9260c75e4caf51e17be6ff969b0604a029c9c62810cbe0/gliner-0.2.26.tar.gz", hash = "sha256:6783be92b4b81caa878dcc4269ba37800207c37118d8ff9be028b93bddd6813d", size = 181224, upload-time = "2026-03-19T15:07:22.707Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7c/6e/d54d3d2867e29b68a22b144f570c8204209647fccc7879cec5218d6ed5fb/gliner-0.2.26-py3-none-any.whl", hash = "sha256:b9baa47641efb90b9d069add0528ed2464d137991ff097f42b0cab37a91ba991", size = 170429, upload-time = "2026-03-19T15:07:19.914Z" },
+]
+
+[[package]]
+name = "gliner2"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "tqdm" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b1/ab/cebcf92279c85f988bf3853530ec3aa16bfb9f21cc15bde1fba9d2c6db2e/gliner2-2.1.0.tar.gz", hash = "sha256:cfded5eeaa5e95a4ea325ed205889beda3e00b486c69c9d369a1c4cf616fe4f1", size = 399121, upload-time = "2026-10-09T17:49:14.471Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6a/b1/cae13092a6ca796dd17493c8129d48e38fc370f23b9cce6f616020ed3654/gliner2-2.1.0-py3-none-any.whl", hash = "sha256:0c242c5de53f37020df835788fc4eb820e1673b5212c202cd90e9234a7e786bc", size = 355814, upload-time = "2026-10-09T17:49:12.815Z" },
+]
+
+[package.optional-dependencies]
+local = [
+    { name = "numpy" },
+    { name = "peft" },
+    { name = "safetensors" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux' or (extra == 'extra-10-cogniverse-cpu' and extra == 'extra-10-cogniverse-cuda') or (extra == 'extra-10-cogniverse-cpu' and extra == 'extra-10-cogniverse-rocm') or (extra == 'extra-10-cogniverse-cuda' and extra == 'extra-10-cogniverse-rocm') or (extra != 'extra-10-cogniverse-cpu' and extra != 'extra-10-cogniverse-cuda' and extra != 'extra-10-cogniverse-rocm')" },
+    { name = "torch", version = "2.8.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'linux' and extra == 'extra-10-cogniverse-cpu') or (extra == 'extra-10-cogniverse-cpu' and extra == 'extra-10-cogniverse-cuda') or (extra == 'extra-10-cogniverse-cpu' and extra == 'extra-10-cogniverse-rocm') or (extra == 'extra-10-cogniverse-cuda' and extra == 'extra-10-cogniverse-rocm')" },
+    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform == 'linux' and extra == 'extra-10-cogniverse-cuda') or (extra == 'extra-10-cogniverse-cuda' and extra == 'extra-10-cogniverse-rocm') or (extra == 'extra-10-cogniverse-cpu' and extra == 'extra-10-cogniverse-cuda') or (extra == 'extra-10-cogniverse-cpu' and extra == 'extra-10-cogniverse-rocm')" },
+    { name = "torch", version = "2.8.0+rocm6.4", source = { registry = "https://download.pytorch.org/whl/rocm6.4" }, marker = "(sys_platform == 'linux' and extra == 'extra-10-cogniverse-rocm') or (extra == 'extra-10-cogniverse-cuda' and extra == 'extra-10-cogniverse-rocm') or (extra == 'extra-10-cogniverse-cpu' and extra == 'extra-10-cogniverse-cuda') or (extra == 'extra-10-cogniverse-cpu' and extra == 'extra-10-cogniverse-rocm')" },
+    { name = "transformers" },
 ]
 
 [[package]]
