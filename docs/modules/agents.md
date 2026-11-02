@@ -4124,7 +4124,9 @@ supported facts. From the second round on, a round in which every retrieval
 step (every step but entity extraction, query enhancement and profile
 selection) returned evidence ends the loop as `sufficient` without asking the
 gate, so `final_gate_output` and the response's `missing_aspects` are empty on
-that exit; a round that ends at `max_iter` is still judged by the gate. Later
+that exit. A round that ends at `max_iter` is still judged by the gate, but
+that verdict only labels the exit (`sufficient` or `max_iter`) and fills
+`final_gate_output`, so the gate runs concurrently with the answer step. Later
 rounds reuse a successful entity extraction and profile selection instead of
 re-running them, and the summary or report step runs once after the loop, on
 the last round's search results, whatever the exit. The integration golden in

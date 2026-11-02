@@ -27,6 +27,7 @@ from typing import (
     TYPE_CHECKING,
     AbstractSet,
     Any,
+    Awaitable,
     Collection,
     Dict,
     List,
@@ -2893,6 +2894,7 @@ class OrchestratorAgent(
             if _canonical_agent_name(step.agent_name) in _ANSWER_AGENTS_CONSUMING_SEARCH
         )
         round_results: Dict[str, Any] = {}
+        final_gate: Optional[Awaitable[Dict[str, Any]]] = None
         # Read loop-tuning caps from SystemConfig (set at runtime
         # startup from ITER_RETRIEVAL_* env vars). Read once per
         # /process call so a live ConfigManager update between
@@ -3010,15 +3012,23 @@ class OrchestratorAgent(
                     for agent, result in retrieval_results.items()
                 )
             )
-            gate_output = (
-                {}
-                if converged
-                else await self._run_sufficiency_gate(
+            if converged:
+                gate_output = {}
+            elif iter_idx + 1 >= _max_iter:
+                # The loop ends after this round whatever the gate says, so
+                # its verdict only labels the exit and reports the gaps; it
+                # runs alongside the answer step after the loop.
+                final_gate = self._run_sufficiency_gate(
                     original_query=query,
                     accumulated_evidence=raw_accumulated,
                     iteration_idx=iter_idx,
                 )
-            )
+            else:
+                gate_output = await self._run_sufficiency_gate(
+                    original_query=query,
+                    accumulated_evidence=raw_accumulated,
+                    iteration_idx=iter_idx,
+                )
 
             iterations_executed = iter_idx + 1
 
@@ -3036,6 +3046,8 @@ class OrchestratorAgent(
                     "duration_ms": iter_duration_ms,
                 }
             )
+            if final_gate is not None:
+                break
 
             self._emit_retrieval_iteration_span(
                 tenant_id=tenant_id,
@@ -3098,8 +3110,9 @@ class OrchestratorAgent(
             # Defensive guard against runaway iterations from clock skew.
             del iteration_started
 
+        answer_step: Optional[Awaitable[Dict[str, Any]]] = None
         if answer_agents and iterations_executed:
-            answers = await self._execute_plan(
+            answer_step = self._execute_plan(
                 plan,
                 workflow_id=workflow_id,
                 tenant_id=tenant_id,
@@ -3114,6 +3127,31 @@ class OrchestratorAgent(
                     and step.agent_name not in round_results
                 ),
             )
+        outcomes = await asyncio.gather(
+            *(step for step in (final_gate, answer_step) if step is not None),
+            return_exceptions=True,
+        )
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                raise outcome
+        if final_gate is not None:
+            gate_output = outcomes[0]
+            self._emit_retrieval_iteration_span(
+                tenant_id=tenant_id,
+                iteration_idx=iterations_executed,
+                sufficiency_score=gate_output.get("confidence"),
+                exit_reason="in_progress",
+                evidence_count=len(accumulated),
+                session_id=session_id,
+                inbound_constraints_applied=list(accumulated_inbound_constraints),
+            )
+            exit_reason = (
+                "sufficient"
+                if iterations_executed >= 2 and gate_output.get("sufficient")
+                else "max_iter"
+            )
+        if answer_step is not None:
+            answers = outcomes[-1]
             agent_results_sink.update(
                 (agent, answers[agent]) for agent in answer_agents if agent in answers
             )
