@@ -331,7 +331,7 @@ cluster. `modal token new` writes `~/.modal.toml`; `MODAL_TOKEN_ID` /
    ```
 
 3. Deploy and warm the Modal services (canonical names: `vllm_colpali`,
-   `colbert_pylate`, `code_colbert_pylate`, `denseon`, `gliner`,
+   `colbert_pylate`, `code_colbert_pylate`, `denseon`, `gliner`, `gliner2`,
    `vllm_llm_student`, `vllm_llm_teacher`, `vllm_asr`, `clap_embed`,
    `face_embed`):
 

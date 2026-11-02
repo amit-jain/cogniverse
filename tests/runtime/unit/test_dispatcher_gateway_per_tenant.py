@@ -241,9 +241,9 @@ async def test_concurrent_cold_dispatches_build_gateway_once(dispatcher):
 
 
 @pytest.mark.asyncio
-async def test_saved_shadow_classifier_config_reaches_the_gateway(dispatcher):
-    """A tenant's saved query classifier and the deployment's inference URL
-    for it reach GatewayDeps; a tenant without one gets no shadow."""
+async def test_saved_gliner2_shadow_config_reaches_the_gateway(dispatcher):
+    """A tenant's saved GLiNER2 shadow model and the deployment's gliner2
+    inference URL reach GatewayDeps; a tenant without one gets no shadow."""
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_foundation.config.unified_config import RoutingConfigUnified
     from tests.utils.memory_store import InMemoryConfigStore
@@ -255,14 +255,13 @@ async def test_saved_shadow_classifier_config_reaches_the_gateway(dispatcher):
     system = manager.get_system_config()
     system.inference_service_urls = {
         **system.inference_service_urls,
-        "query_classifier": "http://query-classifier:8080",
+        "gliner2": "http://cogniverse-gliner2:8080",
     }
     manager.set_system_config(system)
     manager.set_routing_config(
         RoutingConfigUnified(
             tenant_id="acme:acme",
-            query_classifier_model="gateway-2026-11",
-            query_classifier_device="cuda",
+            gliner2_model="fastino/gliner2.5-base-v1",
         ),
         tenant_id="acme:acme",
     )
@@ -272,11 +271,10 @@ async def test_saved_shadow_classifier_config_reaches_the_gateway(dispatcher):
     globex = await d._get_or_build_gateway_agent("globex:globex")
 
     assert (
-        acme.deps.query_classifier_model,
-        acme.deps.query_classifier_inference_url,
-        acme.deps.query_classifier_device,
-    ) == ("gateway-2026-11", "http://query-classifier:8080", "cuda")
+        acme.deps.gliner2_model,
+        acme.deps.gliner2_inference_url,
+    ) == ("fastino/gliner2.5-base-v1", "http://cogniverse-gliner2:8080")
     assert (
-        globex.deps.query_classifier_model,
-        globex.deps.query_classifier_inference_url,
+        globex.deps.gliner2_model,
+        globex.deps.gliner2_inference_url,
     ) == (None, None)

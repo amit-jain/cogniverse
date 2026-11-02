@@ -33,6 +33,11 @@ EXPECTED_MODELS = {
         "abd49a1f1ebc12af1be84d06f6848221cf96dcad",
         None,
     ),
+    "gliner2": (
+        "fastino/gliner2.5-base-v1",
+        "54785d51df8d86a0d8f2eb212fec15871aad2c4d",
+        None,
+    ),
     "vllm_llm_student": (
         "google/gemma-4-e4b-it",
         "ee0ef6023621cff504d758262d4e04895a5af4a2",
@@ -117,8 +122,8 @@ def test_each_modal_service_has_an_independent_scale_to_zero_app():
         spec for spec in INFERENCE_SERVICE_SPECS.values() if spec.modal_deployable
     )
 
-    assert len(specs) == 10
-    assert len({spec.modal_app for spec in specs}) == 10
+    assert len(specs) == 11
+    assert len({spec.modal_app for spec in specs}) == 11
     assert all(
         spec.modal_app == f"cogniverse-{spec.name.replace('_', '-')}" for spec in specs
     )

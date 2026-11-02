@@ -2385,20 +2385,29 @@ model, _ = loader.load_model()
 doc_tokens = model.encode(["Vespa stores token embeddings."], is_query=False)[0]
 ```
 
-### Query classifier (query_classifier.py)
+### GLiNER2 (gliner2.py)
 
-Loads the gateway's shadow query classifier. The model and checkpoint format
-(`encoder/`, `heads.safetensors`, `heads.json`) are
-`cogniverse_foundation.query_classifier.QueryClassifier`.
+Client for the GLiNER2 inference service
+(`cogniverse_cli/modal_inference/servers/gliner2.py`), which extracts entity
+spans and answers classification tasks in one pass.
 
-`get_or_load_query_classifier(model, *, inference_url=None, device="cpu",
-timeout=5.0)` returns one cached instance per (model, url, device, timeout),
-built once under concurrent first calls. With `inference_url` it is a
-`RemoteQueryClassifierClient` posting `{"text", "model"}` to `/classify` on
-`cogniverse_cli/modal_inference/servers/query_classifier.py`; otherwise
-`model` is a local checkpoint directory. Both `classify(text)` return
-`{head: {"label", "score"}}`. The client raises on transport errors, non-2xx
-answers, a response for another model, or labels outside the served heads.
+`get_or_load_gliner2(model, *, inference_url, timeout=5.0)` returns one cached
+`RemoteGliner2Client` per (model, url, timeout, credential), built once under
+concurrent first calls.
+
+```text
+RemoteGliner2Client.extract(text, entity_types, classifications, *, threshold)
+    entity_types:    {type: description}
+    classifications: {task: {label: description}}
+    -> {"entities": [{"text", "label", "score", "start", "end"}],
+        "classifications": {task: {"label", "score"}}}
+```
+
+`validate_gliner2_result` checks the answer against the request: every entity
+has a requested type and offsets whose slice of `text` is its `text`, and
+every task (exactly the requested ones) has one of its labels. The client
+raises on transport errors, non-2xx answers, a response for another model, or
+a malformed body.
 
 ### RemoteInferenceClient (model_loaders.py)
 

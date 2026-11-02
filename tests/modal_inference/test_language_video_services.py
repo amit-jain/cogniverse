@@ -17,6 +17,7 @@ import httpx
 import pytest
 import uvicorn
 from cogniverse_cli.modal_inference.gliner import app as gliner_app
+from cogniverse_cli.modal_inference.gliner2 import app as gliner2_app
 from cogniverse_cli.modal_inference.servers import gliner as gliner_server
 
 from cogniverse_core.common.models.model_loaders import (
@@ -118,6 +119,7 @@ class _ExactEntityModel:
 def test_modal_apps_pin_identity_gpu_cache_auth_and_scale_to_zero():
     expected = {
         "gliner": gliner_app,
+        "gliner2": gliner2_app,
     }
 
     for service, modal_app in expected.items():

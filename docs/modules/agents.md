@@ -530,18 +530,18 @@ confidence       — float 0.0–1.0
 It also emits a `cogniverse.routing` span whose `output.value` carries the
 routing decision (`chosen_agent`, `recommended_agent`, `confidence`,
 `reasoning`, `complexity`, `modality`, `generation_type`), read by
-`RoutingEvaluator`, plus `shadow_classification` (the shadow classifier's
+`RoutingEvaluator`, plus `shadow_classification` (the GLiNER2 shadow's
 `ShadowClassification` as a dict, or `null`).
 
-#### Shadow Query Classifier
+#### GLiNER2 Shadow
 
-With `query_classifier_model` set, the gateway also runs a fine-tuned
-multi-head encoder (`cogniverse_foundation.query_classifier.QueryClassifier`,
-mmBERT-small by default) beside GLiNER, in parallel. Its labels are recorded
-and never route: `routed_to` is always the rule decision.
-
-`CLASSIFIER_HEADS` is the head set a checkpoint must carry, with the exact
-`GatewayOutput` vocabularies: `complexity`, `modality`, `generation_type`.
+With `gliner2_model` set, the gateway also sends the query to GLiNER2
+(`fastino/gliner2.5-base-v1`, served by the `gliner2` inference service)
+beside GLiNER, in parallel. One GLiNER2 pass answers the three decisions in
+`SHADOW_DECISIONS` (the `GatewayOutput` `complexity`, `modality` and
+`generation_type` labels, each with a description) and extracts entities of
+`SHADOW_ENTITY_TYPES` (the entity extraction agent's `ENTITY_TYPES`). Its
+answer is recorded and never routes: `routed_to` is always the rule decision.
 
 ```text
 class ShadowClassification(BaseModel):
@@ -549,22 +549,20 @@ class ShadowClassification(BaseModel):
     complexity / complexity_score
     modality / modality_score
     generation_type / generation_type_score
+    entities: List[ShadowEntity]  # text, label, score, start, end
     routed_to: Optional[str]   # classifier_route(complexity, modality, generation_type)
     agrees: Optional[bool]     # routed_to == the rule's routed_to
     latency_ms: float
     error: Optional[str]       # "<ExceptionType>: <message>"; labels are None
 ```
 
-A classifier that is down, hung, or answers with other heads fills `error`
-and leaves routing untouched. The request waits for the shadow at most
-`query_classifier_timeout_s`.
+A service that is down, hung, or answers malformed fills `error` and leaves
+routing untouched. The request waits for the shadow at most
+`gliner2_timeout_s`.
 
-The runtime image has no torch, so production serves checkpoints from
-`cogniverse_cli.modal_inference.servers.query_classifier` (`POST /classify`,
-checkpoints under `MODEL_ROOT`), reached through
-`inference_service_urls["query_classifier"]`. Training is in
-`cogniverse_finetuning` (`dataset/gateway_labels.py`,
-`training/query_classifier_trainer.py`).
+`cogniverse_cli.modal_inference.servers.gliner2` serves `POST /extract`
+(`MODEL_NAME`: the pinned checkpoint, or a local checkpoint directory) and is
+deployed as the `gliner2` Modal app.
 
 #### Configuration
 
@@ -574,10 +572,10 @@ class GatewayDeps(AgentDeps):
     gliner_threshold: float = 0.3           # entity detection confidence floor
     gliner_inference_url: Optional[str] = None  # gliner sidecar URL; None = in-process
     fast_path_confidence_threshold: float = 0.4  # min confidence for simple routing
-    query_classifier_model: Optional[str] = None  # shadow checkpoint; None = no shadow
-    query_classifier_inference_url: Optional[str] = None  # None = in-process load
-    query_classifier_device: str = "cpu"
-    query_classifier_timeout_s: float = 1.0  # bound on the shadow request
+    gliner2_model: Optional[str] = None  # GLiNER2 shadow model; None = no shadow
+    gliner2_inference_url: Optional[str] = None  # gliner2 service URL
+    gliner2_entity_threshold: float = 0.5
+    gliner2_timeout_s: float = 1.0  # bound on the shadow request
 
 deps = GatewayDeps(fast_path_confidence_threshold=0.4)
 gateway = GatewayAgent(deps=deps, port=8014)

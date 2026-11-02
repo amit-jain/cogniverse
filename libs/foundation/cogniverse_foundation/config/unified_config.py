@@ -544,11 +544,10 @@ class RoutingConfigUnified:
     gliner_threshold: float = 0.3
     gliner_device: str = "cpu"
 
-    # Shadow query classifier — seeded into GatewayDeps by the dispatcher. Its
-    # label is recorded beside the rule decision and never routes. None leaves
-    # the shadow off; otherwise the checkpoint the classifier serves.
-    query_classifier_model: Optional[str] = None
-    query_classifier_device: str = "cpu"
+    # GLiNER2 shadow — seeded into GatewayDeps by the dispatcher. Its labels
+    # and entities are recorded beside the rule decision and never route. None
+    # leaves the shadow off; otherwise the model the gliner2 service serves.
+    gliner2_model: Optional[str] = None
 
     # Optimization settings — consumed by scripts/auto_optimization_trigger.py
     enable_auto_optimization: bool = True
@@ -608,8 +607,7 @@ class RoutingConfigUnified:
             "gliner_model": self.gliner_model,
             "gliner_threshold": self.gliner_threshold,
             "gliner_device": self.gliner_device,
-            "query_classifier_model": self.query_classifier_model,
-            "query_classifier_device": self.query_classifier_device,
+            "gliner2_model": self.gliner2_model,
             "enable_auto_optimization": self.enable_auto_optimization,
             "optimization_interval_seconds": self.optimization_interval_seconds,
             "min_samples_for_optimization": self.min_samples_for_optimization,
@@ -647,8 +645,7 @@ class RoutingConfigUnified:
             gliner_model=data.get("gliner_model", "urchade/gliner_large-v2.1"),
             gliner_threshold=data.get("gliner_threshold", 0.3),
             gliner_device=data.get("gliner_device", "cpu"),
-            query_classifier_model=data.get("query_classifier_model"),
-            query_classifier_device=data.get("query_classifier_device", "cpu"),
+            gliner2_model=data.get("gliner2_model"),
             enable_auto_optimization=data.get("enable_auto_optimization", True),
             optimization_interval_seconds=data.get(
                 "optimization_interval_seconds", 3600

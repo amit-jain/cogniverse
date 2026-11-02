@@ -98,7 +98,6 @@ libs/finetuning/
     │   ├── __init__.py
     │   ├── embedding_extractor.py
     │   ├── formatters.py
-    │   ├── gateway_labels.py
     │   ├── method_selector.py
     │   ├── output_projection.py
     │   ├── preference_extractor.py
@@ -121,7 +120,6 @@ libs/finetuning/
         ├── embedding_finetuner.py
         ├── modal_app.py
         ├── modal_runner.py
-        ├── query_classifier_trainer.py
         └── sft_trainer.py
 ```
 
@@ -876,49 +874,6 @@ output_dir: str = "outputs/embedding_adapters"
 local implementation passes epochs and warmup steps into `SentenceTransformer.fit`;
 the typed `learning_rate`, `evaluation_steps`, and `save_steps` values are not
 forwarded by that implementation.
-
-### Gateway query classifier
-
-The gateway's shadow classifier is an encoder with one linear head per
-decision, not a LoRA adapter.
-
-`dataset/gateway_labels.py` turns reviewed `cogniverse.routing` spans into
-`QueryLabelExample(span_id, text, labels)`. An example carries only the
-heads its `routing_annotation` settles:
-
-- `correct`: the recorded `complexity`, `modality` and `generation_type`.
-- `wrong` with a `suggested_agent`: `orchestrator_agent` gives
-  `complexity=complex`; a fast-path agent gives `complexity=simple`, plus the
-  modality or generation type when `SIMPLE_ROUTE_MAP` sends only one to that
-  agent (`suggested_agent_labels`).
-- Anything else, and unreviewed spans, gives no example.
-
-`load_gateway_label_examples(provider, project, annotation_name, start_time,
-end_time)` reads the spans and their latest annotations; telemetry failures
-raise.
-
-`training/query_classifier_trainer.py`:
-
-```text
-QueryClassifierTrainingConfig:
-    base_model: str = "jhu-clsp/mmBERT-small"
-    epochs: int = 3
-    learning_rate: float = 5e-5
-    batch_size: int = 16
-    max_length: int = 128
-    seed: int = 0
-    device: str = "cpu"
-
-train_query_classifier(examples, heads, output_dir, config) -> QueryClassifier
-head_accuracy(classifier, examples) -> Dict[str, float]
-```
-
-Training minimises the sum of per-head cross-entropies; a head an example
-does not label takes no loss from it. Labels outside a head's vocabulary, an
-unknown head, or a head no example labels raise before the model loads. The
-checkpoint is saved in the `cogniverse_foundation.query_classifier` format;
-pass `CLASSIFIER_HEADS` from `cogniverse_agents.gateway_agent` as `heads` for a
-gateway checkpoint.
 
 ### Dataset validation
 

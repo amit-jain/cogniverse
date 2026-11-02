@@ -65,10 +65,6 @@ libs/core/cogniverse_core/
     ├── pinning.py                   # PinService, PinQuotas, PinRecord
     └── lifecycle_scheduler.py       # LifecycleScheduler (schema-driven periodic cleanup)
 
-# The query classifier model and checkpoint format (QueryClassifier,
-# validate_heads, validate_predictions) live in cogniverse-foundation:
-libs/foundation/cogniverse_foundation/query_classifier.py
-
 # Configuration lives in cogniverse-foundation:
 libs/foundation/cogniverse_foundation/config/
     ├── unified_config.py            # SystemConfig, RoutingConfigUnified
@@ -359,9 +355,8 @@ class RoutingConfigUnified:
     gliner_threshold: float = 0.3
     gliner_device: str = "cpu"
 
-    # Shadow query classifier (recorded beside the gateway's rules)
-    query_classifier_model: Optional[str] = None
-    query_classifier_device: str = "cpu"
+    # GLiNER2 shadow (recorded beside the gateway's rules)
+    gliner2_model: Optional[str] = None
 
     # Optimization
     enable_auto_optimization: bool = True

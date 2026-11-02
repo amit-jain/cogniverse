@@ -33,6 +33,7 @@ _DEPLOYMENT_MODULES = {
     "code_colbert_pylate": "cogniverse_cli.modal_inference.code_colbert_pylate",
     "denseon": "cogniverse_cli.modal_inference.denseon",
     "gliner": "cogniverse_cli.modal_inference.gliner",
+    "gliner2": "cogniverse_cli.modal_inference.gliner2",
     "vllm_llm_student": "cogniverse_cli.modal_inference.gemma",
     "vllm_llm_teacher": "cogniverse_cli.modal_inference.teacher",
     "vllm_asr": "cogniverse_cli.modal_inference.whisper",
