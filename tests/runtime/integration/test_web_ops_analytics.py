@@ -195,7 +195,7 @@ def _show_traces(page: Page, web_url: str, tenant: str, want: int):
             region.locator(
                 'dl[aria-label="Trace summary"], p.muted, [role=alert]'
             ).first
-        ).to_be_visible()
+        ).to_be_visible(timeout=max(deadline - time.monotonic(), 1) * 1000)
         facts = _facts(page, "Trace summary") if region.locator("dl").count() else {}
         if facts.get("Traces") == str(want) or time.monotonic() > deadline:
             assert facts.get("Traces") == str(want), facts

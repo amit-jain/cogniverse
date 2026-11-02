@@ -298,7 +298,9 @@ def _show_traces(page, web_url, tenant, want):
     region = page.get_by_role("region", name=f"Traces of {tenant}", exact=True)
     deadline = time.monotonic() + 90
     while True:
-        expect(region.locator("dl, p.muted, .alert").first).to_be_visible()
+        expect(region.locator("dl, p.muted, .alert").first).to_be_visible(
+            timeout=max(deadline - time.monotonic(), 1) * 1000
+        )
         facts = _facts(page, "Trace summary") if region.locator("dl").count() else {}
         if facts.get("Traces") == str(want) or time.monotonic() > deadline:
             return region, facts
