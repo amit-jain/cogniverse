@@ -78,6 +78,7 @@ Routing strategy settings (`RoutingConfigUnified` in `cogniverse_foundation.conf
 
 - Fast path: `enable_fast_path`, `fast_path_confidence_threshold`
 - Fast-path GLiNER settings: `gliner_model`, `gliner_threshold`, `gliner_device`
+- Shadow query classifier: `query_classifier_model`, `query_classifier_device`
 - Auto-optimization: `enable_auto_optimization`, `optimization_interval_seconds`, `min_samples_for_optimization`, `min_unique_queries`, per-optimizer `optimizer_floors` and `training_selection`, and the tenant's promotion-gate overrides `optimization_gap_share` / `optimization_skip_above_score`
 - Multi-tenant routing rules (per-tenant `RoutingConfigUnified` via `set_routing_config`)
 

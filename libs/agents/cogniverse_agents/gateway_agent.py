@@ -12,9 +12,9 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple, get_args
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -177,6 +177,31 @@ class GatewayInput(AgentInput):
     )
 
 
+class ShadowClassification(BaseModel):
+    """The query classifier's decision, recorded beside the rule decision.
+
+    It never routes. ``routed_to`` is where the classifier's labels would have
+    sent the query; ``agrees`` compares it with the rule's ``routed_to``. On a
+    classifier failure the label fields are None and ``error`` says why.
+    """
+
+    model: str
+    complexity: Optional[Literal["simple", "complex"]] = None
+    complexity_score: Optional[float] = None
+    modality: Optional[
+        Literal["video", "text", "audio", "image", "document", "both"]
+    ] = None
+    modality_score: Optional[float] = None
+    generation_type: Optional[Literal["raw_results", "summary", "detailed_report"]] = (
+        None
+    )
+    generation_type_score: Optional[float] = None
+    routed_to: Optional[str] = None
+    agrees: Optional[bool] = None
+    latency_ms: float
+    error: Optional[str] = None
+
+
 class GatewayOutput(AgentOutput):
     """Output from the gateway classifier."""
 
@@ -220,6 +245,32 @@ class GatewayOutput(AgentOutput):
             "classification."
         ),
     )
+    shadow_classification: Optional[ShadowClassification] = Field(
+        None,
+        description=(
+            "The query classifier's decision when one is configured; it is "
+            "recorded only and never changes routed_to."
+        ),
+    )
+
+
+def _literal_labels(field: str) -> List[str]:
+    return list(get_args(GatewayOutput.model_fields[field].annotation))
+
+
+# The heads a gateway query classifier checkpoint must carry, with exactly
+# these label vocabularies (the GatewayOutput decision fields).
+CLASSIFIER_HEADS: Dict[str, List[str]] = {
+    head: _literal_labels(head)
+    for head in ("complexity", "modality", "generation_type")
+}
+
+
+def classifier_route(complexity: str, modality: str, generation_type: str) -> str:
+    """The agent a (complexity, modality, generation_type) decision routes to."""
+    if complexity == "complex":
+        return "orchestrator_agent"
+    return SIMPLE_ROUTE_MAP.get((modality, generation_type), "orchestrator_agent")
 
 
 class GatewayDeps(AgentDeps):
@@ -247,6 +298,28 @@ class GatewayDeps(AgentDeps):
     )
     enable_fast_path: bool = Field(
         True, description="When False, every query is routed through orchestration"
+    )
+    query_classifier_model: Optional[str] = Field(
+        None,
+        description=(
+            "Query classifier checkpoint run in shadow beside the rules: a "
+            "local checkpoint directory, or the model the inference service "
+            "serves when query_classifier_inference_url is set. None: no shadow."
+        ),
+    )
+    query_classifier_inference_url: Optional[str] = Field(
+        None, description="Query classifier inference service URL"
+    )
+    query_classifier_device: str = Field(
+        "cpu", description="Torch device for a locally-loaded query classifier"
+    )
+    query_classifier_timeout_s: float = Field(
+        1.0,
+        gt=0.0,
+        description=(
+            "Seconds the shadow classifier's inference request may take; the "
+            "request waits for the shadow, so this bounds what it can add"
+        ),
     )
 
 
@@ -641,6 +714,49 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
 
         return False
 
+    def _shadow_classify(self, query: str) -> ShadowClassification:
+        """Run the query classifier; a failure is recorded, never raised.
+
+        The returned ``routed_to``/``agrees`` are filled in by the caller once
+        the rule decision exists.
+        """
+        from cogniverse_core.common.models.query_classifier import (
+            get_or_load_query_classifier,
+            validate_predictions,
+        )
+
+        model = self.deps.query_classifier_model
+        started = time.perf_counter()
+        try:
+            classifier = get_or_load_query_classifier(
+                model,
+                inference_url=self.deps.query_classifier_inference_url,
+                device=self.deps.query_classifier_device,
+                timeout=self.deps.query_classifier_timeout_s,
+            )
+            predictions = validate_predictions(
+                classifier.classify(query),
+                CLASSIFIER_HEADS,
+                f"Query classifier {model!r}",
+            )
+        except Exception as exc:
+            logger.warning("Shadow query classifier %r failed: %s", model, exc)
+            return ShadowClassification(
+                model=model,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        return ShadowClassification(
+            model=model,
+            complexity=predictions["complexity"]["label"],
+            complexity_score=predictions["complexity"]["score"],
+            modality=predictions["modality"]["label"],
+            modality_score=predictions["modality"]["score"],
+            generation_type=predictions["generation_type"]["label"],
+            generation_type_score=predictions["generation_type"]["score"],
+            latency_ms=(time.perf_counter() - started) * 1000,
+        )
+
     # ------------------------------------------------------------------
     # Telemetry
     # ------------------------------------------------------------------
@@ -706,6 +822,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         started_ns: int,
         thresholds: Optional["_RoutingThresholds"] = None,
         entity_extraction_failed: bool = False,
+        shadow: Optional[ShadowClassification] = None,
     ) -> None:
         """Emit a cogniverse.routing span with the gateway's decision.
 
@@ -753,6 +870,11 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                         # RoutingEvaluator / QualityMonitor don't recalibrate
                         # thresholds off entity-extraction failures.
                         "entity_extraction_failed": entity_extraction_failed,
+                        # The shadow classifier's labels beside the rule's, so
+                        # the two can be compared on the same decisions.
+                        "shadow_classification": (
+                            shadow.model_dump() if shadow is not None else None
+                        ),
                     },
                     operation=OP_ROUTING,
                 )
@@ -777,9 +899,18 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         # and would otherwise run on the event loop thread — starving every
         # other request including /health/live (readiness failure, pod
         # marked NotReady under concurrent orchestration load).
-        entities, entity_extraction_failed = await asyncio.to_thread(
+        # The shadow classifier runs beside GLiNER, so it adds no latency
+        # unless it is the slower of the two.
+        extraction = asyncio.to_thread(
             self._extract_entities, input.query, thresholds.gliner
         )
+        if self.deps.query_classifier_model:
+            (entities, entity_extraction_failed), shadow = await asyncio.gather(
+                extraction, asyncio.to_thread(self._shadow_classify, input.query)
+            )
+        else:
+            entities, entity_extraction_failed = await extraction
+            shadow = None
         modality, modality_confidence = self._classify_modality(entities, input.query)
         detected_modalities = self._detected_modalities(entities, input.query)
         generation_type, gen_confidence = self._classify_generation_type(entities)
@@ -816,6 +947,12 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                 f"(confidence={overall_confidence:.2f})"
             )
 
+        if shadow is not None and shadow.error is None:
+            shadow.routed_to = classifier_route(
+                shadow.complexity, shadow.modality, shadow.generation_type
+            )
+            shadow.agrees = shadow.routed_to == routed_to
+
         self.emit_progress(
             "routed",
             f"Classified as {complexity} {modality}/{generation_type} → {routed_to}",
@@ -844,6 +981,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             started_ns=started_ns,
             thresholds=thresholds,
             entity_extraction_failed=entity_extraction_failed,
+            shadow=shadow,
         )
 
         return GatewayOutput(
@@ -858,6 +996,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             gliner_threshold=thresholds.gliner,
             reasoning=reasoning,
             entity_extraction_failed=entity_extraction_failed,
+            shadow_classification=shadow,
         )
 
     def _build_complex_reasoning(

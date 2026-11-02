@@ -2385,6 +2385,21 @@ model, _ = loader.load_model()
 doc_tokens = model.encode(["Vespa stores token embeddings."], is_query=False)[0]
 ```
 
+### Query classifier (query_classifier.py)
+
+Loads the gateway's shadow query classifier. The model and checkpoint format
+(`encoder/`, `heads.safetensors`, `heads.json`) are
+`cogniverse_foundation.query_classifier.QueryClassifier`.
+
+`get_or_load_query_classifier(model, *, inference_url=None, device="cpu",
+timeout=5.0)` returns one cached instance per (model, url, device, timeout),
+built once under concurrent first calls. With `inference_url` it is a
+`RemoteQueryClassifierClient` posting `{"text", "model"}` to `/classify` on
+`cogniverse_cli/modal_inference/servers/query_classifier.py`; otherwise
+`model` is a local checkpoint directory. Both `classify(text)` return
+`{head: {"label", "score"}}`. The client raises on transport errors, non-2xx
+answers, a response for another model, or labels outside the served heads.
+
 ### RemoteInferenceClient (model_loaders.py)
 
 Client for remote model inference providers:

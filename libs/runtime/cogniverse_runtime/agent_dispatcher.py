@@ -911,6 +911,12 @@ class AgentDispatcher:
         deps.gliner_device = routing_cfg.gliner_device
         deps.fast_path_confidence_threshold = routing_cfg.fast_path_confidence_threshold
         deps.enable_fast_path = routing_cfg.enable_fast_path
+        deps.query_classifier_model = routing_cfg.query_classifier_model
+        deps.query_classifier_device = routing_cfg.query_classifier_device
+        if routing_cfg.query_classifier_model:
+            deps.query_classifier_inference_url = (
+                self._config_manager.get_system_config().inference_service_urls or {}
+            ).get("query_classifier")
         agent = GatewayAgent(deps=deps)
         agent.telemetry_manager = get_telemetry_manager()
         agent._artifact_tenant_id = tenant_id
