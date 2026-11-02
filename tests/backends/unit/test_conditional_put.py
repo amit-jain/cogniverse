@@ -24,6 +24,7 @@ import socket
 import threading
 from urllib.parse import parse_qs, urlparse
 
+import httpr
 import pytest
 
 from cogniverse_vespa.backend import VespaBackend
@@ -210,8 +211,9 @@ def test_conditional_update_returns_false_on_condition_miss():
 
 
 def test_conditional_update_raises_on_transport_error():
-    backend = _backend(_dead_port())
-    with pytest.raises(Exception) as excinfo:
+    port = _dead_port()
+    backend = _backend(port)
+    with pytest.raises(httpr.ConnectError) as excinfo:
         backend._conditional_update_fields(
             "topic_a",
             {"content": "x", "update_count": 1},
@@ -220,9 +222,13 @@ def test_conditional_update_raises_on_transport_error():
             namespace=_NAMESPACE,
             create=True,
         )
-    # A transport failure must surface (not be swallowed as a False "condition
-    # miss"); it is a connection error, never an HTTP 412.
-    assert "412" not in str(excinfo.value)
+    # A transport failure must surface as the connection error naming the
+    # request, not be swallowed as a False "condition miss".
+    assert str(excinfo.value) == (
+        f"error sending request for url (http://127.0.0.1:{port}/document/v1/"
+        f"{_NAMESPACE}/{_SCHEMA}/docid/topic_a?create=true"
+        f"&condition={_SCHEMA}.update_count%3D%3D0)"
+    )
 
 
 def test_conditional_put_document_maps_and_writes():
