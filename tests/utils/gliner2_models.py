@@ -1,202 +1,201 @@
-"""A tiny real GLiNER2 checkpoint and its inference server, for tests.
+"""The real GLiNER2 inference server with a stand-in model, for tests.
 
-The checkpoint is the production boundary architecture (``gliner2`` 2.5) with
-a one-layer DeBERTa-v2 encoder and a word-level tokenizer over the test
-vocabulary, randomly initialised from a fixed seed. Its labels are arbitrary
-but deterministic, so tests pin what the served model computes, not what a
-trained one would say.
-
-Tests never load weights into the pytest process (``tests/fixtures/
-no_local_models.py``): building and running the checkpoint happen in a child
-process (this module's ``__main__``) or in the real inference server started
-by :func:`gliner2_server`.
+Tests never load model weights on this host (``tests/fixtures/
+no_local_models.py``); the served checkpoint's behaviour belongs to the
+cluster. :class:`ExactGliner2Model` answers in the shape ``gliner2``'s
+``extract(..., include_confidence=True, include_spans=True)`` returns, for
+the exact schema the gateway's shadow builds, and records every call. Its
+answers include spans in the ``.`` GLiNER2 appends to text without closing
+punctuation, as the real model emits them.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import re
+import copy
 import socket
-import subprocess
-import sys
+import threading
 import time
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any, Iterator
 
-import httpx
+import uvicorn
+from cogniverse_cli.modal_inference.servers import gliner2 as server
 
 from cogniverse_agents.gateway_agent import SHADOW_DECISIONS, SHADOW_ENTITY_TYPES
 
-QUERIES = (
-    "show me cat videos",
-    "find Messi videos in Barcelona",
-    "compare reports on rockets from NASA and SpaceX",
-    "summarize the podcast",
-)
 
-_SPECIAL = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
+def _span(text: str, confidence: float, start: int, end: int) -> dict:
+    return {"text": text, "confidence": confidence, "start": start, "end": end}
 
 
-def _vocabulary() -> list[str]:
-    texts = [*QUERIES, *SHADOW_ENTITY_TYPES, *SHADOW_ENTITY_TYPES.values()]
+def _choice(label: str, confidence: float) -> dict:
+    return {"label": label, "confidence": confidence}
+
+
+def _raw(entities: dict[str, list[dict]], **decisions: dict) -> dict:
+    return {
+        "entities": {label: entities.get(label, []) for label in SHADOW_ENTITY_TYPES},
+        **decisions,
+    }
+
+
+# The model's answer per query, as gliner2 formats it.
+RAW_ANSWERS: dict[str, dict] = {
+    "show me cat videos": _raw(
+        {"CONCEPT": [_span("cat", 0.71, 8, 11)]},
+        complexity=_choice("simple", 0.93),
+        modality=_choice("video", 0.88),
+        generation_type=_choice("raw_results", 0.9),
+    ),
+    "find Messi videos in Barcelona": _raw(
+        {
+            "PERSON": [_span("Messi", 0.97, 5, 10)],
+            # The span GLiNER2 reads with its appended period, and the period
+            # alone: the server maps the first onto "Barcelona" and drops the
+            # second.
+            "PLACE": [
+                _span("Barcelona.", 0.94, 21, 31),
+                _span("Barcelona", 0.92, 21, 30),
+                _span(".", 0.51, 30, 31),
+            ],
+        },
+        complexity=_choice("simple", 0.81),
+        modality=_choice("video", 0.95),
+        generation_type=_choice("raw_results", 0.77),
+    ),
+    "compare reports on rockets from NASA and SpaceX": _raw(
+        {
+            "ORGANIZATION": [
+                _span("NASA", 0.96, 32, 36),
+                _span("SpaceX", 0.95, 41, 47),
+            ],
+            "TECHNOLOGY": [_span("rockets", 0.66, 19, 26)],
+        },
+        complexity=_choice("complex", 0.89),
+        modality=_choice("document", 0.62),
+        generation_type=_choice("detailed_report", 0.84),
+    ),
+    "summarize the podcast": _raw(
+        {},
+        complexity=_choice("simple", 0.74),
+        modality=_choice("audio", 0.91),
+        generation_type=_choice("summary", 0.96),
+    ),
+}
+
+QUERIES = tuple(RAW_ANSWERS)
+
+# The /extract answer the server owes for each query.
+SERVED_ANSWERS: dict[str, dict] = {
+    "show me cat videos": {
+        "entities": [
+            {"text": "cat", "label": "CONCEPT", "score": 0.71, "start": 8, "end": 11}
+        ],
+        "classifications": {
+            "complexity": {"label": "simple", "score": 0.93},
+            "modality": {"label": "video", "score": 0.88},
+            "generation_type": {"label": "raw_results", "score": 0.9},
+        },
+    },
+    "find Messi videos in Barcelona": {
+        "entities": [
+            {"text": "Messi", "label": "PERSON", "score": 0.97, "start": 5, "end": 10},
+            {"text": "Barcelona", "label": "PLACE", "score": 0.94, "start": 21,
+             "end": 30},
+        ],
+        "classifications": {
+            "complexity": {"label": "simple", "score": 0.81},
+            "modality": {"label": "video", "score": 0.95},
+            "generation_type": {"label": "raw_results", "score": 0.77},
+        },
+    },
+    "compare reports on rockets from NASA and SpaceX": {
+        "entities": [
+            {"text": "rockets", "label": "TECHNOLOGY", "score": 0.66, "start": 19,
+             "end": 26},
+            {"text": "NASA", "label": "ORGANIZATION", "score": 0.96, "start": 32,
+             "end": 36},
+            {"text": "SpaceX", "label": "ORGANIZATION", "score": 0.95, "start": 41,
+             "end": 47},
+        ],
+        "classifications": {
+            "complexity": {"label": "complex", "score": 0.89},
+            "modality": {"label": "document", "score": 0.62},
+            "generation_type": {"label": "detailed_report", "score": 0.84},
+        },
+    },
+    "summarize the podcast": {
+        "entities": [],
+        "classifications": {
+            "complexity": {"label": "simple", "score": 0.74},
+            "modality": {"label": "audio", "score": 0.91},
+            "generation_type": {"label": "summary", "score": 0.96},
+        },
+    },
+}  # fmt: skip
+
+
+def shadow_schema() -> dict:
+    """The gliner2 schema the shadow's request builds, as ``Schema.build()``."""
+    from gliner2 import Schema
+
+    schema = Schema().entities(SHADOW_ENTITY_TYPES)
     for task, labels in SHADOW_DECISIONS.items():
-        texts += [task, *labels, *labels.values()]
-    return sorted(
-        {w for text in texts for w in re.findall(r"\w+|[^\w\s]", text.lower())}
-        | set("(),|:")
-    )
+        schema = schema.classification(task, labels)
+    return schema.build()
 
 
-def build_tiny_checkpoint(path: Path) -> Path:
-    """Write the tiny boundary checkpoint to ``path``."""
-    import torch
-    from gliner2.configuration import ExtractorConfig
-    from gliner2.models.boundary.model import BoundaryExtractorModel
-    from tokenizers import Tokenizer, models, normalizers, pre_tokenizers
-    from transformers import DebertaV2Config, PreTrainedTokenizerFast
+class ExactGliner2Model:
+    """Answers :data:`RAW_ANSWERS` for the shadow's exact schema."""
 
-    vocab = {t: i for i, t in enumerate(_SPECIAL + _vocabulary())}
-    backend = Tokenizer(models.WordLevel(vocab, unk_token="[UNK]"))
-    backend.normalizer = normalizers.Lowercase()
-    backend.pre_tokenizer = pre_tokenizers.Whitespace()
-    tokenizer = PreTrainedTokenizerFast(
-        tokenizer_object=backend,
-        pad_token="[PAD]",
-        unk_token="[UNK]",
-        cls_token="[CLS]",
-        sep_token="[SEP]",
-        mask_token="[MASK]",
-    )
-    encoder = DebertaV2Config(
-        vocab_size=len(vocab) + 16,
-        hidden_size=32,
-        intermediate_size=64,
-        num_hidden_layers=1,
-        num_attention_heads=2,
-        max_position_embeddings=512,
-        relative_attention=True,
-        pos_att_type=["p2c", "c2p"],
-        position_buckets=32,
-        pooler_hidden_size=32,
-    )
-    torch.manual_seed(0)
-    model = BoundaryExtractorModel(
-        ExtractorConfig(architecture="boundary"),
-        encoder_config=encoder,
-        tokenizer=tokenizer,
-    )
-    model.save_pretrained(str(path))
-    return path
+    def __init__(self, answers: dict[str, dict] = RAW_ANSWERS) -> None:
+        self._answers = answers
+        self._schema = shadow_schema()
+        self.calls: list[dict[str, Any]] = []
+        self._lock = threading.Lock()
 
+    def create_schema(self):
+        from gliner2 import Schema
 
-def _run(*args: str) -> Any:
-    done = subprocess.run(
-        [sys.executable, "-m", "tests.utils.gliner2_models", *args],
-        capture_output=True,
-        text=True,
-        timeout=600,
-        cwd=Path(__file__).resolve().parents[2],
-    )
-    if done.returncode != 0:
-        raise RuntimeError(f"GLiNER2 child failed:\n{done.stderr}")
-    return json.loads(done.stdout.strip().splitlines()[-1])
+        return Schema()
 
-
-def build_in_child(path: Path) -> Path:
-    """Build the tiny checkpoint in a child process."""
-    return Path(_run("build", str(path)))
-
-
-def extract_in_child(checkpoint: Path, requests: list[dict]) -> list[dict]:
-    """The server's response to each ``/extract`` request body, computed by
-    loading ``checkpoint`` directly in a child process."""
-    return _run("extract", str(checkpoint), json.dumps(requests))
+    def extract(self, text, schema, **options):
+        with self._lock:
+            self.calls.append({"text": text, "options": options})
+        assert schema.build() == self._schema
+        assert options == {
+            "threshold": 0.5,
+            "include_confidence": True,
+            "include_spans": True,
+        }
+        return copy.deepcopy(self._answers[text])
 
 
 @contextmanager
-def gliner2_server(
-    checkpoint: Path, *, log_dir: Path, wait_healthy: bool = True
-) -> Iterator[str]:
-    """The real GLiNER2 inference server serving ``checkpoint``, yielded once
-    ``/health`` answers 200 (or, without ``wait_healthy``, answers at all)."""
+def gliner2_server(model: Any) -> Iterator[str]:
+    """The real GLiNER2 server app, serving ``model``, on a local port."""
+    previous = server._model
+    server._model = model
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
-    env = {**os.environ, "MODEL_NAME": str(checkpoint), "DEVICE": "cpu"}
-    log_path = log_dir / f"gliner2-server-{port}.log"
-    log = log_path.open("w")
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "cogniverse_cli.modal_inference.servers.gliner2:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--log-level",
-            "warning",
-        ],
-        env=env,
-        stdout=log,
-        stderr=subprocess.STDOUT,
+    uv = uvicorn.Server(
+        uvicorn.Config(
+            server.app, host="127.0.0.1", port=port, log_level="error", ws="none"
+        )
     )
-    url = f"http://127.0.0.1:{port}"
+    thread = threading.Thread(target=uv.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not uv.started:
+        time.sleep(0.01)
     try:
-        deadline = time.monotonic() + 120
-        while True:
-            if process.poll() is not None:
-                raise RuntimeError(f"GLiNER2 server exited: {log_path.read_text()}")
-            try:
-                status = httpx.get(f"{url}/health", timeout=30).status_code
-                if status == 200 or not wait_healthy:
-                    break
-            except httpx.TransportError:
-                pass
-            if time.monotonic() > deadline:
-                raise RuntimeError(
-                    f"GLiNER2 server never became healthy: {log_path.read_text()}"
-                )
-            time.sleep(0.2)
-        yield url
+        if not uv.started:
+            raise RuntimeError("GLiNER2 server did not start")
+        yield f"http://127.0.0.1:{port}"
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-        log.close()
-
-
-def _main(argv: list[str]) -> None:
-    command = argv[0]
-    if command == "build":
-        print(json.dumps(str(build_tiny_checkpoint(Path(argv[1])))))
-    elif command == "extract":
-        os.environ["MODEL_NAME"] = argv[1]
-        from cogniverse_cli.modal_inference.servers import gliner2 as server
-        from gliner2 import AutoExtractor
-
-        model = AutoExtractor.from_pretrained(argv[1])
-        out = []
-        for body in json.loads(argv[2]):
-            req = server.ExtractRequest(**body)
-            raw = model.extract(
-                req.text,
-                server.build_schema(model, req),
-                threshold=req.threshold,
-                include_confidence=True,
-                include_spans=True,
-            )
-            out.append(server.to_response(raw, req).model_dump())
-        print(json.dumps(out))
-    else:
-        raise SystemExit(f"unknown command {command!r}")
-
-
-if __name__ == "__main__":
-    _main(sys.argv[1:])
+        uv.should_exit = True
+        thread.join(timeout=5)
+        server._model = previous
+        if thread.is_alive():
+            raise RuntimeError("GLiNER2 server did not stop")

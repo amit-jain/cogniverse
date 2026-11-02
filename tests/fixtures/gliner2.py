@@ -1,26 +1,21 @@
-"""Session fixtures: one tiny GLiNER2 checkpoint and its inference server.
-
-The checkpoint is built once per session in a child process and served by the
-real ``servers/gliner2.py`` app in another, so no test loads weights into the
-pytest process.
-"""
+"""Session fixture: the real GLiNER2 server with a stand-in model."""
 
 from __future__ import annotations
 
 import pytest
 
-from tests.utils.gliner2_models import build_in_child, gliner2_server
+from tests.utils.gliner2_models import ExactGliner2Model, gliner2_server
 
 
 @pytest.fixture(scope="session")
-def tiny_gliner2_checkpoint(tmp_path_factory):
-    return build_in_child(tmp_path_factory.mktemp("gliner2") / "tiny-gliner2")
+def gliner2_model():
+    return ExactGliner2Model()
 
 
 @pytest.fixture(scope="session")
-def gliner2_service(tiny_gliner2_checkpoint):
-    """``(url, model)`` of the GLiNER2 server serving the tiny checkpoint."""
-    with gliner2_server(
-        tiny_gliner2_checkpoint, log_dir=tiny_gliner2_checkpoint.parent
-    ) as url:
-        yield url, str(tiny_gliner2_checkpoint)
+def gliner2_service(gliner2_model):
+    """``(url, model)`` of the GLiNER2 server answering with ``gliner2_model``."""
+    from cogniverse_cli.modal_inference.servers import gliner2 as server
+
+    with gliner2_server(gliner2_model) as url:
+        yield url, server.MODEL_ID

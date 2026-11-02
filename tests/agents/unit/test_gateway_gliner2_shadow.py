@@ -1,10 +1,9 @@
 """The gateway's GLiNER2 shadow: recorded beside the rules, never routes.
 
-GLiNER2 is the real inference server serving a tiny real checkpoint in a
-child process, the way production runs it (the runtime image has no torch).
-What the shadow must record is what that checkpoint computes, read by loading
-it directly in another child. GLiNER is a stand-in returning no entities, so
-the rule decision comes from the keyword rules alone.
+GLiNER2 is the real inference server over HTTP, the way production runs it
+(the runtime image has no torch), answering with a stand-in model
+(``tests/utils/gliner2_models.py``). GLiNER is a stand-in returning no
+entities, so the rule decision comes from the keyword rules alone.
 """
 
 from __future__ import annotations
@@ -35,11 +34,9 @@ from cogniverse_core.common.models import gliner2 as loader
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
 from cogniverse_foundation.common.entity_types import ENTITY_TYPES
 from tests.agents.unit._recording_telemetry import RecordingTelemetryManager
-from tests.utils.gliner2_models import QUERIES, extract_in_child
+from tests.utils.gliner2_models import QUERIES, SERVED_ANSWERS
 
 pytestmark = [pytest.mark.unit]
-
-THRESHOLD = GatewayDeps.model_fields["gliner2_entity_threshold"].default
 
 
 @pytest.fixture(autouse=True)
@@ -50,20 +47,10 @@ def _fresh_client_cache():
 
 
 @pytest.fixture(scope="module")
-def computed(gliner2_service, tiny_gliner2_checkpoint):
-    """What the checkpoint itself answers for each query."""
+def computed(gliner2_service):
+    """The server's answer for each query."""
     _, model = gliner2_service
-    bodies = [
-        {
-            "model": model,
-            "text": query,
-            "entity_types": SHADOW_ENTITY_TYPES,
-            "classifications": SHADOW_DECISIONS,
-            "threshold": THRESHOLD,
-        }
-        for query in QUERIES
-    ]
-    return dict(zip(QUERIES, extract_in_child(tiny_gliner2_checkpoint, bodies)))
+    return {query: {"model": model, **SERVED_ANSWERS[query]} for query in QUERIES}
 
 
 def _gateway(**deps) -> tuple[GatewayAgent, RecordingTelemetryManager]:
@@ -168,8 +155,12 @@ async def test_shadow_records_what_gliner2_computes_and_routing_is_the_rules(
 
     spans = _routing_outputs(telemetry)
     assert [_without_latency(s["shadow_classification"]) for s in spans] == expected
-    # The fixture answers are not degenerate: entities and labels vary by query.
-    assert len({json.dumps(computed[q]["classifications"]) for q in QUERIES}) > 1
+    assert [(s["routed_to"], s["agrees"]) for s in expected] == [
+        ("search_agent", True),
+        ("search_agent", True),
+        ("orchestrator_agent", True),
+        ("summarizer_agent", False),
+    ]
 
 
 @pytest.mark.asyncio

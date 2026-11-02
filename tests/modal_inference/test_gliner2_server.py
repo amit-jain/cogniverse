@@ -1,8 +1,7 @@
-"""The GLiNER2 inference server and its client, against a tiny real checkpoint.
+"""The GLiNER2 inference server and its client, over real HTTP.
 
-The server runs in a child process (``tests/fixtures/gliner2.py``) serving the
-production boundary architecture; what it must answer is what the checkpoint
-computes when loaded directly in another child.
+The server is the production app answering with a stand-in model
+(``tests/utils/gliner2_models.py``) whose output has gliner2's exact shape.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from cogniverse_cli.modal_inference.servers import gliner2 as server
 from cogniverse_agents.gateway_agent import SHADOW_DECISIONS, SHADOW_ENTITY_TYPES
 from cogniverse_core.common.models import gliner2 as loader
 from cogniverse_foundation.inference_specs import get_inference_service_spec
-from tests.utils.gliner2_models import QUERIES, extract_in_child, gliner2_server
+from tests.utils.gliner2_models import QUERIES, SERVED_ANSWERS, gliner2_server
 
 pytestmark = [pytest.mark.unit]
 
@@ -34,10 +33,9 @@ def _body(model: str, text: str, **overrides) -> dict:
 
 
 @pytest.fixture(scope="module")
-def computed(gliner2_service, tiny_gliner2_checkpoint):
+def computed(gliner2_service):
     _, model = gliner2_service
-    bodies = [_body(model, query) for query in QUERIES]
-    return dict(zip(QUERIES, extract_in_child(tiny_gliner2_checkpoint, bodies)))
+    return {query: {"model": model, **SERVED_ANSWERS[query]} for query in QUERIES}
 
 
 @pytest.fixture(autouse=True)
@@ -65,16 +63,20 @@ def test_health_names_the_served_checkpoint(gliner2_service):
     assert httpx.get(f"{url}/health", timeout=30).json() == {
         "status": "ready",
         "model": model,
-        "model_revision": None,
+        "model_revision": "54785d51df8d86a0d8f2eb212fec15871aad2c4d",
     }
 
 
-def test_extract_answers_what_the_checkpoint_computes(gliner2_service, computed):
+def test_extract_answers_the_models_output_in_the_service_shape(
+    gliner2_service, gliner2_model, computed
+):
     url, model = gliner2_service
+    calls_before = len(gliner2_model.calls)
     for query in QUERIES:
         resp = httpx.post(f"{url}/extract", json=_body(model, query), timeout=30)
         assert resp.status_code == 200
         assert resp.json() == computed[query]
+    assert [c["text"] for c in gliner2_model.calls[calls_before:]] == list(QUERIES)
 
 
 def test_the_client_returns_the_server_answer_without_the_model_key(
@@ -174,10 +176,12 @@ def test_requests_for_another_model_or_a_one_label_task_are_rejected(
     )
 
 
-def test_a_checkpoint_that_cannot_load_answers_503_with_the_cause(tmp_path):
+def test_a_checkpoint_that_cannot_load_answers_503_with_the_cause(
+    tmp_path, monkeypatch
+):
     missing = tmp_path / "missing-checkpoint"
-    tmp_path.joinpath("missing-checkpoint").mkdir()
-    with gliner2_server(missing, log_dir=tmp_path, wait_healthy=False) as url:
+    monkeypatch.setattr(server, "_SERVED_MODEL", str(missing))
+    with gliner2_server(None) as url:
         health = httpx.get(f"{url}/health", timeout=60)
         extract = httpx.post(
             f"{url}/extract", json=_body(str(missing), "find cats"), timeout=60
@@ -191,10 +195,33 @@ def test_a_checkpoint_that_cannot_load_answers_503_with_the_cause(tmp_path):
     )
 
 
-def test_a_server_error_raises_with_the_endpoint(tmp_path):
+class _FailingModel:
+    def create_schema(self):
+        from gliner2 import Schema
+
+        return Schema()
+
+    def extract(self, text, schema, **options):
+        raise RuntimeError("CUDA out of memory")
+
+
+def test_an_inference_failure_answers_500_with_the_cause(gliner2_service):
+    _, model = gliner2_service
+    with gliner2_server(_FailingModel()) as url:
+        resp = httpx.post(f"{url}/extract", json=_body(model, "find cats"), timeout=30)
+    assert resp.status_code == 500
+    assert resp.json() == {
+        "detail": (
+            f"gliner2: model {model} inference failed "
+            "(RuntimeError): CUDA out of memory"
+        )
+    }
+
+
+def test_a_server_error_raises_with_the_endpoint(tmp_path, monkeypatch):
     missing = tmp_path / "missing-checkpoint"
-    missing.mkdir()
-    with gliner2_server(missing, log_dir=tmp_path, wait_healthy=False) as url:
+    monkeypatch.setattr(server, "_SERVED_MODEL", str(missing))
+    with gliner2_server(None) as url:
         client = loader.RemoteGliner2Client(url, str(missing), timeout=60)
         with pytest.raises(requests.HTTPError) as excinfo:
             client.extract(
