@@ -1555,7 +1555,9 @@ for a modality (`search_agent` for video, `image_search_agent`,
 `audio_analysis_agent`, `document_agent`) — is left out when none of the
 modalities it retrieves is served by the tenant's servable profiles
 (`servable_tenant_profiles`, mapped through `MODALITY_PROFILE_TYPES`). A
-video-only tenant is therefore never planned an image or audio search. A
+video-only tenant is therefore never planned an image or audio search.
+`profile_selection_agent` is left out, retrieving nothing, when the tenant
+serves at most one profile, since there is nothing to choose between. A
 store or registry outage raises `RuntimeError` naming the tenant instead of
 planning against a guess. `_tenant_planning(tenant_id)` returns the same list
 with the withheld retrieval agents and the modalities each retrieves.
@@ -1563,7 +1565,10 @@ with the withheld retrieval agents and the modalities each retrieves.
 **`_create_plan(query, conversation_context, gateway_context, *, available_agents, withheld_agents=None, requested_modalities=()) -> OrchestrationPlan`**
 
 Planning Phase: the DSPy planner proposes an agent sequence from
-`available_agents` (the `_planning_agents` list). Its instructions name only
+`available_agents` (the `_planning_agents` list). Its `gateway_context` hints
+include `past_successful_plans`: the tenant's remembered successful runs for
+similar queries, each naming its agents and reasoning, recalled from Mem0 while
+`_tenant_planning` reads the tenant's agents. A memory outage fails the request. Its instructions name only
 the preprocessing agents; every other agent reaches it through
 `available_agents`.
 
@@ -1597,7 +1602,8 @@ async def _create_plan(
     #   - an agent not offered is dropped and listed in unavailable_agents;
     #     a retrieval agent withheld from the tenant is dropped without being
     #     listed when requested_modalities are known and include none it
-    #     retrieves
+    #     retrieves; an agent withheld retrieving nothing (profile selection
+    #     for a one-profile tenant) is always dropped without being listed
     #   - a repeated agent keeps its first step only (results are keyed
     #     by agent name)
     #   - parallel_steps / dependency indices are remapped from the raw
@@ -2243,7 +2249,7 @@ class DetailedReportAgent(
 | `query` | str | Query for report generation |
 | `search_results` | List[Dict] | Results to analyze |
 | `report_type` | str | Type: comprehensive, technical, analytical |
-| `include_visual_analysis` | bool | Include VLM visual analysis |
+| `include_visual_analysis` | bool | Include VLM visual analysis; up to `VISUAL_ANALYSIS_CONCURRENCY` (4) analyses run at once, results stay in input order, and one failed analysis fails the report naming its image |
 | `include_technical_details` | bool | Include technical breakdown |
 | `include_recommendations` | bool | Include actionable recommendations |
 | `max_results_to_analyze` | int | Maximum results to process (default: 20) |
@@ -4114,7 +4120,14 @@ cap of three iterations; smaller evidence sets use
 not mean the accumulated evidence is discarded: its rationale must cite
 concrete support already found and name only the facets still missing. The
 next retrieval round can therefore reformulate for the gaps without losing
-supported facts. The integration golden in
+supported facts. From the second round on, a round in which every retrieval
+step (every step but entity extraction, query enhancement and profile
+selection) returned evidence ends the loop as `sufficient` without asking the
+gate, so `final_gate_output` and the response's `missing_aspects` are empty on
+that exit; a round that ends at `max_iter` is still judged by the gate. Later
+rounds reuse a successful entity extraction and profile selection instead of
+re-running them, and the summary or report step runs once after the loop, on
+the last round's search results, whatever the exit. The integration golden in
 `tests/agents/integration/test_iterative_retrieval_loop.py` pins both the
 multi-round behavior and the three-iteration RLM cap.
 

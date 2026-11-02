@@ -45,6 +45,12 @@ CHILD_ERROR = (
 )
 
 
+REMEMBERED_PLAN = (
+    "Executed 2/2 steps (2 successful). Agents: first, second. "
+    "Plan: two required sources"
+)
+
+
 class _Runtime:
     def __init__(self):
         self.calls: list[tuple[str, str, str]] = []
@@ -56,6 +62,11 @@ class _Runtime:
         self.release = asyncio.Event()
         self.client: httpx.AsyncClient | None = None
         self.dispatcher: AgentDispatcher | None = None
+        self.agent: OrchestratorAgent | None = None
+        self.plan_hints: list[str] = []
+        self.recall_error: Exception | None = None
+        self.planning_started = threading.Event()
+        self.recall_waits_for_planning = False
 
 
 @pytest.fixture
@@ -99,6 +110,7 @@ async def runtime(monkeypatch):
             available_agents,
             **planning,
         ):
+            state.plan_hints.append(gateway_context)
             return OrchestrationPlan(
                 query=query,
                 reasoning="two required sources",
@@ -124,8 +136,20 @@ async def runtime(monkeypatch):
         def _ensure_memory_for_tenant(self, tenant_id):
             return None
 
+        async def _tenant_planning(self, tenant_id):
+            state.planning_started.set()
+            return await super()._tenant_planning(tenant_id)
+
         def get_relevant_context(self, query):
-            return ""
+            """What Mem0 answers: every remembered summary, numbered."""
+            if state.recall_waits_for_planning:
+                assert state.planning_started.wait(5) is True
+            if state.recall_error is not None:
+                raise state.recall_error
+            return "\n\n".join(
+                f"{i}. {summary}"
+                for i, (_, summary) in enumerate(state.memory_writes, 1)
+            )
 
         def remember_success(self, query, summary):
             assert state.memory_release.wait(10) is True
@@ -143,6 +167,7 @@ async def runtime(monkeypatch):
         agent.telemetry_manager = TelemetryManager(TelemetryConfig(enabled=False))
         agent.workflow_intelligence = None
         agent._http_client_override = children
+        state.agent = agent
 
         class PreparedDispatcher(AgentDispatcher):
             async def _get_or_build_orchestrator(self, tenant_id):
@@ -242,9 +267,7 @@ async def test_every_step_succeeding_is_a_success_and_is_remembered(runtime):
     assert result["status"] == "success"
     assert result["answer"] == ("first:fine\n\nsecond:fine")
     assert result["orchestration_result"]["final_output"]["status"] == "success"
-    assert runtime.memory_writes == [
-        ("fine", "Executed 2/2 steps (2 successful). Plan: two required sources")
-    ]
+    assert runtime.memory_writes == [("fine", REMEMBERED_PLAN)]
 
 
 @pytest.mark.asyncio
@@ -274,9 +297,7 @@ async def test_the_answer_returns_while_its_success_memory_is_still_being_writte
 
     assert result["status"] == "success"
     assert writes_when_answered == []
-    assert runtime.memory_writes == [
-        ("fine", "Executed 2/2 steps (2 successful). Plan: two required sources")
-    ]
+    assert runtime.memory_writes == [("fine", REMEMBERED_PLAN)]
 
 
 @pytest.mark.asyncio
@@ -288,18 +309,14 @@ async def test_a_failing_request_does_not_take_a_concurrent_one_with_it(runtime)
         await asyncio.wait_for(runtime.entered.wait(), 10)
         succeeded = await asyncio.wait_for(_process(runtime, "fine"), 10)
         assert succeeded["status"] == "success"
-        assert runtime.memory_writes == [
-            ("fine", "Executed 2/2 steps (2 successful). Plan: two required sources")
-        ]
+        assert runtime.memory_writes == [("fine", REMEMBERED_PLAN)]
     finally:
         runtime.release.set()
 
     failed = await asyncio.wait_for(pending, 10)
     assert failed["status"] == "failed"
     assert "answer" not in failed
-    assert runtime.memory_writes == [
-        ("fine", "Executed 2/2 steps (2 successful). Plan: two required sources")
-    ]
+    assert runtime.memory_writes == [("fine", REMEMBERED_PLAN)]
     assert sorted(runtime.calls) == [
         ("first", "fine", TENANT),
         ("first", "held-failure", "prodfixagents:held"),
@@ -367,3 +384,51 @@ async def test_a_partial_orchestration_carries_its_answer_to_a2a(runtime):
     assert payload["orchestration_result"]["final_output"]["status"] == "partial"
     assert payload["answer"] == "first:mixed"
     assert runtime.memory_writes == []
+
+
+@pytest.mark.asyncio
+async def test_a_remembered_plan_reaches_the_next_plan_for_the_tenant(runtime):
+    await _process(runtime, "fine")
+    await _process(runtime, "fine")
+
+    assert runtime.plan_hints == [
+        "",
+        f"past_successful_plans=1. {REMEMBERED_PLAN}",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_two_remembered_plans_are_both_offered(runtime):
+    await _process(runtime, "fine")
+    await _process(runtime, "fine")
+    await _process(runtime, "fine")
+
+    assert runtime.plan_hints[2] == (
+        f"past_successful_plans=1. {REMEMBERED_PLAN} | 2. {REMEMBERED_PLAN}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_recall_runs_while_the_tenants_agents_are_read(runtime):
+    """Recall blocks until planning's agent read has started: run one after
+    the other, the request would wait on itself and fail."""
+    runtime.recall_waits_for_planning = True
+
+    result = await asyncio.wait_for(_process(runtime, "fine"), 15)
+
+    assert result["status"] == "success"
+    assert runtime.plan_hints == [""]
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_memory_fails_the_request_before_planning(runtime):
+    from cogniverse_agents.orchestrator_agent import OrchestratorInput
+
+    runtime.recall_error = ConnectionError("mem0 vector store refused")
+
+    with pytest.raises(ConnectionError) as failure:
+        await runtime.agent.process(OrchestratorInput(query="fine", tenant_id=TENANT))
+
+    assert str(failure.value) == "mem0 vector store refused"
+    assert runtime.plan_hints == []
+    assert runtime.calls == []

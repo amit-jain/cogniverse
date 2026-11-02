@@ -286,6 +286,12 @@ def _merge_enrichment(
 # Steps whose output enriches the steps after them rather than answering.
 _ENRICHMENT_AGENTS = frozenset(_ENRICHMENT_FIELD_MAP) | {"profile_selection_agent"}
 
+# Enrichment steps that answer the user's question rather than the gap a
+# retrieval round fills: a successful result is reused by later rounds.
+_PINNED_ACROSS_ROUNDS = frozenset(
+    {"entity_extraction_agent", "profile_selection_agent"}
+)
+
 
 def _canonical_agent_name(agent_name: str) -> str:
     return agent_name if agent_name.endswith("_agent") else f"{agent_name}_agent"
@@ -581,9 +587,11 @@ class AccumulatedEvidence:
     ``evidence`` is the running list of snippets collected across all
     iterations. Each snippet is a dict with at least
     ``{source_doc_id, segment_id, ts_start, ts_end, text}`` plus optional
-    ranking / modality fields. ``final_gate_output`` mirrors the last
-    sufficient-context gate decision, keyed by ``SUFFICIENCY_GATE_FIELDS``,
-    so callers can surface why the loop stopped without re-running it.
+    ranking / modality fields. ``final_gate_output`` is the final
+    iteration's sufficient-context gate decision, keyed by
+    ``SUFFICIENCY_GATE_FIELDS``, so callers can surface why the loop stopped
+    without re-running it; it is empty when the loop stopped on convergence,
+    where the gate is not asked.
 
     ``trace_id`` is the OTEL trace id of the orchestration span; tests
     use it to fetch the ``retrieval_iteration`` child spans from Phoenix.
@@ -669,7 +677,8 @@ class OrchestrationSignature(dspy.Signature):
     gateway_context: str = dspy.InputField(
         desc=(
             "Classification hints from the gateway: modality, generation_type, "
-            "matched workflow template. Use these as priors when choosing "
+            "matched workflow template, and the tenant's past successful plans "
+            "for similar queries. Use these as priors when choosing "
             "preprocessing and execution agents. Empty string if not available."
         )
     )
@@ -1275,18 +1284,20 @@ class OrchestratorAgent(
                 )
                 inbound_queue = None
 
-        # Lazy memory initialization for this tenant. First touch builds a Mem0
-        # stack (embedder + Vespa vector store) — a multi-second sync build kept
-        # off the loop; the lock inside makes concurrent first touches safe.
+        # Recall the tenant's past successful plans while the agents it may
+        # plan with are read: the two run at once, and either failing fails
+        # the request with its own error.
         self.set_tenant_for_context(tenant_id)
-        await asyncio.to_thread(self._ensure_memory_for_tenant, tenant_id)
-
-        # Get relevant context from memory (cross-session). Mem0 search is a
-        # synchronous LLM/vector round trip — run it off the event loop.
         await self.report_phase("memory_context", "Retrieving memory context...")
-        memory_context = await asyncio.to_thread(self.get_relevant_context, query)
-        if memory_context:
-            logger.info(f"Retrieved memory context for query: {query[:50]}...")
+        recalled, planning = await asyncio.gather(
+            self._recall_past_plans(tenant_id, query),
+            self._tenant_planning(tenant_id),
+            return_exceptions=True,
+        )
+        for outcome in (recalled, planning):
+            if isinstance(outcome, BaseException):
+                raise outcome
+        planning_agents, withheld_agents = planning
 
         # Format conversation history for DSPy planner
         conversation_context = self._format_conversation_context(
@@ -1309,9 +1320,12 @@ class OrchestratorAgent(
                     f"suggested_sequence={json.dumps(template.task_sequence)}"
                 )
                 logger.info(f"Workflow intelligence matched template: {template.name}")
+        if recalled:
+            gateway_hints.append(
+                "past_successful_plans=" + " | ".join(recalled.split("\n\n"))
+            )
         gateway_context = "; ".join(gateway_hints)
 
-        planning_agents, withheld_agents = await self._tenant_planning(tenant_id)
         plan = await self._create_plan(
             query,
             conversation_context,
@@ -1530,14 +1544,16 @@ class OrchestratorAgent(
         self, tenant_id: str
     ) -> tuple[List[str], Dict[str, frozenset[str]]]:
         """The registered agents a plan for ``tenant_id`` may use, and the
-        retrieval agents withheld from it with the modalities each retrieves.
+        agents withheld from it with the modalities each retrieves.
 
         A retrieval agent (one whose declared modality and capabilities make
         it the retrieval agent for that modality) is withheld when the tenant
         serves none of its modalities: it can only answer that the tenant has
-        no such content. Every other registered agent is kept. The tenant's
-        served modalities come from its servable profiles, so a store or
-        registry outage raises rather than planning against a guess.
+        no such content. ``profile_selection_agent`` is withheld, retrieving
+        nothing, when the tenant serves at most one profile: there is no
+        choice for it to make. Every other registered agent is kept. The
+        tenant's served modalities come from its servable profiles, so a
+        store or registry outage raises rather than planning against a guess.
         """
         from cogniverse_agents.gateway_agent import MODALITY_PROFILE_TYPES
         from cogniverse_agents.profile_selection_agent import (
@@ -1545,25 +1561,21 @@ class OrchestratorAgent(
         )
         from cogniverse_foundation.config.utils import get_config
 
-        def read() -> tuple[Dict[str, Any], set[str]]:
+        def read() -> tuple[Dict[str, Any], set[str], int]:
             agents_config = get_config(
                 tenant_id=tenant_id, config_manager=self._config_manager
             ).get("agents", {})
-            served_types = {
-                (profile.type or "").lower()
-                for _, profile in servable_tenant_profiles(
-                    self._config_manager, tenant_id
-                )
-            }
+            profiles = servable_tenant_profiles(self._config_manager, tenant_id)
+            served_types = {(profile.type or "").lower() for _, profile in profiles}
             served = {
                 modality
                 for modality, types in MODALITY_PROFILE_TYPES.items()
                 if types & served_types
             }
-            return agents_config, served
+            return agents_config, served, len(profiles)
 
         try:
-            agents_config, served = await asyncio.to_thread(read)
+            agents_config, served, profile_count = await asyncio.to_thread(read)
         except Exception as exc:
             raise RuntimeError(
                 f"Cannot plan for tenant {tenant_id!r}: its servable profiles "
@@ -1573,6 +1585,9 @@ class OrchestratorAgent(
         planning_agents = []
         withheld: Dict[str, frozenset[str]] = {}
         for agent_name in self.registry.list_agents():
+            if agent_name == "profile_selection_agent" and profile_count <= 1:
+                withheld[agent_name] = frozenset()
+                continue
             agent_config = agents_config.get(agent_name)
             retrieves = set()
             if isinstance(agent_config, dict):
@@ -1619,10 +1634,12 @@ class OrchestratorAgent(
         Planning Phase: Create execution plan using LLM reasoning.
 
         An agent the planner names outside ``available_agents`` is reported
-        in ``unavailable_agents``, with one exception: a retrieval agent
-        withheld from this tenant, named for a request whose modalities are
-        known and include none it retrieves, is dropped. The request did not
-        ask for what that agent finds, so nothing it asked for is missing.
+        in ``unavailable_agents``, with two exceptions, both dropped: a
+        withheld agent that retrieves nothing, which has no choice to make
+        for this tenant; and a retrieval agent withheld from this tenant,
+        named for a request whose modalities are known and include none it
+        retrieves. The request did not ask for what that agent finds, so
+        nothing it asked for is missing.
         A plan left with no execution agent ends with the search agent.
 
         Args:
@@ -1630,7 +1647,7 @@ class OrchestratorAgent(
             conversation_context: Formatted previous conversation turns
             gateway_context: Classification context from gateway agent
             available_agents: The agents the plan may use
-            withheld_agents: The retrieval agents withheld from this tenant
+            withheld_agents: The agents withheld from this tenant
                 and the modalities each retrieves (``_tenant_planning``)
             requested_modalities: The modalities the request was detected to
                 ask for; empty when they are not known
@@ -1696,7 +1713,15 @@ class OrchestratorAgent(
         for i, agent_name in enumerate(agent_sequence):
             agent_name = _agent_lookup.get(agent_name, agent_name)
             if agent_name not in registered_agents:
-                retrieves = withheld_agents.get(agent_name)
+                retrieves = withheld_agents.get(
+                    agent_name, withheld_agents.get(f"{agent_name}_agent")
+                )
+                if retrieves is not None and not retrieves:
+                    logger.info(
+                        f"LLM proposed agent '{agent_name}', which has no choice "
+                        f"to make for this tenant, dropping it from the plan"
+                    )
+                    continue
                 if retrieves and requested and not requested & retrieves:
                     logger.warning(
                         f"LLM proposed agent '{agent_name}', which retrieves "
@@ -1848,6 +1873,8 @@ class OrchestratorAgent(
         session_id: Optional[str] = None,
         execution_order_sink: Optional[List[str]] = None,
         agent_observations_sink: Optional[List[Dict[str, Any]]] = None,
+        completed: Optional[Dict[str, Any]] = None,
+        deferred: frozenset[str] = frozenset(),
     ) -> Dict[str, Any]:
         """
         Action Phase: Execute orchestration plan via A2A HTTP calls.
@@ -1862,14 +1889,27 @@ class OrchestratorAgent(
             workflow_id: Workflow identifier for tracking
             tenant_id: Tenant identifier (per-request)
             session_id: Session identifier (per-request)
+            completed: Results of steps already answered, by agent name.
+                Those steps are not dispatched; their results enrich the
+                steps that run and are returned with them.
+            deferred: Agent names whose steps are not run and return no
+                result.
 
         Returns:
             Dictionary of agent results
         """
         import asyncio
 
-        agent_results = {}
-        executed = [False] * len(plan.steps)
+        completed = completed or {}
+        agent_results = {
+            step.agent_name: completed[step.agent_name]
+            for step in plan.steps
+            if step.agent_name in completed
+        }
+        executed = [
+            step.agent_name in completed or step.agent_name in deferred
+            for step in plan.steps
+        ]
         step_count = 0
 
         # Execute steps respecting dependencies and parallelism
@@ -2439,10 +2479,9 @@ class OrchestratorAgent(
     ) -> tuple[str, str]:
         """Run the query analysis module and return (reformulated, rationale).
 
-        On the first iteration ``missing_aspects`` is empty and the
-        reformulator works from the original query alone. On subsequent
-        iterations the missing aspects are appended so the reformulator
-        targets the gaps the gate identified.
+        With empty ``missing_aspects`` the reformulator works from the
+        original query alone; otherwise the missing aspects are appended so
+        it targets the gaps the gate identified or the caller's constraints.
 
         A malformed LM answer comes back from the analysis module as its
         named fallback, whose enhanced query is the seeded query. An LM or
@@ -2724,16 +2763,17 @@ class OrchestratorAgent(
         *,
         tenant_id: str,
         iteration_idx: int,
-        sufficiency_score: float,
+        sufficiency_score: Optional[float],
         exit_reason: str,
         evidence_count: int,
         session_id: Optional[str] = None,
         inbound_constraints_applied: Optional[List[str]] = None,
     ) -> None:
         """Emit a ``retrieval_iteration`` Phoenix span carrying
-        ``iteration_idx``, ``sufficiency_score``, ``exit_reason``, and
-        ``evidence_count`` so trajectory-level evaluation can grade each
-        loop iteration independently.
+        ``iteration_idx``, ``exit_reason``, ``evidence_count`` and, for an
+        iteration the sufficiency gate judged, its ``sufficiency_score``, so
+        trajectory-level evaluation can grade each loop iteration
+        independently.
 
         ``session_id`` + ``inbound_constraints_applied`` are added as
         attributes so end-to-end tests can query Phoenix spans by
@@ -2746,10 +2786,11 @@ class OrchestratorAgent(
         try:
             attrs: Dict[str, Any] = {
                 "iteration_idx": int(iteration_idx),
-                "sufficiency_score": float(sufficiency_score),
                 "exit_reason": exit_reason,
                 "evidence_count": int(evidence_count),
             }
+            if sufficiency_score is not None:
+                attrs["sufficiency_score"] = float(sufficiency_score)
             if session_id:
                 attrs["session_id"] = session_id
             if inbound_constraints_applied:
@@ -2794,6 +2835,10 @@ class OrchestratorAgent(
         ``agent_results_sink`` receives the per-agent results from each
         iteration so the caller can keep emitting them (the orchestration
         envelope still surfaces agent_results) without re-running steps.
+
+        A successful entity extraction or profile selection is reused by
+        later rounds rather than re-run. Answer steps (summary, report) run
+        once after the loop, on the last round's results, whatever the exit.
         """
         loop_started = time.monotonic()
         # ``raw_accumulated`` keeps every snippet that came back from a
@@ -2839,6 +2884,15 @@ class OrchestratorAgent(
         # byte-equal against per-iter goldens.
         loop_trajectory: List[Dict[str, Any]] = []
         iterations_executed = 0
+        # Results later rounds reuse instead of re-running the step.
+        pinned: Dict[str, Any] = {}
+        # Answer steps run once, after the loop, on the final round's results.
+        answer_agents = frozenset(
+            step.agent_name
+            for step in plan.steps
+            if _canonical_agent_name(step.agent_name) in _ANSWER_AGENTS_CONSUMING_SEARCH
+        )
+        round_results: Dict[str, Any] = {}
         # Read loop-tuning caps from SystemConfig (set at runtime
         # startup from ITER_RETRIEVAL_* env vars). Read once per
         # /process call so a live ConfigManager update between
@@ -2877,38 +2931,27 @@ class OrchestratorAgent(
                 for msg in inbound_msgs:
                     if "stop" in msg.tags:
                         exit_reason = "user_stop"
-                        iterations_executed = iter_idx
-                        loop_duration_ms = (time.monotonic() - loop_started) * 1000.0
-                        return AccumulatedEvidence(
-                            evidence=accumulated,
-                            iterations_executed=iterations_executed,
-                            exit_reason=exit_reason,
-                            final_gate_output=gate_output,
-                            partial_due_to_budget=partial_due_to_budget,
-                            partial_due_to_timeout=partial_due_to_timeout,
-                            trace_id=trace_id,
-                            inbound_constraints_applied=list(
-                                accumulated_inbound_constraints
-                            ),
-                            loop_trajectory=list(loop_trajectory),
-                            duration_ms=loop_duration_ms,
-                            per_iter_duration_ms=[
-                                t["duration_ms"] for t in loop_trajectory
-                            ],
-                        )
+                        break
                     if (
                         "constraint" in msg.tags or "interrupt" in msg.tags
                     ) and msg.content:
                         accumulated_inbound_constraints.append(msg.content)
+                if exit_reason == "user_stop":
+                    break
 
             base_missing = gate_output.get("missing_aspects", []) if gate_output else []
             # Inbound constraints take precedence over gate-derived
             # missing_aspects — the caller's explicit steering is more
             # specific than the gate's inferred gaps.
             missing_aspects = list(accumulated_inbound_constraints) + list(base_missing)
-            reformulated_query, _ = await self._reformulate_query(
-                query, missing_aspects
-            )
+            # The first pass, with no gap or constraint to steer toward, runs
+            # the query as asked.
+            if iter_idx == 0 and not missing_aspects:
+                reformulated_query = query
+            else:
+                reformulated_query, _ = await self._reformulate_query(
+                    query, missing_aspects
+                )
 
             # Inject the reformulated query into every plan step so the
             # execution path re-runs against the targeted question.
@@ -2922,17 +2965,59 @@ class OrchestratorAgent(
                 session_id=session_id,
                 execution_order_sink=execution_order_sink,
                 agent_observations_sink=agent_observations_sink,
+                completed=pinned,
+                deferred=answer_agents,
             )
             agent_results_sink.update(iter_results)
+            round_results = iter_results
+            pinned.update(
+                (agent, result)
+                for agent, result in iter_results.items()
+                if _canonical_agent_name(agent) in _PINNED_ACROSS_ROUNDS
+                and isinstance(result, dict)
+                and result.get("status") not in FAILED_STEP_STATUSES | {PARTIAL_STATUS}
+            )
 
             new_snippets = self._extract_evidence_from_results(iter_results)
             raw_accumulated = raw_accumulated + new_snippets
             accumulated = self._deduplicate_evidence(raw_accumulated)
 
-            gate_output = await self._run_sufficiency_gate(
-                original_query=query,
-                accumulated_evidence=raw_accumulated,
-                iteration_idx=iter_idx,
+            # Convergence heuristic — small / cautious LMs (gemma-class
+            # student models) keep returning ``sufficient=False`` on the
+            # gate question even when 3+ evidence snippets already span
+            # the query's main aspects. The orchestrator must not run
+            # unbounded retrievals chasing the gate's perfectionism. From
+            # the second iteration onward, if every retrieval step in the
+            # plan (every step but enrichment) contributed at least one
+            # usable evidence snippet this round, the loop has converged:
+            # continuing would just re-query the same agents with the same
+            # reformulated query and return the same evidence. The loop
+            # exits whatever the gate would say, so the gate is not asked
+            # and ``final_gate_output`` is empty. A constraint is folded
+            # into THIS iteration's reformulation (above) and the evidence
+            # is gathered against it before this check, so it never blocks
+            # convergence.
+            retrieval_results = {
+                agent: result
+                for agent, result in iter_results.items()
+                if _canonical_agent_name(agent) not in _ENRICHMENT_AGENTS
+            }
+            converged = (
+                iter_idx >= 1
+                and bool(retrieval_results)
+                and all(
+                    bool(self._extract_evidence_from_results({agent: result}))
+                    for agent, result in retrieval_results.items()
+                )
+            )
+            gate_output = (
+                {}
+                if converged
+                else await self._run_sufficiency_gate(
+                    original_query=query,
+                    accumulated_evidence=raw_accumulated,
+                    iteration_idx=iter_idx,
+                )
             )
 
             iterations_executed = iter_idx + 1
@@ -2955,12 +3040,16 @@ class OrchestratorAgent(
             self._emit_retrieval_iteration_span(
                 tenant_id=tenant_id,
                 iteration_idx=iterations_executed,
-                sufficiency_score=gate_output.get("confidence", 0.0),
+                sufficiency_score=gate_output.get("confidence"),
                 exit_reason="in_progress",
                 evidence_count=len(accumulated),
                 session_id=session_id,
                 inbound_constraints_applied=list(accumulated_inbound_constraints),
             )
+
+            if converged:
+                exit_reason = "sufficient"
+                break
 
             # Honor a ``sufficient`` gate decision only from the second
             # iteration onwards. Real-world LMs (especially smaller
@@ -2971,31 +3060,6 @@ class OrchestratorAgent(
             # call. Requiring iter_idx >= 1 forces at least one
             # corroborating retrieval pass before we trust the gate.
             if iter_idx >= 1 and gate_output.get("sufficient"):
-                exit_reason = "sufficient"
-                break
-
-            # Convergence heuristic — small / cautious LMs (gemma-class
-            # student models) keep returning ``sufficient=False`` on the
-            # gate question even when 3+ evidence snippets already span
-            # the query's main aspects. The orchestrator must not run
-            # unbounded retrievals chasing the gate's perfectionism. From
-            # the second iteration onward, if every sub-agent in the plan
-            # contributed at least one usable evidence snippet this
-            # round, treat the loop as converged: continuing would just
-            # re-query the same agents with the same reformulated query
-            # and return the same evidence. The gate's missing-aspects
-            # list is retained in ``final_gate_output`` so the caller can
-            # still surface what the gate flagged.
-            all_agents_returned_evidence = bool(iter_results) and all(
-                bool(self._extract_evidence_from_results({agent: result}))
-                for agent, result in iter_results.items()
-            )
-            # A constraint is folded into THIS iteration's reformulation
-            # (above) and the evidence below is gathered against it before this
-            # check, so it never blocks convergence — it keeps steering via
-            # missing_aspects. The loop converges once every sub-agent
-            # contributed evidence this round.
-            if iter_idx >= 1 and all_agents_returned_evidence:
                 exit_reason = "sufficient"
                 break
 
@@ -3033,6 +3097,26 @@ class OrchestratorAgent(
 
             # Defensive guard against runaway iterations from clock skew.
             del iteration_started
+
+        if answer_agents and iterations_executed:
+            answers = await self._execute_plan(
+                plan,
+                workflow_id=workflow_id,
+                tenant_id=tenant_id,
+                session_id=session_id,
+                execution_order_sink=execution_order_sink,
+                agent_observations_sink=agent_observations_sink,
+                completed=round_results,
+                deferred=frozenset(
+                    step.agent_name
+                    for step in plan.steps
+                    if step.agent_name not in answer_agents
+                    and step.agent_name not in round_results
+                ),
+            )
+            agent_results_sink.update(
+                (agent, answers[agent]) for agent in answer_agents if agent in answers
+            )
 
         loop_duration_ms = (time.monotonic() - loop_started) * 1000.0
         return AccumulatedEvidence(
@@ -3554,6 +3638,15 @@ class OrchestratorAgent(
                 summary = "Orchestration did not complete every planned agent"
         return summary[:512]
 
+    async def _recall_past_plans(self, tenant_id: str, query: str) -> Optional[str]:
+        """The tenant's remembered successful plans for queries like ``query``.
+
+        The first touch builds the tenant's Mem0 stack; both it and the search
+        are blocking, so they run off the loop.
+        """
+        await asyncio.to_thread(self._ensure_memory_for_tenant, tenant_id)
+        return await asyncio.to_thread(self.get_relevant_context, query)
+
     def _generate_summary(
         self, plan: OrchestrationPlan, agent_results: Dict[str, Any]
     ) -> str:
@@ -3569,6 +3662,7 @@ class OrchestratorAgent(
         return (
             f"Executed {executed_steps}/{total_steps} steps "
             f"({successful_steps} successful). "
+            f"Agents: {', '.join(step.agent_name for step in plan.steps)}. "
             f"Plan: {plan.reasoning}"
         )
 

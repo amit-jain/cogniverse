@@ -111,7 +111,7 @@ class TestVLMInterface:
         mock_result.relevance_score = "0.85"
 
         mock_predict_instance = Mock()
-        mock_predict_instance.return_value = mock_result
+        mock_predict_instance.acall = AsyncMock(return_value=mock_result)
         mock_predict.return_value = mock_predict_instance
 
         vlm = VLMInterface(config_manager=Mock(), tenant_id="test:unit")

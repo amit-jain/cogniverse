@@ -34,6 +34,9 @@ OP_GATEWAY = "gateway"
 # The model the backend reports having served a routed LM call, as the
 # completion's ``model`` field; stamped on the span the call ran under.
 LLM_SERVED_MODEL_ATTRIBUTE = "llm.served_model"
+# Whether the tenant's LM response cache served a call (True, no LM call
+# made) or the call reached the LM (False); stamped on the span it ran under.
+LLM_CACHE_HIT_ATTRIBUTE = "llm.cache_hit"
 LLM_TIER_DEGRADED_ATTRIBUTE = "tier_degraded"
 LLM_UPSTREAM_STATUS_ATTRIBUTE = "upstream_status"
 LLM_UPSTREAM_EXCEPTION_TYPE_ATTRIBUTE = "upstream_exception_type"

@@ -86,6 +86,8 @@ class _StubOrchestrator:
     def __init__(self) -> None:
         self._reformulate_calls: List[List[str]] = []
         self._execute_calls: int = 0
+        self._executed_queries: List[str] = []
+        self._gate_iterations: List[int] = []
         # ``_iterative_retrieval_loop`` reads tuning caps off
         # ``self._config_manager.get_system_config()``; supply a real
         # ``SystemConfig`` with bounded test defaults so the loop
@@ -106,6 +108,7 @@ class _StubOrchestrator:
 
     async def _execute_plan(self, plan, **_kwargs) -> Dict[str, Any]:
         self._execute_calls += 1
+        self._executed_queries.append(plan.steps[0].input_data["query"])
         return {
             "stub-agent": {
                 "results": [
@@ -143,6 +146,7 @@ class _StubOrchestrator:
     async def _run_sufficiency_gate(
         self, *, original_query: str, accumulated_evidence, iteration_idx: int
     ) -> Dict[str, Any]:
+        self._gate_iterations.append(iteration_idx)
         return {
             "sufficient": False,
             "missing_aspects": [],
@@ -180,6 +184,7 @@ async def _run_loop(orch, plan, *, inbound_queue):
 
 class _StubPlanStep:
     def __init__(self) -> None:
+        self.agent_name = "stub-agent"
         self.input_data: Dict[str, Any] = {}
 
 
@@ -220,6 +225,11 @@ async def test_constraint_enqueued_before_iter_0_appears_in_iter_0_missing_aspec
     assert stub._reformulate_calls[0] == ["only sources from 2024"]
     # Iter 1 still has it — constraints are monotonic across iterations.
     assert stub._reformulate_calls[1] == ["only sources from 2024"]
+    # A constraint present at iter 0 keeps iter 0's reformulation.
+    assert stub._executed_queries == [
+        "test query :: only sources from 2024",
+        "test query :: only sources from 2024",
+    ]
 
 
 # --------------------------------------------------------------------- #
@@ -253,10 +263,13 @@ async def test_constraint_enqueued_after_iter_0_appears_in_iter_1_not_iter_0():
     assert result.exit_reason == "sufficient"
     assert result.iterations_executed == 2
     # Iter 0 saw no constraints (queue was empty when iter 0 drained,
-    # constraint enqueued during iter 0's execute).
-    assert stub._reformulate_calls[0] == []
-    # Iter 1 picks up the constraint from iter 0's enqueue.
-    assert stub._reformulate_calls[1] == ["mid-loop constraint"]
+    # constraint enqueued during iter 0's execute), so it ran the query as
+    # asked without a reformulation; iter 1 reformulates for the constraint.
+    assert stub._reformulate_calls == [["mid-loop constraint"]]
+    assert stub._executed_queries == [
+        "test query",
+        "test query :: mid-loop constraint",
+    ]
 
 
 # --------------------------------------------------------------------- #
@@ -381,9 +394,14 @@ async def test_no_inbound_queue_loop_runs_unchanged():
 
     assert result.exit_reason == "sufficient"
     assert result.iterations_executed == 2
-    # No constraints anywhere — every reformulate call's missing_aspects
-    # comes from the (empty) gate output only.
-    assert stub._reformulate_calls == [[], []]
+    # No constraints anywhere: iter 0 runs the query as asked, and iter 1's
+    # reformulation reads the (empty) gate output only.
+    assert stub._reformulate_calls == [[]]
+    assert stub._executed_queries == ["test query", "test query :: "]
+    # Iter 1 converged, so only iter 0 asked the gate and the loop reports
+    # no final gate decision.
+    assert stub._gate_iterations == [0]
+    assert result.final_gate_output == {}
 
 
 # --------------------------------------------------------------------- #
@@ -429,7 +447,8 @@ async def test_untagged_message_does_not_steer_loop():
     result = await _run_loop(stub, plan, inbound_queue=queue)
 
     assert result.exit_reason == "sufficient"
-    assert stub._reformulate_calls == [[], []]
+    assert stub._reformulate_calls == [[]]
+    assert stub._executed_queries == ["test query", "test query :: "]
 
 
 # --------------------------------------------------------------------- #
@@ -452,7 +471,8 @@ async def test_empty_content_constraint_does_not_inject_blank_aspect():
     result = await _run_loop(stub, plan, inbound_queue=queue)
 
     assert result.exit_reason == "sufficient"
-    assert stub._reformulate_calls == [[], []]
+    assert stub._reformulate_calls == [[]]
+    assert stub._executed_queries == ["test query", "test query :: "]
 
 
 # --------------------------------------------------------------------- #
@@ -508,7 +528,12 @@ async def test_per_session_isolation_constraint_to_a_does_not_reach_b():
     # A saw the constraint at iter 0 (position 0).
     assert stub_a._reformulate_calls[0] == ["constraint-only-for-A"]
     # B saw NO constraints — exact equality to the no-inbound case.
-    assert stub_b._reformulate_calls == [[], []]
+    assert stub_b._reformulate_calls == [[]]
+    assert stub_b._executed_queries == ["q-B", "q-B :: "]
+    assert stub_a._executed_queries == [
+        "q-A :: constraint-only-for-A",
+        "q-A :: constraint-only-for-A",
+    ]
     # B's reformulate_calls flattened contain ZERO occurrences of A's
     # constraint string — strong leak check.
     import json as _json
@@ -553,6 +578,45 @@ async def test_max_iter_exit_reason_distinct_from_user_stop_and_sufficient():
     assert result.iterations_executed == 3
     assert result.exit_reason != "user_stop"
     assert result.exit_reason != "sufficient"
+    # No iteration converged, so the gate judged every one, the last
+    # included, and its decision is the loop's final gate output.
+    assert stub._gate_iterations == [0, 1, 2]
+    assert result.final_gate_output == {
+        "sufficient": False,
+        "missing_aspects": [],
+        "confidence": 0.3,
+        "rationale": "stub",
+    }
+
+
+async def test_a_sufficient_gate_ends_a_round_that_did_not_converge():
+    """A round where some sub-agent returned nothing does not converge, so
+    the gate is asked, and its ``sufficient`` verdict from iter 1 onward
+    ends the loop with that verdict as the final gate output."""
+    reset_inbound_queue_registry_for_testing()
+    verdict = {
+        "sufficient": True,
+        "missing_aspects": [],
+        "confidence": 0.9,
+        "rationale": "stub-sufficient",
+    }
+
+    class _OneAgentSilentStub(_StubOrchestrator):
+        async def _execute_plan(self, plan, **kwargs):
+            results = await super()._execute_plan(plan, **kwargs)
+            results["silent-agent"] = {"results": []}
+            return results
+
+        async def _run_sufficiency_gate(self, *, iteration_idx, **_kwargs):
+            self._gate_iterations.append(iteration_idx)
+            return dict(verdict)
+
+    stub = _OneAgentSilentStub()
+    result = await _run_loop(stub, _StubPlan(), inbound_queue=None)
+
+    assert (result.exit_reason, result.iterations_executed) == ("sufficient", 2)
+    assert stub._gate_iterations == [0, 1]
+    assert result.final_gate_output == verdict
 
 
 # --------------------------------------------------------------------- #

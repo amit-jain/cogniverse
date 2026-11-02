@@ -21,6 +21,7 @@ from cogniverse_foundation.config.token_budget import (
     TokenBudget,
 )
 from cogniverse_foundation.config.unified_config import SemanticRouterConfig
+from cogniverse_foundation.telemetry.span_contract import LLM_CACHE_HIT_ATTRIBUTE
 
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
@@ -314,6 +315,7 @@ class TestOneUpstreamCallPerKey:
 
         assert len(upstream) == 1
         assert answers == ["answer-0"] * 16
+        assert cache.stats() == {"hits": 15, "misses": 1, "entries": 1}
 
     def test_sixteen_tasks_racing_one_key_make_one_call(self, cache, monkeypatch):
         upstream = Upstream(lambda index: f"answer-{index}").install(monkeypatch)
@@ -337,6 +339,7 @@ class TestOneUpstreamCallPerKey:
 
         assert len(upstream) == 1
         assert answers == ["answer-0"] * 16
+        assert cache.stats() == {"hits": 15, "misses": 1, "entries": 1}
 
 
 class TestAFailedCallIsRaisedNotStored:
@@ -397,6 +400,7 @@ class TestAFailedCallIsRaisedNotStored:
         ]
         assert cache.entry_count() == 0
         assert len(upstream) == 1
+        assert cache.stats() == {"hits": 0, "misses": 1, "entries": 0}
 
     def test_a_context_window_rejection_still_reads_as_a_prompt_budget_overflow(
         self, cache, monkeypatch
@@ -442,6 +446,116 @@ class TestAServedEntryIsNobodysToMutate:
         second.text = "trampled"
         assert acme.forward(messages=MESSAGES).text == "only answer"
         assert len(upstream) == 1
+
+
+def _tracer():
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return exporter, provider.get_tracer("lm-cache-test")
+
+
+def _cache_hit_by_span(exporter) -> list[tuple[str, object]]:
+    return [
+        (span.name, span.attributes.get(LLM_CACHE_HIT_ATTRIBUTE))
+        for span in exporter.get_finished_spans()
+    ]
+
+
+class TestEachCallSaysWhetherTheCacheServedIt:
+    def test_a_miss_then_a_hit_are_stamped_and_counted(self, cache, monkeypatch):
+        Upstream(["only answer"]).install(monkeypatch)
+        acme = build_lm(cache, "acme:prod")
+        exporter, tracer = _tracer()
+
+        with tracer.start_as_current_span("first"):
+            acme.forward(messages=MESSAGES)
+        with tracer.start_as_current_span("second"):
+            asyncio.run(acme.aforward(messages=MESSAGES))
+
+        assert _cache_hit_by_span(exporter) == [("first", False), ("second", True)]
+        assert cache.stats() == {"hits": 1, "misses": 1, "entries": 1}
+
+    def test_an_expired_entry_counts_as_a_miss(self, cache, clock, monkeypatch):
+        Upstream(["first", "second"]).install(monkeypatch)
+        acme = build_lm(cache, "acme:prod")
+
+        acme.forward(messages=MESSAGES)
+        clock.set(TTL_SECONDS)
+        acme.forward(messages=MESSAGES)
+
+        assert cache.stats() == {"hits": 0, "misses": 2, "entries": 1}
+
+    def test_tasks_joining_a_call_in_flight_are_stamped_as_hits(
+        self, cache, monkeypatch
+    ):
+        upstream = Upstream(lambda index: f"answer-{index}").install(monkeypatch)
+        upstream.delay = 0.05
+        acme = build_lm(cache, "acme:prod")
+        exporter, tracer = _tracer()
+
+        async def run():
+            ready = asyncio.Event()
+
+            async def ask(name: str):
+                await ready.wait()
+                with tracer.start_as_current_span(name):
+                    await acme.aforward(messages=MESSAGES)
+
+            tasks = [asyncio.create_task(ask(f"call-{i}")) for i in range(8)]
+            await asyncio.sleep(0)
+            ready.set()
+            await asyncio.gather(*tasks)
+
+        asyncio.run(run())
+
+        stamped = _cache_hit_by_span(exporter)
+        assert sorted(name for name, _ in stamped) == [f"call-{i}" for i in range(8)]
+        assert sorted(hit for _, hit in stamped) == [False] + [True] * 7
+        assert len(upstream) == 1
+        assert cache.stats() == {"hits": 7, "misses": 1, "entries": 1}
+
+    def test_a_failed_call_is_stamped_as_a_miss(self, cache, monkeypatch):
+        Upstream([RuntimeError("upstream down")]).install(monkeypatch)
+        acme = build_lm(cache, "acme:prod")
+        exporter, tracer = _tracer()
+
+        with tracer.start_as_current_span("failed"):
+            with pytest.raises(RuntimeError) as failure:
+                acme.forward(messages=MESSAGES)
+
+        assert str(failure.value) == "upstream down"
+        assert _cache_hit_by_span(exporter) == [("failed", False)]
+        assert cache.stats() == {"hits": 0, "misses": 1, "entries": 0}
+
+    def test_a_call_with_the_cache_off_is_neither_stamped_nor_counted(
+        self, cache, monkeypatch
+    ):
+        Upstream(["a", "b"]).install(monkeypatch)
+        acme = build_lm(cache, "acme:prod")
+        exporter, tracer = _tracer()
+
+        with tracer.start_as_current_span("uncached"):
+            acme.forward(messages=MESSAGES, cache=False)
+
+        assert _cache_hit_by_span(exporter) == [("uncached", None)]
+        assert cache.stats() == {"hits": 0, "misses": 0, "entries": 0}
+
+    def test_clearing_the_cache_keeps_its_counts(self, cache, monkeypatch):
+        Upstream(["a", "b"]).install(monkeypatch)
+        acme = build_lm(cache, "acme:prod")
+
+        acme.forward(messages=MESSAGES)
+        acme.forward(messages=MESSAGES)
+        cache.clear()
+
+        assert cache.stats() == {"hits": 1, "misses": 1, "entries": 0}
 
 
 class TestTheAmbientLmIsBoundPerRequest:

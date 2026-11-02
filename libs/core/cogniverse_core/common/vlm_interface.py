@@ -95,7 +95,9 @@ class VLMInterface:
                 if Path(image_path).exists():
                     image_descriptions.append(f"Image: {Path(image_path).name}")
 
-            result = visual_analysis(images=", ".join(image_descriptions), query=query)
+            result = await visual_analysis.acall(
+                images=", ".join(image_descriptions), query=query
+            )
 
             def _split_or_empty(val: str | None) -> list[str]:
                 return val.split(", ") if val else []

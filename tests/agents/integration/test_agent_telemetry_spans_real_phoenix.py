@@ -1084,7 +1084,8 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             },
             "final_output": final_output,
             "execution_summary": (
-                "Executed 1/1 steps (1 successful). Plan: Single search step"
+                "Executed 1/1 steps (1 successful). Agents: search_agent. "
+                "Plan: Single search step"
             ),
             "metadata": {
                 "iterative_loop": {

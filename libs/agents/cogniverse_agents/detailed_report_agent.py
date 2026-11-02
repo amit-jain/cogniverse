@@ -38,6 +38,8 @@ from cogniverse_foundation.telemetry.context import request_trace_context
 logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8004
+# Visual analyses of one report in flight at once.
+VISUAL_ANALYSIS_CONCURRENCY = 4
 
 # Per-request report call state (frames attached, degraded flag/reason). The
 # dispatcher builds a fresh agent per request, but the standalone A2A app
@@ -727,7 +729,9 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
     async def _perform_visual_analysis(
         self, request: ReportRequest, thinking_phase: ThinkingPhase
     ) -> List[Dict[str, Any]]:
-        """Perform visual analysis using VLM"""
+        """Analyze each visual result with the VLM, at most
+        ``VISUAL_ANALYSIS_CONCURRENCY`` at once, in result order. A failed
+        analysis raises naming its image."""
         if not request.include_visual_analysis or not self.visual_analysis_enabled:
             return []
 
@@ -736,30 +740,40 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
         logger.info("Performing visual analysis...")
 
-        visual_analysis = []
-        for result in request.search_results[: request.max_results_to_analyze]:
-            if "thumbnail" in result or "image_path" in result:
-                image_path = result.get("thumbnail") or result.get("image_path")
+        slots = asyncio.Semaphore(VISUAL_ANALYSIS_CONCURRENCY)
 
+        async def _analyze(result: Dict[str, Any]) -> Dict[str, Any]:
+            image_path = result.get("thumbnail") or result.get("image_path")
+            async with slots:
                 try:
                     analysis = await self.vlm.analyze_visual_content(
                         [image_path], request.query
                     )
-
-                    visual_analysis.append(
-                        {
-                            "result_id": result.get("id", "unknown"),
-                            "insights": analysis.get("insights", []),
-                            # VLMInterface.analyze_visual_content emits
-                            # relevance_score, not confidence — the old key was
-                            # always absent, so every visual analysis reported 0.0.
-                            "confidence": analysis.get("relevance_score", 0.0),
-                        }
-                    )
                 except Exception as e:
-                    logger.warning(f"Visual analysis failed for {image_path}: {e}")
+                    raise RuntimeError(
+                        f"Visual analysis failed for {image_path}: {e}"
+                    ) from e
+            return {
+                "result_id": result.get("id", "unknown"),
+                "insights": analysis.get("insights", []),
+                # VLMInterface.analyze_visual_content emits relevance_score.
+                "confidence": analysis.get("relevance_score", 0.0),
+            }
 
-        return visual_analysis
+        # Every analysis runs to its end before a failure is raised, so none
+        # is left in flight against the VLM.
+        outcomes = await asyncio.gather(
+            *(
+                _analyze(result)
+                for result in request.search_results[: request.max_results_to_analyze]
+                if "thumbnail" in result or "image_path" in result
+            ),
+            return_exceptions=True,
+        )
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                raise outcome
+        return list(outcomes)
 
     @staticmethod
     def _parse_llm_list(raw: Any) -> List[str]:

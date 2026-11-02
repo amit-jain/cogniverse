@@ -13,6 +13,7 @@ import asyncio
 import json
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -44,8 +45,20 @@ _SERVICE_URLS = {
     for service in [(data.get("inference_services") or {}).get("embedding")]
     if service
 }
-VIDEO_ONLY_DROPPED = {"image_search_agent", "audio_analysis_agent", "document_agent"}
-DOCUMENT_ONLY_DROPPED = {"search_agent", "image_search_agent", "audio_analysis_agent"}
+# Each of these tenants serves one profile, so profile selection has no
+# choice to make and is withheld with the retrieval agents.
+VIDEO_ONLY_DROPPED = {
+    "image_search_agent",
+    "audio_analysis_agent",
+    "document_agent",
+    "profile_selection_agent",
+}
+DOCUMENT_ONLY_DROPPED = {
+    "search_agent",
+    "image_search_agent",
+    "audio_analysis_agent",
+    "profile_selection_agent",
+}
 
 
 def _tenant(label: str) -> str:
@@ -88,6 +101,14 @@ def _video_tenant(config_manager) -> str:
     """Registered: the built-in video schema deployed, no stored profile."""
     tenant_id = _tenant("video")
     _register(config_manager, tenant_id, "video_colpali_smol500_mv_frame")
+    return tenant_id
+
+
+def _two_video_profile_tenant(config_manager) -> str:
+    """Registered with two built-in video schemas deployed."""
+    tenant_id = _tenant("two_video")
+    _register(config_manager, tenant_id, "video_colpali_smol500_mv_frame")
+    _register(config_manager, tenant_id, "video_colqwen_omni_mv_chunk_30s")
     return tenant_id
 
 
@@ -193,7 +214,59 @@ class TestPlanningFollowsTheTenantsModalities:
             "image_search_agent": frozenset({"image"}),
             "audio_analysis_agent": frozenset({"audio"}),
             "document_agent": frozenset({"document"}),
+            "profile_selection_agent": frozenset(),
         }
+
+    async def test_a_tenant_with_two_profiles_keeps_profile_selection(
+        self, config_manager
+    ):
+        tenant_id = _two_video_profile_tenant(config_manager)
+        orchestrator = _orchestrator(config_manager, tenant_id)
+        registered = orchestrator.registry.list_agents()
+
+        planning, withheld = await orchestrator._tenant_planning(tenant_id)
+
+        assert planning == [
+            a
+            for a in registered
+            if a not in VIDEO_ONLY_DROPPED - {"profile_selection_agent"}
+        ]
+        assert "profile_selection_agent" in planning
+        assert withheld == {
+            "image_search_agent": frozenset({"image"}),
+            "audio_analysis_agent": frozenset({"audio"}),
+            "document_agent": frozenset({"document"}),
+        }
+
+    @pytest.mark.parametrize("named", ["profile_selection_agent", "profile_selection"])
+    async def test_profile_selection_named_for_a_one_profile_tenant_is_dropped(
+        self, config_manager, named
+    ):
+        """The planner names profile selection anyway: the step is dropped,
+        not run and not reported, since there is no profile to choose."""
+        tenant_id = _video_tenant(config_manager)
+        orchestrator = _orchestrator(config_manager, tenant_id)
+        planning, withheld = await orchestrator._tenant_planning(tenant_id)
+        orchestrator.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence=f"{named},query_enhancement_agent,search_agent",
+                parallel_steps="0,1",
+                reasoning="pick the profile, sharpen the query, then search",
+            )
+        )
+
+        plan = await orchestrator._create_plan(
+            "find videos of a man washing dishes in a kitchen sink",
+            available_agents=planning,
+            withheld_agents=withheld,
+            requested_modalities=["video"],
+        )
+
+        assert [step.agent_name for step in plan.steps] == [
+            "query_enhancement_agent",
+            "search_agent",
+        ]
+        assert plan.unavailable_agents == []
 
     async def test_a_withheld_agent_the_request_did_not_ask_for_is_dropped(
         self, config_manager
@@ -303,9 +376,14 @@ class TestPlanningFollowsTheTenantsModalities:
             barrier.wait()
             return asyncio.run(orchestrator._planning_agents(tenant_id))
 
-        planned = await asyncio.gather(
-            *(asyncio.to_thread(plan_for, tenant_id) for tenant_id in tenants)
-        )
+        loop = asyncio.get_running_loop()
+        with ThreadPoolExecutor(max_workers=len(tenants)) as pool:
+            planned = await asyncio.gather(
+                *(
+                    loop.run_in_executor(pool, plan_for, tenant_id)
+                    for tenant_id in tenants
+                )
+            )
 
         assert (VIDEO_ONLY_DROPPED | DOCUMENT_ONLY_DROPPED) <= set(registered)
         assert (

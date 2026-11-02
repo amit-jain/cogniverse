@@ -24,7 +24,10 @@ from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
     SemanticRouterConfig,
 )
-from cogniverse_foundation.telemetry.span_contract import LLM_SERVED_MODEL_ATTRIBUTE
+from cogniverse_foundation.telemetry.span_contract import (
+    LLM_CACHE_HIT_ATTRIBUTE,
+    LLM_SERVED_MODEL_ATTRIBUTE,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -136,6 +139,7 @@ async def test_a_transient_teacher_failure_gets_one_named_student_attempt(
     _assert_student(response, prompt, status)
     (span,) = exporter.get_finished_spans()
     assert dict(span.attributes) == {
+        LLM_CACHE_HIT_ATTRIBUTE: False,
         LLM_SERVED_MODEL_ATTRIBUTE: "basic-chat",
         **_degradation(status),
     }
@@ -166,7 +170,7 @@ async def test_a_permanent_teacher_refusal_never_reaches_the_student(
     assert type(raised.value) is kind
     assert raised.value.status == status
     (span,) = exporter.get_finished_spans()
-    assert dict(span.attributes) == {}
+    assert dict(span.attributes) == {LLM_CACHE_HIT_ATTRIBUTE: False}
     assert _counts(stack, {prompt}) == {"teacher": {prompt: 1}, "student": {}}
 
 
@@ -199,7 +203,10 @@ def test_a_student_call_carries_no_degradation(semantic_router_stack, tier, call
     } == {}
     assert response.model == "basic-chat"
     (span,) = exporter.get_finished_spans()
-    assert dict(span.attributes) == {LLM_SERVED_MODEL_ATTRIBUTE: "basic-chat"}
+    assert dict(span.attributes) == {
+        LLM_CACHE_HIT_ATTRIBUTE: False,
+        LLM_SERVED_MODEL_ATTRIBUTE: "basic-chat",
+    }
     assert _counts(stack, {prompt}) == {"teacher": {}, "student": {prompt: 1}}
 
 
@@ -233,6 +240,7 @@ def test_sixteen_concurrent_pro_calls_retry_once_without_marking_a_default_call(
         span.name: dict(span.attributes) for span in exporter.get_finished_spans()
     } == {
         str(i): {
+            LLM_CACHE_HIT_ATTRIBUTE: False,
             LLM_SERVED_MODEL_ATTRIBUTE: "basic-chat",
             **(_degradation(503) if i < 16 else {}),
         }
@@ -254,6 +262,7 @@ def test_a_refused_teacher_connection_gets_one_student_attempt(semantic_router_s
     _assert_student(response, prompt, 503)
     (span,) = exporter.get_finished_spans()
     assert dict(span.attributes) == {
+        LLM_CACHE_HIT_ATTRIBUTE: False,
         LLM_SERVED_MODEL_ATTRIBUTE: "basic-chat",
         **_degradation(503),
     }
@@ -274,7 +283,10 @@ def test_a_failed_student_attempt_propagates_without_another_retry(
     assert raised.value.status == 503
     assert raised.value.routed_model == "openai/cogniverse-classification"
     (span,) = exporter.get_finished_spans()
-    assert dict(span.attributes) == _degradation(503)
+    assert dict(span.attributes) == {
+        LLM_CACHE_HIT_ATTRIBUTE: False,
+        **_degradation(503),
+    }
     assert _counts(stack, {prompt}) == {"teacher": {prompt: 1}, "student": {prompt: 1}}
 
 
@@ -292,7 +304,7 @@ def test_a_default_tier_outage_keeps_its_retry_policy_without_degradation(
     assert raised.value.status == 502
     assert raised.value.routed_model == "openai/auto"
     (span,) = exporter.get_finished_spans()
-    assert dict(span.attributes) == {}
+    assert dict(span.attributes) == {LLM_CACHE_HIT_ATTRIBUTE: False}
     assert _counts(stack, {prompt}) == {"teacher": {}, "student": {prompt: 3}}
 
 
@@ -322,7 +334,14 @@ async def test_degradation_does_not_mutate_the_cached_student_completion(
     assert {
         span.name: dict(span.attributes) for span in exporter.get_finished_spans()
     } == {
-        "fallback": {LLM_SERVED_MODEL_ATTRIBUTE: "basic-chat", **_degradation(503)},
-        "bounded": {LLM_SERVED_MODEL_ATTRIBUTE: "basic-chat"},
+        "fallback": {
+            LLM_CACHE_HIT_ATTRIBUTE: False,
+            LLM_SERVED_MODEL_ATTRIBUTE: "basic-chat",
+            **_degradation(503),
+        },
+        "bounded": {
+            LLM_CACHE_HIT_ATTRIBUTE: True,
+            LLM_SERVED_MODEL_ATTRIBUTE: "basic-chat",
+        },
     }
     assert _counts(stack, {prompt}) == {"teacher": {prompt: 1}, "student": {prompt: 1}}

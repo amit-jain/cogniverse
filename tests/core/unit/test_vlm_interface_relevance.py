@@ -24,9 +24,17 @@ class _StubResult:
 async def test_label_relevance_score_is_coerced(monkeypatch):
     vlm = object.__new__(VLMInterface)
     vlm._dspy_lm = Mock()
+
     # The real LM commonly returns a label like "high" rather than a float;
     # a bare float() crashed here before parse_confidence.
-    monkeypatch.setattr(dspy, "Predict", lambda sig: lambda **kw: _StubResult())
+    class _StubPredict:
+        def __init__(self, signature):
+            pass
+
+        async def acall(self, **kwargs):
+            return _StubResult()
+
+    monkeypatch.setattr(dspy, "Predict", _StubPredict)
 
     out = await vlm.analyze_visual_content([], "find safety gear")
 
