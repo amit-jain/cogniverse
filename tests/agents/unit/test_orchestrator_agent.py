@@ -2896,3 +2896,163 @@ class TestLoopRoundsRerunOnlyWhatTheGapChanges:
             }
         assert len(server.calls("entity_extraction_agent")) == 2
         assert len(server.calls("summarizer_agent")) == 2
+
+
+def _search_finds_nothing_after_the_first_round(payload, call_number):
+    """Later rounds' searches return no hits, so the loop never converges
+    and runs to its last round."""
+    if payload["agent_name"] == "search_agent" and "| the gap" in payload["query"]:
+        return 200, {"agent": "search_agent", "results": []}
+    return _agent_answer(payload, call_number)
+
+
+class TestTheLastRoundsGateRunsAlongsideTheAnswer:
+    """On the last allowed round the loop ends whatever the gate says, so the
+    gate only labels the exit and reports the gaps: it runs at the same time
+    as the answer step instead of before it."""
+
+    _agents = staticmethod(TestLoopRoundsRerunOnlyWhatTheGapChanges._agents)
+    _loop = staticmethod(TestLoopRoundsRerunOnlyWhatTheGapChanges._loop)
+
+    @pytest.fixture
+    def two_round_orchestrator(self, orchestrator_agent):
+        orch = orchestrator_agent
+        orch._config_manager.get_system_config = Mock(
+            return_value=SystemConfig(
+                inference_service_urls={"gliner": "http://127.0.0.1:29071"},
+                iter_retrieval_max_iter=2,
+                iter_retrieval_token_budget=1_000_000,
+                iter_retrieval_wall_clock_ms=600_000,
+            )
+        )
+
+        async def reformulate(query, missing_aspects):
+            return f"{query} | {', '.join(missing_aspects)}", ""
+
+        orch._reformulate_query = reformulate
+        spans: list[tuple[int, float, str]] = []
+
+        def record_span(**kwargs):
+            spans.append(
+                (
+                    kwargs["iteration_idx"],
+                    kwargs["sufficiency_score"],
+                    kwargs["exit_reason"],
+                )
+            )
+
+        orch._emit_retrieval_iteration_span = record_span
+        orch.spans = spans
+        return orch
+
+    async def test_the_answer_is_asked_while_the_last_gate_is_still_out(
+        self, two_round_orchestrator
+    ):
+        orch = two_round_orchestrator
+        summary_asked = threading.Event()
+        gate_saw_the_summary_asked: list[bool] = []
+
+        async def gate(*, original_query, accumulated_evidence, iteration_idx):
+            if iteration_idx == 1:
+                gate_saw_the_summary_asked.append(
+                    await asyncio.to_thread(summary_asked.wait, 10)
+                )
+                return {
+                    "sufficient": False,
+                    "missing_aspects": ["colour of the second car"],
+                    "confidence": 0.4,
+                    "rationale": "one car only",
+                }
+            return {
+                "sufficient": False,
+                "missing_aspects": ["the gap"],
+                "confidence": 0.2,
+                "rationale": "",
+            }
+
+        def answers(payload, call_number):
+            if payload["agent_name"] == "summarizer_agent":
+                summary_asked.set()
+            return _search_finds_nothing_after_the_first_round(payload, call_number)
+
+        orch._run_sufficiency_gate = gate
+        sink: dict = {}
+        async with self._agents(orch, answers) as server:
+            result = await self._loop(orch, "red cars", sink=sink)
+
+        assert gate_saw_the_summary_asked == [True]
+        assert result.exit_reason == "max_iter"
+        assert result.iterations_executed == 2
+        assert result.final_gate_output == {
+            "sufficient": False,
+            "missing_aspects": ["colour of the second car"],
+            "confidence": 0.4,
+            "rationale": "one car only",
+        }
+        assert orch.spans == [(1, 0.2, "in_progress"), (2, 0.4, "in_progress")]
+        (summary_call,) = server.calls("summarizer_agent")
+        assert summary_call["query"] == "red cars | the gap"
+        assert sink["summarizer_agent"] == {"summary": "summary of red cars | the gap"}
+
+    async def test_a_sufficient_last_gate_still_labels_the_exit_sufficient(
+        self, two_round_orchestrator
+    ):
+        orch = two_round_orchestrator
+
+        async def gate(*, original_query, accumulated_evidence, iteration_idx):
+            return {
+                "sufficient": iteration_idx == 1,
+                "missing_aspects": [] if iteration_idx == 1 else ["the gap"],
+                "confidence": 0.9 if iteration_idx == 1 else 0.2,
+                "rationale": "",
+            }
+
+        orch._run_sufficiency_gate = gate
+        sink: dict = {}
+        async with self._agents(orch, _search_finds_nothing_after_the_first_round):
+            result = await self._loop(orch, "red cars", sink=sink)
+
+        assert result.exit_reason == "sufficient"
+        assert result.final_gate_output == {
+            "sufficient": True,
+            "missing_aspects": [],
+            "confidence": 0.9,
+            "rationale": "",
+        }
+        assert orch.spans == [(1, 0.2, "in_progress"), (2, 0.9, "in_progress")]
+        assert sink["summarizer_agent"] == {"summary": "summary of red cars | the gap"}
+
+    async def test_a_failing_last_gate_raises_after_the_answer_step_finishes(
+        self, two_round_orchestrator
+    ):
+        orch = two_round_orchestrator
+
+        async def gate(*, original_query, accumulated_evidence, iteration_idx):
+            if iteration_idx == 1:
+                raise RuntimeError("gate LM unreachable at iter=1")
+            return {
+                "sufficient": False,
+                "missing_aspects": ["the gap"],
+                "confidence": 0.2,
+                "rationale": "",
+            }
+
+        orch._run_sufficiency_gate = gate
+        sink: dict = {}
+        async with self._agents(
+            orch, _search_finds_nothing_after_the_first_round
+        ) as server:
+            with pytest.raises(RuntimeError) as raised:
+                await self._loop(orch, "red cars", sink=sink)
+            pending = [
+                task
+                for task in asyncio.all_tasks()
+                if task is not asyncio.current_task()
+            ]
+
+        assert str(raised.value) == "gate LM unreachable at iter=1"
+        assert [p["query"] for p in server.calls("summarizer_agent")] == [
+            "red cars | the gap"
+        ]
+        assert pending == []
+        assert "summarizer_agent" not in sink
