@@ -143,6 +143,14 @@ INFERENCE_SERVICE_SPECS: Mapping[str, InferenceServiceSpec] = MappingProxyType(
             "T4",
             "L4",
         ),
+        "gliner2": _spec(
+            "gliner2",
+            "fastino/GLiNER2.5-Decide",
+            "9d1bfb848cd16d93ee56ccbc59cd92bf0f284d90",
+            None,
+            "T4",
+            "L4",
+        ),
         "vllm_llm_student": _spec(
             "vllm_llm_student",
             "google/gemma-4-e4b-it",

@@ -355,6 +355,9 @@ class RoutingConfigUnified:
     gliner_threshold: float = 0.3
     gliner_device: str = "cpu"
 
+    # GLiNER2 shadow (recorded beside the gateway's rules)
+    gliner2_model: Optional[str] = None
+
     # Optimization
     enable_auto_optimization: bool = True
     optimization_interval_seconds: int = 3600

@@ -63,6 +63,7 @@ TARGETS = (
         "huggingface_hub.hub_mixin", "ModelHubMixin", "from_pretrained", "classmethod"
     ),
     _Target("gliner.model", "GLiNER", "from_pretrained", "classmethod"),
+    _Target("gliner2.auto", "AutoExtractor", "from_pretrained", "classmethod"),
     _Target("whisper", None, "load_model", "function"),
     _Target("faster_whisper.transcribe", "WhisperModel", "__init__", "init"),
     _Target("insightface.app.face_analysis", "FaceAnalysis", "__init__", "init"),

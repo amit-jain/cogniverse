@@ -5,6 +5,7 @@ pytest_plugins = [
     "tests.fixtures.instafail",
     "tests.fixtures.llm",
     "tests.fixtures.no_local_models",
+    "tests.fixtures.gliner2",
     "tests.fixtures.sidecars",
     "tests.fixtures.telemetry_loss_guard",
 ]

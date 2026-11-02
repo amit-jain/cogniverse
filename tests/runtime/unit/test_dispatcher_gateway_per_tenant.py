@@ -238,3 +238,43 @@ async def test_concurrent_cold_dispatches_build_gateway_once(dispatcher):
     assert calls["n"] == 1, "concurrent cold dispatches ran duplicate gateway builds"
     assert results[0] is results[1] is results[2]
     assert results[0]._artifact_tenant_id == "acme:acme"
+
+
+@pytest.mark.asyncio
+async def test_saved_gliner2_shadow_config_reaches_the_gateway(dispatcher):
+    """A tenant's saved GLiNER2 shadow model and the deployment's gliner2
+    inference URL reach GatewayDeps; a tenant without one gets no shadow."""
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    d, _ = dispatcher
+    store = InMemoryConfigStore()
+    store.initialize()
+    manager = ConfigManager(store=store)
+    system = manager.get_system_config()
+    system.inference_service_urls = {
+        **system.inference_service_urls,
+        "gliner2": "http://cogniverse-gliner2:8080",
+    }
+    manager.set_system_config(system)
+    manager.set_routing_config(
+        RoutingConfigUnified(
+            tenant_id="acme:acme",
+            gliner2_model="fastino/GLiNER2.5-Decide",
+        ),
+        tenant_id="acme:acme",
+    )
+    d._config_manager = manager
+
+    acme = await d._get_or_build_gateway_agent("acme:acme")
+    globex = await d._get_or_build_gateway_agent("globex:globex")
+
+    assert (
+        acme.deps.gliner2_model,
+        acme.deps.gliner2_inference_url,
+    ) == ("fastino/GLiNER2.5-Decide", "http://cogniverse-gliner2:8080")
+    assert (
+        globex.deps.gliner2_model,
+        globex.deps.gliner2_inference_url,
+    ) == (None, None)

@@ -432,6 +432,19 @@ cluster's gliner pod: the baked export's `source.json` names the pinned
 checkpoint, the server runs it on ONNX Runtime with as many threads as the
 pod's CPU limit, and its entities match the PyTorch checkpoint's.
 
+### GLiNER2 (entities and classifications in one pass, `gliner2`)
+
+| | |
+|---|---|
+| Model | `fastino/GLiNER2.5-Decide` @ `9d1bfb848cd16d93ee56ccbc59cd92bf0f284d90` |
+| Server | `cogniverse_cli.modal_inference.servers.gliner2` (`POST /extract`, `GET /health`) |
+| Modal app | `cogniverse-gliner2` (`cogniverse inference modal deploy gliner2`) |
+| Runtime URL | `SystemConfig.inference_service_urls["gliner2"]` |
+
+The gateway sends each query to it in shadow when the tenant's
+`RoutingConfigUnified.gliner2_model` is set; nothing else reads it yet. The
+server downloads the pinned revision as one snapshot and loads it from disk.
+
 ### InsightFace (face embeddings, `face_embed` sidecar)
 
 | Field | Value |

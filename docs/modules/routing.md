@@ -222,6 +222,11 @@ class RoutingConfigUnified:
     gliner_threshold: float = 0.3
     gliner_device: str = "cpu"
 
+    # GLiNER2 shadow, seeded into GatewayDeps by the dispatcher with
+    # inference_service_urls["gliner2"] as its URL. Recorded beside the rule
+    # decision, never routes. None: no shadow.
+    gliner2_model: Optional[str] = None
+
     # Optimization settings — consumed by scripts/auto_optimization_trigger.py
     enable_auto_optimization: bool = True
     optimization_interval_seconds: int = 3600

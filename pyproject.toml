@@ -48,6 +48,7 @@ dependencies = [
     "transformers==4.56.2",
     "colpali-engine==0.3.13",
     "gliner==0.2.26",
+    "gliner2[local]==2.1.0",
     "xgboost==3.2.0",
     "scikit-learn==1.8.0",
     # Search & Retrieval

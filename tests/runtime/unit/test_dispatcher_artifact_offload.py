@@ -55,10 +55,13 @@ async def test_gateway_load_artifact_runs_off_the_event_loop(monkeypatch):
     d.consult_egress_policy = lambda *a, **k: None
     d._verify_egress = lambda *a, **k: None
     d._get_rail_chains = lambda *a, **k: None
+    from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+
     d._resolve_gliner_url = lambda *a, **k: None
     # The gateway build seeds GLiNER deps from the tenant routing config.
     d._config_manager = SimpleNamespace(
-        get_routing_config=lambda tenant_id: SimpleNamespace(
+        get_routing_config=lambda tenant_id: RoutingConfigUnified(
+            tenant_id=tenant_id,
             gliner_model="urchade/gliner_multi-v2.1",
             gliner_threshold=0.3,
             gliner_device="cpu",

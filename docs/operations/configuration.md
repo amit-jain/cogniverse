@@ -311,6 +311,7 @@ flowchart LR
 - Fast path: `enable_fast_path` (default `True`), `fast_path_confidence_threshold` (0.4)
 
 - GLiNER settings: `gliner_model`, `gliner_threshold`, `gliner_device`
+- GLiNER2 shadow: `gliner2_model` (served by `inference_service_urls["gliner2"]`)
 
 - Auto-optimization: `enable_auto_optimization`, `optimization_interval_seconds`, `min_samples_for_optimization`, `min_unique_queries`, `optimizer_floors`, `training_selection`, `optimization_gap_share`, `optimization_skip_above_score`
 

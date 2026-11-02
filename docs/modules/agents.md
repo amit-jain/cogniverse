@@ -472,6 +472,7 @@ class GatewayOutput(AgentOutput):
     entity_extraction_failed: bool  # True on a GLiNER outage (keyword-only
                                     # classification); distinguishes a sidecar
                                     # outage from genuine low confidence
+    shadow_classification: Optional[ShadowClassification]  # see below
 ```
 
 #### 6 Complexity Signals
@@ -529,7 +530,39 @@ confidence       — float 0.0–1.0
 It also emits a `cogniverse.routing` span whose `output.value` carries the
 routing decision (`chosen_agent`, `recommended_agent`, `confidence`,
 `reasoning`, `complexity`, `modality`, `generation_type`), read by
-`RoutingEvaluator`.
+`RoutingEvaluator`, plus `shadow_classification` (the GLiNER2 shadow's
+`ShadowClassification` as a dict, or `null`).
+
+#### GLiNER2 Shadow
+
+With `gliner2_model` set, the gateway also sends the query to GLiNER2
+(`fastino/GLiNER2.5-Decide`, served by the `gliner2` inference service)
+beside GLiNER, in parallel. One GLiNER2 pass answers the three decisions in
+`SHADOW_DECISIONS` (the `GatewayOutput` `complexity`, `modality` and
+`generation_type` labels, each with a description) and extracts entities of
+`SHADOW_ENTITY_TYPES` (the entity extraction agent's `ENTITY_TYPES`). Its
+answer is recorded and never routes: `routed_to` is always the rule decision.
+
+```text
+class ShadowClassification(BaseModel):
+    model: str
+    complexity / complexity_score
+    modality / modality_score
+    generation_type / generation_type_score
+    entities: List[ShadowEntity]  # text, label, score, start, end
+    routed_to: Optional[str]   # classifier_route(complexity, modality, generation_type)
+    agrees: Optional[bool]     # routed_to == the rule's routed_to
+    latency_ms: float
+    error: Optional[str]       # "<ExceptionType>: <message>"; labels are None
+```
+
+A service that is down, hung, or answers malformed fills `error` and leaves
+routing untouched. The request waits for the shadow at most
+`gliner2_timeout_s`.
+
+`cogniverse_cli.modal_inference.servers.gliner2` serves `POST /extract`
+(`MODEL_NAME`: the pinned checkpoint, or a local checkpoint directory) and is
+deployed as the `gliner2` Modal app.
 
 #### Configuration
 
@@ -539,6 +572,10 @@ class GatewayDeps(AgentDeps):
     gliner_threshold: float = 0.3           # entity detection confidence floor
     gliner_inference_url: Optional[str] = None  # gliner sidecar URL; None = in-process
     fast_path_confidence_threshold: float = 0.4  # min confidence for simple routing
+    gliner2_model: Optional[str] = None  # GLiNER2 shadow model; None = no shadow
+    gliner2_inference_url: Optional[str] = None  # gliner2 service URL
+    gliner2_entity_threshold: float = 0.3  # GLiNER2 entity confidence floor
+    gliner2_timeout_s: float = 1.0  # bound on the shadow request
 
 deps = GatewayDeps(fast_path_confidence_threshold=0.4)
 gateway = GatewayAgent(deps=deps, port=8014)

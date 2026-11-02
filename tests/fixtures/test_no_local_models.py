@@ -33,6 +33,7 @@ def test_every_library_entry_point_is_refused():
     import whisper
     from faster_whisper import WhisperModel
     from gliner import GLiNER
+    from gliner2 import AutoExtractor
     from pylate import models as pylate_models
     from transformers import AutoModel
 
@@ -46,6 +47,9 @@ def test_every_library_entry_point_is_refused():
         ),
         "gliner": _refused(
             lambda: GLiNER.from_pretrained("urchade/gliner_large-v2.1")
+        ),
+        "gliner2": _refused(
+            lambda: AutoExtractor.from_pretrained("fastino/GLiNER2.5-Decide")
         ),
         "whisper": _refused(lambda: whisper.load_model("tiny")),
         "faster_whisper": _refused(lambda: WhisperModel("tiny")),
@@ -63,6 +67,9 @@ def test_every_library_entry_point_is_refused():
             "('bert-base-uncased')"
         ),
         "gliner": "gliner.model.GLiNER.from_pretrained('urchade/gliner_large-v2.1')",
+        "gliner2": (
+            "gliner2.auto.AutoExtractor.from_pretrained('fastino/GLiNER2.5-Decide')"
+        ),
         "whisper": "whisper.load_model('tiny')",
         "faster_whisper": "faster_whisper.transcribe.WhisperModel.__init__",
     }

@@ -14,12 +14,13 @@ import re
 import time
 from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
+from cogniverse_foundation.common.entity_types import EntityType
 from cogniverse_foundation.telemetry.span_contract import (
     OP_GATEWAY,
     OP_ROUTING,
@@ -177,6 +178,43 @@ class GatewayInput(AgentInput):
     )
 
 
+class ShadowEntity(BaseModel):
+    """An entity span GLiNER2 found in the query."""
+
+    text: str
+    label: EntityType
+    score: float
+    start: int
+    end: int
+
+
+class ShadowClassification(BaseModel):
+    """GLiNER2's decision and entities, recorded beside the rule decision.
+
+    It never routes. ``routed_to`` is where GLiNER2's labels would have sent
+    the query; ``agrees`` compares it with the rule's ``routed_to``. On a
+    GLiNER2 failure the label fields are None, ``entities`` is empty and
+    ``error`` says why.
+    """
+
+    model: str
+    complexity: Optional[Literal["simple", "complex"]] = None
+    complexity_score: Optional[float] = None
+    modality: Optional[
+        Literal["video", "text", "audio", "image", "document", "both"]
+    ] = None
+    modality_score: Optional[float] = None
+    generation_type: Optional[Literal["raw_results", "summary", "detailed_report"]] = (
+        None
+    )
+    generation_type_score: Optional[float] = None
+    entities: List[ShadowEntity] = Field(default_factory=list)
+    routed_to: Optional[str] = None
+    agrees: Optional[bool] = None
+    latency_ms: float
+    error: Optional[str] = None
+
+
 class GatewayOutput(AgentOutput):
     """Output from the gateway classifier."""
 
@@ -220,6 +258,54 @@ class GatewayOutput(AgentOutput):
             "classification."
         ),
     )
+    shadow_classification: Optional[ShadowClassification] = Field(
+        None,
+        description=(
+            "GLiNER2's decision and entities when gliner2_model is set; it is "
+            "recorded only and never changes routed_to."
+        ),
+    )
+
+
+# The classification tasks GLiNER2 answers in shadow: each GatewayOutput
+# decision field, with a description of every label the model reads.
+SHADOW_DECISIONS: Dict[str, Dict[str, str]] = {
+    "complexity": {
+        "simple": "one direct lookup or summary of a single kind of content",
+        "complex": "needs several steps: comparing, analysing or combining sources",
+    },
+    "modality": {
+        "video": "videos, clips or footage",
+        "text": "text or articles",
+        "audio": "audio, podcasts, music or recordings",
+        "image": "images, photos or pictures",
+        "document": "documents or PDFs",
+        "both": "more than one kind of content",
+    },
+    "generation_type": {
+        "raw_results": "find or show matching items",
+        "summary": "a short summary",
+        "detailed_report": "a detailed report or analysis",
+    },
+}
+
+# The entity types GLiNER2 extracts in shadow (the entity extraction agent's
+# vocabulary), with a description of each the model reads.
+SHADOW_ENTITY_TYPES: Dict[str, str] = {
+    "PERSON": "a named person",
+    "ORGANIZATION": "a company, team, institution or other organization",
+    "PLACE": "a city, country, venue or other location",
+    "EVENT": "a named event, match, launch or occurrence",
+    "TECHNOLOGY": "a technology, product, tool or method",
+    "CONCEPT": "a topic, idea or subject",
+}
+
+
+def classifier_route(complexity: str, modality: str, generation_type: str) -> str:
+    """The agent a (complexity, modality, generation_type) decision routes to."""
+    if complexity == "complex":
+        return "orchestrator_agent"
+    return SIMPLE_ROUTE_MAP.get((modality, generation_type), "orchestrator_agent")
 
 
 class GatewayDeps(AgentDeps):
@@ -247,6 +333,27 @@ class GatewayDeps(AgentDeps):
     )
     enable_fast_path: bool = Field(
         True, description="When False, every query is routed through orchestration"
+    )
+    gliner2_model: Optional[str] = Field(
+        None,
+        description=(
+            "GLiNER2 model the gliner2 inference service serves, run in "
+            "shadow beside the rules. None: no shadow."
+        ),
+    )
+    gliner2_inference_url: Optional[str] = Field(
+        None, description="GLiNER2 inference service URL"
+    )
+    gliner2_entity_threshold: float = Field(
+        0.3, ge=0.0, le=1.0, description="Minimum GLiNER2 entity score"
+    )
+    gliner2_timeout_s: float = Field(
+        1.0,
+        gt=0.0,
+        description=(
+            "Seconds the shadow GLiNER2 request may take; the request waits "
+            "for the shadow, so this bounds what it can add"
+        ),
     )
 
 
@@ -641,6 +748,48 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
 
         return False
 
+    def _shadow_classify(self, query: str) -> ShadowClassification:
+        """Run GLiNER2 on the query; a failure is recorded, never raised.
+
+        The returned ``routed_to``/``agrees`` are filled in by the caller once
+        the rule decision exists.
+        """
+        from cogniverse_core.common.models.gliner2 import get_or_load_gliner2
+
+        model = self.deps.gliner2_model
+        started = time.perf_counter()
+        try:
+            client = get_or_load_gliner2(
+                model,
+                inference_url=self.deps.gliner2_inference_url,
+                timeout=self.deps.gliner2_timeout_s,
+            )
+            result = client.extract(
+                query,
+                SHADOW_ENTITY_TYPES,
+                SHADOW_DECISIONS,
+                threshold=self.deps.gliner2_entity_threshold,
+            )
+        except Exception as exc:
+            logger.warning("Shadow GLiNER2 %r failed: %s", model, exc)
+            return ShadowClassification(
+                model=model,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        decisions = result["classifications"]
+        return ShadowClassification(
+            model=model,
+            complexity=decisions["complexity"]["label"],
+            complexity_score=decisions["complexity"]["score"],
+            modality=decisions["modality"]["label"],
+            modality_score=decisions["modality"]["score"],
+            generation_type=decisions["generation_type"]["label"],
+            generation_type_score=decisions["generation_type"]["score"],
+            entities=[ShadowEntity(**entity) for entity in result["entities"]],
+            latency_ms=(time.perf_counter() - started) * 1000,
+        )
+
     # ------------------------------------------------------------------
     # Telemetry
     # ------------------------------------------------------------------
@@ -706,6 +855,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         started_ns: int,
         thresholds: Optional["_RoutingThresholds"] = None,
         entity_extraction_failed: bool = False,
+        shadow: Optional[ShadowClassification] = None,
     ) -> None:
         """Emit a cogniverse.routing span with the gateway's decision.
 
@@ -753,6 +903,11 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                         # RoutingEvaluator / QualityMonitor don't recalibrate
                         # thresholds off entity-extraction failures.
                         "entity_extraction_failed": entity_extraction_failed,
+                        # GLiNER2's labels and entities beside the rule's, so
+                        # the two can be compared on the same decisions.
+                        "shadow_classification": (
+                            shadow.model_dump() if shadow is not None else None
+                        ),
                     },
                     operation=OP_ROUTING,
                 )
@@ -777,9 +932,18 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         # and would otherwise run on the event loop thread — starving every
         # other request including /health/live (readiness failure, pod
         # marked NotReady under concurrent orchestration load).
-        entities, entity_extraction_failed = await asyncio.to_thread(
+        # The GLiNER2 shadow runs beside GLiNER, so it adds no latency unless
+        # it is the slower of the two.
+        extraction = asyncio.to_thread(
             self._extract_entities, input.query, thresholds.gliner
         )
+        if self.deps.gliner2_model:
+            (entities, entity_extraction_failed), shadow = await asyncio.gather(
+                extraction, asyncio.to_thread(self._shadow_classify, input.query)
+            )
+        else:
+            entities, entity_extraction_failed = await extraction
+            shadow = None
         modality, modality_confidence = self._classify_modality(entities, input.query)
         detected_modalities = self._detected_modalities(entities, input.query)
         generation_type, gen_confidence = self._classify_generation_type(entities)
@@ -816,6 +980,12 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                 f"(confidence={overall_confidence:.2f})"
             )
 
+        if shadow is not None and shadow.error is None:
+            shadow.routed_to = classifier_route(
+                shadow.complexity, shadow.modality, shadow.generation_type
+            )
+            shadow.agrees = shadow.routed_to == routed_to
+
         self.emit_progress(
             "routed",
             f"Classified as {complexity} {modality}/{generation_type} → {routed_to}",
@@ -844,6 +1014,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             started_ns=started_ns,
             thresholds=thresholds,
             entity_extraction_failed=entity_extraction_failed,
+            shadow=shadow,
         )
 
         return GatewayOutput(
@@ -858,6 +1029,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             gliner_threshold=thresholds.gliner,
             reasoning=reasoning,
             entity_extraction_failed=entity_extraction_failed,
+            shadow_classification=shadow,
         )
 
     def _build_complex_reasoning(
