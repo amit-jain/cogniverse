@@ -439,8 +439,10 @@ class OrchestratorOutput(AgentOutput):
             "so downstream consumers (eval harnesses, the BRIGHT probe "
             "harness, evaluation dashboards) can read the loop trajectory "
             "without depending on the fusion-shaped ``final_output`` "
-            "envelope. Set by ``_process_impl_locked`` after the iterative "
-            "retrieval loop returns."
+            "envelope, and ``memory_recall_error``: why the past-plans recall "
+            "failed, or None when memory was read. Set by "
+            "``_process_impl_locked`` after the iterative retrieval loop "
+            "returns."
         ),
     )
 
@@ -1290,15 +1292,16 @@ class OrchestratorAgent(
         # the request with its own error.
         self.set_tenant_for_context(tenant_id)
         await self.report_phase("memory_context", "Retrieving memory context...")
-        recalled, planning = await asyncio.gather(
+        recall, planning = await asyncio.gather(
             self._recall_past_plans(tenant_id, query),
             self._tenant_planning(tenant_id),
             return_exceptions=True,
         )
-        for outcome in (recalled, planning):
+        for outcome in (recall, planning):
             if isinstance(outcome, BaseException):
                 raise outcome
         planning_agents, withheld_agents = planning
+        recalled, memory_recall_error = recall
 
         # Format conversation history for DSPy planner
         conversation_context = self._format_conversation_context(
@@ -1514,7 +1517,10 @@ class OrchestratorAgent(
                 agent_results=agent_results,
                 final_output=final_output,
                 execution_summary=execution_summary,
-                metadata={"iterative_loop": iterative_loop},
+                metadata={
+                    "iterative_loop": iterative_loop,
+                    "memory_recall_error": memory_recall_error,
+                },
             )
         finally:
             self.active_workflows.pop(workflow_id, None)
@@ -3676,14 +3682,28 @@ class OrchestratorAgent(
                 summary = "Orchestration did not complete every planned agent"
         return summary[:512]
 
-    async def _recall_past_plans(self, tenant_id: str, query: str) -> Optional[str]:
-        """The tenant's remembered successful plans for queries like ``query``.
+    async def _recall_past_plans(
+        self, tenant_id: str, query: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """The tenant's remembered successful plans for queries like ``query``,
+        and the recall's error when memory could not be read.
 
-        The first touch builds the tenant's Mem0 stack; both it and the search
-        are blocking, so they run off the loop.
+        Past plans only steer the planner, so a memory outage plans without
+        them; the error is returned so the response records the outage instead
+        of reading as "no past plans". The first touch builds the tenant's Mem0
+        stack; both it and the search are blocking, so they run off the loop.
         """
-        await asyncio.to_thread(self._ensure_memory_for_tenant, tenant_id)
-        return await asyncio.to_thread(self.get_relevant_context, query)
+        try:
+            await asyncio.to_thread(self._ensure_memory_for_tenant, tenant_id)
+            return await asyncio.to_thread(self.get_relevant_context, query), None
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            logger.warning(
+                "Planning for tenant %s without past plans; memory recall failed: %s",
+                tenant_id,
+                error,
+            )
+            return None, error
 
     def _generate_summary(
         self, plan: OrchestrationPlan, agent_results: Dict[str, Any]

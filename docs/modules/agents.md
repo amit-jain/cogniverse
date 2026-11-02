@@ -1568,7 +1568,9 @@ Planning Phase: the DSPy planner proposes an agent sequence from
 `available_agents` (the `_planning_agents` list). Its `gateway_context` hints
 include `past_successful_plans`: the tenant's remembered successful runs for
 similar queries, each naming its agents and reasoning, recalled from Mem0 while
-`_tenant_planning` reads the tenant's agents. A memory outage fails the request. Its instructions name only
+`_tenant_planning` reads the tenant's agents. A memory outage plans without
+them and records the error as the output's `metadata["memory_recall_error"]`
+(None when memory was read). Its instructions name only
 the preprocessing agents; every other agent reaches it through
 `available_agents`.
 

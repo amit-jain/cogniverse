@@ -25,8 +25,9 @@ from cogniverse_agents.orchestrator_agent import (
 pytestmark = [pytest.mark.unit, pytest.mark.ci_fast]
 
 
-class _StopHere(Exception):
-    pass
+class _StopHere(BaseException):
+    """Halts the run right after the offloaded call. Not an ``Exception``, so
+    the recall's memory-outage handling does not take it for one."""
 
 
 @pytest.mark.asyncio

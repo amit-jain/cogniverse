@@ -65,6 +65,7 @@ class _Runtime:
         self.agent: OrchestratorAgent | None = None
         self.plan_hints: list[str] = []
         self.recall_error: Exception | None = None
+        self.memory_build_error: Exception | None = None
         self.planning_started = threading.Event()
         self.recall_waits_for_planning = False
 
@@ -134,7 +135,8 @@ async def runtime(monkeypatch):
             return AccumulatedEvidence(iterations_executed=1, exit_reason="max_iter")
 
         def _ensure_memory_for_tenant(self, tenant_id):
-            return None
+            if state.memory_build_error is not None:
+                raise state.memory_build_error
 
         async def _tenant_planning(self, tenant_id):
             state.planning_started.set()
@@ -388,9 +390,13 @@ async def test_a_partial_orchestration_carries_its_answer_to_a2a(runtime):
 
 @pytest.mark.asyncio
 async def test_a_remembered_plan_reaches_the_next_plan_for_the_tenant(runtime):
-    await _process(runtime, "fine")
-    await _process(runtime, "fine")
+    first = await _process(runtime, "fine")
+    second = await _process(runtime, "fine")
 
+    assert [
+        response["orchestration_result"]["metadata"]["memory_recall_error"]
+        for response in (first, second)
+    ] == [None, None]
     assert runtime.plan_hints == [
         "",
         f"past_successful_plans=1. {REMEMBERED_PLAN}",
@@ -420,15 +426,39 @@ async def test_recall_runs_while_the_tenants_agents_are_read(runtime):
     assert runtime.plan_hints == [""]
 
 
+@pytest.mark.parametrize(
+    ("failure", "error", "recorded"),
+    [
+        (
+            "recall_error",
+            ConnectionError("mem0 vector store refused"),
+            "ConnectionError: mem0 vector store refused",
+        ),
+        (
+            "memory_build_error",
+            TimeoutError("mem0 embedder did not answer"),
+            "TimeoutError: mem0 embedder did not answer",
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_an_unreachable_memory_fails_the_request_before_planning(runtime):
-    from cogniverse_agents.orchestrator_agent import OrchestratorInput
+async def test_an_unreachable_memory_plans_without_past_plans_and_says_so(
+    runtime, failure, error, recorded
+):
+    """Past plans only steer the planner: a memory outage, at the search or
+    at the tenant's first-touch build, plans without them and records why in
+    the response, so it never reads as a tenant with no past plans."""
+    setattr(runtime, failure, error)
 
-    runtime.recall_error = ConnectionError("mem0 vector store refused")
+    result = await _process(runtime, "fine")
 
-    with pytest.raises(ConnectionError) as failure:
-        await runtime.agent.process(OrchestratorInput(query="fine", tenant_id=TENANT))
-
-    assert str(failure.value) == "mem0 vector store refused"
-    assert runtime.plan_hints == []
-    assert runtime.calls == []
+    assert result["status"] == "success"
+    assert result["answer"] == "first:fine\n\nsecond:fine"
+    assert result["orchestration_result"]["metadata"]["memory_recall_error"] == (
+        recorded
+    )
+    assert runtime.plan_hints == [""]
+    assert sorted(runtime.calls) == [
+        ("first", "fine", TENANT),
+        ("second", "fine", TENANT),
+    ]
