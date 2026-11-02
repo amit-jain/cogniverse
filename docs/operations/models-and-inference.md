@@ -436,7 +436,7 @@ pod's CPU limit, and its entities match the PyTorch checkpoint's.
 
 | | |
 |---|---|
-| Model | `fastino/gliner2.5-base-v1` @ `54785d51df8d86a0d8f2eb212fec15871aad2c4d` |
+| Model | `fastino/GLiNER2.5-Decide` @ `9d1bfb848cd16d93ee56ccbc59cd92bf0f284d90` |
 | Server | `cogniverse_cli.modal_inference.servers.gliner2` (`POST /extract`, `GET /health`) |
 | Modal app | `cogniverse-gliner2` (`cogniverse inference modal deploy gliner2`) |
 | Runtime URL | `SystemConfig.inference_service_urls["gliner2"]` |

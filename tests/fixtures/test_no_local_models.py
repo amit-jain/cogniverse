@@ -49,7 +49,7 @@ def test_every_library_entry_point_is_refused():
             lambda: GLiNER.from_pretrained("urchade/gliner_large-v2.1")
         ),
         "gliner2": _refused(
-            lambda: AutoExtractor.from_pretrained("fastino/gliner2.5-base-v1")
+            lambda: AutoExtractor.from_pretrained("fastino/GLiNER2.5-Decide")
         ),
         "whisper": _refused(lambda: whisper.load_model("tiny")),
         "faster_whisper": _refused(lambda: WhisperModel("tiny")),
@@ -68,7 +68,7 @@ def test_every_library_entry_point_is_refused():
         ),
         "gliner": "gliner.model.GLiNER.from_pretrained('urchade/gliner_large-v2.1')",
         "gliner2": (
-            "gliner2.auto.AutoExtractor.from_pretrained('fastino/gliner2.5-base-v1')"
+            "gliner2.auto.AutoExtractor.from_pretrained('fastino/GLiNER2.5-Decide')"
         ),
         "whisper": "whisper.load_model('tiny')",
         "faster_whisper": "faster_whisper.transcribe.WhisperModel.__init__",

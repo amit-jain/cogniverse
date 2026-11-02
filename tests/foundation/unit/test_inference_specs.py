@@ -34,8 +34,8 @@ EXPECTED_MODELS = {
         None,
     ),
     "gliner2": (
-        "fastino/gliner2.5-base-v1",
-        "54785d51df8d86a0d8f2eb212fec15871aad2c4d",
+        "fastino/GLiNER2.5-Decide",
+        "9d1bfb848cd16d93ee56ccbc59cd92bf0f284d90",
         None,
     ),
     "vllm_llm_student": (

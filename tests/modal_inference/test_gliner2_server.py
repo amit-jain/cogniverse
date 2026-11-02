@@ -48,8 +48,8 @@ def _fresh_client_cache():
 def test_the_served_model_is_the_pinned_spec_checkpoint():
     spec = get_inference_service_spec("gliner2")
     assert (server.MODEL_ID, server.MODEL_REVISION) == (
-        "fastino/gliner2.5-base-v1",
-        "54785d51df8d86a0d8f2eb212fec15871aad2c4d",
+        "fastino/GLiNER2.5-Decide",
+        "9d1bfb848cd16d93ee56ccbc59cd92bf0f284d90",
     )
     assert (spec.model_id, spec.model_revision) == (
         server.MODEL_ID,
@@ -63,7 +63,7 @@ def test_health_names_the_served_checkpoint(gliner2_service):
     assert httpx.get(f"{url}/health", timeout=30).json() == {
         "status": "ready",
         "model": model,
-        "model_revision": "54785d51df8d86a0d8f2eb212fec15871aad2c4d",
+        "model_revision": "9d1bfb848cd16d93ee56ccbc59cd92bf0f284d90",
     }
 
 

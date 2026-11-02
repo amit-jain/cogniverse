@@ -176,7 +176,7 @@ async def test_no_model_means_no_shadow_and_no_client_built():
 @pytest.mark.asyncio
 async def test_a_dead_service_is_recorded_and_routing_still_served():
     agent, telemetry = _gateway(
-        gliner2_model="fastino/gliner2.5-base-v1",
+        gliner2_model="fastino/GLiNER2.5-Decide",
         gliner2_inference_url="http://127.0.0.1:9",
     )
     plain, _ = _gateway()
@@ -188,7 +188,7 @@ async def test_a_dead_service_is_recorded_and_routing_still_served():
     assert shadow.error.startswith("ConnectionError: ")
     assert "127.0.0.1" in shadow.error and "port=9" in shadow.error
     assert _without_latency(shadow.model_dump()) == {
-        "model": "fastino/gliner2.5-base-v1",
+        "model": "fastino/GLiNER2.5-Decide",
         "complexity": None,
         "complexity_score": None,
         "modality": None,
@@ -207,7 +207,7 @@ async def test_a_dead_service_is_recorded_and_routing_still_served():
 
 @pytest.mark.asyncio
 async def test_a_model_without_an_inference_url_is_an_error():
-    agent, _ = _gateway(gliner2_model="fastino/gliner2.5-base-v1")
+    agent, _ = _gateway(gliner2_model="fastino/GLiNER2.5-Decide")
     output = await _route(agent, "show me cat videos")
 
     assert output.routed_to == "search_agent"

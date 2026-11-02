@@ -261,7 +261,7 @@ async def test_saved_gliner2_shadow_config_reaches_the_gateway(dispatcher):
     manager.set_routing_config(
         RoutingConfigUnified(
             tenant_id="acme:acme",
-            gliner2_model="fastino/gliner2.5-base-v1",
+            gliner2_model="fastino/GLiNER2.5-Decide",
         ),
         tenant_id="acme:acme",
     )
@@ -273,7 +273,7 @@ async def test_saved_gliner2_shadow_config_reaches_the_gateway(dispatcher):
     assert (
         acme.deps.gliner2_model,
         acme.deps.gliner2_inference_url,
-    ) == ("fastino/gliner2.5-base-v1", "http://cogniverse-gliner2:8080")
+    ) == ("fastino/GLiNER2.5-Decide", "http://cogniverse-gliner2:8080")
     assert (
         globex.deps.gliner2_model,
         globex.deps.gliner2_inference_url,

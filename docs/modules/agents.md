@@ -536,7 +536,7 @@ routing decision (`chosen_agent`, `recommended_agent`, `confidence`,
 #### GLiNER2 Shadow
 
 With `gliner2_model` set, the gateway also sends the query to GLiNER2
-(`fastino/gliner2.5-base-v1`, served by the `gliner2` inference service)
+(`fastino/GLiNER2.5-Decide`, served by the `gliner2` inference service)
 beside GLiNER, in parallel. One GLiNER2 pass answers the three decisions in
 `SHADOW_DECISIONS` (the `GatewayOutput` `complexity`, `modality` and
 `generation_type` labels, each with a description) and extracts entities of
