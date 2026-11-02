@@ -1104,7 +1104,8 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
                     "duration_ms": 0.0,
                     "per_iter_duration_ms": [],
                     "accumulated_evidence": [],
-                }
+                },
+                "memory_recall_error": None,
             },
         }
 
