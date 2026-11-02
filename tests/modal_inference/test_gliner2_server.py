@@ -16,7 +16,12 @@ from cogniverse_cli.modal_inference.servers import gliner2 as server
 from cogniverse_agents.gateway_agent import SHADOW_DECISIONS, SHADOW_ENTITY_TYPES
 from cogniverse_core.common.models import gliner2 as loader
 from cogniverse_foundation.inference_specs import get_inference_service_spec
-from tests.utils.gliner2_models import QUERIES, SERVED_ANSWERS, gliner2_server
+from tests.utils.gliner2_models import (
+    QUERIES,
+    SERVED_ANSWERS,
+    SHADOW_THRESHOLD,
+    gliner2_server,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -27,7 +32,7 @@ def _body(model: str, text: str, **overrides) -> dict:
         "text": text,
         "entity_types": SHADOW_ENTITY_TYPES,
         "classifications": SHADOW_DECISIONS,
-        "threshold": 0.5,
+        "threshold": SHADOW_THRESHOLD,
         **overrides,
     }
 
@@ -86,7 +91,7 @@ def test_the_client_returns_the_server_answer_without_the_model_key(
     client = loader.get_or_load_gliner2(model, inference_url=url, timeout=30)
     for query in QUERIES:
         result = client.extract(
-            query, SHADOW_ENTITY_TYPES, SHADOW_DECISIONS, threshold=0.5
+            query, SHADOW_ENTITY_TYPES, SHADOW_DECISIONS, threshold=SHADOW_THRESHOLD
         )
         assert result == {
             "entities": computed[query]["entities"],
@@ -225,7 +230,10 @@ def test_a_server_error_raises_with_the_endpoint(tmp_path, monkeypatch):
         client = loader.RemoteGliner2Client(url, str(missing), timeout=60)
         with pytest.raises(requests.HTTPError) as excinfo:
             client.extract(
-                "find cats", SHADOW_ENTITY_TYPES, SHADOW_DECISIONS, threshold=0.5
+                "find cats",
+                SHADOW_ENTITY_TYPES,
+                SHADOW_DECISIONS,
+                threshold=SHADOW_THRESHOLD,
             )
     assert str(excinfo.value).startswith(
         f"503 Server Error: Service Unavailable for url: {url}/extract"
@@ -242,7 +250,7 @@ def test_concurrent_requests_each_get_their_own_answer(gliner2_service, computed
     def run(index: int, query: str) -> None:
         barrier.wait()
         results[index] = client.extract(
-            query, SHADOW_ENTITY_TYPES, SHADOW_DECISIONS, threshold=0.5
+            query, SHADOW_ENTITY_TYPES, SHADOW_DECISIONS, threshold=SHADOW_THRESHOLD
         )
 
     threads = [threading.Thread(target=run, args=(i, q)) for i, q in enumerate(queries)]

@@ -574,7 +574,7 @@ class GatewayDeps(AgentDeps):
     fast_path_confidence_threshold: float = 0.4  # min confidence for simple routing
     gliner2_model: Optional[str] = None  # GLiNER2 shadow model; None = no shadow
     gliner2_inference_url: Optional[str] = None  # gliner2 service URL
-    gliner2_entity_threshold: float = 0.5
+    gliner2_entity_threshold: float = 0.3  # GLiNER2 entity confidence floor
     gliner2_timeout_s: float = 1.0  # bound on the shadow request
 
 deps = GatewayDeps(fast_path_confidence_threshold=0.4)

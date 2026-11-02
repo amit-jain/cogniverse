@@ -21,7 +21,14 @@ from typing import Any, Iterator
 import uvicorn
 from cogniverse_cli.modal_inference.servers import gliner2 as server
 
-from cogniverse_agents.gateway_agent import SHADOW_DECISIONS, SHADOW_ENTITY_TYPES
+from cogniverse_agents.gateway_agent import (
+    SHADOW_DECISIONS,
+    SHADOW_ENTITY_TYPES,
+    GatewayDeps,
+)
+
+# The entity threshold the gateway's shadow sends.
+SHADOW_THRESHOLD = GatewayDeps.model_fields["gliner2_entity_threshold"].default
 
 
 def _span(text: str, confidence: float, start: int, end: int) -> dict:
@@ -164,7 +171,7 @@ class ExactGliner2Model:
             self.calls.append({"text": text, "options": options})
         assert schema.build() == self._schema
         assert options == {
-            "threshold": 0.5,
+            "threshold": SHADOW_THRESHOLD,
             "include_confidence": True,
             "include_spans": True,
         }

@@ -339,3 +339,23 @@ def test_shadow_classification_fields_are_the_recorded_span_keys():
         "latency_ms",
         "error",
     }
+
+
+@pytest.mark.asyncio
+async def test_the_shadow_asks_for_entities_down_to_the_gateway_floor(
+    gliner2_service, gliner2_model
+):
+    assert GatewayDeps().gliner2_entity_threshold == 0.3
+    agent, _ = _shadowed(gliner2_service)
+    calls_before = len(gliner2_model.calls)
+    await _route(agent, "show me cat videos")
+    assert gliner2_model.calls[calls_before:] == [
+        {
+            "text": "show me cat videos",
+            "options": {
+                "threshold": 0.3,
+                "include_confidence": True,
+                "include_spans": True,
+            },
+        }
+    ]

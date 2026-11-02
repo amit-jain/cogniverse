@@ -345,7 +345,7 @@ class GatewayDeps(AgentDeps):
         None, description="GLiNER2 inference service URL"
     )
     gliner2_entity_threshold: float = Field(
-        0.5, ge=0.0, le=1.0, description="Minimum GLiNER2 entity score"
+        0.3, ge=0.0, le=1.0, description="Minimum GLiNER2 entity score"
     )
     gliner2_timeout_s: float = Field(
         1.0,
